@@ -10,7 +10,8 @@
     "test": "vitest run",
     "tauri": "tauri",
     "desktop:dev": "tauri dev",
-    "desktop:build": "node scripts/build-desktop.mjs"
+    "desktop:build": "node scripts/build-desktop.mjs --no-bundle --ci -- --locked",
+    "desktop:package": "node scripts/build-desktop.mjs --ci -- --locked"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.0.0",

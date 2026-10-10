@@ -86,13 +86,18 @@ cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
 npm run desktop:build
 ```
 
-构建脚本读取 `package.json` 版本，将 EXE 和安装包输出到 `src-tauri/target/v<版本>/release/`。不需要手动设置 `CARGO_TARGET_DIR`，脚本会统一使用版本目录；当前版本为 `v0.1.3`。若重复构建同一版本，须先退出该目录下运行的 EXE。
+默认由用户自行编译，开发协作中没有明确要求时不运行编译或打包。构建脚本固定使用 `src-tauri/target/`，复用同一份依赖缓存，不按版本创建目录；即使环境中留有旧 `CARGO_TARGET_DIR`，脚本也会统一使用固定目录。编译前先从托盘退出 Snap Desk，避免 Windows 阻止覆盖 EXE。
 
 ```powershell
-npm run desktop:build -- --ci -- --locked
+# 日常使用：生成可运行程序，不制作安装包
+npm run desktop:build
+# 需要安装包时再执行
+npm run desktop:package
 ```
 
 当前平台只能直接生成对应平台包；macOS / Linux 需各自在目标系统上构建，签名、公证、自动更新和分发不在本期内。
+
+Windows 输出：程序为 `src-tauri/target/release/snap-desk.exe`，安装包位于 `src-tauri/target/release/bundle/`。两条命令已包含 `--ci` 和 `--locked`，无需追加。旧版本目录保留原样，不再写入。
 
 运行新版前仍需从托盘退出旧版，因为两个版本共享单实例标识和设置文件。
 
@@ -103,7 +108,7 @@ V0.1.2 历史构建产物（保留，不纳入 Git）：
 - MSI 安装包：`src-tauri/target/v0.1.2/release/bundle/msi/Snap Desk_0.1.2_x64_en-US.msi`。
 - 默认目录 `src-tauri/target/release/snap-desk.exe` 仍是此前正在运行的旧版，本轮未覆盖。
 
-实际发布构建命令为 `npm run desktop:build -- --ci -- --locked`。构建尚有一项非阻塞提示：应用标识 `io.snapdesk.app` 以 `.app` 结尾；macOS 打包前应确定最终应用标识并处理该提示。
+历史发布构建有一项非阻塞提示：应用标识 `io.snapdesk.app` 以 `.app` 结尾；macOS 打包前应确定最终应用标识并处理该提示。
 
 V0.1.2 历史验证记录：
 
@@ -148,7 +153,7 @@ V0.1.2 额外实机验收：
 ## 代码入口
 
 ```text
-scripts/build-desktop.mjs        按版本隔离构建输出，透传 Tauri 构建参数
+scripts/build-desktop.mjs        固定构建输出目录，透传 Tauri 构建参数
 src/App.vue                     主窗口、设置表单、倒计时提示、快捷键、关于
 src/components/CaptureOverlay.vue  选区交互、快捷键与工具栏
 src/components/ui/button/       shadcn-vue 风格可扩展 Button
@@ -182,6 +187,8 @@ tests/annotations.test.ts       标注历史、预览几何与缩放坐标测试
 ## V0.1.3 额外验收
 
 本轮验证：12 项前端测试、16 项 Rust 测试、Vue / TypeScript 类型检查、Vite 生产构建、Rust 格式检查与构建脚本语法检查通过。桌面系统交互未自动验收，以下项目保留手动检查。
+
+上述编译与测试在改为“默认不编译”约定前执行。0.1.3 发布构建未完成，改用固定目录后的脚本仅做语法与静态核对，未再启动编译。
 
 - [ ] 首次启动默认 Alt+F1；旧默认迁移后可用；已有其他自定义键和延时保留。
 - [ ] 设置页选择 Alt+F1～F12 后保存，冲突时旧键仍可用；主页延时保存失败时恢复原显示。
