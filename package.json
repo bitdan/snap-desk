@@ -11,7 +11,8 @@
     "tauri": "tauri",
     "desktop:dev": "tauri dev",
     "desktop:build": "node scripts/build-desktop.mjs --no-bundle --ci -- --locked",
-    "desktop:package": "node scripts/build-desktop.mjs --ci -- --locked"
+    "desktop:package": "node scripts/build-desktop.mjs --ci -- --locked",
+    "desktop:clean": "node scripts/clean-desktop.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.0.0",

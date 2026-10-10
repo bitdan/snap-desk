@@ -93,7 +93,11 @@ npm run desktop:build
 npm run desktop:build
 # 需要安装包时再执行
 npm run desktop:package
+# 仅在需要清理缓存或释放磁盘空间时执行
+npm run desktop:clean
 ```
+
+`desktop:clean` 调用 Cargo 自带的 `clean`，清理整个 `src-tauri/target/`，包括编译缓存、EXE、安装包及此前的 `v0.1.2` / `v0.1.3` 子目录；不删除源码、用户设置、`node_modules` 或前端 `dist`。执行前退出程序并停止构建。日常直接 build 即可，clean 后首次编译会重新编译依赖，耗时更长。前端 `dist` 在生产构建时由 Vite 重建。
 
 当前平台只能直接生成对应平台包；macOS / Linux 需各自在目标系统上构建，签名、公证、自动更新和分发不在本期内。
 
