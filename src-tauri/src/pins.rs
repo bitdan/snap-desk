@@ -12,13 +12,59 @@ use std::{
     },
 };
 use tauri::{
-    AppHandle, Emitter, LogicalSize, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
+    AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, WebviewUrl, WebviewWindow,
+    WebviewWindowBuilder,
 };
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
 const MAX_PINS: usize = 12;
 const MAX_IMAGE_PIXELS: u64 = 16_000_000;
 const MAX_TOTAL_PIXELS: u64 = 32_000_000;
+
+/// 与 Vue 共用同一份布局尺寸，单位均为逻辑像素，避免 DPI 下底栏挤占图片。
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PinLayout {
+    padding: f64,
+    gap: f64,
+    border: f64,
+    expanded_height: f64,
+    collapsed_height: f64,
+    min_image_width: f64,
+    min_image_height: f64,
+}
+impl PinLayout {
+    fn load() -> Self {
+        // 编译时嵌入仓库内常量，不读取用户文件；前端直接导入相同 JSON。
+        serde_json::from_str(include_str!("../../src/lib/pin-layout.json"))
+            .expect("内置贴图布局配置无效")
+    }
+    fn chrome_height(&self, expanded: bool) -> f64 {
+        self.padding * 2.0
+            + self.gap
+            + self.border * 2.0
+            + if expanded {
+                self.expanded_height
+            } else {
+                self.collapsed_height
+            }
+    }
+    fn window_size(
+        &self,
+        width: u32,
+        height: u32,
+        zoom: f64,
+        max_width: f64,
+        max_height: f64,
+        expanded: bool,
+    ) -> (f64, f64) {
+        let width = (f64::from(width) * zoom).max(self.min_image_width)
+            + (self.padding + self.border) * 2.0;
+        let height =
+            (f64::from(height) * zoom).max(self.min_image_height) + self.chrome_height(expanded);
+        (width.min(max_width), height.min(max_height))
+    }
+}
 
 #[derive(Default)]
 pub struct PinState {
@@ -43,6 +89,8 @@ pub struct PinView {
     opacity: f64,
     locked: bool,
     topmost: bool,
+    /// 展开/收起底栏同时调整原生窗口高度，不改变图片缩放比例。
+    toolbar_expanded: bool,
 }
 impl Default for PinView {
     fn default() -> Self {
@@ -51,6 +99,7 @@ impl Default for PinView {
             opacity: 1.0,
             locked: false,
             topmost: true,
+            toolbar_expanded: true,
         }
     }
 }
@@ -165,16 +214,22 @@ pub fn create(app: &AppHandle, image: RgbaImage) -> Result<WebviewWindow, String
         .primary_monitor()
         .map_err(err)?
         .ok_or("无法获取显示器信息。")?;
-    let max_width = f64::from(monitor.size().width) / monitor.scale_factor() * 0.8;
-    let max_height = f64::from(monitor.size().height) / monitor.scale_factor() * 0.8;
-    let zoom = (max_width / f64::from(image.width()))
-        .min(max_height / f64::from(image.height()))
-        .min(1.0)
-        .max(0.1);
-    let width = (f64::from(image.width()) * zoom).max(240.0).min(max_width);
-    let height = (f64::from(image.height()) * zoom)
-        .max(160.0)
-        .min(max_height);
+    let layout = PinLayout::load();
+    let max_width = f64::from(monitor.work_area().size.width) / monitor.scale_factor() * 0.8;
+    let max_height = f64::from(monitor.work_area().size.height) / monitor.scale_factor() * 0.8;
+    let zoom = ((max_width - (layout.padding + layout.border) * 2.0).max(1.0)
+        / f64::from(image.width()))
+    .min((max_height - layout.chrome_height(true)).max(1.0) / f64::from(image.height()))
+    .min(1.0)
+    .max(0.1);
+    let (width, height) = layout.window_size(
+        image.width(),
+        image.height(),
+        zoom,
+        max_width,
+        max_height,
+        true,
+    );
     let label = format!("pin-{}", state.next_id.fetch_add(1, Ordering::SeqCst) + 1);
     let image = Arc::new(image);
     state.images.lock().map_err(err)?.insert(
@@ -348,16 +403,51 @@ pub async fn set_pin_view(
             .current_monitor()
             .map_err(err)?
             .ok_or("无法获取显示器信息。")?;
-        let width = (f64::from(pin.image.width()) * view.zoom)
-            .max(240.0)
-            .min(f64::from(monitor.size().width) / monitor.scale_factor() * 0.95);
-        let height = (f64::from(pin.image.height()) * view.zoom)
-            .max(160.0)
-            .min(f64::from(monitor.size().height) / monitor.scale_factor() * 0.95);
+        let scale = monitor.scale_factor();
+        let work_area = monitor.work_area();
+        let (width, height) = PinLayout::load().window_size(
+            pin.image.width(),
+            pin.image.height(),
+            view.zoom,
+            f64::from(work_area.size.width) / scale * 0.95,
+            f64::from(work_area.size.height) / scale * 0.95,
+            view.toolbar_expanded,
+        );
+        let old_size = window.inner_size().map_err(err)?;
+        let old_position = window.outer_position().map_err(err)?;
+        // 底栏展开或放大时，将窗口限制在显示器工作区内，避免按钮掉到任务栏下方。
+        let x = f64::from(old_position.x).clamp(
+            f64::from(work_area.position.x),
+            f64::from(work_area.position.x) + f64::from(work_area.size.width)
+                - (width * scale).ceil(),
+        );
+        let y = f64::from(old_position.y).clamp(
+            f64::from(work_area.position.y),
+            f64::from(work_area.position.y) + f64::from(work_area.size.height)
+                - (height * scale).ceil(),
+        );
         window.set_always_on_top(view.topmost).map_err(err)?;
-        if let Err(error) = window.set_size(LogicalSize::new(width, height)) {
-            let _ = window.set_always_on_top(pin.view.topmost);
-            return Err(err(error));
+        if let Err(error) = window
+            .set_size(LogicalSize::new(width, height))
+            .and_then(|_| {
+                window.set_position(PhysicalPosition::new(x.round() as i32, y.round() as i32))
+            })
+        {
+            let mut failures = Vec::new();
+            for result in [
+                window.set_size(old_size),
+                window.set_position(old_position),
+                window.set_always_on_top(pin.view.topmost),
+            ] {
+                if let Err(e) = result {
+                    failures.push(err(e));
+                }
+            }
+            return Err(if failures.is_empty() {
+                err(error)
+            } else {
+                format!("{error}；恢复窗口失败：{}", failures.join("；"))
+            });
         }
         state
             .images
@@ -538,6 +628,41 @@ pub async fn pin_action(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn bottom_toolbar_does_not_consume_image_height() {
+        let layout = PinLayout::load();
+        let (width, height) = layout.window_size(800, 600, 1.0, 1920.0, 1080.0, true);
+        assert_eq!(width - (layout.padding + layout.border) * 2.0, 800.0);
+        assert_eq!(height - layout.chrome_height(true), 600.0);
+        let (_, collapsed) = layout.window_size(800, 600, 1.0, 1920.0, 1080.0, false);
+        assert_eq!(collapsed - layout.chrome_height(false), 600.0);
+        assert_eq!(
+            height - collapsed,
+            layout.expanded_height - layout.collapsed_height
+        );
+    }
+    #[test]
+    fn layout_handles_small_images_large_images_and_scaled_work_areas() {
+        let layout = PinLayout::load();
+        let (width, height) = layout.window_size(1, 1, 1.0, 1200.0, 800.0, true);
+        assert_eq!(
+            width,
+            layout.min_image_width + (layout.padding + layout.border) * 2.0
+        );
+        assert_eq!(height, layout.min_image_height + layout.chrome_height(true));
+        // 物理 1920×1080、150% DPI 的工作区换算为逻辑像素后再限制窗口。
+        assert_eq!(
+            layout.window_size(3000, 2000, 4.0, 1920.0 / 1.5, 1080.0 / 1.5, true),
+            (1280.0, 720.0)
+        );
+        assert_eq!(
+            layout.window_size(600, 800, 0.5, 1200.0, 800.0, true),
+            (
+                300.0 + (layout.padding + layout.border) * 2.0,
+                400.0 + layout.chrome_height(true)
+            )
+        );
+    }
     #[test]
     fn rejects_empty_oversized_and_excess_pins() {
         assert!(validate_capacity(0, 1, 0, 0).is_err());

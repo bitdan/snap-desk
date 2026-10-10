@@ -4,7 +4,7 @@ import type { Rect } from './selection'
 import type { Annotation } from './annotations'
 
 export interface CaptureFrame { id: number; width: number; height: number; dataUrl: string }
-export interface PinView { zoom: number; opacity: number; locked: boolean; topmost: boolean }
+export interface PinView { zoom: number; opacity: number; locked: boolean; topmost: boolean; toolbarExpanded: boolean }
 export interface PinFrame { label: string; width: number; height: number; dataUrl: string; view: PinView; transparencySupported: boolean }
 export interface PinSummary { label: string; width: number; height: number; visible: boolean }
 export type PinTransform = 'rotateRight' | 'rotateLeft' | 'flipHorizontal' | 'flipVertical' | 'grayscale' | 'invert' | 'reset'
