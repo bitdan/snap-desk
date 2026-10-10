@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { Camera, Keyboard, Settings2, Info, Scan, PanelLeftClose, Monitor, Check, Command } from 'lucide-vue-next'
+import { Camera, Keyboard, Settings2, Info, Scan, PanelLeftClose, Monitor, Check, Command, Pin } from 'lucide-vue-next'
+import PinManager from '@/components/PinManager.vue'
 import Button from '@/components/ui/button/Button.vue'
 import { api, desktop, onDelay, onError, onResult, type AppStatus, type Settings } from '@/lib/api'
 
 const page = ref('截图')
-const items = [{ name: '截图', icon: Camera }, { name: '快捷键', icon: Keyboard }, { name: '设置', icon: Settings2 }, { name: '关于', icon: Info }]
+const items = [{ name: '截图', icon: Camera }, { name: '贴图', icon: Pin }, { name: '快捷键', icon: Keyboard }, { name: '设置', icon: Settings2 }, { name: '关于', icon: Info }]
 const status = ref<AppStatus | null>(null)
 const pending = ref(false)
 const saving = ref(false)
@@ -102,15 +103,17 @@ onUnmounted(() => { disposed = true; disposers.forEach(off => off()) })
             <div><span>标注</span><span>矩形 / 椭圆 / 直线 / 箭头</span></div>
             <div><span>复制图片</span><kbd>Enter</kbd></div>
             <div><span>保存 PNG</span><kbd>Ctrl / ⌘ + S</kbd></div>
+            <div><span>截图贴图</span><kbd>Ctrl / ⌘ + P</kbd></div>
             <div><span>撤销 / 重做</span><kbd>Ctrl / ⌘ + Z / Shift + Z</kbd></div>
             <div><span>取消</span><kbd>Esc / 右键</kbd></div>
           </section>
           <p class="scope-note"><Monitor :size="15" />当前截取主显示器。关闭窗口后可从托盘或快捷键继续截图。</p>
         </template>
 
+        <PinManager v-else-if="page === '贴图'" />
         <template v-else-if="page === '快捷键'">
           <h1>快捷键</h1><p class="subtitle">应用运行时，全局快捷键可在其他窗口中使用。</p>
-          <section class="settings-card"><div v-for="[label, key] in [['开始区域截图', shortcut], ['复制选区（包含标注）', 'Enter / Ctrl / ⌘ + C'], ['保存 PNG', 'Ctrl / ⌘ + S'], ['选择整个主屏（无标注时）', 'Ctrl / ⌘ + A'], ['撤销标注', 'Ctrl / ⌘ + Z'], ['重做标注', 'Ctrl / ⌘ + Shift + Z / Ctrl + Y'], ['取消截图', 'Esc / 鼠标右键']]" :key="label" class="setting-row"><span>{{ label }}</span><kbd>{{ key }}</kbd></div></section>
+          <section class="settings-card"><div v-for="[label, key] in [['开始区域截图', shortcut], ['复制选区（包含标注）', 'Enter / Ctrl / ⌘ + C'], ['保存 PNG', 'Ctrl / ⌘ + S'], ['截图贴图', 'Ctrl / ⌘ + P'], ['选择整个主屏（无标注时）', 'Ctrl / ⌘ + A'], ['撤销标注', 'Ctrl / ⌘ + Z'], ['重做标注', 'Ctrl / ⌘ + Shift + Z / Ctrl + Y'], ['取消截图', 'Esc / 鼠标右键']]" :key="label" class="setting-row"><span>{{ label }}</span><kbd>{{ key }}</kbd></div></section>
           <p class="scope-note"><Command :size="16" />倒计时期间再次按截图键可取消。其他按键仅在截图蒙层内生效。</p>
           <Button variant="outline" class="mt-4" @click="page = '设置'">修改截图快捷键</Button>
         </template>
@@ -129,7 +132,7 @@ onUnmounted(() => { disposed = true; disposers.forEach(off => off()) })
 
         <template v-else>
           <h1>关于 Snap Desk</h1><p class="subtitle">桌面截图与标注工具</p>
-          <section class="settings-card about"><span class="brand-icon"><Scan :size="30" /></span><h2>Snap Desk <span class="pill">0.1.3</span></h2><p>基于 Tauri 2、Vue 3、TypeScript 与 Rust。截图仅在内存中处理，复制到剪贴板或保存至你选择的位置；快捷键与延时设置保存在本机。</p><p>当前范围：主屏区域截图、矩形、椭圆、直线与箭头标注、撤销重做。更多标注、贴图、OCR、长截图与录屏将按项目 TODO 分期实现。</p><p>Windows / macOS / Linux X11 使用原生截图后端，尚待各平台实机验收。macOS 需要屏幕录制权限；Wayland 暂未开放。</p></section>
+          <section class="settings-card about"><span class="brand-icon"><Scan :size="30" /></span><h2>Snap Desk <span class="pill">0.1.3</span></h2><p>基于 Tauri 2、Vue 3、TypeScript 与 Rust。截图和贴图仅在内存中处理，复制到剪贴板或保存至你选择的位置；快捷键与延时设置保存在本机。</p><p>当前范围：主屏区域截图、常用图形标注、撤销重做，以及截图 / 剪贴板图片贴图、多贴图管理和基础图片处理。贴图继续标注、OCR、长截图与录屏将按项目 TODO 分期实现。</p><p>Windows / macOS / Linux X11 使用原生截图后端，尚待各平台实机验收。macOS 需要屏幕录制权限；Wayland 暂未开放。</p></section>
         </template>
       </div>
     </main>

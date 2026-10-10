@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { Copy, Save, X, Maximize, Square, Circle, Minus, ArrowUpRight, Undo2, Redo2, MousePointer2, Scan } from 'lucide-vue-next'
+import { Copy, Save, X, Maximize, Square, Circle, Minus, ArrowUpRight, Undo2, Redo2, MousePointer2, Scan, Pin } from 'lucide-vue-next'
 import { api, onFrame, type CaptureFrame } from '@/lib/api'
 import { clamp, move, normalize, resize, toPixels, nudgeSelection, type Handle, type Point, type Rect } from '@/lib/selection'
 import { append, emptyHistory, undo, redo, shapePath, imagePoint as toImagePoint, type Annotation } from '@/lib/annotations'
@@ -88,7 +88,7 @@ async function cancel() {
   try { await api.cancel(frame.value.id); frame.value = null } catch (e) { error.value = String(e) }
   finally { busy.value = false }
 }
-async function finish(action: 'copy' | 'save') {
+async function finish(action: 'copy' | 'save' | 'pin') {
   if (!frame.value || !valid.value || !pixels.value || busy.value || drawing.value || gesture) return
   busy.value = true; error.value = ''
   try {
@@ -117,6 +117,7 @@ function key(e: KeyboardEvent) {
   if (e.key === 'Escape') { e.preventDefault(); void cancel() }
   else if (e.key === 'Enter' || (command && e.key.toLowerCase() === 'c')) { e.preventDefault(); void finish('copy') }
   else if (command && e.key.toLowerCase() === 's') { e.preventDefault(); void finish('save') }
+  else if (command && e.key.toLowerCase() === 'p') { e.preventDefault(); void finish('pin') }
   else if (command && e.key.toLowerCase() === 'a') { e.preventDefault(); selectAll() }
   else if (command && e.key.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? redoShape() : undoShape() }
   else if (command && e.key.toLowerCase() === 'y') { e.preventDefault(); redoShape() }
@@ -167,6 +168,7 @@ onUnmounted(() => { disposed = true; off?.(); window.removeEventListener('keydow
       <div class="tool-row">
         <button v-for="c in colors" :key="c" class="color-swatch" :style="{ background: c }" :class="{ chosen: color === c }" :aria-label="`颜色 ${c}`" :aria-pressed="color === c" :disabled="busy" @click="color = c" />
         <select v-model.number="lineWidth" aria-label="标注线宽" :disabled="busy"><option :value="2">细</option><option :value="3">中</option><option :value="6">粗</option></select>
+        <button title="贴图 Ctrl/⌘+P" :disabled="busy" @click="finish('pin')"><Pin :size="16" />贴图</button>
         <button :disabled="busy" @click="finish('save')"><Save :size="16" />保存</button><button class="copy-button" :disabled="busy" @click="finish('copy')"><Copy :size="16" />{{ busy ? '处理中' : '复制' }}</button><button title="取消 (Esc)" aria-label="取消截图" :disabled="busy" @click="cancel"><X :size="18" /></button>
       </div>
       <small v-if="tool === 'select' && !marked">方向键移动 1 px · Shift 10 px · Alt 调整宽高</small>

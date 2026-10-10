@@ -1,5 +1,7 @@
 mod annotations;
 mod capture;
+mod image_io;
+mod pins;
 mod platform;
 mod settings;
 
@@ -70,6 +72,7 @@ pub fn run() {
             }
         }))
         .manage(CaptureState::default())
+        .manage(pins::PinState::default())
         .plugin(
             tauri_plugin_log::Builder::new()
                 .level(log::LevelFilter::Info)
@@ -132,12 +135,25 @@ pub fn run() {
         })
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                api.prevent_close();
                 if window.label() == "main" {
+                    api.prevent_close();
                     let _ = window.hide();
                 } else if window.label() == "capture" {
+                    api.prevent_close();
                     let _ = capture::cancel_active(window.app_handle());
+                } else if window.label().starts_with("pin-")
+                    && window
+                        .app_handle()
+                        .state::<pins::PinState>()
+                        .operation
+                        .load(Ordering::SeqCst)
+                {
+                    api.prevent_close();
                 }
+            }
+            if matches!(event, tauri::WindowEvent::Destroyed) && window.label().starts_with("pin-")
+            {
+                pins::destroyed(window.app_handle(), window.label());
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -151,6 +167,15 @@ pub fn run() {
             capture::cancel_capture,
             capture::copy_capture,
             capture::save_capture,
+            capture::pin_capture,
+            pins::pin_clipboard,
+            pins::current_pin,
+            pins::list_pins,
+            pins::manage_pins,
+            pins::set_pin_view,
+            pins::drag_pin,
+            pins::transform_pin,
+            pins::pin_action,
         ])
         .run(tauri::generate_context!())
         .expect("无法启动 Snap Desk");

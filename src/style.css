@@ -14,6 +14,8 @@
 :root { font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif; color: #24292f; background: #fff; font-synthesis: none; text-rendering: optimizeLegibility; }
 * { box-sizing: border-box; }
 body { margin: 0; }
+/* 贴图的原生透明窗口必须同时清除 WebView 根节点背景；工具面板保持可读。 */
+.pin-window, .pin-window body, .pin-window #app { width: 100%; height: 100%; overflow: hidden; background: transparent; }
 button { cursor: pointer; }
 button:disabled { cursor: default; }
 /* 主内容独立滚动，导航与托盘入口始终可见，小窗口也能操作。 */

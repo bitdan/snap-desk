@@ -3,16 +3,14 @@ use base64::{engine::general_purpose::STANDARD, Engine};
 use image::{ImageFormat, RgbaImage};
 use serde::{Deserialize, Serialize};
 use std::{
-    io::{Cursor, Write},
+    io::Cursor,
     sync::{
         atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering},
         Mutex,
     },
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant},
 };
 use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
-use tauri_plugin_clipboard_manager::ClipboardExt;
-use tauri_plugin_dialog::DialogExt;
 
 #[derive(Default)]
 pub struct CaptureState {
@@ -371,7 +369,7 @@ pub fn cancel_capture(app: AppHandle, window: WebviewWindow, id: u64) -> Result<
     close_session(&app, id)
 }
 
-/// 复制与保存共用合成入口，保证两种输出都包含相同标注。
+/// 复制、保存与贴图共用合成入口，保证输出都包含相同标注。
 fn crop(
     app: &AppHandle,
     id: u64,
@@ -414,14 +412,7 @@ pub async fn copy_capture(
         let state = app.state::<CaptureState>();
         let _operation = Operation::acquire(&state.operation)?;
         let cropped = crop(&app, id, rect, &annotations)?;
-        let image = tauri::image::Image::new_owned(
-            cropped.as_raw().clone(),
-            cropped.width(),
-            cropped.height(),
-        );
-        app.clipboard()
-            .write_image(&image)
-            .map_err(|e| format!("复制失败，请重试或保存图片：{e}"))?;
+        crate::image_io::copy(&app, &cropped)?;
         close_session(&app, id)?;
         let _ = app.emit_to("main", "capture-result", "截图已复制到剪贴板。");
         Ok(())
@@ -446,39 +437,7 @@ pub async fn save_capture(
         let window = overlay(&app)?;
         // A topmost overlay must not cover the system save dialog.
         window.hide().map_err(err)?;
-        let result = (|| -> Result<bool, String> {
-            let timestamp = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map_err(err)?
-                .as_secs();
-            let path = app
-                .dialog()
-                .file()
-                .set_title("保存截图")
-                .add_filter("PNG 图片", &["png"])
-                .set_file_name(format!("SnapDesk-{timestamp}.png"))
-                .blocking_save_file();
-            let Some(path) = path else {
-                return Ok(false);
-            };
-            let path = path.into_path().map_err(err)?;
-            if !path
-                .extension()
-                .and_then(|ext| ext.to_str())
-                .is_some_and(|ext| ext.eq_ignore_ascii_case("png"))
-            {
-                return Err("请使用 .png 扩展名保存图片。".into());
-            }
-            let parent = path.parent().ok_or("保存路径无效。")?;
-            let mut temporary = tempfile::NamedTempFile::new_in(parent).map_err(err)?;
-            cropped
-                .write_to(temporary.as_file_mut(), ImageFormat::Png)
-                .map_err(err)?;
-            temporary.flush().map_err(err)?;
-            temporary.as_file().sync_all().map_err(err)?;
-            temporary.persist(&path).map_err(err)?;
-            Ok(true)
-        })();
+        let result = crate::pins::save_capture_image(&app, &cropped);
         match result {
             Ok(true) => {
                 close_session(&app, id)?;
@@ -491,6 +450,38 @@ pub async fn save_capture(
                 other
             }
         }
+    })
+    .await
+    .map_err(err)?
+}
+
+/// 创建独立贴图后结束截图会话；创建失败时保留原选区供用户重试。
+#[tauri::command]
+pub async fn pin_capture(
+    app: AppHandle,
+    window: WebviewWindow,
+    id: u64,
+    rect: Rect,
+    annotations: Vec<crate::annotations::Annotation>,
+) -> Result<(), String> {
+    require_window(&window, "capture")?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<CaptureState>();
+        let _operation = Operation::acquire(&state.operation)?;
+        let cropped = crop(&app, id, rect, &annotations)?;
+        let pin = crate::pins::create(&app, cropped)?;
+        if let Err(error) = pin.show() {
+            let _ = pin.destroy();
+            return Err(err(error));
+        }
+        if let Err(error) = close_session(&app, id) {
+            let _ = pin.destroy();
+            return Err(error);
+        }
+        let _ = pin.set_focus();
+        let _ = app.emit_to("main", "pins-changed", ());
+        let _ = app.emit_to("main", "capture-result", "截图已贴到桌面。");
+        Ok(())
     })
     .await
     .map_err(err)?
