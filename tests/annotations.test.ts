@@ -25,6 +25,12 @@ describe('annotations', () => {
   it('keeps rectangle drag direction and closes the path', () => {
     expect(shapePath(rectangle)).toBe('M 40 30 H 10 V 5 H 40 Z')
   })
+  it('previews lines without arrow wings and ellipses independent of drag direction', () => {
+    expect(shapePath({ ...rectangle, kind: 'line' })).toBe('M 40 30 L 10 5')
+    const ellipse: Annotation = { ...rectangle, kind: 'ellipse' }
+    expect(shapePath(ellipse)).toBe('M 10 17.5 A 15 12.5 0 1 0 40 17.5 A 15 12.5 0 1 0 10 17.5 Z')
+    expect(shapePath({ ...ellipse, start: ellipse.end, end: ellipse.start })).toBe(shapePath(ellipse))
+  })
   it('produces arrow wings using the native compositor geometry', () => {
     const arrow: Annotation = { ...rectangle, kind: 'arrow', start: { x: 0, y: 20 }, end: { x: 30, y: 20 }, width: 2 }
     expect(arrowWings(arrow)).toEqual([{ x: 20, y: 15 }, { x: 20, y: 25 }])

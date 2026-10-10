@@ -15,6 +15,8 @@ pub struct Point {
 pub enum Kind {
     Rectangle,
     Arrow,
+    Ellipse,
+    Line,
 }
 
 #[derive(Deserialize)]
@@ -67,6 +69,27 @@ fn segments(s: &Annotation) -> Vec<(Point, Point)> {
     let a = s.start;
     let b = s.end;
     match s.kind {
+        Kind::Line => vec![(a, b)],
+        Kind::Ellipse => {
+            let rx = (b.x - a.x).abs() / 2.0;
+            let ry = (b.y - a.y).abs() / 2.0;
+            let cx = (a.x + b.x) / 2.0;
+            let cy = (a.y + b.y) / 2.0;
+            // 用短线段逼近椭圆，复用抗锯齿绘制。未触及段数上限时弧线误差约小于 0.5 像素。
+            // 最大段数防止异常的大图让一次导出占用过多时间。
+            let count =
+                ((std::f64::consts::TAU * rx.max(ry).sqrt()).ceil() as usize).clamp(24, 2048);
+            let point = |i: usize| {
+                let angle = std::f64::consts::TAU * i as f64 / count as f64;
+                Point {
+                    x: cx + rx * angle.cos(),
+                    y: cy + ry * angle.sin(),
+                }
+            };
+            (0..count)
+                .map(|i| (point(i), point((i + 1) % count)))
+                .collect()
+        }
         Kind::Rectangle => {
             let c = Point { x: b.x, y: a.y };
             let d = Point { x: a.x, y: b.y };
@@ -183,6 +206,29 @@ fn line(image: &mut RgbaImage, a: Point, b: Point, width: f64, rgb: [u8; 3]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn ellipse_keeps_center_empty_and_handles_reverse_drag_and_crop() {
+        let mut s = shape();
+        s.kind = Kind::Ellipse;
+        s.start = Point { x: 42.0, y: 32.0 };
+        s.end = Point { x: 12.0, y: 12.0 };
+        let mut image = RgbaImage::new(40, 30);
+        render(&mut image, &[s], Point { x: 10.0, y: 10.0 }).unwrap();
+        for (x, y) in [(2, 12), (31, 12), (17, 2), (17, 21)] {
+            assert!(image.get_pixel(x, y)[3] > 0);
+        }
+        assert_eq!(image.get_pixel(17, 12)[3], 0);
+        assert_eq!(image.get_pixel(2, 2)[3], 0);
+    }
+    #[test]
+    fn line_has_no_arrow_wings_and_accepts_ipc_kind() {
+        let s: Annotation = serde_json::from_str(r##"{"kind":"line","start":{"x":2,"y":20},"end":{"x":30,"y":20},"width":2,"color":"#ff0000"}"##).unwrap();
+        validate(std::slice::from_ref(&s), 32, 32).unwrap();
+        let mut image = RgbaImage::new(32, 32);
+        render(&mut image, &[s], Point { x: 0.0, y: 0.0 }).unwrap();
+        assert!(image.get_pixel(15, 20)[3] > 0);
+        assert_eq!(image.get_pixel(20, 15)[3], 0);
+    }
     fn shape() -> Annotation {
         Annotation {
             kind: Kind::Rectangle,

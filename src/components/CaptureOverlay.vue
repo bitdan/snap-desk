@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { Copy, Save, X, Maximize, Square, ArrowUpRight, Undo2, Redo2, MousePointer2, Scan } from 'lucide-vue-next'
+import { Copy, Save, X, Maximize, Square, Circle, Minus, ArrowUpRight, Undo2, Redo2, MousePointer2, Scan } from 'lucide-vue-next'
 import { api, onFrame, type CaptureFrame } from '@/lib/api'
 import { clamp, move, normalize, resize, toPixels, type Handle, type Point, type Rect } from '@/lib/selection'
 import { append, emptyHistory, undo, redo, shapePath, imagePoint as toImagePoint, type Annotation } from '@/lib/annotations'
@@ -72,7 +72,7 @@ function up() {
   if (!drawing.value) return
   const s = drawing.value
   const dx = Math.abs(s.end.x - s.start.x), dy = Math.abs(s.end.y - s.start.y)
-  if (s.kind === 'rectangle' ? dx >= 1 && dy >= 1 : Math.hypot(dx, dy) >= 2) history.value = append(history.value, s)
+  if (s.kind === 'rectangle' || s.kind === 'ellipse' ? dx >= 1 && dy >= 1 : Math.hypot(dx, dy) >= 2) history.value = append(history.value, s)
   drawing.value = null
 }
 function abortGesture() { drawing.value = null; gesture = null }
@@ -144,6 +144,8 @@ onUnmounted(() => { disposed = true; off?.(); window.removeEventListener('keydow
       <div class="tool-row">
         <button title="调整选区" aria-label="调整选区" :class="{ 'tool-active': tool === 'select' }" :disabled="busy || marked" @click="tool = 'select'"><MousePointer2 :size="17" /></button>
         <button title="矩形" aria-label="矩形标注" :aria-pressed="tool === 'rectangle'" :class="{ 'tool-active': tool === 'rectangle' }" :disabled="busy" @click="tool = 'rectangle'"><Square :size="17" /></button>
+        <button title="椭圆" aria-label="椭圆标注" :aria-pressed="tool === 'ellipse'" :class="{ 'tool-active': tool === 'ellipse' }" :disabled="busy" @click="tool = 'ellipse'"><Circle :size="17" /></button>
+        <button title="直线" aria-label="直线标注" :aria-pressed="tool === 'line'" :class="{ 'tool-active': tool === 'line' }" :disabled="busy" @click="tool = 'line'"><Minus :size="17" /></button>
         <button title="箭头" aria-label="箭头标注" :aria-pressed="tool === 'arrow'" :class="{ 'tool-active': tool === 'arrow' }" :disabled="busy" @click="tool = 'arrow'"><ArrowUpRight :size="17" /></button>
         <span class="toolbar-divider" />
         <button title="撤销 Ctrl/⌘+Z" aria-label="撤销" :disabled="busy || !marked" @click="undoShape"><Undo2 :size="17" /></button>

@@ -22,7 +22,7 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            shortcut: "Alt+Shift+S".into(),
+            shortcut: "Alt+F1".into(),
             delay_seconds: 0,
         }
     }
@@ -74,7 +74,12 @@ pub fn load(path: &Path) -> (Settings, Option<String>) {
     let result = match fs::read(path) {
         Ok(bytes) => serde_json::from_slice::<Settings>(&bytes)
             .map_err(|e| e.to_string())
-            .and_then(|value| {
+            .and_then(|mut value| {
+                // 旧版本未记录快捷键来源，只迁移旧默认组合；其他自定义组合不变。
+                // 此处只修改内存，用户下次保存设置时才写入磁盘。
+                if value.shortcut == "Alt+Shift+S" {
+                    value.shortcut = Settings::default().shortcut;
+                }
                 value.validate()?;
                 Ok(value)
             }),
@@ -219,6 +224,35 @@ pub async fn save_settings(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn migrates_legacy_default_but_keeps_custom_keys_and_delay() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        for key in ["Alt+Shift+S", "Alt+F12", "Ctrl+F8"] {
+            let old = Settings {
+                shortcut: key.into(),
+                delay_seconds: 5,
+            };
+            persist(&path, &old).unwrap();
+            let bytes = fs::read(&path).unwrap();
+            let (loaded, warning) = load(&path);
+            assert!(warning.is_none());
+            assert_eq!(
+                loaded.shortcut,
+                if key == "Alt+Shift+S" { "Alt+F1" } else { key }
+            );
+            assert_eq!(loaded.delay_seconds, 5);
+            assert_eq!(fs::read(&path).unwrap(), bytes);
+        }
+        for n in 1..=12 {
+            assert!(Settings {
+                shortcut: format!("Alt+F{n}"),
+                ..Settings::default()
+            }
+            .validate()
+            .is_ok());
+        }
+    }
     #[test]
     fn shortcut_conflict_leaves_old_key_and_disk_untouched() {
         let next = Settings {
