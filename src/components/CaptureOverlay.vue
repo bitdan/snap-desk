@@ -2,7 +2,7 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { Copy, Save, X, Maximize, Square, Circle, Minus, ArrowUpRight, Undo2, Redo2, MousePointer2, Scan } from 'lucide-vue-next'
 import { api, onFrame, type CaptureFrame } from '@/lib/api'
-import { clamp, move, normalize, resize, toPixels, type Handle, type Point, type Rect } from '@/lib/selection'
+import { clamp, move, normalize, resize, toPixels, nudgeSelection, type Handle, type Point, type Rect } from '@/lib/selection'
 import { append, emptyHistory, undo, redo, shapePath, imagePoint as toImagePoint, type Annotation } from '@/lib/annotations'
 
 const frame = ref<CaptureFrame | null>(null)
@@ -98,11 +98,22 @@ async function finish(action: 'copy' | 'save') {
   finally { busy.value = false }
 }
 function key(e: KeyboardEvent) {
-  if (e.repeat) return
   const command = e.ctrlKey || e.metaKey
   // 工具栏控件编辑时保留原生按键（例如下拉框的方向键和 Enter）。
   const target = e.target as HTMLElement
   if (['INPUT', 'SELECT', 'BUTTON'].includes(target.tagName) && e.key !== 'Escape' && !command) return
+  // 方向键允许长按连续微调；绘制、导出或已有标注时不改变裁剪范围。
+  const directions: Record<string, Point> = { ArrowLeft: { x: -1, y: 0 }, ArrowRight: { x: 1, y: 0 }, ArrowUp: { x: 0, y: -1 }, ArrowDown: { x: 0, y: 1 } }
+  const direction = directions[e.key]
+  if (direction && !command) {
+    e.preventDefault()
+    if (busy.value || gesture || drawing.value || marked.value || tool.value !== 'select' || !valid.value || !selection.value || !frame.value) return
+    const step = e.shiftKey ? 10 : 1
+    selection.value = nudgeSelection(selection.value, { x: direction.x * step, y: direction.y * step }, viewport.value, frame.value, e.altKey)
+    history.value = emptyHistory()
+    return
+  }
+  if (e.repeat) return
   if (e.key === 'Escape') { e.preventDefault(); void cancel() }
   else if (e.key === 'Enter' || (command && e.key.toLowerCase() === 'c')) { e.preventDefault(); void finish('copy') }
   else if (command && e.key.toLowerCase() === 's') { e.preventDefault(); void finish('save') }
@@ -133,7 +144,7 @@ onUnmounted(() => { disposed = true; off?.(); window.removeEventListener('keydow
     <div v-if="!selection" class="initial-shade" />
     <div v-if="!selection" class="capture-tip">拖动框选屏幕 <span>Esc / 右键取消 · Ctrl / ⌘ + A 全屏</span></div>
     <div v-if="selection" class="selection" :style="{ ...boxStyle, cursor: tool === 'select' ? marked ? 'default' : 'move' : 'crosshair' }" @pointerdown.stop="selectionDown">
-      <span class="size-label">{{ pixels?.width }} × {{ pixels?.height }} px</span>
+      <span class="size-label">{{ pixels?.width }} × {{ pixels?.height }} px · ({{ pixels?.x }}, {{ pixels?.y }})</span>
       <template v-if="!marked && tool === 'select'"><span v-for="handle in handles" :key="handle" :class="['resize-handle', handle]" @pointerdown.stop="down($event, handle)" /></template>
     </div>
     <svg v-if="frame && pixels" class="annotation-preview" :viewBox="`0 0 ${frame.width} ${frame.height}`" preserveAspectRatio="none" aria-hidden="true">
@@ -158,7 +169,8 @@ onUnmounted(() => { disposed = true; off?.(); window.removeEventListener('keydow
         <select v-model.number="lineWidth" aria-label="标注线宽" :disabled="busy"><option :value="2">细</option><option :value="3">中</option><option :value="6">粗</option></select>
         <button :disabled="busy" @click="finish('save')"><Save :size="16" />保存</button><button class="copy-button" :disabled="busy" @click="finish('copy')"><Copy :size="16" />{{ busy ? '处理中' : '复制' }}</button><button title="取消 (Esc)" aria-label="取消截图" :disabled="busy" @click="cancel"><X :size="18" /></button>
       </div>
-      <small>选工具后在选区内拖动 · {{ history.present.length }}/100 · 重选会清空标注</small>
+      <small v-if="tool === 'select' && !marked">方向键移动 1 px · Shift 10 px · Alt 调整宽高</small>
+      <small v-else>选工具后在选区内拖动 · {{ history.present.length }}/100 · 重选会清空标注</small>
     </div>
     <div v-if="error" class="overlay-error" role="alert" @pointerdown.stop>{{ error }}</div>
   </div>
