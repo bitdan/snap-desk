@@ -1,6 +1,7 @@
 mod annotations;
 mod capture;
 mod image_io;
+mod pin_content;
 mod pins;
 mod platform;
 mod settings;
@@ -166,9 +167,14 @@ pub fn run() {
             capture::show_capture,
             capture::cancel_capture,
             capture::copy_capture,
+            capture::copy_capture_color,
             capture::save_capture,
             capture::pin_capture,
             pins::pin_clipboard,
+            pins::pin_file,
+            pin_content::pin_color,
+            pin_content::pin_text,
+            pins::set_pin_group,
             pins::current_pin,
             pins::set_pin_annotations,
             pins::list_pins,

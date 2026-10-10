@@ -1,11 +1,14 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { Copy, Save, X, Maximize, Scan, Move, Pin } from 'lucide-vue-next'
-import { api, onFrame, type CaptureFrame } from '@/lib/api'
+import { computed, onMounted, onUnmounted, ref, shallowRef } from 'vue'
+import { Copy, Save, X, Maximize, Scan, Move, Pin, Pipette } from 'lucide-vue-next'
+import { api, onFrame, type CaptureFrame, type ColorFormat } from '@/lib/api'
 import { clamp, move, normalize, resize, toPixels, nudgeSelection, type Handle, type Point, type Rect } from '@/lib/selection'
 import { useAnnotations, type AnnotationTool } from '@/lib/use-annotations'
 import AnnotationSurface from './AnnotationSurface.vue'
 import AnnotationToolbar from './AnnotationToolbar.vue'
+import CaptureMagnifier from './CaptureMagnifier.vue'
+import { magnifierSample } from '@/lib/magnifier'
+import { nudgeColorPoint } from '@/lib/color-picker'
 
 const frame = ref<CaptureFrame | null>(null)
 const selection = ref<Rect | null>(null)
@@ -13,6 +16,12 @@ const busy = ref(false)
 const error = ref('')
 const viewport = ref({ width: innerWidth, height: innerHeight })
 const annotating = ref(false)
+const screenImage = shallowRef<HTMLImageElement | null>(null)
+const imageReady = ref(false)
+const pointer = ref<Point | null>(null)
+const picking = ref(false)
+const colorFormat = ref<ColorFormat>('hex')
+const showMagnifier = computed(() => frame.value && imageReady.value && screenImage.value && pointer.value && !busy.value && (picking.value || (!annotating.value && !marked.value)))
 const editor = useAnnotations(() => pixels.value ?? { x: 0, y: 0, width: 0, height: 0 }, () => frame.value?.dataUrl ?? '', () => busy.value)
 const marked = computed(() => editor.history.present.length > 0)
 const handles: Handle[] = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w']
@@ -32,21 +41,43 @@ function chooseTool(tool: AnnotationTool) { if (busy.value || editor.pending || 
 function selectionDown(e: PointerEvent) { if (!annotating.value) down(e, 'move') }
 function reselect() {
   if (busy.value) return
-  editor.reset(); selection.value = null; gesture = null; annotating.value = false; error.value = ''
+  editor.reset(); selection.value = null; gesture = null; annotating.value = false; error.value = ''; pointer.value = null; picking.value = false
+}
+/** 切换取色不清空选区或标注；Esc / 右键先退出取色，再次按才取消截图。 */
+function togglePicker() {
+  if (busy.value || gesture || editor.pending || editor.interacting) return
+  picking.value = !picking.value; error.value = ''
+}
+function contextMenu() { if (picking.value) { if (!busy.value) picking.value = false } else void cancel() }
+async function copyColor(format = colorFormat.value) {
+  if (!frame.value || !pointer.value || !imageReady.value || busy.value || editor.pending || editor.interacting) return
+  const pixel = magnifierSample(pointer.value, viewport.value, frame.value).pixel
+  busy.value = true; error.value = ''
+  try { await api.copyColor(frame.value.id, pixel, format); frame.value = null }
+  catch (e) { error.value = String(e) }
+  finally { busy.value = false }
+}
+function pickDown(e: PointerEvent) {
+  if (!picking.value || (e.target as Element).closest('.capture-toolbar, .capture-modebar, .overlay-error')) return
+  e.stopPropagation()
+  if (e.button === 0) { e.preventDefault(); pointer.value = point(e); void copyColor(e.shiftKey ? 'rgb' : colorFormat.value) }
 }
 function point(e: PointerEvent): Point { return { x: clamp(e.clientX, 0, viewport.value.width), y: clamp(e.clientY, 0, viewport.value.height) } }
 function down(e: PointerEvent, mode: 'draw' | 'move' | Handle = 'draw') {
-  if (busy.value || e.button !== 0 || !frame.value) return
+  if (busy.value || picking.value || e.button !== 0 || !frame.value) return
   // 有标注时固定选区，避免调整裁剪范围导致已画内容跳动；“重新框选”显式清空。
   if (marked.value || editor.interacting || annotating.value) return
   editor.reset()
   const p = point(e)
+  pointer.value = p
   if (mode === 'draw') selection.value = { ...p, width: 0, height: 0 }
   if (!selection.value) return
   gesture = { start: p, initial: { ...selection.value }, mode }
   ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
 }
 function drag(e: PointerEvent) {
+  // 工具栏不需要像素辅助；捕获阶段监听可覆盖选区控制点的事件。
+  pointer.value = (e.target as Element).closest('.capture-toolbar, .capture-modebar, .overlay-error') ? null : point(e)
   if (!gesture) return
   const p = point(e)
   const { start, initial, mode } = gesture
@@ -54,10 +85,11 @@ function drag(e: PointerEvent) {
 }
 function up() { gesture = null }
 function abortGesture() { gesture = null }
-function selectAll() { if (!busy.value && !marked.value && !editor.interacting) { editor.reset(); selection.value = { x: 0, y: 0, ...viewport.value } } }
-function receive(value: CaptureFrame) { busy.value = false; reselect(); frame.value = value }
+function selectAll() { if (!busy.value && !picking.value && !marked.value && !editor.interacting) { editor.reset(); selection.value = { x: 0, y: 0, ...viewport.value } } }
+function receive(value: CaptureFrame) { busy.value = false; reselect(); imageReady.value = false; frame.value = value }
 async function loaded() {
   if (!frame.value) return
+  imageReady.value = true
   try { await api.ready(frame.value.id) } catch (e) { error.value = String(e) }
 }
 async function cancel() {
@@ -67,7 +99,7 @@ async function cancel() {
   finally { busy.value = false }
 }
 async function finish(action: 'copy' | 'save' | 'pin') {
-  if (!frame.value || !valid.value || !pixels.value || busy.value || editor.pending || editor.interacting || gesture) return
+  if (!frame.value || picking.value || !valid.value || !pixels.value || busy.value || editor.pending || editor.interacting || gesture) return
   busy.value = true; error.value = ''
   try {
     const result = await api[action](frame.value.id, pixels.value, editor.history.present)
@@ -76,9 +108,23 @@ async function finish(action: 'copy' | 'save' | 'pin') {
   finally { busy.value = false }
 }
 function key(e: KeyboardEvent) {
-  if (annotating.value && editor.key(e)) return
   if ((e.target as HTMLElement).closest('input, textarea, select')) return
   const command = e.ctrlKey || e.metaKey
+  if (!command && !e.altKey && !e.repeat && e.key.toLowerCase() === 'i') { e.preventDefault(); togglePicker(); return }
+  if (picking.value) {
+    // 此模式的快捷键优先于标注编辑，避免取色时误撤销或导出原选区。
+    if (e.key === 'Escape') { e.preventDefault(); if (!busy.value) picking.value = false }
+    else if (!e.repeat && (e.key === 'Enter' || (command && e.key.toLowerCase() === 'c'))) { e.preventDefault(); void copyColor(e.shiftKey ? 'rgb' : colorFormat.value) }
+    else if (e.key.startsWith('Arrow')) {
+      e.preventDefault()
+      if (pointer.value && frame.value && !busy.value) {
+        const step = e.shiftKey ? 10 : 1
+        pointer.value = nudgeColorPoint(pointer.value, { x: e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0, y: e.key === 'ArrowUp' ? -step : e.key === 'ArrowDown' ? step : 0 }, viewport.value, frame.value)
+      }
+    }
+    return
+  }
+  if (annotating.value && editor.key(e)) return
   // 工具栏控件编辑时保留原生按键（例如下拉框的方向键和 Enter）。
   const target = e.target as HTMLElement
   if (['INPUT', 'SELECT', 'BUTTON'].includes(target.tagName) && e.key !== 'Escape' && !command) return
@@ -120,16 +166,23 @@ onUnmounted(() => { disposed = true; off?.(); window.removeEventListener('keydow
 </script>
 
 <template>
-  <div class="capture-overlay" @pointerdown="down($event)" @pointermove="drag" @pointerup="up" @pointercancel="abortGesture" @contextmenu.prevent="cancel">
-    <img v-if="frame" :key="frame.id" class="screen-image" :src="frame.dataUrl" alt="当前屏幕截图" draggable="false" @load="loaded" @error="imageFailed" />
+  <div class="capture-overlay" @pointerdown.capture="pickDown" @pointerdown="down($event)" @pointermove.capture="drag" @pointerleave="pointer = null" @pointerup="up" @pointercancel="abortGesture(); pointer = null" @contextmenu.prevent="contextMenu">
+    <img v-if="frame" :key="frame.id" ref="screenImage" class="screen-image" :src="frame.dataUrl" alt="当前屏幕截图" draggable="false" @load="loaded" @error="imageFailed" />
     <div v-if="!selection" class="initial-shade" />
-    <div v-if="!selection" class="capture-tip">拖动框选屏幕 <span>Esc / 右键取消 · Ctrl / ⌘ + A 全屏</span></div>
+    <div v-if="!selection && !picking" class="capture-tip">拖动框选屏幕 <span>Esc / 右键取消 · Ctrl / ⌘ + A 全屏 · I 取色</span></div>
+    <div v-if="frame" class="capture-modebar" @pointerdown.stop @contextmenu.stop.prevent>
+      <button :disabled="busy || editor.pending || editor.interacting" :aria-pressed="picking" title="取色 I" @click="togglePicker"><Pipette :size="15" />{{ picking ? '返回框选' : '取色 I' }}</button>
+      <template v-if="picking">
+        <select v-model="colorFormat" :disabled="busy" aria-label="复制色值格式"><option value="hex">HEX</option><option value="rgb">RGB</option></select>
+        <span>单击 / Enter 复制并结束 · Shift 临时用 RGB · 方向键微调 · Esc 返回</span>
+      </template>
+    </div>
     <div v-if="selection" class="selection" :style="{ ...boxStyle, cursor: marked ? 'default' : 'move' }" @pointerdown.stop="selectionDown">
       <span class="size-label">{{ pixels?.width }} × {{ pixels?.height }} px · ({{ pixels?.x }}, {{ pixels?.y }})</span>
       <template v-if="!marked && !annotating"><span v-for="handle in handles" :key="handle" :class="['resize-handle', handle]" @pointerdown.stop="down($event, handle)" /></template>
     </div>
-    <AnnotationSurface v-if="frame && pixels" :editor="editor" :width="frame.width" :height="frame.height" :bounds="pixels" :enabled="annotating && !busy" />
-    <div v-if="valid" class="capture-toolbar annotation-toolbar" :style="toolbarStyle" @pointerdown.stop @contextmenu.stop.prevent>
+    <AnnotationSurface v-if="frame && pixels" :editor="editor" :width="frame.width" :height="frame.height" :bounds="pixels" :enabled="annotating && !busy && !picking" />
+    <div v-if="valid && !picking" class="capture-toolbar annotation-toolbar" :style="toolbarStyle" @pointerdown.stop @contextmenu.stop.prevent>
       <AnnotationToolbar :editor="editor" :disabled="busy" :active="annotating" @tool="chooseTool">
         <template #leading><button :disabled="busy || editor.pending || editor.interacting || marked" :aria-pressed="!annotating" title="调整选区" aria-label="调整选区" @click="annotating = false"><Move :size="16" /></button></template>
         <template #actions>
@@ -142,6 +195,16 @@ onUnmounted(() => { disposed = true; off?.(); window.removeEventListener('keydow
         </template>
       </AnnotationToolbar>
     </div>
+    <CaptureMagnifier v-if="showMagnifier && screenImage && pointer && frame" :image="screenImage" :point="pointer" :viewport="viewport" :image-size="frame" :show-color="picking" />
     <div v-if="error" class="overlay-error" role="alert" @pointerdown.stop>{{ error }}</div>
   </div>
 </template>
+
+<style scoped>
+.capture-modebar { position: absolute; top: 8px; left: 8px; z-index: 4; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; max-width: calc(100vw - 16px); border-radius: 6px; padding: 6px 8px; background: #242330ed; color: white; font-size: 12px; cursor: default; }
+.capture-modebar button { display: flex; align-items: center; gap: 5px; padding: 3px; }
+.capture-modebar button[aria-pressed=true] { color: #c4b5fd; }
+.capture-modebar button:disabled { opacity: .5; }
+.capture-modebar select { background: #3f3f46; color: white; border-radius: 3px; padding: 3px; }
+.capture-modebar span { color: #d4d4d8; }
+</style>

@@ -104,6 +104,7 @@ onUnmounted(() => { disposed = true; disposers.forEach(off => off()) })
             <div><span>复制图片</span><kbd>Enter</kbd></div>
             <div><span>保存 PNG</span><kbd>Ctrl / ⌘ + S</kbd></div>
             <div><span>截图贴图</span><kbd>Ctrl / ⌘ + P</kbd></div>
+            <div><span>屏幕取色（HEX / RGB）</span><kbd>I · 单击复制</kbd></div>
             <div><span>撤销 / 重做</span><kbd>Ctrl / ⌘ + Z / Shift + Z</kbd></div>
             <div><span>取消</span><kbd>Esc / 右键</kbd></div>
           </section>

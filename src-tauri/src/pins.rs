@@ -16,6 +16,7 @@ use tauri::{
     WebviewWindowBuilder,
 };
 use tauri_plugin_clipboard_manager::ClipboardExt;
+use tauri_plugin_dialog::DialogExt;
 
 const MAX_PINS: usize = 12;
 const MAX_IMAGE_PIXELS: u64 = 16_000_000;
@@ -80,6 +81,8 @@ struct Pin {
     view: PinView,
     annotations: Vec<crate::annotations::Annotation>,
     original_annotations: Vec<crate::annotations::Annotation>,
+    /// 空字符串表示未分组；与图片一样仅保留到本次应用退出。
+    group: String,
 }
 
 /// zoom 使用逻辑像素比例；1 表示一图像像素对应一 CSS 像素。
@@ -139,6 +142,7 @@ pub struct PinSummary {
     width: u32,
     height: u32,
     visible: bool,
+    group: String,
 }
 
 /// 导出、图像变换与窗口管理串行执行；Drop 在错误提前返回时也会释放占用。
@@ -245,6 +249,7 @@ pub fn create(
             original: image.clone(),
             image,
             original_annotations: annotations.clone(),
+            group: String::new(),
             annotations,
             view: PinView {
                 zoom,
@@ -286,6 +291,60 @@ pub fn destroyed(app: &AppHandle, label: &str) {
     changed(app);
 }
 
+/// 主窗口创建贴图共用显示与失败清理，隐藏窗口创建成功并不代表贴图已显示。
+pub(crate) fn create_visible(
+    app: &AppHandle,
+    image: RgbaImage,
+    annotations: Vec<crate::annotations::Annotation>,
+) -> Result<(), String> {
+    let pin = create(app, image, annotations)?;
+    if let Err(error) = pin.show().and_then(|_| pin.set_focus()) {
+        let _ = pin.destroy();
+        return Err(err(error));
+    }
+    changed(app);
+    Ok(())
+}
+
+/// 只允许主窗口唤起原生文件选择器；取消不创建贴图、不清除现有列表。
+#[tauri::command]
+pub async fn pin_file(app: AppHandle, window: WebviewWindow) -> Result<bool, String> {
+    crate::capture::require_window(&window, "main")?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let image = {
+            let state = app.state::<PinState>();
+            let _operation = Operation::acquire(&state)?;
+            with_hidden_pins(
+                &app,
+                None,
+                || {
+                    let path = app
+                        .dialog()
+                        .file()
+                        .set_title("打开 PNG 图片贴图")
+                        .add_filter("PNG 图片", &["png"])
+                        .blocking_pick_file();
+                    path.map(|path| crate::pin_content::read_png(&path.into_path().map_err(err)?))
+                        .transpose()
+                },
+                |image| {
+                    if image.is_some() {
+                        "图片已读取，但尚未创建贴图"
+                    } else {
+                        "已取消打开图片"
+                    }
+                },
+            )?
+        };
+        // create 会获取同一把操作锁，必须先结束对话框的临界区。
+        let Some(image) = image else { return Ok(false) };
+        create_visible(&app, image, vec![])?;
+        Ok(true)
+    })
+    .await
+    .map_err(err)?
+}
+
 #[tauri::command]
 pub async fn pin_clipboard(app: AppHandle, window: WebviewWindow) -> Result<(), String> {
     crate::capture::require_window(&window, "main")?;
@@ -301,13 +360,7 @@ pub async fn pin_clipboard(app: AppHandle, window: WebviewWindow) -> Result<(), 
             clipboard.rgba().to_vec(),
         )
         .ok_or("剪贴板图片数据无效。")?;
-        let pin = create(&app, image, vec![])?;
-        if let Err(error) = pin.show().and_then(|_| pin.set_focus()) {
-            let _ = pin.destroy();
-            return Err(err(error));
-        }
-        changed(&app);
-        Ok(())
+        create_visible(&app, image, vec![])
     })
     .await
     .map_err(err)?
@@ -377,6 +430,7 @@ pub fn list_pins(app: AppHandle, window: WebviewWindow) -> Result<Vec<PinSummary
                 width: pin.image.width(),
                 height: pin.image.height(),
                 visible,
+                group: pin.group,
             })
         })
         .collect()
@@ -394,20 +448,14 @@ pub async fn manage_pins(
     app: AppHandle,
     window: WebviewWindow,
     label: Option<String>,
+    group: Option<String>,
     action: ManageAction,
 ) -> Result<(), String> {
     crate::capture::require_window(&window, "main")?;
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<PinState>();
         let _operation = Operation::acquire(&state)?;
-        let labels: Vec<String> = {
-            let images = state.images.lock().map_err(err)?;
-            match label {
-                Some(label) if images.contains_key(&label) => vec![label],
-                Some(_) => return Err("贴图已关闭。".into()),
-                None => images.keys().cloned().collect(),
-            }
-        };
+        let labels = management_labels(&*state.images.lock().map_err(err)?, label, group)?;
         // 即使部分窗口操作失败，也刷新管理列表，让已经成功的操作可见。
         let mut errors = Vec::new();
         for label in labels {
@@ -431,6 +479,74 @@ pub async fn manage_pins(
     })
     .await
     .map_err(err)?
+}
+
+/// 分组名称不对应文件路径；只限制长度和控制字符，支持中文名称。
+fn normalize_group(group: &str) -> Result<String, String> {
+    let group = group.trim();
+    if group.chars().count() > 32 || group.chars().any(char::is_control) {
+        return Err("分组名称最多 32 个字符，且不能包含换行或控制字符。".into());
+    }
+    Ok(group.to_string())
+}
+
+fn management_labels(
+    images: &BTreeMap<String, Pin>,
+    label: Option<String>,
+    group: Option<String>,
+) -> Result<Vec<String>, String> {
+    if label.is_some() && group.is_some() {
+        return Err("单张贴图与分组不能同时指定。".into());
+    }
+    if let Some(label) = label {
+        return if images.contains_key(&label) {
+            Ok(vec![label])
+        } else {
+            Err("贴图已关闭。".into())
+        };
+    }
+    let group = group.as_deref().map(normalize_group).transpose()?;
+    Ok(images
+        .iter()
+        .filter(|(_, pin)| group.as_ref().is_none_or(|g| &pin.group == g))
+        .map(|(label, _)| label.clone())
+        .collect())
+}
+
+/// 先校验全部目标再修改，避免一张已关闭的贴图导致分组只更新一半。
+fn assign_group(
+    images: &mut BTreeMap<String, Pin>,
+    labels: &[String],
+    group: &str,
+) -> Result<(), String> {
+    let group = normalize_group(group)?;
+    if labels.is_empty() || labels.len() > MAX_PINS {
+        return Err("请选择 1～12 张贴图。".into());
+    }
+    if labels.iter().any(|label| !images.contains_key(label)) {
+        return Err("部分贴图已关闭，请刷新后重试。".into());
+    }
+    for label in labels {
+        if let Some(pin) = images.get_mut(label) {
+            pin.group.clone_from(&group);
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn set_pin_group(
+    app: AppHandle,
+    window: WebviewWindow,
+    labels: Vec<String>,
+    group: String,
+) -> Result<(), String> {
+    crate::capture::require_window(&window, "main")?;
+    let state = app.state::<PinState>();
+    let _operation = Operation::acquire(&state)?;
+    assign_group(&mut *state.images.lock().map_err(err)?, &labels, &group)?;
+    changed(&app);
+    Ok(())
 }
 
 #[tauri::command]
@@ -677,13 +793,14 @@ pub enum PinAction {
     Close,
 }
 
-/// 保存期间临时隐藏所有可见贴图，防止其他置顶贴图盖住系统对话框。
+/// 打开/保存期间临时隐藏所有可见贴图，防止其他置顶贴图盖住系统对话框。
 /// 仅恢复本次隐藏的窗口，用户原本隐藏的贴图保持隐藏；失败也走恢复路径。
-fn save_with_hidden_pins(
+fn with_hidden_pins<T>(
     app: &AppHandle,
     focus: Option<&WebviewWindow>,
-    image: &RgbaImage,
-) -> Result<bool, String> {
+    task: impl FnOnce() -> Result<T, String>,
+    describe: impl FnOnce(&T) -> &'static str,
+) -> Result<T, String> {
     let mut hidden = Vec::new();
     let result = (|| {
         for pin in app
@@ -696,7 +813,7 @@ fn save_with_hidden_pins(
                 hidden.push(pin);
             }
         }
-        crate::image_io::save(app, image)
+        task()
     })();
     let mut restore_errors = Vec::new();
     for pin in hidden {
@@ -714,14 +831,32 @@ fn save_with_hidden_pins(
         return result;
     }
     let status = match result {
-        Ok(true) => "图片已保存".to_string(),
-        Ok(false) => "已取消保存".to_string(),
+        Ok(value) => describe(&value).to_string(),
         Err(error) => error,
     };
     Err(format!(
         "{status}；恢复贴图窗口失败，可从贴图管理页重新显示：{}",
         restore_errors.join("；")
     ))
+}
+
+fn save_with_hidden_pins(
+    app: &AppHandle,
+    focus: Option<&WebviewWindow>,
+    image: &RgbaImage,
+) -> Result<bool, String> {
+    with_hidden_pins(
+        app,
+        focus,
+        || crate::image_io::save(app, image),
+        |saved| {
+            if *saved {
+                "图片已保存"
+            } else {
+                "已取消保存"
+            }
+        },
+    )
 }
 
 /// 截图保存也需避让已有置顶贴图；获取同一操作锁，避免保存期间发生批量显示。
@@ -757,6 +892,48 @@ pub async fn pin_action(
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn grouped_pin(group: &str) -> Pin {
+        let image = Arc::new(RgbaImage::new(1, 1));
+        Pin {
+            original: image.clone(),
+            image,
+            view: PinView::default(),
+            annotations: vec![],
+            original_annotations: vec![],
+            group: group.into(),
+        }
+    }
+    #[test]
+    fn groups_distinguish_all_ungrouped_and_named_targets() {
+        let images = BTreeMap::from([
+            ("pin-1".into(), grouped_pin("")),
+            ("pin-2".into(), grouped_pin("参考")),
+        ]);
+        assert_eq!(management_labels(&images, None, None).unwrap().len(), 2);
+        assert_eq!(
+            management_labels(&images, None, Some("".into())).unwrap(),
+            vec!["pin-1"]
+        );
+        assert_eq!(
+            management_labels(&images, None, Some("参考".into())).unwrap(),
+            vec!["pin-2"]
+        );
+        assert!(management_labels(&images, Some("missing".into()), None).is_err());
+        assert!(management_labels(&images, Some("pin-1".into()), Some("参考".into())).is_err());
+    }
+    #[test]
+    fn assigning_groups_is_atomic_and_validates_names() {
+        let mut images = BTreeMap::from([("pin-1".into(), grouped_pin("旧组"))]);
+        assert!(assign_group(&mut images, &["pin-1".into(), "missing".into()], "新组").is_err());
+        assert_eq!(images["pin-1"].group, "旧组");
+        for name in ["字".repeat(33), "a\nb".into(), "a\u{0085}b".into()] {
+            assert!(assign_group(&mut images, &["pin-1".into()], &name).is_err());
+        }
+        assign_group(&mut images, &["pin-1".into()], " 新组 ").unwrap();
+        assert_eq!(images["pin-1"].group, "新组");
+        assign_group(&mut images, &["pin-1".into()], "").unwrap();
+        assert_eq!(images["pin-1"].group, "");
+    }
     #[test]
     fn rotating_and_flipping_keep_annotations_editable_and_in_bounds() {
         let s: crate::annotations::Annotation = serde_json::from_value(serde_json::json!({
@@ -791,6 +968,7 @@ mod tests {
             view: PinView::default(),
             annotations: vec![s],
             original_annotations: vec![],
+            group: String::new(),
         };
         let output = composed(&pin).unwrap();
         assert!(output.get_pixel(10, 10)[3] > 0);

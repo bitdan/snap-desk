@@ -1,12 +1,15 @@
 import { invoke, isTauri } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
-import type { Rect } from './selection'
+import type { Point, Rect } from './selection'
 import type { Annotation } from './annotations'
 
 export interface CaptureFrame { id: number; width: number; height: number; dataUrl: string }
 export interface PinView { zoom: number; opacity: number; locked: boolean; topmost: boolean; toolbarExpanded: boolean }
 export interface PinFrame { label: string; width: number; height: number; dataUrl: string; view: PinView; transparencySupported: boolean; annotations: Annotation[] }
-export interface PinSummary { label: string; width: number; height: number; visible: boolean }
+export interface PinSummary { label: string; width: number; height: number; visible: boolean; group: string }
+export interface ColorPinRequest { color: string; width: number; height: number }
+export interface TextPinRequest { background: string; annotation: Annotation }
+export type ColorFormat = 'hex' | 'rgb'
 export type PinTransform = 'rotateRight' | 'rotateLeft' | 'flipHorizontal' | 'flipVertical' | 'grayscale' | 'invert' | 'reset'
 export type PinAction = 'copy' | 'save' | 'hide' | 'close'
 export type PinManageAction = 'show' | 'hide' | 'close'
@@ -23,13 +26,18 @@ export const api = {
   ready: (id: number) => invoke<void>('show_capture', { id }),
   cancel: (id: number) => invoke<void>('cancel_capture', { id }),
   copy: (id: number, rect: Rect, annotations: Annotation[]) => invoke<void>('copy_capture', { id, rect, annotations }),
+  copyColor: (id: number, point: Point, format: ColorFormat) => invoke<void>('copy_capture_color', { id, point, format }),
   save: (id: number, rect: Rect, annotations: Annotation[]) => invoke<boolean>('save_capture', { id, rect, annotations }),
   pin: (id: number, rect: Rect, annotations: Annotation[]) => invoke<void>('pin_capture', { id, rect, annotations }),
   pinClipboard: () => invoke<void>('pin_clipboard'),
+  pinFile: () => invoke<boolean>('pin_file'),
+  pinColor: (request: ColorPinRequest) => invoke<void>('pin_color', { request }),
+  pinText: (request: TextPinRequest) => invoke<void>('pin_text', { request }),
   currentPin: () => invoke<PinFrame>('current_pin'),
   setPinAnnotations: (annotations: Annotation[]) => invoke<void>('set_pin_annotations', { annotations }),
   listPins: () => invoke<PinSummary[]>('list_pins'),
-  managePins: (action: PinManageAction, label: string | null = null) => invoke<void>('manage_pins', { action, label }),
+  managePins: (action: PinManageAction, label: string | null = null, group: string | null = null) => invoke<void>('manage_pins', { action, label, group }),
+  setPinGroup: (labels: string[], group: string) => invoke<void>('set_pin_group', { labels, group }),
   setPinView: (view: PinView) => invoke<PinView>('set_pin_view', { view }),
   dragPin: () => invoke<void>('drag_pin'),
   transformPin: (action: PinTransform) => invoke<PinFrame>('transform_pin', { action }),

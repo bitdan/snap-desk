@@ -11,6 +11,7 @@ use std::{
     time::{Duration, Instant},
 };
 use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
+use tauri_plugin_clipboard_manager::ClipboardExt;
 
 #[derive(Default)]
 pub struct CaptureState {
@@ -421,6 +422,68 @@ pub async fn copy_capture(
     .map_err(err)?
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PixelPoint {
+    x: u32,
+    y: u32,
+}
+
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ColorFormat {
+    Hex,
+    Rgb,
+}
+
+fn pixel_color(
+    image: &RgbaImage,
+    point: PixelPoint,
+    format: ColorFormat,
+) -> Result<String, String> {
+    if point.x >= image.width() || point.y >= image.height() {
+        return Err("取色坐标超出截图边界。".into());
+    }
+    let p = image.get_pixel(point.x, point.y);
+    Ok(match format {
+        ColorFormat::Hex => format!("#{:02X}{:02X}{:02X}", p[0], p[1], p[2]),
+        ColorFormat::Rgb => format!("rgb({}, {}, {})", p[0], p[1], p[2]),
+    })
+}
+
+/// 取色只读取当前截图原始像素，不接受前端传来的任意剪贴板文本。
+/// 复制成功后结束截图；剪贴板写入失败保留会话、选区及标注，允许重试。
+#[tauri::command]
+pub async fn copy_capture_color(
+    app: AppHandle,
+    window: WebviewWindow,
+    id: u64,
+    point: PixelPoint,
+    format: ColorFormat,
+) -> Result<(), String> {
+    require_window(&window, "capture")?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<CaptureState>();
+        let _operation = Operation::acquire(&state.operation)?;
+        let text = {
+            let guard = state.session.lock().map_err(err)?;
+            let session = guard
+                .as_ref()
+                .filter(|s| s.frame.id == id)
+                .ok_or("截图已过期，请重新截图。")?;
+            pixel_color(&session.image, point, format)?
+        };
+        app.clipboard()
+            .write_text(text.clone())
+            .map_err(|e| format!("复制色值失败，请重试：{e}"))?;
+        close_session(&app, id)?;
+        let _ = app.emit_to("main", "capture-result", format!("色值 {text} 已复制。"));
+        Ok(())
+    })
+    .await
+    .map_err(err)?
+}
+
 #[tauri::command]
 pub async fn save_capture(
     app: AppHandle,
@@ -501,6 +564,21 @@ pub async fn pin_capture(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn color_picker_formats_exact_source_pixels_and_rejects_edges() {
+        let mut image = RgbaImage::new(2, 2);
+        image.put_pixel(1, 1, image::Rgba([0, 128, 255, 255]));
+        assert_eq!(
+            pixel_color(&image, PixelPoint { x: 1, y: 1 }, ColorFormat::Hex).unwrap(),
+            "#0080FF"
+        );
+        assert_eq!(
+            pixel_color(&image, PixelPoint { x: 1, y: 1 }, ColorFormat::Rgb).unwrap(),
+            "rgb(0, 128, 255)"
+        );
+        assert!(pixel_color(&image, PixelPoint { x: 2, y: 1 }, ColorFormat::Hex).is_err());
+        assert!(pixel_color(&image, PixelPoint { x: 1, y: u32::MAX }, ColorFormat::Hex).is_err());
+    }
     #[test]
     fn delay_can_be_cancelled_before_or_during_wait() {
         let cancelled = AtomicBool::new(true);
