@@ -1,0 +1,172 @@
+# Snap Desk
+
+根目录独立桌面项目，按 [跨平台截图工具 TODO](跨平台截图工具_TODO.md) 逐步实现。采用 **Tauri 2 + Vue 3 + TypeScript + Tailwind CSS + shadcn-vue（Reka UI）+ Rust**。主界面使用侧边栏、卡片和淡紫色调；不依赖仓库内的 Java / Python / tool-hub。
+
+**当前：V0.1.2 新增矩形、箭头标注，颜色/线宽选择和撤销/重做，测试与 Windows 独立打包通过；这是 V0.2 的第一批功能，完整里程碑尚未完成。** 桌面交互实机验收待完成，尚不宣称已完成跨平台兼容。
+
+## 本期功能
+
+- `Alt + Shift + S`、主窗口按钮或托盘菜单开始截图。
+- 截图前隐藏主窗口，捕获主显示器的静态画面；截图期间重复快捷键不会叠加窗口。
+- 框选、反向拖拽、移动选区、八个方向调整大小、像素尺寸显示。
+- `Enter` / `Ctrl+ C` / `⌘ + C` 复制图片；`Ctrl + S` / `⌘ + S` 保存 PNG。
+- `Ctrl + A` / `⌘ + A` 选择整个主屏，`Esc` / 右键取消。
+- 保存对话框取消或写入失败时保留选区，可继续编辑和重试。
+- 系统托盘、单实例；关闭主窗口收起到托盘，从托盘菜单退出。
+- 快捷键冲突提示、截图权限错误提示、基础日志、蒙层加载超时恢复。
+- 设置页支持修改截图快捷键、选择立即 / 3 秒 / 5 秒截图，以及恢复默认并保存。
+- 设置保存为本机 JSON，重启恢复；文件缺失使用默认值，文件损坏显示提示并保留原文件，主动保存才替换。
+- 倒计时期间可通过主界面取消按钮、再次按截图快捷键或托盘“取消延时截图”取消；长按快捷键不会重复触发。
+- 矩形 / 箭头标注、六种颜色、三档线宽；复制与保存包含标注。
+- `Ctrl / ⌘ + Z` 撤销，`Ctrl / ⌘ + Shift + Z` 或 `Ctrl + Y` 重做。
+
+当前不包含跨屏框选、窗口识别、放大镜、文字/画笔/马赛克、贴图、历史记录或开机自启。除快捷键与延时外，设置页仍展示当前固定行为。
+
+## V0.1.2 标注使用说明
+
+先框选并调整截图区域，再点击工具栏的矩形或箭头图标，在选区内拖动绘制。颜色和线宽只影响接下来新画的图形。每张截图最多 100 个标注。
+
+添加标注后固定截图选区，不再允许移动或缩放选区；点击“重选”会清空所有标注与撤销记录，重新框选。撤销至没有标注时也可切回选区工具调整，此时调整选区会清空重做记录。当前不支持单独移动、缩放或修改已画图形，可撤销后重画。
+
+复制和保存均由 Rust 将标注合成到裁剪后的原图，输出保持原图像素尺寸。取消保存对话框会保留选区与标注。预览使用 SVG，导出使用像素绘制；边缘抗锯齿可能存在细微差异。
+
+## V0.1.1 设置使用说明
+
+在“设置”页面输入组合文本（例如 `Ctrl+Alt+S`），选择截图延时并保存。修饰键支持 `Ctrl`、`Alt`、`Shift`、`Super`（Win / ⌘），主键支持大写字母、数字、F1～F12；使用 `+` 连接，不加空格。这里是文本输入框，不是按键录制器。
+
+新快捷键注册失败时，旧快捷键继续可用；文件写入失败时清理新快捷键，保留旧设置。若系统清理/回滚也失败，错误提示会明确列出结果。截图及倒计时期间不允许保存设置。
+
+选择 3 秒或 5 秒后，按钮、快捷键和托盘入口均使用该延时。倒计时期间可切换到目标窗口并展开菜单；结束时隐藏主窗口再抓屏。取消仅对尚未结束的倒计时有效，已经进入截图蒙层后使用 Esc / 右键取消。
+
+配置位置由 Tauri 的 `app_config_dir()` 决定，Windows 通常为 `%APPDATA%\io.snapdesk.app\settings.json`；前端不能指定任意配置路径。配置示例：
+
+```json
+{ "shortcut": "Alt+Shift+S", "delaySeconds": 3 }
+```
+
+## 开发环境
+
+- Node.js 18.20+（建议 22 LTS），npm。
+- Rust stable 与 Cargo（本机验证版本 1.99.0）；已有 `src-tauri/Cargo.lock`，原生检查和测试使用 `--locked` 固定依赖版本。
+- Windows：Visual Studio 2022 Build Tools，勾选 **使用 C++ 的桌面开发**、MSVC 与 Windows SDK；需要 WebView2 Runtime。
+- macOS：Xcode Command Line Tools；首次截图须在系统设置中允许屏幕录制，然后重新启动应用。
+- Linux X11：安装 Tauri 的 WebKitGTK 4.1、AppIndicator 等开发依赖，以及 xcap 所需 XCB/RandR、PipeWire、Clang 开发依赖。具体包名随发行版变化。
+- Linux Wayland：V0.1 主动提示暂不支持，不绕过 Portal 或声称功能等同 X11。
+
+依赖安装参考：[Tauri 环境准备](https://v2.tauri.app/start/prerequisites/)、[xcap 平台依赖](https://github.com/nashaofu/xcap#system-dependencies)、[Tauri 全局快捷键](https://v2.tauri.app/plugin/global-shortcut/)。
+
+```powershell
+cd F:\project\leetcode\snap-desk
+npm ci
+npm run desktop:dev
+```
+
+应用默认按 `Alt + Shift + S` 开始截图，拖动框选，然后复制或保存。若快捷键已被占用，使用按钮/托盘菜单，或在设置页更换快捷键。
+
+只查看主界面可运行 `npm run dev`；浏览器不会执行原生截图，也不会伪造截图成功。没有启动开发服务时无需执行此命令。
+
+## 验证与构建
+
+```powershell
+npm run check
+npm test
+npm run build
+npm run tauri info
+cargo test --manifest-path src-tauri/Cargo.toml --lib --locked
+cargo check --manifest-path src-tauri/Cargo.toml --locked
+cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+npm run desktop:build
+```
+
+安装包默认输出至 `src-tauri/target/release/bundle/`。构建前应从托盘退出正在运行的同路径程序，否则 Windows 会阻止覆盖 EXE。需要保留旧程序时，可将 `CARGO_TARGET_DIR` 指向独立目录。当前平台只能直接生成对应平台包；macOS / Linux 需各自在目标系统上构建，签名、公证、自动更新和分发不在本期内。
+
+本轮 0.1.2 因旧版占用默认 EXE，使用独立构建目录（PowerShell）：
+
+```powershell
+$env:CARGO_TARGET_DIR = "$PWD/src-tauri/target/v0.1.2"
+npm run desktop:build -- --ci -- --locked
+```
+
+运行新版前仍需从托盘退出旧版，因为两个版本共享单实例标识和设置文件。
+
+本机已生成（构建产物不纳入 Git）：
+
+- 0.1.2 直接运行：`src-tauri/target/v0.1.2/release/snap-desk.exe`。
+- EXE 安装包：`src-tauri/target/v0.1.2/release/bundle/nsis/Snap Desk_0.1.2_x64-setup.exe`。
+- MSI 安装包：`src-tauri/target/v0.1.2/release/bundle/msi/Snap Desk_0.1.2_x64_en-US.msi`。
+- 默认目录 `src-tauri/target/release/snap-desk.exe` 仍是此前正在运行的旧版，本轮未覆盖。
+
+实际发布构建命令为 `npm run desktop:build -- --ci -- --locked`。构建尚有一项非阻塞提示：应用标识 `io.snapdesk.app` 以 `.app` 结尾；macOS 打包前应确定最终应用标识并处理该提示。
+
+2026-10-10 本机记录：
+
+| 检查 | 结果 |
+| --- | --- |
+| Vue / TypeScript 类型检查与 Vite 生产构建 | 通过 |
+| 前端单元测试 | 11 项通过：选区边界/缩放、标注坐标、撤销重做与预览几何 |
+| Tauri 图标生成 | 通过 |
+| Tauri 环境检查 | 通过：Rust / Cargo 1.99.0、Visual Studio Community 2022 MSVC、WebView2 |
+| Rust 编译、格式检查 | 测试 / 发布构建的原生编译、`cargo fmt -- --check` 通过 |
+| Rust 单元测试 | 13 项通过：标注校验/像素合成，以及原有选区、配置回滚、延时取消测试 |
+| Windows 发布构建与安装包 | V0.1.2 独立目录通过：优化版 EXE、MSI（3.50 MiB）、NSIS（2.34 MiB）；默认目录首次构建因旧 EXE 占用失败 |
+| 桌面截图、剪贴板、保存对话框、托盘与其他平台 | 未实机验收 |
+
+### 实机验收清单
+
+完成这些项后再勾选项目 TODO 的 V0.1 里程碑：
+
+- [x] Rust 编译、边界/溢出校验测试、格式检查与 Windows 安装包构建通过。
+- [ ] 按快捷键时主窗口不出现在截图中；托盘和按钮均可唤起；连续按快捷键只出现一个蒙层。
+- [ ] 正反方向拖拽、八方向调整、拖动至四边、1 像素选区与全屏选区输出正确。
+- [ ] Windows 100% / 125% / 150% / 200% 缩放下，输出尺寸与实际像素、选区内容一致。
+- [ ] PNG 可正常打开；复制后可在画图等支持图片的应用粘贴，颜色/透明度正确。
+- [ ] 取消保存、目标文件覆盖确认、只读目录写入失败后可重试；失败不破坏已有文件。
+- [ ] Esc、右键、Alt+F4、重复启动、关闭主窗口与托盘退出无残留窗口。
+- [ ] 快捷键占用、无屏幕录制权限、屏幕连接变化、蒙层加载失败时可恢复。
+- [ ] macOS 与 Linux X11 分别执行上述适用项；Wayland 显示暂不支持提示。
+
+V0.1.1 额外实机验收：
+
+- [ ] 修改快捷键后新键生效、旧键释放；重启后快捷键和延时保持一致；恢复默认后立即生效。
+- [ ] 选择被其他应用占用的快捷键，错误可见且原快捷键仍可用。
+- [ ] 3 秒 / 5 秒倒计时完成后截图；通过按钮、重复快捷键、托盘取消后不会出现蒙层；长按不误取消。
+- [ ] 缺失、损坏或不可写配置文件时有预期提示，失败不会假报保存成功。
+
+V0.1.2 额外实机验收：
+
+- [ ] 正反方向矩形、各方向箭头、不同颜色/线宽都能绘制；松开鼠标后正确提交，取消指针操作不提交半成品。
+- [ ] 撤销、重做、撤销后画新图形、重选、全屏选择符合说明；保存对话框取消后标注仍在。
+- [ ] 100% / 125% / 200% 缩放下，预览与复制/PNG 输出的位置一致；选区边缘裁切正确，无工具栏或蒙层混入。
+
+## 代码入口
+
+```text
+src/App.vue                     主窗口、设置表单、倒计时提示、快捷键、关于
+src/components/CaptureOverlay.vue  选区交互、快捷键与工具栏
+src/components/ui/button/       shadcn-vue 风格可扩展 Button
+src/lib/api.ts                  唯一的前端原生 API 封装、契约类型
+src/lib/selection.ts            CSS 选区 → 原图像素换算
+src/lib/annotations.ts          标注模型、原图坐标换算、撤销重做和 SVG 预览路径
+src-tauri/src/lib.rs            插件、托盘、单实例、全局快捷键
+src-tauri/src/capture.rs        截图会话、裁剪、复制、PNG 保存、校验
+src-tauri/src/platform.rs       原生截图适配边界（xcap 各平台实现）
+src-tauri/src/settings.rs       配置模型、JSON 读写、快捷键切换与失败回滚
+src-tauri/src/annotations.rs    标注校验、线段栅格化与图片合成
+tests/selection.test.ts         坐标/缩放测试
+tests/annotations.test.ts       标注历史、预览几何与缩放坐标测试
+```
+
+截图只保存在活动会话内存中，不上传、不写入历史。复制使用原生 RGBA 剪贴板；保存路径由 Rust 原生对话框产生，不接收前端任意文件路径。PNG 先写同目录临时文件，完整写入后替换目标文件。截图完成或取消后释放会话；日志不记录截图内容。
+
+后续按项目 TODO 推进：先完成实机验收，再做更多标注、窗口识别、多屏 DPI；不提前铺开 OCR 和录屏。
+
+## Rust 学习阅读顺序
+
+1. 从 `src/App.vue` 的 `saveSettings` 和 `src/lib/api.ts` 开始：Vue 收集表单，通过 `invoke` 调用 Rust 命令。
+2. 阅读 `settings.rs` 的 `Settings`：结构体定义数据，Serde 将 Rust 的下划线字段名转换为前端使用的 camelCase JSON。
+3. 阅读 `load`、`persist`：`Result` 携带成功/失败，`?` 向调用者返回错误；临时文件完整落盘后再替换正式配置。
+4. 阅读 `save_settings`、`apply_settings`：`Mutex` 串行保护配置，后台闭包负责系统调用；失败分支解释哪些操作需要撤销。
+5. 阅读 `capture.rs` 的 `begin`、`wait_delay`、`cancel_delay`：后台等待不冻结界面，原子变量传递取消请求，短临界区解决取消与超时同时发生的竞争。
+6. 阅读 `annotations.rs`：`enum` 表示图形种类；前端图形通过 Serde 变成 Rust 结构体，减去裁剪原点后按像素距离绘制，复制和保存共用同一合成入口。
+
+相关模块已有中文注释。建议先理解一次“保存设置”和一次“延时截图”的调用路径，再阅读窗口导出与资源释放逻辑。
