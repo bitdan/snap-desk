@@ -468,8 +468,19 @@ pub async fn pin_capture(
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<CaptureState>();
         let _operation = Operation::acquire(&state.operation)?;
-        let cropped = crop(&app, id, rect, &annotations)?;
-        let pin = crate::pins::create(&app, cropped)?;
+        let cropped = crop(&app, id, rect, &[])?;
+        // 贴图保存裁剪后的底图与独立图形；将屏幕坐标平移为贴图局部像素坐标。
+        let mut annotations = annotations;
+        for shape in &mut annotations {
+            for p in [&mut shape.start, &mut shape.end]
+                .into_iter()
+                .chain(shape.points.iter_mut())
+            {
+                p.x -= f64::from(rect.x);
+                p.y -= f64::from(rect.y);
+            }
+        }
+        let pin = crate::pins::create(&app, cropped, annotations)?;
         if let Err(error) = pin.show() {
             let _ = pin.destroy();
             return Err(err(error));

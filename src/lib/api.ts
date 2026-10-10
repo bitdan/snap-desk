@@ -5,7 +5,7 @@ import type { Annotation } from './annotations'
 
 export interface CaptureFrame { id: number; width: number; height: number; dataUrl: string }
 export interface PinView { zoom: number; opacity: number; locked: boolean; topmost: boolean; toolbarExpanded: boolean }
-export interface PinFrame { label: string; width: number; height: number; dataUrl: string; view: PinView; transparencySupported: boolean }
+export interface PinFrame { label: string; width: number; height: number; dataUrl: string; view: PinView; transparencySupported: boolean; annotations: Annotation[] }
 export interface PinSummary { label: string; width: number; height: number; visible: boolean }
 export type PinTransform = 'rotateRight' | 'rotateLeft' | 'flipHorizontal' | 'flipVertical' | 'grayscale' | 'invert' | 'reset'
 export type PinAction = 'copy' | 'save' | 'hide' | 'close'
@@ -27,6 +27,7 @@ export const api = {
   pin: (id: number, rect: Rect, annotations: Annotation[]) => invoke<void>('pin_capture', { id, rect, annotations }),
   pinClipboard: () => invoke<void>('pin_clipboard'),
   currentPin: () => invoke<PinFrame>('current_pin'),
+  setPinAnnotations: (annotations: Annotation[]) => invoke<void>('set_pin_annotations', { annotations }),
   listPins: () => invoke<PinSummary[]>('list_pins'),
   managePins: (action: PinManageAction, label: string | null = null) => invoke<void>('manage_pins', { action, label }),
   setPinView: (view: PinView) => invoke<PinView>('set_pin_view', { view }),

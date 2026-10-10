@@ -22,7 +22,7 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            shortcut: "Alt+F1".into(),
+            shortcut: "Alt+F4".into(),
             delay_seconds: 0,
         }
     }
@@ -74,12 +74,8 @@ pub fn load(path: &Path) -> (Settings, Option<String>) {
     let result = match fs::read(path) {
         Ok(bytes) => serde_json::from_slice::<Settings>(&bytes)
             .map_err(|e| e.to_string())
-            .and_then(|mut value| {
-                // 旧版本未记录快捷键来源，只迁移旧默认组合；其他自定义组合不变。
-                // 此处只修改内存，用户下次保存设置时才写入磁盘。
-                if value.shortcut == "Alt+Shift+S" {
-                    value.shortcut = Settings::default().shortcut;
-                }
+            .and_then(|value| {
+                // 已保存的快捷键原样加载，默认值不用于改写已有配置。
                 value.validate()?;
                 Ok(value)
             }),
@@ -225,10 +221,10 @@ pub async fn save_settings(
 mod tests {
     use super::*;
     #[test]
-    fn migrates_legacy_default_but_keeps_custom_keys_and_delay() {
+    fn preserves_saved_shortcuts_and_delay() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("settings.json");
-        for key in ["Alt+Shift+S", "Alt+F12", "Ctrl+F8"] {
+        for key in ["Alt+Shift+S", "Alt+F1", "Alt+F4", "Alt+F12", "Ctrl+F8"] {
             let old = Settings {
                 shortcut: key.into(),
                 delay_seconds: 5,
@@ -237,10 +233,7 @@ mod tests {
             let bytes = fs::read(&path).unwrap();
             let (loaded, warning) = load(&path);
             assert!(warning.is_none());
-            assert_eq!(
-                loaded.shortcut,
-                if key == "Alt+Shift+S" { "Alt+F1" } else { key }
-            );
+            assert_eq!(loaded.shortcut, key);
             assert_eq!(loaded.delay_seconds, 5);
             assert_eq!(fs::read(&path).unwrap(), bytes);
         }

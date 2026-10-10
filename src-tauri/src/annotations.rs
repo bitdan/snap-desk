@@ -1,32 +1,72 @@
 //! 将前端标注合成到裁剪后的原图。只接受结构化图形，不接收任意 SVG 或图片路径。
 //! 线段按像素中心到线段的距离绘制，边缘使用覆盖率混色，支持任意方向的箭头。
+use base64::{engine::general_purpose::STANDARD, Engine};
 use image::RgbaImage;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use std::io::Cursor;
 
-#[derive(Clone, Copy, Deserialize)]
+#[derive(Clone, Copy, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Point {
     pub x: f64,
     pub y: f64,
 }
 
-#[derive(Clone, Copy, Deserialize)]
+#[derive(Clone, Copy, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Kind {
     Rectangle,
     Arrow,
     Ellipse,
     Line,
+    Polyline,
+    Pen,
+    Highlighter,
+    Text,
+    Mosaic,
+    Blur,
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Annotation {
     pub kind: Kind,
     pub start: Point,
     pub end: Point,
     pub color: String,
     pub width: f64,
+    #[serde(default = "opaque")]
+    pub opacity: f64,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub points: Vec<Point>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font_size: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font_family: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub raster: Option<String>,
+}
+fn opaque() -> f64 {
+    1.0
+}
+
+/// 字形/滤镜只允许受限 PNG；先检查解码尺寸再分配 RGBA，防止压缩图片导致巨量内存分配。
+pub(crate) fn raster(s: &Annotation) -> Result<RgbaImage, String> {
+    let value = s.raster.as_deref().ok_or("标注缺少像素数据。")?;
+    if value.len() > 2_000_000 {
+        return Err("单个标注像素数据过大。".into());
+    }
+    let bytes = STANDARD.decode(value).map_err(|_| "标注 PNG 编码无效。")?;
+    let reader = image::ImageReader::with_format(Cursor::new(&bytes), image::ImageFormat::Png);
+    let (w, h) = reader.into_dimensions().map_err(|_| "标注 PNG 无效。")?;
+    if w == 0 || h == 0 || w > 2048 || h > 2048 || u64::from(w) * u64::from(h) > 1_048_576 {
+        return Err("标注 PNG 尺寸超限。".into());
+    }
+    image::load_from_memory_with_format(&bytes, image::ImageFormat::Png)
+        .map(|image| image.to_rgba8())
+        .map_err(|e| e.to_string())
 }
 
 /// 限制数量、坐标、颜色和线宽，防止无效 IPC 数据造成越界或过长绘制循环。
@@ -34,11 +74,22 @@ pub fn validate(shapes: &[Annotation], width: u32, height: u32) -> Result<(), St
     if shapes.len() > 100 {
         return Err("单张截图最多支持 100 个标注。".into());
     }
+    if shapes
+        .iter()
+        .map(|s| s.raster.as_ref().map_or(0, String::len))
+        .sum::<usize>()
+        > 8_000_000
+    {
+        return Err("标注像素数据总量过大。".into());
+    }
     for s in shapes {
         if !s.width.is_finite() || !(0.5..=64.0).contains(&s.width) {
             return Err("标注线宽无效。".into());
         }
-        for p in [s.start, s.end] {
+        if !s.opacity.is_finite() || !(0.05..=1.0).contains(&s.opacity) || s.points.len() > 2048 {
+            return Err("标注透明度或路径点数量无效。".into());
+        }
+        for p in [s.start, s.end].iter().chain(s.points.iter()) {
             if !p.x.is_finite()
                 || !p.y.is_finite()
                 || p.x < 0.0
@@ -48,6 +99,35 @@ pub fn validate(shapes: &[Annotation], width: u32, height: u32) -> Result<(), St
             {
                 return Err("标注坐标超出截图边界。".into());
             }
+        }
+        if matches!(s.kind, Kind::Pen | Kind::Highlighter | Kind::Polyline) && s.points.len() < 2 {
+            return Err("路径至少需要两个点。".into());
+        }
+        if !matches!(s.kind, Kind::Pen | Kind::Highlighter | Kind::Polyline) && !s.points.is_empty()
+        {
+            return Err("此标注类型不接受路径点。".into());
+        }
+        if matches!(s.kind, Kind::Text | Kind::Mosaic | Kind::Blur) {
+            if s.start.x >= s.end.x || s.start.y >= s.end.y {
+                return Err("文字或滤镜范围为空。".into());
+            }
+            raster(s)?;
+        } else if s.raster.is_some() {
+            return Err("此标注类型不接受像素数据。".into());
+        }
+        if matches!(s.kind, Kind::Mosaic | Kind::Blur) && s.opacity != 1.0 {
+            return Err("遮挡滤镜必须完全不透明。".into());
+        }
+        if matches!(s.kind, Kind::Text)
+            && (s
+                .text
+                .as_ref()
+                .is_none_or(|text| text.is_empty() || text.chars().count() > 500)
+                || s.font_size
+                    .is_none_or(|size| !size.is_finite() || !(8.0..=128.0).contains(&size))
+                || !matches!(s.font_family.as_deref(), Some("sans" | "serif" | "mono")))
+        {
+            return Err("文字或字体参数无效。".into());
         }
         color(&s.color)?;
     }
@@ -69,6 +149,10 @@ fn segments(s: &Annotation) -> Vec<(Point, Point)> {
     let a = s.start;
     let b = s.end;
     match s.kind {
+        Kind::Pen | Kind::Highlighter | Kind::Polyline => {
+            s.points.windows(2).map(|p| (p[0], p[1])).collect()
+        }
+        Kind::Text | Kind::Mosaic | Kind::Blur => vec![],
         Kind::Line => vec![(a, b)],
         Kind::Ellipse => {
             let rx = (b.x - a.x).abs() / 2.0;
@@ -130,7 +214,37 @@ fn segments(s: &Annotation) -> Vec<(Point, Point)> {
 /// 原图坐标减去裁剪原点后才是输出图片坐标；超出选区的笔画自然裁掉。
 pub fn render(image: &mut RgbaImage, shapes: &[Annotation], origin: Point) -> Result<(), String> {
     for s in shapes {
+        if matches!(s.kind, Kind::Text | Kind::Mosaic | Kind::Blur) {
+            let source = raster(s)?;
+            let left = s.start.x - origin.x;
+            let top = s.start.y - origin.y;
+            let width = s.end.x - s.start.x;
+            let height = s.end.y - s.start.y;
+            for y in top.floor().max(0.0) as u32
+                ..(top + height).ceil().min(f64::from(image.height())) as u32
+            {
+                for x in left.floor().max(0.0) as u32
+                    ..(left + width).ceil().min(f64::from(image.width())) as u32
+                {
+                    let sx = (((f64::from(x) + 0.5 - left) / width).clamp(0.0, 1.0)
+                        * f64::from(source.width())) as u32;
+                    let sy = (((f64::from(y) + 0.5 - top) / height).clamp(0.0, 1.0)
+                        * f64::from(source.height())) as u32;
+                    let pixel =
+                        source.get_pixel(sx.min(source.width() - 1), sy.min(source.height() - 1));
+                    blend(
+                        image.get_pixel_mut(x, y),
+                        [pixel[0], pixel[1], pixel[2]],
+                        f64::from(pixel[3]) / 255.0 * s.opacity,
+                    );
+                }
+            }
+            continue;
+        }
         let rgb = color(&s.color)?;
+        // 同一笔画先取最大覆盖率再混色，荧光笔拐角不会因重复线段叠加而变深。
+        let mut mask = vec![0u8; image.width() as usize * image.height() as usize];
+        let mut touched = Vec::new();
         for (a, b) in segments(s) {
             line(
                 image,
@@ -143,14 +257,45 @@ pub fn render(image: &mut RgbaImage, shapes: &[Annotation], origin: Point) -> Re
                     y: b.y - origin.y,
                 },
                 s.width,
+                &mut mask,
+                &mut touched,
+            );
+        }
+        for index in touched {
+            let coverage = f64::from(mask[index]) / 255.0 * s.opacity;
+            blend(
+                image.get_pixel_mut(index as u32 % image.width(), index as u32 / image.width()),
                 rgb,
+                coverage,
             );
         }
     }
     Ok(())
 }
 
-fn line(image: &mut RgbaImage, a: Point, b: Point, width: f64, rgb: [u8; 3]) {
+fn blend(pixel: &mut image::Rgba<u8>, rgb: [u8; 3], coverage: f64) {
+    if coverage <= 0.0 {
+        return;
+    }
+    let old_alpha = f64::from(pixel[3]) / 255.0;
+    let alpha = coverage + old_alpha * (1.0 - coverage);
+    for channel in 0..3 {
+        pixel[channel] = ((f64::from(rgb[channel]) * coverage
+            + f64::from(pixel[channel]) * old_alpha * (1.0 - coverage))
+            / alpha)
+            .round() as u8;
+    }
+    pixel[3] = (alpha * 255.0).round() as u8;
+}
+
+fn line(
+    image: &RgbaImage,
+    a: Point,
+    b: Point,
+    width: f64,
+    mask: &mut [u8],
+    touched: &mut Vec<usize>,
+) {
     let radius = width / 2.0;
     let dx = b.x - a.x;
     let dy = b.y - a.y;
@@ -188,17 +333,12 @@ fn line(image: &mut RgbaImage, a: Point, b: Point, width: f64, rgb: [u8; 3]) {
             if coverage == 0.0 {
                 continue;
             }
-            let pixel = image.get_pixel_mut(x, y);
-            // source-over 混合，保留截图本身的透明度语义。
-            let old_alpha = f64::from(pixel[3]) / 255.0;
-            let alpha = coverage + old_alpha * (1.0 - coverage);
-            for channel in 0..3 {
-                pixel[channel] = ((f64::from(rgb[channel]) * coverage
-                    + f64::from(pixel[channel]) * old_alpha * (1.0 - coverage))
-                    / alpha)
-                    .round() as u8;
+            let index = y as usize * image.width() as usize + x as usize;
+            let value = (coverage * 255.0).round() as u8;
+            if value > 0 && mask[index] == 0 {
+                touched.push(index);
             }
-            pixel[3] = (alpha * 255.0).round() as u8;
+            mask[index] = mask[index].max(value);
         }
     }
 }
@@ -206,6 +346,58 @@ fn line(image: &mut RgbaImage, a: Point, b: Point, width: f64, rgb: [u8; 3]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn highlighter_does_not_darken_its_own_overlapping_segments() {
+        let mut s = shape();
+        s.kind = Kind::Highlighter;
+        s.start = Point { x: 2.0, y: 10.0 };
+        s.end = s.start;
+        s.points = vec![s.start, Point { x: 20.0, y: 10.0 }, s.start];
+        s.width = 6.0;
+        s.opacity = 0.35;
+        validate(std::slice::from_ref(&s), 24, 24).unwrap();
+        let mut image = RgbaImage::new(24, 24);
+        render(&mut image, &[s], Point { x: 0.0, y: 0.0 }).unwrap();
+        assert_eq!(image.get_pixel(10, 10)[3], 89);
+    }
+    #[test]
+    fn raster_annotations_validate_and_export_with_alpha_and_crop_origin() {
+        let source = RgbaImage::from_pixel(2, 2, image::Rgba([0, 255, 0, 128]));
+        let mut png = Cursor::new(Vec::new());
+        source.write_to(&mut png, image::ImageFormat::Png).unwrap();
+        let mut s = shape();
+        s.kind = Kind::Text;
+        s.opacity = 0.5;
+        s.text = Some("中文".into());
+        s.font_size = Some(24.0);
+        s.font_family = Some("sans".into());
+        s.raster = Some(STANDARD.encode(png.into_inner()));
+        validate(std::slice::from_ref(&s), 32, 32).unwrap();
+        let mut image = RgbaImage::new(20, 20);
+        render(
+            &mut image,
+            std::slice::from_ref(&s),
+            Point { x: 10.0, y: 10.0 },
+        )
+        .unwrap();
+        assert_eq!(image.get_pixel(5, 5).0, [0, 255, 0, 64]);
+        assert_eq!(image.get_pixel(0, 0)[3], 0);
+        s.raster = Some("not a png".into());
+        assert!(validate(&[s], 32, 32).is_err());
+    }
+    #[test]
+    fn rejects_invalid_opacity_and_path_limits() {
+        let mut s = shape();
+        s.opacity = f64::NAN;
+        assert!(validate(&[s], 32, 32).is_err());
+        let mut s = shape();
+        s.kind = Kind::Pen;
+        s.points = vec![s.start; 2049];
+        assert!(validate(&[s], 32, 32).is_err());
+        let mut s = shape();
+        s.kind = Kind::Polyline;
+        assert!(validate(&[s], 32, 32).is_err());
+    }
     #[test]
     fn ellipse_keeps_center_empty_and_handles_reverse_drag_and_crop() {
         let mut s = shape();
@@ -236,6 +428,12 @@ mod tests {
             end: Point { x: 22.0, y: 22.0 },
             color: "#ff0000".into(),
             width: 2.0,
+            opacity: 1.0,
+            points: vec![],
+            text: None,
+            font_size: None,
+            font_family: None,
+            raster: None,
         }
     }
     #[test]

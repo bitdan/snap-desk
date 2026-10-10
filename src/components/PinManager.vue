@@ -54,12 +54,13 @@ onUnmounted(() => { disposed = true; off?.() })
   <section class="operation-list">
     <h2>贴图操作</h2>
     <div><span>移动 / 缩放</span><span>拖动图片 / 滚轮</span></div>
-    <div><span>显示 / 收起工具</span><span>右键 · 工具按钮</span></div>
+    <div><span>编辑标注 / 更多操作</span><span>图片右键菜单</span></div>
+    <div><span>显示 / 收起工具</span><span>Tab · 工具按钮</span></div>
     <div><span>复制 / 保存 PNG</span><kbd>Ctrl / ⌘ + C / S</kbd></div>
     <div><span>隐藏 / 关闭</span><kbd>Esc / Ctrl / ⌘ + W</kbd></div>
     <div><span>图片处理</span><span>旋转 · 翻转 · 灰度 · 反色 · 恢复原图</span></div>
   </section>
-  <p class="scope-note">最多 12 张、单张 1600 万像素、总计 3200 万像素。关闭贴图或退出应用会清除内存图片，请先保存需要保留的内容。已有截图标注会合并进图片，贴图内继续标注尚未开放。</p>
+  <p class="scope-note">最多 12 张、单张 1600 万像素、总计 3200 万像素。底部直接选择标注工具，指针工具可修改已有标注；截图转贴图会保留可编辑图形。关闭窗口或退出应用会清除内存图片，请先保存需要保留的内容。</p>
 </template>
 
 <style scoped>

@@ -170,6 +170,7 @@ pub fn run() {
             capture::pin_capture,
             pins::pin_clipboard,
             pins::current_pin,
+            pins::set_pin_annotations,
             pins::list_pins,
             pins::manage_pins,
             pins::set_pin_view,

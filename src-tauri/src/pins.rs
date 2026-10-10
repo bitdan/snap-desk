@@ -78,6 +78,8 @@ struct Pin {
     original: Arc<RgbaImage>,
     image: Arc<RgbaImage>,
     view: PinView,
+    annotations: Vec<crate::annotations::Annotation>,
+    original_annotations: Vec<crate::annotations::Annotation>,
 }
 
 /// zoom 使用逻辑像素比例；1 表示一图像像素对应一 CSS 像素。
@@ -128,6 +130,7 @@ pub struct PinFrame {
     data_url: String,
     view: PinView,
     transparency_supported: bool,
+    annotations: Vec<crate::annotations::Annotation>,
 }
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -184,6 +187,7 @@ fn frame(label: &str, pin: &Pin) -> Result<PinFrame, String> {
         ),
         view: pin.view.clone(),
         transparency_supported: !cfg!(target_os = "macos"),
+        annotations: pin.annotations.clone(),
     })
 }
 fn validate_capacity(width: u32, height: u32, count: usize, used: u64) -> Result<(), String> {
@@ -199,7 +203,12 @@ fn validate_capacity(width: u32, height: u32, count: usize, used: u64) -> Result
 
 /// 必须从后台线程调用，避免 Windows WebView 创建阻塞 UI 线程。
 /// 先登记图片再创建窗口，保证页面首次请求能读到数据；失败时回收登记。
-pub fn create(app: &AppHandle, image: RgbaImage) -> Result<WebviewWindow, String> {
+pub fn create(
+    app: &AppHandle,
+    image: RgbaImage,
+    annotations: Vec<crate::annotations::Annotation>,
+) -> Result<WebviewWindow, String> {
+    crate::annotations::validate(&annotations, image.width(), image.height())?;
     let state = app.state::<PinState>();
     let _operation = Operation::acquire(&state)?;
     {
@@ -217,11 +226,9 @@ pub fn create(app: &AppHandle, image: RgbaImage) -> Result<WebviewWindow, String
     let layout = PinLayout::load();
     let max_width = f64::from(monitor.work_area().size.width) / monitor.scale_factor() * 0.8;
     let max_height = f64::from(monitor.work_area().size.height) / monitor.scale_factor() * 0.8;
-    let zoom = ((max_width - (layout.padding + layout.border) * 2.0).max(1.0)
-        / f64::from(image.width()))
-    .min((max_height - layout.chrome_height(true)).max(1.0) / f64::from(image.height()))
-    .min(1.0)
-    .max(0.1);
+    // 新贴图始终按 100% 显示；只限制窗口大小，超出部分由前端滚动查看。
+    // 不再按屏幕空间缩小图片，避免文字在刚贴出时变小。
+    let zoom = PinView::default().zoom;
     let (width, height) = layout.window_size(
         image.width(),
         image.height(),
@@ -237,6 +244,8 @@ pub fn create(app: &AppHandle, image: RgbaImage) -> Result<WebviewWindow, String
         Pin {
             original: image.clone(),
             image,
+            original_annotations: annotations.clone(),
+            annotations,
             view: PinView {
                 zoom,
                 ..PinView::default()
@@ -292,7 +301,7 @@ pub async fn pin_clipboard(app: AppHandle, window: WebviewWindow) -> Result<(), 
             clipboard.rgba().to_vec(),
         )
         .ok_or("剪贴板图片数据无效。")?;
-        let pin = create(&app, image)?;
+        let pin = create(&app, image, vec![])?;
         if let Err(error) = pin.show().and_then(|_| pin.set_focus()) {
             let _ = pin.destroy();
             return Err(err(error));
@@ -309,6 +318,45 @@ pub async fn current_pin(app: AppHandle, window: WebviewWindow) -> Result<PinFra
     tauri::async_runtime::spawn_blocking(move || frame(window.label(), &own(&app, &window)?))
         .await
         .map_err(err)?
+}
+
+/// 前端每完成一次编辑就同步结构化标注；锁定/导出中不允许覆盖，错误时保留旧数据。
+#[tauri::command]
+pub async fn set_pin_annotations(
+    app: AppHandle,
+    window: WebviewWindow,
+    annotations: Vec<crate::annotations::Annotation>,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<PinState>();
+        let _operation = Operation::acquire(&state)?;
+        let pin = own(&app, &window)?;
+        if pin.view.locked {
+            return Err("请先解锁贴图再编辑标注。".into());
+        }
+        crate::annotations::validate(&annotations, pin.image.width(), pin.image.height())?;
+        state
+            .images
+            .lock()
+            .map_err(err)?
+            .get_mut(window.label())
+            .ok_or("贴图已关闭。")?
+            .annotations = annotations;
+        Ok(())
+    })
+    .await
+    .map_err(err)?
+}
+
+/// 导出只在底图副本上合成，复制/保存不改变可编辑对象，也不破坏“恢复原图”。
+fn composed(pin: &Pin) -> Result<RgbaImage, String> {
+    let mut image = (*pin.image).clone();
+    crate::annotations::render(
+        &mut image,
+        &pin.annotations,
+        crate::annotations::Point { x: 0.0, y: 0.0 },
+    )?;
+    Ok(image)
 }
 
 #[tauri::command]
@@ -512,6 +560,76 @@ fn transform(image: &RgbaImage, original: &RgbaImage, action: Transform) -> Rgba
         }
     }
 }
+/// 整图变换同步变换标注坐标及字形/滤镜像素，保留可编辑对象而不是合并图层。
+fn transform_annotations(
+    shapes: &[crate::annotations::Annotation],
+    width: u32,
+    height: u32,
+    action: Transform,
+) -> Result<Vec<crate::annotations::Annotation>, String> {
+    use crate::annotations::{Kind, Point};
+    let map = |p: Point| -> Point {
+        match action {
+            Transform::RotateRight => Point {
+                x: f64::from(height) - p.y,
+                y: p.x,
+            },
+            Transform::RotateLeft => Point {
+                x: p.y,
+                y: f64::from(width) - p.x,
+            },
+            Transform::FlipHorizontal => Point {
+                x: f64::from(width) - p.x,
+                y: p.y,
+            },
+            Transform::FlipVertical => Point {
+                x: p.x,
+                y: f64::from(height) - p.y,
+            },
+            _ => p,
+        }
+    };
+    shapes
+        .iter()
+        .map(|source| {
+            let mut s = source.clone();
+            s.start = map(s.start);
+            s.end = map(s.end);
+            s.points = s.points.into_iter().map(map).collect();
+            if matches!(s.kind, Kind::Text | Kind::Mosaic | Kind::Blur) {
+                let a = s.start;
+                let b = s.end;
+                s.start = Point {
+                    x: a.x.min(b.x),
+                    y: a.y.min(b.y),
+                };
+                s.end = Point {
+                    x: a.x.max(b.x),
+                    y: a.y.max(b.y),
+                };
+                let raster = crate::annotations::raster(source)?;
+                let mut png = Cursor::new(Vec::new());
+                transform(&raster, &raster, action)
+                    .write_to(&mut png, image::ImageFormat::Png)
+                    .map_err(err)?;
+                s.raster = Some(STANDARD.encode(png.into_inner()));
+            }
+            if matches!(action, Transform::Grayscale | Transform::Invert) {
+                let value = u32::from_str_radix(&s.color[1..], 16).map_err(err)?;
+                let pixel = RgbaImage::from_pixel(
+                    1,
+                    1,
+                    image::Rgba([(value >> 16) as u8, (value >> 8) as u8, value as u8, 255]),
+                );
+                let converted = transform(&pixel, &pixel, action);
+                let p = converted.get_pixel(0, 0);
+                s.color = format!("#{:02x}{:02x}{:02x}", p[0], p[1], p[2]);
+            }
+            Ok(s)
+        })
+        .collect()
+}
+
 #[tauri::command]
 pub async fn transform_pin(
     app: AppHandle,
@@ -525,7 +643,18 @@ pub async fn transform_pin(
         if pin.view.locked {
             return Err("请先解锁贴图再处理图片。".into());
         }
+        if matches!(action, Transform::Reset) {
+            pin.annotations = pin.original_annotations.clone();
+        } else {
+            pin.annotations = transform_annotations(
+                &pin.annotations,
+                pin.image.width(),
+                pin.image.height(),
+                action,
+            )?;
+        }
         pin.image = Arc::new(transform(&pin.image, &pin.original, action));
+        crate::annotations::validate(&pin.annotations, pin.image.width(), pin.image.height())?;
         let result = frame(window.label(), &pin)?;
         state
             .images
@@ -613,8 +742,8 @@ pub async fn pin_action(
         let _operation = Operation::acquire(&state)?;
         let pin = own(&app, &window)?;
         match action {
-            PinAction::Copy => crate::image_io::copy(&app, &pin.image)?,
-            PinAction::Save => return save_with_hidden_pins(&app, Some(&window), &pin.image),
+            PinAction::Copy => crate::image_io::copy(&app, &composed(&pin)?)?,
+            PinAction::Save => return save_with_hidden_pins(&app, Some(&window), &composed(&pin)?),
             PinAction::Hide => window.hide().map_err(err)?,
             PinAction::Close => window.destroy().map_err(err)?,
         }
@@ -628,6 +757,46 @@ pub async fn pin_action(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn rotating_and_flipping_keep_annotations_editable_and_in_bounds() {
+        let s: crate::annotations::Annotation = serde_json::from_value(serde_json::json!({
+            "kind":"pen", "start":{"x":10,"y":5}, "end":{"x":30,"y":20},
+            "color":"#ff0000", "width":3, "points":[{"x":10,"y":5},{"x":20,"y":25},{"x":30,"y":20}]
+        }))
+        .unwrap();
+        let source = vec![s];
+        let rotated = transform_annotations(&source, 100, 50, Transform::RotateRight).unwrap();
+        crate::annotations::validate(&rotated, 50, 100).unwrap();
+        assert_eq!(rotated[0].start.x, 45.0);
+        assert_eq!(rotated[0].points[1].y, 20.0);
+        let restored = transform_annotations(&rotated, 50, 100, Transform::RotateLeft).unwrap();
+        assert_eq!(
+            serde_json::to_value(restored).unwrap(),
+            serde_json::to_value(&source).unwrap()
+        );
+        let flipped = transform_annotations(&source, 100, 50, Transform::FlipHorizontal).unwrap();
+        assert_eq!(flipped[0].start.x, 90.0);
+        let inverted = transform_annotations(&source, 100, 50, Transform::Invert).unwrap();
+        assert_eq!(inverted[0].color, "#00ffff");
+    }
+    #[test]
+    fn exporting_annotations_does_not_flatten_the_editable_source() {
+        let s: crate::annotations::Annotation = serde_json::from_value(serde_json::json!({
+            "kind":"line", "start":{"x":2,"y":10}, "end":{"x":25,"y":10}, "color":"#ff0000", "width":3
+        })).unwrap();
+        let image = Arc::new(RgbaImage::new(30, 30));
+        let pin = Pin {
+            original: image.clone(),
+            image,
+            view: PinView::default(),
+            annotations: vec![s],
+            original_annotations: vec![],
+        };
+        let output = composed(&pin).unwrap();
+        assert!(output.get_pixel(10, 10)[3] > 0);
+        assert_eq!(pin.image.get_pixel(10, 10)[3], 0);
+        assert_eq!(pin.annotations.len(), 1);
+    }
     #[test]
     fn bottom_toolbar_does_not_consume_image_height() {
         let layout = PinLayout::load();

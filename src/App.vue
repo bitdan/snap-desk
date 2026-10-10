@@ -12,13 +12,13 @@ const pending = ref(false)
 const saving = ref(false)
 const remaining = ref(0)
 // 表单草稿与已生效配置分开：保存失败时快捷键提示仍显示原来的值。
-const draft = ref<Settings>({ shortcut: 'Alt+F1', delaySeconds: 0 })
+const draft = ref<Settings>({ shortcut: 'Alt+F4', delaySeconds: 0 })
 const message = ref('')
 const error = ref('')
 const disposers: (() => void)[] = []
 let disposed = false
 let delayRevision = 0
-const shortcut = computed(() => status.value?.settings.shortcut ?? 'Alt+F1')
+const shortcut = computed(() => status.value?.settings.shortcut ?? 'Alt+F4')
 const locked = computed(() => !desktop || !status.value || pending.value || saving.value || remaining.value > 0)
 async function refreshStatus() {
   const revision = delayRevision
@@ -100,7 +100,7 @@ onUnmounted(() => { disposed = true; disposers.forEach(off => off()) })
           </section>
           <section class="operation-list" aria-label="操作说明">
             <h2>截图中可用</h2>
-            <div><span>标注</span><span>矩形 / 椭圆 / 直线 / 箭头</span></div>
+            <div><span>标注</span><span>图形 / 画笔 / 文字 / 马赛克 / 二次编辑</span></div>
             <div><span>复制图片</span><kbd>Enter</kbd></div>
             <div><span>保存 PNG</span><kbd>Ctrl / ⌘ + S</kbd></div>
             <div><span>截图贴图</span><kbd>Ctrl / ⌘ + P</kbd></div>
@@ -121,18 +121,16 @@ onUnmounted(() => { disposed = true; disposers.forEach(off => off()) })
         <template v-else-if="page === '设置'">
           <h1>设置</h1><p class="subtitle">保存后立即生效，下次启动自动恢复。</p>
           <form class="settings-card mb-5" @submit.prevent="saveSettings()">
-            <div class="setting-row"><label for="capture-shortcut">截图快捷键<small>输入组合文本，如 Ctrl+Alt+S；Super 表示 Win / ⌘。</small></label><input id="capture-shortcut" v-model="draft.shortcut" :disabled="locked" required maxlength="48" autocomplete="off" spellcheck="false" class="w-48 rounded-lg border border-zinc-200 px-3 py-2 text-sm focus:outline-blue-500" /></div>
-            <div class="shortcut-presets" aria-label="截图快捷键预设"><span>快捷选择</span><button v-for="n in 12" :key="n" type="button" :disabled="locked" :aria-pressed="draft.shortcut === `Alt+F${n}`" @click="draft.shortcut = `Alt+F${n}`">Alt+F{{ n }}</button></div>
-            <p class="py-3 text-xs leading-6 text-zinc-500">修饰键支持 Ctrl、Alt、Shift、Super，搭配大写字母、数字或 F1～F12。默认 Alt+F1；快捷选择只修改当前截图键，保存后生效。若被其他应用占用，将保留原设置。</p>
+            <div class="setting-row"><label for="capture-shortcut">截图快捷键</label><input id="capture-shortcut" v-model="draft.shortcut" :disabled="locked" required maxlength="48" autocomplete="off" spellcheck="false" class="w-48 rounded-lg border border-zinc-200 px-3 py-2 text-sm focus:outline-blue-500" /></div>
             <div class="setting-row"><label for="capture-delay">截图延时<small>等待时可展开菜单；结束时自动隐藏本窗口。</small></label><select id="capture-delay" v-model.number="draft.delaySeconds" :disabled="locked" class="rounded-lg border border-zinc-200 bg-white px-3 py-2"><option :value="0">立即截图</option><option :value="3">3 秒</option><option :value="5">5 秒</option></select></div>
-            <div class="flex gap-3 py-5"><Button type="submit" :disabled="locked">{{ saving ? '正在保存…' : '保存设置' }}</Button><Button type="button" variant="outline" :disabled="locked" @click="saveSettings({ shortcut: 'Alt+F1', delaySeconds: 0 })">恢复默认并保存</Button></div>
+            <div class="flex gap-3 py-5"><Button type="submit" :disabled="locked">{{ saving ? '正在保存…' : '保存设置' }}</Button><Button type="button" variant="outline" :disabled="locked" @click="saveSettings({ shortcut: 'Alt+F4', delaySeconds: 0 })">恢复默认并保存</Button></div>
           </form>
           <section class="settings-card"><div class="setting-row"><span>截图范围<small>当前阶段不支持跨显示器选区</small></span><strong>主显示器</strong></div><div class="setting-row"><span>图片格式<small>按屏幕原始像素裁剪，不二次缩放</small></span><strong>PNG</strong></div><div class="setting-row"><span>截图前隐藏主窗口</span><Check :size="18" class="text-primary" /></div><div class="setting-row"><span>保存位置<small>取消保存对话框后可继续调整选区</small></span><strong>每次选择</strong></div><div class="setting-row"><span>关闭主窗口<small>从托盘菜单退出应用</small></span><strong>收起到托盘</strong></div></section>
         </template>
 
         <template v-else>
           <h1>关于 Snap Desk</h1><p class="subtitle">桌面截图与标注工具</p>
-          <section class="settings-card about"><span class="brand-icon"><Scan :size="30" /></span><h2>Snap Desk <span class="pill">0.1.3</span></h2><p>基于 Tauri 2、Vue 3、TypeScript 与 Rust。截图和贴图仅在内存中处理，复制到剪贴板或保存至你选择的位置；快捷键与延时设置保存在本机。</p><p>当前范围：主屏区域截图、常用图形标注、撤销重做，以及截图 / 剪贴板图片贴图、多贴图管理和基础图片处理。贴图继续标注、OCR、长截图与录屏将按项目 TODO 分期实现。</p><p>Windows / macOS / Linux X11 使用原生截图后端，尚待各平台实机验收。macOS 需要屏幕录制权限；Wayland 暂未开放。</p></section>
+          <section class="settings-card about"><span class="brand-icon"><Scan :size="30" /></span><h2>Snap Desk <span class="pill">0.1.3</span></h2><p>基于 Tauri 2、Vue 3、TypeScript 与 Rust。截图和贴图仅在内存中处理，复制到剪贴板或保存至你选择的位置；快捷键与延时设置保存在本机。</p><p>当前范围：主屏区域截图、图形 / 画笔 / 文字 / 马赛克标注、撤销重做、贴图内继续标注与二次编辑，以及多贴图管理和基础图片处理。OCR、长截图与录屏将按项目 TODO 分期实现。</p><p>Windows / macOS / Linux X11 使用原生截图后端，尚待各平台实机验收。macOS 需要屏幕录制权限；Wayland 暂未开放。</p></section>
         </template>
       </div>
     </main>

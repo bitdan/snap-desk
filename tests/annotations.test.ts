@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { append, arrowWings, emptyHistory, imagePoint, redo, shapePath, undo, type Annotation } from '../src/lib/annotations'
+import { append, arrowWings, commit, emptyHistory, hitTest, imagePoint, moveShape, resizeShape, shapeBounds, redo, shapePath, undo, type Annotation } from '../src/lib/annotations'
 
 const rectangle: Annotation = { kind: 'rectangle', start: { x: 40, y: 30 }, end: { x: 10, y: 5 }, color: '#ef4444', width: 3 }
 describe('annotations', () => {
@@ -35,5 +35,35 @@ describe('annotations', () => {
     const arrow: Annotation = { ...rectangle, kind: 'arrow', start: { x: 0, y: 20 }, end: { x: 30, y: 20 }, width: 2 }
     expect(arrowWings(arrow)).toEqual([{ x: 20, y: 15 }, { x: 20, y: 25 }])
     expect(arrowWings({ ...arrow, end: arrow.start })).toEqual([arrow.start, arrow.start])
+  })
+  it('undoes moves, restyling and deletion as complete transactions', () => {
+    const original = append(emptyHistory(), rectangle)
+    const moved = commit(original, [{ ...rectangle, color: '#ffffff', start: { x: 30, y: 20 } }])
+    const deleted = commit(moved, [])
+    expect(undo(deleted).present).toEqual(moved.present)
+    expect(undo(undo(deleted)).present).toEqual(original.present)
+    expect(redo(undo(deleted))).toEqual(deleted)
+    expect(commit(undo(deleted), [rectangle]).future).toEqual([])
+  })
+  it('moves every pen point and clamps the whole stroke within the crop', () => {
+    const pen: Annotation = { ...rectangle, kind: 'pen', start: { x: 20, y: 20 }, end: { x: 40, y: 40 }, points: [{ x: 20, y: 20 }, { x: 30, y: 50 }, { x: 40, y: 40 }] }
+    const moved = moveShape(pen, { x: 100, y: -100 }, { x: 10, y: 10, width: 60, height: 60 })
+    expect(moved.points).toEqual([{ x: 50, y: 10 }, { x: 60, y: 40 }, { x: 70, y: 30 }])
+    expect(pen.points![0]).toEqual({ x: 20, y: 20 })
+    expect(shapeBounds(moved)).toEqual({ x: 50, y: 10, width: 20, height: 30 })
+  })
+  it('resizes reverse shapes and line endpoints without NaN', () => {
+    const bounds = { x: 0, y: 0, width: 100, height: 100 }
+    expect(shapeBounds(resizeShape(rectangle, 'se', { x: 90, y: 80 }, bounds))).toEqual({ x: 10, y: 5, width: 80, height: 75 })
+    const line: Annotation = { ...rectangle, kind: 'line', start: { x: 5, y: 10 }, end: { x: 50, y: 10 } }
+    expect(resizeShape(line, 'end', { x: 120, y: -10 }, bounds).end).toEqual({ x: 100, y: 0 })
+  })
+  it('hit tests topmost strokes, arrow wings and raster interiors', () => {
+    const line: Annotation = { ...rectangle, kind: 'line', start: { x: 0, y: 20 }, end: { x: 30, y: 20 }, width: 2 }
+    expect(hitTest([line, { ...line, color: '#ffffff' }], { x: 10, y: 20 }, 1)).toBe(1)
+    expect(hitTest([line], { x: 10, y: 35 }, 1)).toBe(-1)
+    expect(hitTest([{ ...line, kind: 'arrow' }], { x: 20, y: 15 }, 1)).toBe(0)
+    expect(hitTest([{ ...rectangle, kind: 'text' }], { x: 20, y: 20 }, 1)).toBe(0)
+    expect(hitTest([rectangle], { x: 20, y: 20 }, 1)).toBe(-1)
   })
 })

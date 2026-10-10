@@ -1,0 +1,142 @@
+import { reactive } from 'vue'
+import { commit, emptyHistory, hitTest, moveShape, resizeShape, undo, redo, type Annotation, type History } from './annotations'
+import { prepareRaster } from './annotation-raster'
+import { clamp, type Point, type Rect, type Handle } from './selection'
+
+export type AnnotationTool = 'edit' | 'eraser' | Annotation['kind']
+/** 截图/贴图共用编辑状态。一次拖动只提交一次历史，保存失败不改历史也不丢失原图形。 */
+export function useAnnotations(bounds: () => Rect, imageUrl: () => string, disabled: () => boolean, persist?: (shapes: Annotation[]) => Promise<void>) {
+  const state = reactive({ history: emptyHistory(), tool: 'edit' as AnnotationTool, selected: -1,
+    draft: null as Annotation | null, pending: false, interacting: false, error: '',
+    color: '#ef4444', width: 3, opacity: 1, text: '', fontSize: 24, fontFamily: 'sans' as NonNullable<Annotation['fontFamily']> })
+  let gesture: { start: Point; shape: Annotation; mode: 'draw' | 'move' | Handle | 'start' | 'end' } | null = null
+  let generation = 0
+  function locked() { return disabled() || state.pending }
+  function point(p: Point): Point { const b = bounds(); return { x: clamp(p.x, b.x, b.x + b.width), y: clamp(p.y, b.y, b.y + b.height) } }
+  async function apply(next: History) {
+    if (locked()) return
+    if (next.present.reduce((sum, s) => sum + (s.raster?.length ?? 0), 0) > 8_000_000) { state.error = '文字和滤镜数据总量过大，请删除部分标注。'; return }
+    const version = generation
+    state.pending = true; state.error = ''
+    try { await persist?.(next.present); if (version === generation) state.history = next }
+    catch (e) { state.error = String(e) }
+    finally { state.pending = false }
+  }
+  function select(index: number) {
+    state.selected = index
+    const s = state.history.present[index]
+    if (s) { state.color = s.color; state.width = s.width; state.opacity = s.opacity ?? 1; state.text = s.text ?? ''; state.fontSize = s.fontSize ?? 24; state.fontFamily = s.fontFamily ?? 'sans' }
+  }
+  function setTool(tool: AnnotationTool) {
+    if (locked() || state.interacting) return
+    state.tool = tool; state.selected = -1
+    if (tool === 'highlighter') { state.width = 20; state.opacity = 0.35 }
+    else if (tool === 'mosaic' || tool === 'blur') { state.width = 16; state.opacity = 1 }
+    else { state.width = 3; state.opacity = 1 }
+  }
+  function reset(shapes: Annotation[] = []) { generation++; state.history = emptyHistory(shapes); state.selected = -1; abort(); state.error = '' }
+  function abort() { gesture = null; state.draft = null; state.interacting = false }
+  async function remove() {
+    if (locked() || state.interacting || state.selected < 0) return
+    const next = state.history.present.filter((_, i) => i !== state.selected)
+    await apply(commit(state.history, next)); state.selected = -1
+  }
+  async function clear() {
+    if (locked() || state.interacting || !state.history.present.length) return
+    await apply(commit(state.history, [])); state.selected = -1
+  }
+  function begin(p: Point, tolerance: number, handle?: Handle | 'start' | 'end') {
+    if (locked()) return
+    p = point(p)
+    if (state.tool === 'polyline' && state.draft) {
+      if ((state.draft.points?.length ?? 0) < 2048) state.draft = { ...state.draft, end: p, points: [...state.draft.points!, p] }
+      return
+    }
+    if (state.interacting) return
+    if (state.tool === 'edit' || state.tool === 'eraser') {
+      if (!handle) select(hitTest(state.history.present, p, tolerance))
+      if (state.selected < 0) return
+      if (state.tool === 'eraser') { void remove(); return }
+      const shape = state.history.present[state.selected]
+      gesture = { start: p, shape, mode: handle ?? 'move' }; state.draft = shape; state.interacting = true; return
+    }
+    if (state.history.present.length >= 100) { state.error = '最多支持 100 个标注。'; return }
+    if (state.tool === 'text' && !state.text.trim()) { state.error = '请先在工具栏输入文字，再点击图片放置。'; return }
+    state.selected = -1
+    const shape: Annotation = { kind: state.tool, start: p, end: p, color: state.color, width: state.width, opacity: state.opacity }
+    if (['pen', 'highlighter', 'polyline'].includes(shape.kind)) shape.points = [p]
+    if (shape.kind === 'text') { shape.text = state.text; shape.fontSize = state.fontSize; shape.fontFamily = state.fontFamily }
+    state.draft = shape; state.interacting = true
+    if (shape.kind !== 'polyline') gesture = { start: p, shape, mode: 'draw' }
+  }
+  function drag(p: Point) {
+    if (!gesture || !state.draft || locked()) return
+    p = point(p)
+    if (gesture.mode === 'move') state.draft = moveShape(gesture.shape, { x: p.x - gesture.start.x, y: p.y - gesture.start.y }, bounds())
+    else if (gesture.mode !== 'draw') state.draft = resizeShape(gesture.shape, gesture.mode, p, bounds())
+    else if (state.draft.points) {
+      const last = state.draft.points.at(-1)!
+      if (Math.hypot(p.x - last.x, p.y - last.y) >= 1 && state.draft.points.length < 2048) state.draft = { ...state.draft, end: p, points: [...state.draft.points, p] }
+    } else if (state.draft.kind !== 'text') state.draft = { ...state.draft, end: p }
+  }
+  async function finish(polyline = false) {
+    if (!state.draft || locked() || (state.tool === 'polyline' && !polyline)) return
+    let shape = state.draft
+    const editing = state.selected >= 0 && gesture?.mode !== 'draw'
+    if (editing && JSON.stringify(shape) === JSON.stringify(state.history.present[state.selected])) { abort(); return }
+    const dx = Math.abs(shape.end.x - shape.start.x), dy = Math.abs(shape.end.y - shape.start.y)
+    if (editing && ['rectangle', 'ellipse', 'text', 'mosaic', 'blur'].includes(shape.kind) && (dx < 1 || dy < 1)) { abort(); return }
+    if (!editing && shape.kind !== 'text' && (shape.points ? shape.points.length < 2 : ['line', 'arrow'].includes(shape.kind) ? Math.hypot(dx, dy) < 1 : dx < 1 || dy < 1)) { abort(); return }
+    const version = generation
+    state.pending = true
+    try {
+      if (shape.kind === 'mosaic' || shape.kind === 'blur' || (shape.kind === 'text' && !editing)) shape = await prepareRaster(shape, imageUrl(), bounds())
+    } catch (e) { state.error = String(e); abort(); state.pending = false; return }
+    state.pending = false
+    if (version !== generation) return
+    const next = editing ? state.history.present.map((s, i) => i === state.selected ? shape : s) : [...state.history.present, shape]
+    await apply(commit(state.history, next)); abort()
+  }
+  async function style(patch: Partial<Pick<Annotation, 'color' | 'width' | 'opacity' | 'text' | 'fontSize' | 'fontFamily'>>) {
+    if (locked() || state.interacting) return
+    Object.assign(state, patch)
+    const original = state.history.present[state.selected]
+    if (!original) return
+    const version = generation
+    let shape = { ...original, ...patch }
+    state.pending = true
+    try {
+      if (shape.kind === 'text' || shape.kind === 'mosaic' || shape.kind === 'blur') shape = await prepareRaster(shape, imageUrl(), bounds(), !('text' in patch || 'fontSize' in patch || 'fontFamily' in patch))
+    } catch (e) { state.error = String(e); state.pending = false; return }
+    state.pending = false
+    if (version !== generation) return
+    await apply(commit(state.history, state.history.present.map((s, i) => i === state.selected ? shape : s)))
+    select(state.selected)
+  }
+  async function travel(direction: 'undo' | 'redo') {
+    if (state.interacting || locked()) return
+    await apply(direction === 'undo' ? undo(state.history) : redo(state.history)); state.selected = -1
+  }
+  function key(e: KeyboardEvent): boolean {
+    if ((e.target as HTMLElement)?.closest?.('input, textarea, select, [contenteditable=true]')) return false
+    const command = e.ctrlKey || e.metaKey, k = e.key.toLowerCase()
+    if (command && (k === 'z' || k === 'y')) { e.preventDefault(); if (!e.repeat) void travel(k === 'y' || e.shiftKey ? 'redo' : 'undo'); return true }
+    if (k === 'escape' && state.interacting) { e.preventDefault(); if (!locked()) abort(); return true }
+    if (k === 'enter' && state.tool === 'polyline' && state.draft) { e.preventDefault(); void finish(true); return true }
+    if (k === 'delete' || k === 'backspace') { e.preventDefault(); void remove(); return true }
+    const delta = ({ arrowleft: { x: -1, y: 0 }, arrowright: { x: 1, y: 0 }, arrowup: { x: 0, y: -1 }, arrowdown: { x: 0, y: 1 } } as Record<string, Point>)[k]
+    if (!command && delta && state.selected >= 0) {
+      e.preventDefault()
+      if (!locked() && !state.interacting) {
+        const shape = state.history.present[state.selected], step = e.shiftKey ? 10 : 1
+        gesture = { start: shape.start, shape, mode: 'move' }; state.interacting = true
+        state.draft = moveShape(shape, { x: delta.x * step, y: delta.y * step }, bounds())
+        void finish()
+      }
+      return true
+    }
+    return false
+  }
+  return Object.assign(state, { begin, drag, finish, abort, reset, setTool, select, remove, clear, style, travel, key })
+}
+export type AnnotationEditor = ReturnType<typeof useAnnotations>
