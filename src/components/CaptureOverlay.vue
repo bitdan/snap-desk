@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, shallowRef } from 'vue'
-import { Copy, Save, X, Maximize, Scan, Move, Pin, Pipette } from 'lucide-vue-next'
-import { api, onFrame, type CaptureFrame, type ColorFormat } from '@/lib/api'
+import { Copy, Save, X, Maximize, Scan, Move, Pin, Pipette, ArrowDownToLine } from 'lucide-vue-next'
+import { api, onFrame, onScroll, type CaptureFrame, type ColorFormat, type ScrollView } from '@/lib/api'
 import { clamp, move, normalize, resize, toPixels, nudgeSelection, type Handle, type Point, type Rect } from '@/lib/selection'
 import { useAnnotations, type AnnotationTool } from '@/lib/use-annotations'
 import AnnotationSurface from './AnnotationSurface.vue'
@@ -9,11 +9,16 @@ import AnnotationToolbar from './AnnotationToolbar.vue'
 import CaptureMagnifier from './CaptureMagnifier.vue'
 import { magnifierSample } from '@/lib/magnifier'
 import { nudgeColorPoint } from '@/lib/color-picker'
+import { newerScroll } from '@/lib/scroll-capture'
 
 const frame = ref<CaptureFrame | null>(null)
 const selection = ref<Rect | null>(null)
 const busy = ref(false)
 const error = ref('')
+const scroll = ref<ScrollView | null>(null)
+const scrollSetup = ref(false)
+const automaticScroll = ref(true)
+const saveScrollFrames = ref(true)
 const viewport = ref({ width: innerWidth, height: innerHeight })
 const annotating = ref(false)
 const screenImage = shallowRef<HTMLImageElement | null>(null)
@@ -21,12 +26,13 @@ const imageReady = ref(false)
 const pointer = ref<Point | null>(null)
 const picking = ref(false)
 const colorFormat = ref<ColorFormat>('hex')
-const showMagnifier = computed(() => frame.value && imageReady.value && screenImage.value && pointer.value && !busy.value && (picking.value || (!annotating.value && !marked.value)))
+const showMagnifier = computed(() => frame.value && imageReady.value && screenImage.value && pointer.value && !busy.value && !scrollSetup.value && (picking.value || (!annotating.value && !marked.value)))
 const editor = useAnnotations(() => pixels.value ?? { x: 0, y: 0, width: 0, height: 0 }, () => frame.value?.dataUrl ?? '', () => busy.value)
 const marked = computed(() => editor.history.present.length > 0)
 const handles: Handle[] = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w']
 let gesture: { start: Point; initial: Rect; mode: 'draw' | 'move' | Handle } | null = null
 let off: (() => void) | undefined
+let offScroll: (() => void) | undefined
 let disposed = false
 const pixels = computed(() => selection.value && frame.value ? toPixels(selection.value, viewport.value, frame.value) : null)
 const valid = computed(() => pixels.value && pixels.value.width > 0 && pixels.value.height > 0)
@@ -42,6 +48,19 @@ function selectionDown(e: PointerEvent) { if (!annotating.value) down(e, 'move')
 function reselect() {
   if (busy.value) return
   editor.reset(); selection.value = null; gesture = null; annotating.value = false; error.value = ''; pointer.value = null; picking.value = false
+}
+function receiveScroll(value: ScrollView) {
+  const next = newerScroll(scroll.value, value, frame.value?.id)
+  if (next && !next.collecting) scrollClosed()
+  else scroll.value = next
+}
+function scrollClosed() { scroll.value = null; frame.value = null; scrollSetup.value = false }
+async function startScroll() {
+  if (!frame.value || !pixels.value || !valid.value || busy.value || marked.value || editor.pending || editor.interacting || gesture) return
+  busy.value = true; error.value = ''
+  try { receiveScroll(await api.startScroll(frame.value.id, pixels.value, automaticScroll.value, saveScrollFrames.value)); scrollSetup.value = false }
+  catch (e) { error.value = String(e) }
+  finally { busy.value = false }
 }
 /** 切换取色不清空选区或标注；Esc / 右键先退出取色，再次按才取消截图。 */
 function togglePicker() {
@@ -86,7 +105,7 @@ function drag(e: PointerEvent) {
 function up() { gesture = null }
 function abortGesture() { gesture = null }
 function selectAll() { if (!busy.value && !picking.value && !marked.value && !editor.interacting) { editor.reset(); selection.value = { x: 0, y: 0, ...viewport.value } } }
-function receive(value: CaptureFrame) { busy.value = false; reselect(); imageReady.value = false; frame.value = value }
+function receive(value: CaptureFrame) { busy.value = false; reselect(); scroll.value = null; scrollSetup.value = false; imageReady.value = false; frame.value = value }
 async function loaded() {
   if (!frame.value) return
   imageReady.value = true
@@ -108,6 +127,12 @@ async function finish(action: 'copy' | 'save' | 'pin') {
   finally { busy.value = false }
 }
 function key(e: KeyboardEvent) {
+  if (scroll.value) return
+  if (scrollSetup.value) {
+    if (e.key === 'Escape' && !busy.value) { e.preventDefault(); scrollSetup.value = false }
+    else if (e.key === 'Enter' && !e.repeat && !(e.target as HTMLElement).closest('button')) { e.preventDefault(); void startScroll() }
+    return
+  }
   if ((e.target as HTMLElement).closest('input, textarea, select')) return
   const command = e.ctrlKey || e.metaKey
   if (!command && !e.altKey && !e.repeat && e.key.toLowerCase() === 'i') { e.preventDefault(); togglePicker(); return }
@@ -148,7 +173,7 @@ function key(e: KeyboardEvent) {
   else if (command && e.key.toLowerCase() === 'z') { e.preventDefault(); void editor.travel(e.shiftKey ? 'redo' : 'undo') }
   else if (command && e.key.toLowerCase() === 'y') { e.preventDefault(); void editor.travel('redo') }
 }
-function resized() { viewport.value = { width: innerWidth, height: innerHeight }; reselect() }
+function resized() { viewport.value = { width: innerWidth, height: innerHeight }; if (!scroll.value) reselect() }
 async function imageFailed() {
   error.value = '截图预览加载失败，请重新截图。'
   await cancel()
@@ -158,15 +183,20 @@ onMounted(async () => {
   try {
     off = await onFrame(receive)
     if (disposed) { off(); return }
+    offScroll = await onScroll(receiveScroll)
+    if (disposed) { offScroll(); return }
     const current = await api.current()
     if (current && (!frame.value || current.id > frame.value.id)) receive(current)
+    const currentScroll = await api.currentScroll()
+    if (currentScroll && !disposed) receiveScroll(currentScroll)
   } catch (e) { error.value = String(e) }
 })
-onUnmounted(() => { disposed = true; off?.(); window.removeEventListener('keydown', key); window.removeEventListener('resize', resized) })
+onUnmounted(() => { disposed = true; off?.(); offScroll?.(); window.removeEventListener('keydown', key); window.removeEventListener('resize', resized) })
 </script>
 
 <template>
-  <div class="capture-overlay" @pointerdown.capture="pickDown" @pointerdown="down($event)" @pointermove.capture="drag" @pointerleave="pointer = null" @pointerup="up" @pointercancel="abortGesture(); pointer = null" @contextmenu.prevent="contextMenu">
+  <div v-if="scroll" class="scroll-running" role="status">正在自动拼接，结束后直接保存并复制。</div>
+  <div v-else class="capture-overlay" @pointerdown.capture="pickDown" @pointerdown="down($event)" @pointermove.capture="drag" @pointerleave="pointer = null" @pointerup="up" @pointercancel="abortGesture(); pointer = null" @contextmenu.prevent="contextMenu">
     <img v-if="frame" :key="frame.id" ref="screenImage" class="screen-image" :src="frame.dataUrl" alt="当前屏幕截图" draggable="false" @load="loaded" @error="imageFailed" />
     <div v-if="!selection" class="initial-shade" />
     <div v-if="!selection && !picking" class="capture-tip">拖动框选屏幕 <span>Esc / 右键取消 · Ctrl / ⌘ + A 全屏 · I 取色</span></div>
@@ -188,6 +218,7 @@ onUnmounted(() => { disposed = true; off?.(); window.removeEventListener('keydow
         <template #actions>
           <button :disabled="busy || editor.pending || editor.interacting" title="清空标注并重新框选" aria-label="重新框选" @click="reselect"><Scan :size="16" /></button>
           <button :disabled="busy || editor.pending || editor.interacting || marked" title="全屏选区" aria-label="全屏选区" @click="selectAll"><Maximize :size="16" /></button>
+          <button :disabled="busy || editor.pending || editor.interacting || marked" title="长截图：选区不要包含固定标题栏或滚动条；请先清空标注" @click="scrollSetup = true"><ArrowDownToLine :size="16" />长截图</button>
         <button :disabled="busy || editor.pending || editor.interacting" title="贴图 Ctrl/⌘+P" @click="finish('pin')"><Pin :size="16" />贴图</button>
         <button :disabled="busy || editor.pending || editor.interacting" @click="finish('save')"><Save :size="16" />保存</button>
         <button class="copy-button" :disabled="busy || editor.pending || editor.interacting" @click="finish('copy')"><Copy :size="16" />{{ busy ? '处理中' : '复制' }}</button>
@@ -196,7 +227,20 @@ onUnmounted(() => { disposed = true; off?.(); window.removeEventListener('keydow
       </AnnotationToolbar>
     </div>
     <CaptureMagnifier v-if="showMagnifier && screenImage && pointer && frame" :image="screenImage" :point="pointer" :viewport="viewport" :image-size="frame" :show-color="picking" />
-    <div v-if="error" class="overlay-error" role="alert" @pointerdown.stop>{{ error }}</div>
+    <div v-if="scrollSetup" class="scroll-setup-shade" @pointerdown.stop @pointermove.stop @contextmenu.stop.prevent>
+      <section class="scroll-setup" role="dialog" aria-modal="true" aria-label="开始长截图">
+        <h2>滚动长截图</h2>
+        <p v-if="error" class="scroll-setup-error" role="alert">{{ error }}</p>
+        <p>选区 {{ pixels?.width }} × {{ pixels?.height }} px。只框选可滚动的内容，避开固定标题栏、滚动条和悬浮按钮。</p>
+        <label><input v-model="automaticScroll" type="checkbox" :disabled="busy" /> 自动向下滚动（移动鼠标结束）</label>
+        <label><input v-model="saveScrollFrames" type="checkbox" :disabled="busy" /> 保存原始帧到本地（取消后仍保留，需自行清理）</label>
+        <p v-if="automaticScroll">开始后有 2 秒将鼠标放到选区内的可滚动内容上，并保持不动。自动调整滚动量，连续多次没有位移后停止。目标应用需能接收鼠标所在位置的滚轮。</p>
+        <p v-else>开始后在原窗口向下滚动，每次停顿约 1 秒，保留至少 32 行重叠。</p>
+        <p>再次按截图快捷键、从托盘结束或移动鼠标后，自动保存 PNG 并复制。拼接重试失败会自动结束，只输出已确认部分，无需手动处理。</p>
+        <div><button :disabled="busy" @click="scrollSetup = false">返回调整选区</button><button :disabled="busy" @click="startScroll">{{ busy ? '准备中…' : '开始滚动采集' }}</button></div>
+      </section>
+    </div>
+    <div v-if="error && !scrollSetup" class="overlay-error" role="alert" @pointerdown.stop>{{ error }}</div>
   </div>
 </template>
 
@@ -207,4 +251,9 @@ onUnmounted(() => { disposed = true; off?.(); window.removeEventListener('keydow
 .capture-modebar button:disabled { opacity: .5; }
 .capture-modebar select { background: #3f3f46; color: white; border-radius: 3px; padding: 3px; }
 .capture-modebar span { color: #d4d4d8; }
+.scroll-setup-shade { position: absolute; inset: 0; z-index: 5; display: grid; place-items: center; background: #0005; cursor: default; }
+.scroll-setup { width: min(480px, calc(100vw - 32px)); padding: 20px; border-radius: 8px; background: white; color: #27272a; font-size: 13px; box-shadow: 0 8px 30px #0005; }
+.scroll-setup h2 { font-size: 16px; font-weight: 600; margin-bottom: 12px; }.scroll-setup p { margin-bottom: 12px; line-height: 1.6; }
+.scroll-setup-error { color: #991b1b; background: #fee2e2; padding: 8px; border-radius: 4px; }
+.scroll-setup div { display: flex; justify-content: flex-end; gap: 10px; }.scroll-setup button { padding: 8px 12px; border: 1px solid #d4d4d8; border-radius: 5px; }.scroll-setup button:last-child { background: #2563eb; color: white; }
 </style>

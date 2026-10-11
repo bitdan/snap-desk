@@ -2,6 +2,14 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "desktop",
   "description": "Local UI event subscriptions only; native operations are validated Rust commands.",
-  "windows": ["main", "capture", "pin-*"],
-  "permissions": ["core:event:allow-listen", "core:event:allow-unlisten"]
+  "windows": [
+    "main",
+    "capture",
+    "pin-*",
+    "scroll-preview"
+  ],
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten"
+  ]
 }

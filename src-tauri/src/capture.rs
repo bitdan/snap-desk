@@ -13,6 +13,9 @@ use std::{
 use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
+#[path = "scroll_capture.rs"]
+pub mod scroll_capture;
+
 #[derive(Default)]
 pub struct CaptureState {
     /// 从倒计时开始到导出/取消结束只允许一个会话。
@@ -22,6 +25,11 @@ pub struct CaptureState {
     operation: AtomicBool,
     next_id: AtomicU64,
     session: Mutex<Option<Session>>,
+    scroll: Mutex<Option<scroll_capture::ScrollSession>>,
+    /// 全局快捷键只写原子停止标志，不等待后台拼接持有的图片锁。
+    scroll_collecting: AtomicBool,
+    scroll_stop: AtomicBool,
+    scroll_cancel: AtomicBool,
     /// 0 表示不在倒计时；取消只设置标志，由原任务清理，防止旧任务干扰新截图。
     pub delay_remaining: AtomicU8,
     delay_cancelled: AtomicBool,
@@ -310,7 +318,13 @@ pub fn show_capture(app: AppHandle, window: WebviewWindow, id: u64) -> Result<()
 fn cleanup(app: &AppHandle, restore_main: bool) -> Result<(), String> {
     // Keep the session recoverable if hiding fails; don't expose a dead overlay.
     overlay(app)?.hide().map_err(err)?;
+    if let Some(preview) = app.get_webview_window("scroll-preview") {
+        let _ = preview.hide();
+    }
     let state = app.state::<CaptureState>();
+    state.scroll_stop.store(true, Ordering::SeqCst);
+    state.scroll_collecting.store(false, Ordering::SeqCst);
+    *state.scroll.lock().map_err(err)? = None;
     *state.session.lock().map_err(err)? = None;
     if restore_main {
         show_main(app);
@@ -378,6 +392,9 @@ fn crop(
     annotations: &[crate::annotations::Annotation],
 ) -> Result<RgbaImage, String> {
     let state = app.state::<CaptureState>();
+    if state.scroll.lock().map_err(err)?.is_some() {
+        return Err("长截图进行中，请使用长截图预览中的导出按钮。".into());
+    }
     let guard = state.session.lock().map_err(err)?;
     let session = guard
         .as_ref()
@@ -465,6 +482,9 @@ pub async fn copy_capture_color(
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<CaptureState>();
         let _operation = Operation::acquire(&state.operation)?;
+        if state.scroll.lock().map_err(err)?.is_some() {
+            return Err("长截图进行中，不能取色。".into());
+        }
         let text = {
             let guard = state.session.lock().map_err(err)?;
             let session = guard

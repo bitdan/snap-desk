@@ -21,6 +21,7 @@
 - 倒计时期间可通过主界面取消按钮、再次按截图快捷键或托盘“取消延时截图”取消；长按快捷键不会重复触发。
 - 矩形 / 椭圆 / 直线 / 箭头 / 折线、画笔 / 荧光笔、文字、区域马赛克 / 模糊；复制与保存包含标注。
 - `Ctrl / ⌘ + Z` 撤销，`Ctrl / ⌘ + Shift + Z` 或 `Ctrl + Y` 重做。
+- 框选后进入“长截图”，自动滚动或在原窗口手动滚动采集与拼接；截图快捷键 / 托盘结束后自动保存并复制。
 
 当前不包含跨屏框选、窗口识别、历史记录或开机自启。除快捷键与延时外，设置页仍展示当前固定行为。
 
@@ -31,6 +32,32 @@
 键盘微调只在选区有效、没有标注且未进行拖动或导出时生效；最小尺寸为 1 × 1 原图像素，移动与缩放均限制在主屏范围。鼠标框选的非整数像素边缘首次微调时对齐到实际裁剪边缘。工具栏按钮或下拉框获得焦点时保留其原生方向键行为，点击选区后可继续微调。撤销全部标注并切回选区工具后可以微调，同时清空重做记录。
 
 本轮验证：`npm run check`、选区与标注的 15 项定向测试、`git diff --check` 通过。按项目约定未编译、打包或启动桌面验收；待实机检查 125% / 150% / 200% 缩放下长按方向键、Alt / Shift 组合键、工具栏焦点以及复制 / PNG 输出与选区坐标的一致性。
+
+## 长截图（代码已落地，原生编译与实机验收待完成）
+
+1. 框选主屏可滚动内容，点击“长截图”，避开固定标题栏、滚动条和悬浮按钮。
+2. 自动模式开始后有 2 秒把鼠标放入选区并保持不动；也可关闭自动滚动，自己向下滚，每次停顿约 1 秒。
+3. 自动滚动连续 4 次无位移、移动鼠标、截图快捷键或托盘“结束长截图并自动保存”都会结束采集。
+4. 自动生成原尺寸 PNG 到应用本地数据目录 `scroll-results/`，同时复制到剪贴板。主界面提示保存路径。采集时选区旁有实时缩略预览，绿色框标出最新一屏；结束后没有预览确认、接缝编辑或导出确认步骤。
+
+匹配使用 xcap + enigo + image 与自定义行投票 / SAD / NCC 校验；每轮间隔 160 ms 取两帧，画面稳定后匹配，成功后记录分段。参考 [jietuba](https://github.com/1003129155/jietuba) 的滚动反馈思路与 [scrollshot](https://github.com/xutianyi1999/scrollshot) 的稳定等待和匹配校验流程，没有引入其代码。滚轮不是固定像素，按实际位移调整 1～6 刻度。
+
+实时预览优先位于选区右侧，其次左侧、下方和上方；仅追加成功才更新。预览窗口不抢焦点，并提供结束 / 取消按钮。选区几乎占满屏幕时会退到屏幕右侧，取样期间隐藏预览再恢复，可能出现短暂闪动，避免把面板拼进长图。
+
+匹配失败会在原位置延时重试 2 次。仍失败则自动结束，不追加不可靠候选帧，只输出已经确认的部分，并明确提示提前结束。连续动态画面、显示器变化、容量或时长上限也会结束。手动滚动短暂停顿不视为完成。没有要求用户修接缝、丢弃候选帧或回滚页面的流程。
+
+PNG 保存和剪贴板相互独立：一种失败仍保留另一种输出；两者都失败自动重试 3 次，仍失败则提示错误并保留内存会话，不假报成功。托盘“取消当前截图”可释放会话（正在处理时会提示稍候）。退出程序会释放内存。
+
+默认可选保存原始帧至本地 `scroll-frames/session-*`，包括首帧、不同的稳定候选帧及匹配日志。取消或退出后仍保留，需自行清理。成图目录也需自行清理；未实现应用内存档恢复。
+
+边界：主屏纵向；至少 32 × 64 px，单帧不超过 800 万像素；最多 64 帧 / 60000 行，成图与已接受源帧各最多 3200 万像素；每轮 5 分钟。原始帧存档每会话最多 128 张 / 512 MiB。尚未实现固定元素过滤、局部动态内容识别与磁盘分块导出。macOS 自动输入另需辅助功能权限，Wayland 暂不支持。
+
+验证：前端类型检查、长截图完成事件定向测试、Rust 格式检查；按项目约定未编译和执行 Rust 测试，尚待桌面验收。
+
+- [ ] 网页 / 编辑器 / 文件列表：实时预览随帧增长且绿色框准确，正常结束直接保存并复制，无完成确认。
+- [ ] 重复图案、过大位移、持续动画：自动重试并输出可靠部分，明确提示截断。
+- [ ] 保存与剪贴板各自失败及同时失败：不误报成功、不丢失唯一可用输出。
+- [ ] 选区四周空间、满屏选区降级、DPI 缩放、预览不抢焦点 / 不进入成图、结束与取消按钮、显示器变化和容量边界。
 
 ## 贴图功能（本轮新增，待原生编译与实机验收）
 
@@ -137,13 +164,19 @@ Esc / 右键先退出取色并恢复原选区、标注，再次操作才取消�
 { "shortcut": "Alt+F4", "delaySeconds": 3 }
 ```
 
+## Windows 图片复制修复（待实机验证）
+
+图片复制统一走 `image_io.rs`：Windows 先准备 PNG 与 CF_DIBV5，再使用主窗口句柄在同一工作线程内打开、清空、写入和关闭剪贴板，避免持有剪贴板期间编码大图。瞬时失败最多尝试 4 次，每次释放后再等待；PNG 成功而补充 DIB 失败时保留 PNG。普通截图、贴图与长截图共用此路径；其他平台仍使用原插件。
+
+针对 SetClipboardData / OS error 1418 的实现修复已加入；尚未复现并确认用户环境中的具体触发条件。新增位图布局 Rust 用例，按约定未编译或执行。需重新构建后测试普通截图、大图、透明贴图及剪贴板被其他程序短暂占用的场景。长截图已保存的 PNG 不受剪贴板失败影响。
+
 ## 开发环境
 
 - Node.js 18.20+（建议 22 LTS），npm。
 - Rust stable 与 Cargo（本机验证版本 1.99.0）；已有 `src-tauri/Cargo.lock`，原生检查和测试使用 `--locked` 固定依赖版本。
 - Windows：Visual Studio 2022 Build Tools，勾选 **使用 C++ 的桌面开发**、MSVC 与 Windows SDK；需要 WebView2 Runtime。
 - macOS：Xcode Command Line Tools；首次截图须在系统设置中允许屏幕录制，然后重新启动应用。
-- Linux X11：安装 Tauri 的 WebKitGTK 4.1、AppIndicator 等开发依赖，以及 xcap 所需 XCB/RandR、PipeWire、Clang 开发依赖。具体包名随发行版变化。
+- Linux X11：安装 Tauri 的 WebKitGTK 4.1、AppIndicator 等开发依赖，以及 xcap 所需 XCB/RandR、PipeWire、Clang 开发依赖和 enigo 所需 libxkbcommon 开发包。具体包名随发行版变化。
 - Linux Wayland：V0.1 主动提示暂不支持，不绕过 Portal 或声称功能等同 X11。
 
 依赖安装参考：[Tauri 环境准备](https://v2.tauri.app/start/prerequisites/)、[xcap 平台依赖](https://github.com/nashaofu/xcap#system-dependencies)、[Tauri 全局快捷键](https://v2.tauri.app/plugin/global-shortcut/)。
@@ -259,6 +292,7 @@ src/lib/selection.ts            CSS 选区 → 原图像素换算
 src/lib/magnifier.ts            放大镜采样、边缘留白与面板定位
 src/lib/color-picker.ts         取色预览格式与原图像素微调
 src/lib/pin-content.ts          文本排版复用、颜色输入和分组筛选
+src/lib/scroll-capture.ts       长截图完成事件版本校验
 src/lib/annotations.ts          标注模型、原图坐标换算、撤销重做和 SVG 预览路径
 src/lib/use-annotations.ts      标注编辑事务、历史与贴图同步失败回滚
 src/lib/annotation-raster.ts    中文字形与区域滤镜 PNG 生成
@@ -266,6 +300,10 @@ src/lib/pins.ts                 贴图缩放步进与编辑条件
 src/lib/pin-layout.json         前后端共用的底栏、边框与阴影留白尺寸
 src-tauri/src/lib.rs            插件、托盘、单实例、全局快捷键
 src-tauri/src/capture.rs        截图会话、裁剪、复制、PNG 保存、校验
+src-tauri/src/scroll_capture.rs 长截图后台采集、自动结束、保存和复制
+src-tauri/src/scroll_driver.rs  enigo 区域滚动与步长调节
+src-tauri/src/scroll_archive.rs 原始 PNG 帧与操作日志存档
+src-tauri/src/stitch.rs         重叠匹配、拼接、接缝重调和容量校验
 src-tauri/src/platform.rs       原生截图适配边界（xcap 各平台实现）
 src-tauri/src/settings.rs       配置模型、JSON 读写、快捷键切换与失败回滚
 src-tauri/src/annotations.rs    标注校验、线段栅格化与图片合成
@@ -276,6 +314,7 @@ tests/selection.test.ts         坐标/缩放测试
 tests/magnifier.test.ts         放大镜 DPI 换算、边缘采样及面板避让测试
 tests/color-picker.test.ts      HEX / RGB 格式及取色像素微调测试
 tests/pin-content.test.ts       文本 / 颜色输入、分组范围与名称校验测试
+tests/scroll-capture.test.ts    长截图响应顺序、操作条件与重叠范围测试
 tests/annotations.test.ts       标注历史、预览几何与缩放坐标测试
 tests/annotation-editor.test.ts 编辑事务、原有标注编辑、锁定与失败回滚测试
 tests/pins.test.ts              缩放范围、连续步进与锁定条件测试

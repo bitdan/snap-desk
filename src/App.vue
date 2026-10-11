@@ -105,6 +105,7 @@ onUnmounted(() => { disposed = true; disposers.forEach(off => off()) })
             <div><span>保存 PNG</span><kbd>Ctrl / ⌘ + S</kbd></div>
             <div><span>截图贴图</span><kbd>Ctrl / ⌘ + P</kbd></div>
             <div><span>屏幕取色（HEX / RGB）</span><kbd>I · 单击复制</kbd></div>
+            <div><span>长截图</span><span>框选 → 长截图 → 自动拼接 → 结束后保存并复制</span></div>
             <div><span>撤销 / 重做</span><kbd>Ctrl / ⌘ + Z / Shift + Z</kbd></div>
             <div><span>取消</span><kbd>Esc / 右键</kbd></div>
           </section>
@@ -131,7 +132,7 @@ onUnmounted(() => { disposed = true; disposers.forEach(off => off()) })
 
         <template v-else>
           <h1>关于 Snap Desk</h1><p class="subtitle">桌面截图与标注工具</p>
-          <section class="settings-card about"><span class="brand-icon"><Scan :size="30" /></span><h2>Snap Desk <span class="pill">0.1.3</span></h2><p>基于 Tauri 2、Vue 3、TypeScript 与 Rust。截图和贴图仅在内存中处理，复制到剪贴板或保存至你选择的位置；快捷键与延时设置保存在本机。</p><p>当前范围：主屏区域截图、图形 / 画笔 / 文字 / 马赛克标注、撤销重做、贴图内继续标注与二次编辑，以及多贴图管理和基础图片处理。OCR、长截图与录屏将按项目 TODO 分期实现。</p><p>Windows / macOS / Linux X11 使用原生截图后端，尚待各平台实机验收。macOS 需要屏幕录制权限；Wayland 暂未开放。</p></section>
+          <section class="settings-card about"><span class="brand-icon"><Scan :size="30" /></span><h2>Snap Desk <span class="pill">0.1.3</span></h2><p>基于 Tauri 2、Vue 3、TypeScript 与 Rust。截图和贴图在本地处理；长截图可选保存原始帧，取消后仍保留，需自行清理；快捷键与延时设置保存在本机。</p><p>当前范围：主屏区域截图、图形 / 画笔 / 文字 / 马赛克标注、撤销重做、贴图内继续标注与二次编辑，以及多贴图管理和基础图片处理。支持区域滚动长截图；OCR 与录屏将按项目 TODO 分期实现。</p><p>Windows / macOS / Linux X11 使用原生截图后端，尚待各平台实机验收。macOS 截图需要屏幕录制权限，自动滚动另需辅助功能权限；Wayland 暂未开放。</p></section>
         </template>
       </div>
     </main>

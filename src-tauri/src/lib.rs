@@ -5,6 +5,7 @@ mod pin_content;
 mod pins;
 mod platform;
 mod settings;
+mod stitch;
 
 use capture::{require_window, show_main, CaptureState};
 use serde::Serialize;
@@ -52,6 +53,9 @@ fn hide_main(window: WebviewWindow) -> Result<(), String> {
 fn trigger(app: &AppHandle) {
     // 倒计时内再次按截图键代表取消；真正截图开始后不重复创建会话。
     if capture::cancel_delay(app) {
+        return;
+    }
+    if capture::scroll_capture::stop(app) {
         return;
     }
     if app.state::<CaptureState>().active.load(Ordering::SeqCst) {
@@ -109,9 +113,28 @@ pub fn run() {
             settings::initialize(app.handle())?;
             let capture = MenuItem::with_id(app, "capture", "开始截图", true, None::<&str>)?;
             let cancel = MenuItem::with_id(app, "cancel", "取消延时截图", true, None::<&str>)?;
+            let scroll_stop = MenuItem::with_id(
+                app,
+                "scroll-stop",
+                "结束长截图并自动保存",
+                true,
+                None::<&str>,
+            )?;
+            let scroll_cancel =
+                MenuItem::with_id(app, "scroll-cancel", "取消当前截图", true, None::<&str>)?;
             let open = MenuItem::with_id(app, "open", "打开 Snap Desk", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&capture, &cancel, &open, &quit])?;
+            let menu = Menu::with_items(
+                app,
+                &[
+                    &capture,
+                    &cancel,
+                    &scroll_stop,
+                    &scroll_cancel,
+                    &open,
+                    &quit,
+                ],
+            )?;
             TrayIconBuilder::new()
                 .icon(tauri::image::Image::from_bytes(include_bytes!(
                     "../icons/32x32.png"
@@ -120,6 +143,14 @@ pub fn run() {
                 .menu(&menu)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "capture" => trigger(app),
+                    "scroll-cancel" => {
+                        if let Err(error) = capture::cancel_active(app) {
+                            capture::report_error(app, error);
+                        }
+                    }
+                    "scroll-stop" => {
+                        capture::scroll_capture::stop(app);
+                    }
                     "cancel" => {
                         capture::cancel_delay(app);
                     }
@@ -139,6 +170,9 @@ pub fn run() {
                 if window.label() == "main" {
                     api.prevent_close();
                     let _ = window.hide();
+                } else if window.label() == "scroll-preview" {
+                    api.prevent_close();
+                    capture::scroll_capture::stop(window.app_handle());
                 } else if window.label() == "capture" {
                     api.prevent_close();
                     let _ = capture::cancel_active(window.app_handle());
@@ -170,6 +204,9 @@ pub fn run() {
             capture::copy_capture_color,
             capture::save_capture,
             capture::pin_capture,
+            capture::scroll_capture::start_scroll,
+            capture::scroll_capture::current_scroll,
+            capture::scroll_capture::control_scroll,
             pins::pin_clipboard,
             pins::pin_file,
             pin_content::pin_color,

@@ -5,11 +5,20 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 use tauri::AppHandle;
+#[cfg(not(target_os = "windows"))]
 use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_dialog::DialogExt;
 
+#[cfg(target_os = "windows")]
+#[path = "windows_clipboard.rs"]
+mod windows_clipboard;
+
 /// 保留原始 RGBA 像素，不把窗口缩放或透明度混入导出图片。
 pub fn copy(app: &AppHandle, image: &RgbaImage) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    return windows_clipboard::copy(app, image);
+
+    #[cfg(not(target_os = "windows"))]
     app.clipboard()
         .write_image(&tauri::image::Image::new(
             image.as_raw(),

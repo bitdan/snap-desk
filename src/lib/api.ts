@@ -10,6 +10,10 @@ export interface PinSummary { label: string; width: number; height: number; visi
 export interface ColorPinRequest { color: string; width: number; height: number }
 export interface TextPinRequest { background: string; annotation: Annotation }
 export type ColorFormat = 'hex' | 'rgb'
+export interface ScrollView {
+  id: number; revision: number; collecting: boolean; automatic: boolean; archivePath: string | null;
+  width: number; height: number; frames: number; message: string; preview: string; frameHeight: number
+}
 export type PinTransform = 'rotateRight' | 'rotateLeft' | 'flipHorizontal' | 'flipVertical' | 'grayscale' | 'invert' | 'reset'
 export type PinAction = 'copy' | 'save' | 'hide' | 'close'
 export type PinManageAction = 'show' | 'hide' | 'close'
@@ -29,6 +33,9 @@ export const api = {
   copyColor: (id: number, point: Point, format: ColorFormat) => invoke<void>('copy_capture_color', { id, point, format }),
   save: (id: number, rect: Rect, annotations: Annotation[]) => invoke<boolean>('save_capture', { id, rect, annotations }),
   pin: (id: number, rect: Rect, annotations: Annotation[]) => invoke<void>('pin_capture', { id, rect, annotations }),
+  startScroll: (id: number, rect: Rect, automatic: boolean, saveFrames: boolean) => invoke<ScrollView>('start_scroll', { id, rect, automatic, saveFrames }),
+  controlScroll: (id: number, cancel = false) => invoke<void>('control_scroll', { id, cancel }),
+  currentScroll: () => invoke<ScrollView | null>('current_scroll'),
   pinClipboard: () => invoke<void>('pin_clipboard'),
   pinFile: () => invoke<boolean>('pin_file'),
   pinColor: (request: ColorPinRequest) => invoke<void>('pin_color', { request }),
@@ -49,3 +56,4 @@ export const onError = (fn: (error: string) => void) => listen<string>('capture-
 export const onResult = (fn: (result: string) => void) => listen<string>('capture-result', e => fn(e.payload))
 export const onDelay = (fn: (remaining: number) => void) => listen<number>('capture-delay', e => fn(e.payload))
 export const onPinsChanged = (fn: () => void) => listen('pins-changed', fn)
+export const onScroll = (fn: (view: ScrollView) => void) => listen<ScrollView>('scroll-updated', e => fn(e.payload))
