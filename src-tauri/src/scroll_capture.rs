@@ -289,19 +289,39 @@ fn sample_pair(
         std::thread::sleep(Duration::from_millis(80));
     }
     let _preview_guard = PreviewSample(preview);
-    let first = sample(app, rect, source_size)?;
-    if finishing {
-        std::thread::sleep(Duration::from_millis(160));
-    } else if !wait(state, 160) {
-        return Ok(None);
+    let mut reference = sample(app, rect, source_size)?;
+    let mut quiet_samples = 0;
+    let mut settled = None;
+    // 每 80 ms 检查，连续 240 ms 稳定即可继续，不再每轮固定停顿近一秒。
+    // 始终与本段静止期的首帧比较，防止缓慢动画的逐帧小变化累积成错位。
+    // 最多等待约 1.3 秒；持续运动交由外层重试，期间绝不再发送滚轮。
+    for _ in 0..16 {
+        if finishing {
+            if state.scroll_cancel.load(Ordering::SeqCst) {
+                return Ok(None);
+            }
+            std::thread::sleep(Duration::from_millis(80));
+        } else if !wait(state, 80) {
+            return Ok(None);
+        }
+        let candidate = sample(app, rect, source_size)?;
+        if !finishing && state.scroll_stop.load(Ordering::SeqCst) {
+            return Ok(None);
+        }
+        if crate::stitch::stable(&reference, &candidate) {
+            quiet_samples += 1;
+            if quiet_samples >= 3 {
+                settled = Some(candidate);
+                break;
+            }
+        } else {
+            reference = candidate;
+            quiet_samples = 0;
+        }
     }
-    let second = sample(app, rect, source_size)?;
-    if !finishing && state.scroll_stop.load(Ordering::SeqCst) {
+    let Some(second) = settled else {
         return Ok(None);
-    }
-    if !crate::stitch::stable(&first, &second) {
-        return Ok(None);
-    }
+    };
     let mut guard = state.scroll.lock().map_err(err)?;
     let session = guard
         .as_mut()
@@ -391,7 +411,7 @@ fn collect(app: AppHandle, id: u64, first_delay: u64) {
     let mut delay = first_delay;
     let mut manual_retries = 0;
     while finish_latest && wait(&state, delay) {
-        delay = 700;
+        delay = 80;
         if Instant::now() >= deadline {
             message = "采集达到 5 分钟上限，已自动结束。".into();
             finish_latest = false;
@@ -422,7 +442,7 @@ fn collect(app: AppHandle, id: u64, first_delay: u64) {
                         driver.retries += 1;
                         driver.unchanged = 0;
                         driver.step = 1;
-                        delay = 1200;
+                        delay = 400;
                         if driver.retries <= 2 {
                             return Ok(());
                         }
@@ -437,7 +457,7 @@ fn collect(app: AppHandle, id: u64, first_delay: u64) {
                         if driver.unchanged >= 4 {
                             return Err("连续 4 次滚动后画面未移动：可能已到底或窗口不接受滚轮，已自动停止。".into());
                         }
-                        delay = 1200;
+                        delay = 400;
                     }
                     Some(Match::Overlap(overlap)) => {
                         let guard = state.scroll.lock().map_err(err)?;
@@ -470,8 +490,17 @@ fn collect(app: AppHandle, id: u64, first_delay: u64) {
                         std::thread::sleep(Duration::from_millis(80));
                     }
                     let _preview_guard = PreviewSample(preview);
-                    if !state.scroll_stop.load(Ordering::SeqCst) {
-                        driver.scroll()?;
+                    // 将反馈得到的 1～6 格拆开匀速发送；每格前都检查鼠标和停止状态。
+                    // 整组结束后才采集，既减轻页面跳动，也避免把动画中间帧拼进去。
+                    for tick in 0..driver.step {
+                        if tick > 0 && !wait(&state, 70) {
+                            break;
+                        }
+                        check_driver(&app, &state, id, driver)?;
+                        if state.scroll_stop.load(Ordering::SeqCst) {
+                            break;
+                        }
+                        driver.scroll_tick()?;
                     }
                 }
             } else if result == Some(Match::Uncertain) {

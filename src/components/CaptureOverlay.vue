@@ -234,8 +234,8 @@ onUnmounted(() => { disposed = true; off?.(); offScroll?.(); window.removeEventL
         <p>选区 {{ pixels?.width }} × {{ pixels?.height }} px。只框选可滚动的内容，避开固定标题栏、滚动条和悬浮按钮。</p>
         <label><input v-model="automaticScroll" type="checkbox" :disabled="busy" /> 自动向下滚动（移动鼠标结束）</label>
         <label><input v-model="saveScrollFrames" type="checkbox" :disabled="busy" /> 保存原始帧到本地（取消后仍保留，需自行清理）</label>
-        <p v-if="automaticScroll">开始后有 2 秒将鼠标放到选区内的可滚动内容上，并保持不动。自动调整滚动量，连续多次没有位移后停止。目标应用需能接收鼠标所在位置的滚轮。</p>
-        <p v-else>开始后在原窗口向下滚动，每次停顿约 1 秒，保留至少 32 行重叠。</p>
+        <p v-if="automaticScroll">开始后有 2 秒将鼠标放到选区内的可滚动内容上，并保持不动。小步滚动，画面稳定后继续，连续多次没有位移后停止。目标应用需能接收鼠标所在位置的滚轮。</p>
+        <p v-else>开始后在原窗口向下滚动，每次短暂停顿，等预览更新后继续，建议保留至少半屏重叠。</p>
         <p>再次按截图快捷键、从托盘结束或移动鼠标后，自动保存 PNG 并复制。拼接重试失败会自动结束，只输出已确认部分，无需手动处理。</p>
         <div><button :disabled="busy" @click="scrollSetup = false">返回调整选区</button><button :disabled="busy" @click="startScroll">{{ busy ? '准备中…' : '开始滚动采集' }}</button></div>
       </section>

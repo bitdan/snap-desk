@@ -39,9 +39,10 @@ impl Driver {
         self.anchor = Some(point);
         Ok(())
     }
-    pub fn scroll(&mut self) -> Result<(), String> {
+    /// 每次只发一格，由采集线程控制间隔；避免一次多格让页面突然跳动。
+    pub fn scroll_tick(&mut self) -> Result<(), String> {
         self.input
-            .scroll(self.step, Axis::Vertical)
+            .scroll(1, Axis::Vertical)
             .map_err(|e| e.to_string())?;
         self.scrolled = true;
         Ok(())
