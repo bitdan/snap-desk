@@ -31,7 +31,8 @@ function value(event: Event) { return (event.target as HTMLInputElement).value }
       <label>粗细 <input type="number" min="1" max="64" :value="editor.width" :disabled="locked" @change="editor.style({ width: Math.min(64, Math.max(1, Number(value($event)) || 3)) })" /></label>
       <label>不透明度 <select :value="editor.opacity" :disabled="locked || filterMode" @change="editor.style({ opacity: Number(value($event)) })"><option :value="1">100%</option><option :value="0.7">70%</option><option :value="0.35">35%</option><option :value="0.15">15%</option></select></label>
       <template v-if="textMode">
-      <input class="annotation-text" aria-label="标注文字" placeholder="输入文字，再点击图片放置" maxlength="500" :value="editor.text" :disabled="locked" @change="editor.style({ text: value($event) })" />
+      <input v-if="editor.selected >= 0" class="annotation-text" aria-label="修改标注文字" placeholder="修改选中文字" maxlength="500" :value="editor.text" :disabled="locked" @change="editor.style({ text: value($event) })" />
+      <span v-else class="annotation-hint">点击图片输入文字；Enter 完成，Shift+Enter 换行，Esc 取消</span>
       <label>字号 <input type="number" min="8" max="128" :value="editor.fontSize" :disabled="locked" @change="editor.style({ fontSize: Math.min(128, Math.max(8, Number(value($event)) || 24)) })" /></label>
       <select aria-label="字体" :value="editor.fontFamily" :disabled="locked" @change="editor.style({ fontFamily: value($event) as 'sans' | 'serif' | 'mono' })"><option value="sans">无衬线</option><option value="serif">衬线</option><option value="mono">等宽</option></select>
       </template>

@@ -54,11 +54,11 @@ onUnmounted(() => { disposed = true; off?.() })
 </script>
 
 <template>
-  <h1>贴图</h1><p class="subtitle">把截图、PNG、文本或颜色贴在桌面上，边查看边工作。</p>
+  <h1>贴图</h1><p class="subtitle">把截图、图片文件、文本或颜色贴在桌面上，边查看边工作。</p>
   <div v-if="error" class="notice error" role="alert">{{ error }}</div>
   <div class="pin-manager-actions">
     <Button :disabled="!desktop || busy" @click="run(api.pinClipboard)">剪贴板图片贴图</Button>
-    <Button variant="outline" :disabled="!desktop || busy" @click="run(api.pinFile)">打开 PNG 贴图</Button>
+    <Button variant="outline" :disabled="!desktop || busy" @click="run(api.pinFile)">打开图片贴图</Button>
   </div>
   <PinCreator :disabled="!desktop || busy" @create="run" />
   <div class="pin-manager-actions group-actions">
@@ -89,7 +89,7 @@ onUnmounted(() => { disposed = true; off?.() })
     <div><span>隐藏 / 关闭</span><kbd>Esc / Ctrl / ⌘ + W</kbd></div>
     <div><span>图片处理</span><span>旋转 · 翻转 · 灰度 · 反色 · 恢复原图</span></div>
   </section>
-  <p class="scope-note">最多 12 张、单张 1600 万像素、总计 3200 万像素；PNG 文件最多 64 MiB。分组名称最多 32 字符，空组自动消失。截图和文本贴图保留可编辑标注。关闭窗口或退出应用会清除内存图片及分组，请先保存需要保留的内容。</p>
+  <p class="scope-note">最多 12 张、单张 1600 万像素、总计 3200 万像素；支持 PNG / JPEG / WebP，文件最多 64 MiB，动画 WebP 仅取首帧。分组名称最多 32 字符，空组自动消失。截图和文本贴图保留可编辑标注。关闭窗口或退出应用会清除内存图片及分组，请先保存需要保留的内容。</p>
 </template>
 
 <style scoped>

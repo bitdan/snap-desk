@@ -7,19 +7,24 @@ export type AnnotationTool = 'edit' | 'eraser' | Annotation['kind']
 /** 截图/贴图共用编辑状态。一次拖动只提交一次历史，保存失败不改历史也不丢失原图形。 */
 export function useAnnotations(bounds: () => Rect, imageUrl: () => string, disabled: () => boolean, persist?: (shapes: Annotation[]) => Promise<void>) {
   const state = reactive({ history: emptyHistory(), tool: 'edit' as AnnotationTool, selected: -1,
-    draft: null as Annotation | null, pending: false, interacting: false, error: '',
+    draft: null as Annotation | null, pending: false, interacting: false, textEditing: false, error: '',
     color: '#ef4444', width: 3, opacity: 1, text: '', fontSize: 24, fontFamily: 'sans' as NonNullable<Annotation['fontFamily']> })
   let gesture: { start: Point; shape: Annotation; mode: 'draw' | 'move' | Handle | 'start' | 'end' } | null = null
   let generation = 0
+  // 输入框和最终字形使用同一原图坐标区域，缩放/DPI 仅由 SVG 负责换算。
+  function textBox() {
+    const b = bounds(), p = state.draft?.start ?? { x: b.x, y: b.y }
+    return { x: p.x, y: p.y, width: Math.min(180, b.x + b.width - p.x), height: Math.min(180, b.y + b.height - p.y) }
+  }
   function locked() { return disabled() || state.pending }
   function point(p: Point): Point { const b = bounds(); return { x: clamp(p.x, b.x, b.x + b.width), y: clamp(p.y, b.y, b.y + b.height) } }
   async function apply(next: History) {
-    if (locked()) return
-    if (next.present.reduce((sum, s) => sum + (s.raster?.length ?? 0), 0) > 8_000_000) { state.error = '文字和滤镜数据总量过大，请删除部分标注。'; return }
+    if (locked()) return false
+    if (next.present.reduce((sum, s) => sum + (s.raster?.length ?? 0), 0) > 8_000_000) { state.error = '文字和滤镜数据总量过大，请删除部分标注。'; return false }
     const version = generation
     state.pending = true; state.error = ''
-    try { await persist?.(next.present); if (version === generation) state.history = next }
-    catch (e) { state.error = String(e) }
+    try { await persist?.(next.present); if (version !== generation) return false; state.history = next; return true }
+    catch (e) { state.error = String(e); return false }
     finally { state.pending = false }
   }
   function select(index: number) {
@@ -35,7 +40,7 @@ export function useAnnotations(bounds: () => Rect, imageUrl: () => string, disab
     else { state.width = 3; state.opacity = 1 }
   }
   function reset(shapes: Annotation[] = []) { generation++; state.history = emptyHistory(shapes); state.selected = -1; abort(); state.error = '' }
-  function abort() { gesture = null; state.draft = null; state.interacting = false }
+  function abort() { gesture = null; state.draft = null; state.interacting = false; state.textEditing = false }
   async function remove() {
     if (locked() || state.interacting || state.selected < 0) return
     const next = state.history.present.filter((_, i) => i !== state.selected)
@@ -61,13 +66,19 @@ export function useAnnotations(bounds: () => Rect, imageUrl: () => string, disab
       gesture = { start: p, shape, mode: handle ?? 'move' }; state.draft = shape; state.interacting = true; return
     }
     if (state.history.present.length >= 100) { state.error = '最多支持 100 个标注。'; return }
-    if (state.tool === 'text' && !state.text.trim()) { state.error = '请先在工具栏输入文字，再点击图片放置。'; return }
     state.selected = -1
     const shape: Annotation = { kind: state.tool, start: p, end: p, color: state.color, width: state.width, opacity: state.opacity }
     if (['pen', 'highlighter', 'polyline'].includes(shape.kind)) shape.points = [p]
-    if (shape.kind === 'text') { shape.text = state.text; shape.fontSize = state.fontSize; shape.fontFamily = state.fontFamily }
+    if (shape.kind === 'text') {
+      // 先放置空输入框，临近右/下边缘时让出可输入的空间，不复用上一次文字。
+      const b = bounds()
+      const lineHeight = Math.ceil(state.fontSize * 1.3 + 4)
+      shape.start = { x: Math.min(p.x, b.x + Math.max(0, b.width - 120)), y: Math.min(p.y, b.y + Math.max(0, b.height - lineHeight)) }
+      shape.end = { ...shape.start }; shape.text = ''; shape.fontSize = state.fontSize; shape.fontFamily = state.fontFamily
+      state.textEditing = true; state.error = ''
+    }
     state.draft = shape; state.interacting = true
-    if (shape.kind !== 'polyline') gesture = { start: p, shape, mode: 'draw' }
+    if (shape.kind !== 'polyline' && shape.kind !== 'text') gesture = { start: p, shape, mode: 'draw' }
   }
   function drag(p: Point) {
     if (!gesture || !state.draft || locked()) return
@@ -80,6 +91,7 @@ export function useAnnotations(bounds: () => Rect, imageUrl: () => string, disab
     } else if (state.draft.kind !== 'text') state.draft = { ...state.draft, end: p }
   }
   async function finish(polyline = false) {
+    if (state.textEditing) return // 放置输入框的 pointerup 不应提交空文字。
     if (!state.draft || locked() || (state.tool === 'polyline' && !polyline)) return
     let shape = state.draft
     const editing = state.selected >= 0 && gesture?.mode !== 'draw'
@@ -96,6 +108,20 @@ export function useAnnotations(bounds: () => Rect, imageUrl: () => string, disab
     if (version !== generation) return
     const next = editing ? state.history.present.map((s, i) => i === state.selected ? shape : s) : [...state.history.present, shape]
     await apply(commit(state.history, next)); abort()
+  }
+  /** 输入完成才栅格化并提交一次历史；失败保留输入框，允许修改后重试。 */
+  async function finishText() {
+    if (!state.textEditing || !state.draft || locked()) return
+    if (!state.draft.text?.trim()) { abort(); return }
+    if ([...state.draft.text].length > 500) { state.error = '文字最多 500 个字符。'; return }
+    const version = generation
+    state.pending = true; state.error = ''
+    let shape: Annotation
+    try { shape = await prepareRaster(state.draft, imageUrl(), textBox()) }
+    catch (e) { if (version === generation) state.error = String(e); return }
+    finally { state.pending = false }
+    if (version !== generation) return
+    if (await apply(commit(state.history, [...state.history.present, shape]))) abort()
   }
   async function style(patch: Partial<Pick<Annotation, 'color' | 'width' | 'opacity' | 'text' | 'fontSize' | 'fontFamily'>>) {
     if (locked() || state.interacting) return
@@ -137,6 +163,6 @@ export function useAnnotations(bounds: () => Rect, imageUrl: () => string, disab
     }
     return false
   }
-  return Object.assign(state, { begin, drag, finish, abort, reset, setTool, select, remove, clear, style, travel, key })
+  return Object.assign(state, { textBox, begin, drag, finish, finishText, abort, reset, setTool, select, remove, clear, style, travel, key })
 }
 export type AnnotationEditor = ReturnType<typeof useAnnotations>
