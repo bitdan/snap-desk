@@ -23,6 +23,7 @@ pub enum Kind {
     Pen,
     Highlighter,
     Text,
+    Number,
     Mosaic,
     Blur,
 }
@@ -107,7 +108,10 @@ pub fn validate(shapes: &[Annotation], width: u32, height: u32) -> Result<(), St
         {
             return Err("此标注类型不接受路径点。".into());
         }
-        if matches!(s.kind, Kind::Text | Kind::Mosaic | Kind::Blur) {
+        if matches!(
+            s.kind,
+            Kind::Text | Kind::Number | Kind::Mosaic | Kind::Blur
+        ) {
             if s.start.x >= s.end.x || s.start.y >= s.end.y {
                 return Err("文字或滤镜范围为空。".into());
             }
@@ -117,6 +121,15 @@ pub fn validate(shapes: &[Annotation], width: u32, height: u32) -> Result<(), St
         }
         if matches!(s.kind, Kind::Mosaic | Kind::Blur) && s.opacity != 1.0 {
             return Err("遮挡滤镜必须完全不透明。".into());
+        }
+        // 序号沿用 text 字段传递数字，但只接受 1～999 的规范十进制表示。
+        if matches!(s.kind, Kind::Number)
+            && !s.text.as_deref().is_some_and(|text| {
+                text.parse::<u16>()
+                    .is_ok_and(|value| (1..=999).contains(&value) && value.to_string() == text)
+            })
+        {
+            return Err("序号须为 1～999。".into());
         }
         if matches!(s.kind, Kind::Text)
             && (s
@@ -152,7 +165,7 @@ fn segments(s: &Annotation) -> Vec<(Point, Point)> {
         Kind::Pen | Kind::Highlighter | Kind::Polyline => {
             s.points.windows(2).map(|p| (p[0], p[1])).collect()
         }
-        Kind::Text | Kind::Mosaic | Kind::Blur => vec![],
+        Kind::Text | Kind::Number | Kind::Mosaic | Kind::Blur => vec![],
         Kind::Line => vec![(a, b)],
         Kind::Ellipse => {
             let rx = (b.x - a.x).abs() / 2.0;
@@ -214,7 +227,10 @@ fn segments(s: &Annotation) -> Vec<(Point, Point)> {
 /// 原图坐标减去裁剪原点后才是输出图片坐标；超出选区的笔画自然裁掉。
 pub fn render(image: &mut RgbaImage, shapes: &[Annotation], origin: Point) -> Result<(), String> {
     for s in shapes {
-        if matches!(s.kind, Kind::Text | Kind::Mosaic | Kind::Blur) {
+        if matches!(
+            s.kind,
+            Kind::Text | Kind::Number | Kind::Mosaic | Kind::Blur
+        ) {
             let source = raster(s)?;
             let left = s.start.x - origin.x;
             let top = s.start.y - origin.y;
@@ -346,6 +362,36 @@ fn line(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn number_annotations_validate_labels_and_export_raster() {
+        let mut png = Cursor::new(Vec::new());
+        RgbaImage::from_pixel(2, 2, image::Rgba([255, 0, 0, 255]))
+            .write_to(&mut png, image::ImageFormat::Png)
+            .unwrap();
+        let mut s = shape();
+        s.kind = Kind::Number;
+        s.raster = Some(STANDARD.encode(png.into_inner()));
+        for text in ["1", "99", "999"] {
+            s.text = Some(text.into());
+            validate(std::slice::from_ref(&s), 32, 32).unwrap();
+        }
+        let mut image = RgbaImage::new(32, 32);
+        render(
+            &mut image,
+            std::slice::from_ref(&s),
+            Point { x: 0.0, y: 0.0 },
+        )
+        .unwrap();
+        assert_eq!(image.get_pixel(15, 15).0, [255, 0, 0, 255]);
+        for text in ["", "0", "01", "-1", "1000", "1.5", "中文"] {
+            s.text = Some(text.into());
+            assert!(validate(std::slice::from_ref(&s), 32, 32).is_err());
+        }
+        s.text = Some("1".into());
+        s.raster = None;
+        assert!(validate(&[s], 32, 32).is_err());
+    }
+
     #[test]
     fn highlighter_does_not_darken_its_own_overlapping_segments() {
         let mut s = shape();

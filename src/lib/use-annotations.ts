@@ -1,5 +1,5 @@
 import { reactive } from 'vue'
-import { commit, emptyHistory, hitTest, moveShape, resizeShape, undo, redo, type Annotation, type History } from './annotations'
+import { commit, emptyHistory, hitTest, moveShape, resizeShape, undo, redo, nextNumber, type Annotation, type History } from './annotations'
 import { prepareRaster } from './annotation-raster'
 import { clamp, type Point, type Rect, type Handle } from './selection'
 
@@ -68,6 +68,12 @@ export function useAnnotations(bounds: () => Rect, imageUrl: () => string, disab
     if (state.history.present.length >= 100) { state.error = '最多支持 100 个标注。'; return }
     state.selected = -1
     const shape: Annotation = { kind: state.tool, start: p, end: p, color: state.color, width: state.width, opacity: state.opacity }
+    if (shape.kind === 'number') {
+      const b = bounds(), size = Math.min(36, b.width, b.height), value = nextNumber(state.history.present)
+      if (value > 999 || size < 12) { state.error = value > 999 ? '序号最多为 999。' : '选区太小，无法放置序号。'; return }
+      const x = clamp(p.x - size / 2, b.x, b.x + b.width - size), y = clamp(p.y - size / 2, b.y, b.y + b.height - size)
+      shape.start = { x, y }; shape.end = { x: x + size, y: y + size }; shape.text = String(value)
+    }
     if (['pen', 'highlighter', 'polyline'].includes(shape.kind)) shape.points = [p]
     if (shape.kind === 'text') {
       // 先放置空输入框，临近右/下边缘时让出可输入的空间，不复用上一次文字。
@@ -88,7 +94,7 @@ export function useAnnotations(bounds: () => Rect, imageUrl: () => string, disab
     else if (state.draft.points) {
       const last = state.draft.points.at(-1)!
       if (Math.hypot(p.x - last.x, p.y - last.y) >= 1 && state.draft.points.length < 2048) state.draft = { ...state.draft, end: p, points: [...state.draft.points, p] }
-    } else if (state.draft.kind !== 'text') state.draft = { ...state.draft, end: p }
+    } else if (state.draft.kind !== 'text' && state.draft.kind !== 'number') state.draft = { ...state.draft, end: p }
   }
   async function finish(polyline = false) {
     if (state.textEditing) return // 放置输入框的 pointerup 不应提交空文字。
@@ -97,12 +103,12 @@ export function useAnnotations(bounds: () => Rect, imageUrl: () => string, disab
     const editing = state.selected >= 0 && gesture?.mode !== 'draw'
     if (editing && JSON.stringify(shape) === JSON.stringify(state.history.present[state.selected])) { abort(); return }
     const dx = Math.abs(shape.end.x - shape.start.x), dy = Math.abs(shape.end.y - shape.start.y)
-    if (editing && ['rectangle', 'ellipse', 'text', 'mosaic', 'blur'].includes(shape.kind) && (dx < 1 || dy < 1)) { abort(); return }
+    if (editing && ['rectangle', 'ellipse', 'text', 'number', 'mosaic', 'blur'].includes(shape.kind) && (dx < 1 || dy < 1)) { abort(); return }
     if (!editing && shape.kind !== 'text' && (shape.points ? shape.points.length < 2 : ['line', 'arrow'].includes(shape.kind) ? Math.hypot(dx, dy) < 1 : dx < 1 || dy < 1)) { abort(); return }
     const version = generation
     state.pending = true
     try {
-      if (shape.kind === 'mosaic' || shape.kind === 'blur' || (shape.kind === 'text' && !editing)) shape = await prepareRaster(shape, imageUrl(), bounds())
+      if (shape.kind === 'mosaic' || shape.kind === 'blur' || ((shape.kind === 'text' || shape.kind === 'number') && !editing)) shape = await prepareRaster(shape, imageUrl(), bounds())
     } catch (e) { state.error = String(e); abort(); state.pending = false; return }
     state.pending = false
     if (version !== generation) return
@@ -132,7 +138,7 @@ export function useAnnotations(bounds: () => Rect, imageUrl: () => string, disab
     let shape = { ...original, ...patch }
     state.pending = true
     try {
-      if (shape.kind === 'text' || shape.kind === 'mosaic' || shape.kind === 'blur') shape = await prepareRaster(shape, imageUrl(), bounds(), !('text' in patch || 'fontSize' in patch || 'fontFamily' in patch))
+      if (shape.kind === 'text' || (shape.kind === 'number' && 'color' in patch) || shape.kind === 'mosaic' || shape.kind === 'blur') shape = await prepareRaster(shape, imageUrl(), bounds(), !('text' in patch || 'fontSize' in patch || 'fontFamily' in patch))
     } catch (e) { state.error = String(e); state.pending = false; return }
     state.pending = false
     if (version !== generation) return

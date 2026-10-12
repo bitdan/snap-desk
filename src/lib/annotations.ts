@@ -2,7 +2,7 @@ import { clamp, resize, type Handle, type Point, type Rect, type Size } from './
 
 // 标注始终使用原图物理像素坐标，预览和 Rust 导出共用数据，避免 DPI 缩放错位。
 export interface Annotation {
-  kind: 'rectangle' | 'arrow' | 'ellipse' | 'line' | 'polyline' | 'pen' | 'highlighter' | 'text' | 'mosaic' | 'blur'
+  kind: 'rectangle' | 'arrow' | 'ellipse' | 'line' | 'polyline' | 'pen' | 'highlighter' | 'text' | 'number' | 'mosaic' | 'blur'
   start: Point
   end: Point
   color: string
@@ -12,7 +12,7 @@ export interface Annotation {
   text?: string
   fontSize?: number
   fontFamily?: 'sans' | 'serif' | 'mono'
-  /** 仅文字/局部滤镜携带受限 PNG；Rust 校验格式与大小，不接受 SVG 或文件路径。 */
+  /** 文字、序号及局部滤镜携带受限 PNG；Rust 校验格式与大小，不接受 SVG 或文件路径。 */
   raster?: string
 }
 export interface History { past: Annotation[][]; present: Annotation[]; future: Annotation[][] }
@@ -101,4 +101,9 @@ export function hitTest(shapes: Annotation[], p: Point, tolerance = 6): number {
   for (let index = shapes.length - 1; index >= 0; index--) if (hit(shapes[index])) return index
   return -1
 }
-export const isRaster = (s: Annotation) => ['text', 'mosaic', 'blur'].includes(s.kind)
+export const isRaster = (s: Annotation) => ['text', 'number', 'mosaic', 'blur'].includes(s.kind)
+
+/** 序号由当前历史推导：撤销/删除末项后可复用，删除中间项不重排已有标注。 */
+export function nextNumber(shapes: Annotation[]): number {
+  return Math.max(0, ...shapes.filter(s => s.kind === 'number').map(s => Number(s.text) || 0)) + 1
+}

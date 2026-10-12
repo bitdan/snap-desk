@@ -17,7 +17,19 @@ export async function prepareRaster(shape: Annotation, imageUrl: string, crop: R
     if (raster.length > 2_000_000) throw new Error('此标注图片过大，请缩小区域。')
     return { ...shape, raster }
   }
-  if (shape.kind === 'text') {
+  if (shape.kind === 'number') {
+    if (!/^[1-9]\d{0,2}$/.test(shape.text ?? '')) throw new Error('序号须为 1～999。')
+    // 固定高分辨率字形保证缩放清晰；几何范围保持不变，预览与原生导出共用 PNG。
+    canvas.width = 144; canvas.height = 144
+    await document.fonts.ready
+    context.fillStyle = shape.color
+    context.beginPath(); context.arc(72, 72, 70, 0, Math.PI * 2); context.fill()
+    context.font = `bold ${shape.text!.length === 3 ? 60 : 76}px sans-serif`
+    const rgb = [1, 3, 5].map(offset => parseInt(shape.color.slice(offset, offset + 2), 16))
+    context.fillStyle = rgb[0] * .299 + rgb[1] * .587 + rgb[2] * .114 > 160 ? '#111827' : '#ffffff'
+    context.textAlign = 'center'; context.textBaseline = 'middle'
+    context.fillText(shape.text!, 72, 76)
+  } else if (shape.kind === 'text') {
     const size = shape.fontSize ?? 24, lines: string[] = []
     if (!shape.text?.trim()) throw new Error('文字不能为空。')
     const font = `${size}px ${fonts[shape.fontFamily ?? 'sans']}`
@@ -72,5 +84,5 @@ export async function prepareRaster(shape: Annotation, imageUrl: string, crop: R
   const raster = canvas.toDataURL('image/png').split(',')[1]
   if (raster.length > 2_000_000) throw new Error('此标注图片过大，请缩小区域。')
   return { ...shape, start: { x: box.x, y: box.y }, end: { x: box.x + box.width, y: box.y + box.height }, raster,
-    opacity: shape.kind === 'text' ? shape.opacity ?? 1 : 1 }
+    opacity: shape.kind === 'text' || shape.kind === 'number' ? shape.opacity ?? 1 : 1 }
 }

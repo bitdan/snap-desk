@@ -712,7 +712,10 @@ fn transform_annotations(
             s.start = map(s.start);
             s.end = map(s.end);
             s.points = s.points.into_iter().map(map).collect();
-            if matches!(s.kind, Kind::Text | Kind::Mosaic | Kind::Blur) {
+            if matches!(
+                s.kind,
+                Kind::Text | Kind::Number | Kind::Mosaic | Kind::Blur
+            ) {
                 let a = s.start;
                 let b = s.end;
                 s.start = Point {
