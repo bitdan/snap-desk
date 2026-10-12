@@ -35,7 +35,7 @@
       {
         "label": "recording-controls",
         "title": "录屏控制",
-        "url": "index.html?window=recording-controls",
+        "url": "recording-controls.html",
         "visible": false,
         "decorations": false,
         "resizable": false,

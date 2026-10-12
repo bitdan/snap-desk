@@ -317,9 +317,13 @@ fn place_windows(
 }
 
 pub(crate) fn show_recording(app: &AppHandle) -> Result<(), String> {
-    for label in RECORDING_LABELS {
+    // 先显示四条边框，再显示并激活按钮窗，避免辅助窗口的置顶顺序遮住操作区。
+    for label in &RECORDING_LABELS[1..] {
         show_window(&window(app, label).ok_or("录屏辅助窗口不可用。")?)?;
     }
+    let controls = window(app, "recording-controls").ok_or("录屏控制窗口不可用。")?;
+    show_window(&controls)?;
+    controls.set_focus().map_err(err)?;
     Ok(())
 }
 pub(crate) fn hide_recording(app: &AppHandle) {
