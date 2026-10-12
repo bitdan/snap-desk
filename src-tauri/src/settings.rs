@@ -78,7 +78,7 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            shortcut: "Alt+F4".into(),
+            shortcut: "F1".into(),
             delay_seconds: 0,
             export: ExportSettings::default(),
         }
@@ -86,7 +86,7 @@ impl Default for Settings {
 }
 
 impl Settings {
-    /// 与前端录入规则一致：至少一个修饰键，搭配字母、数字或 F1～F12。
+    /// 与前端录入规则一致：F1～F12 可单独作为快捷键；字母、数字需搭配至少一个修饰键。
     /// 后端必须再次校验，不能假设所有 IPC 请求都来自正常表单。
     pub fn validate(&self) -> Result<Shortcut, String> {
         self.export.validate()?;
@@ -94,14 +94,8 @@ impl Settings {
             return Err("截图延时只能为 0、3 或 5 秒。".into());
         }
         let parts: Vec<_> = self.shortcut.split('+').collect();
-        if parts.len() < 2 || parts.len() > 5 {
-            return Err("快捷键需要修饰键和一个字母、数字或 F1～F12。".into());
-        }
-        let mut modifiers = std::collections::HashSet::new();
-        for part in &parts[..parts.len() - 1] {
-            if !["Ctrl", "Alt", "Shift", "Super"].contains(part) || !modifiers.insert(*part) {
-                return Err("快捷键修饰键无效或重复。".into());
-            }
+        if parts.len() > 5 {
+            return Err("快捷键组合过长，最多一个主键加四个修饰键。".into());
         }
         let key = parts[parts.len() - 1];
         let letter = key.len() == 1
@@ -111,6 +105,16 @@ impl Settings {
         let function = (1..=12).any(|n| key == format!("F{n}"));
         if !letter && !function {
             return Err("主键仅支持字母、数字或 F1～F12。".into());
+        }
+        // 字母和数字是普通输入内容，单独作为全局键会干扰打字；仅 F1～F12 允许不加修饰键。
+        if parts.len() == 1 && !function {
+            return Err("字母和数字需要搭配至少一个修饰键；F1～F12 可单独使用。".into());
+        }
+        let mut modifiers = std::collections::HashSet::new();
+        for part in &parts[..parts.len() - 1] {
+            if !["Ctrl", "Alt", "Shift", "Super"].contains(part) || !modifiers.insert(*part) {
+                return Err("快捷键修饰键无效或重复。".into());
+            }
         }
         self.shortcut
             .parse::<Shortcut>()
@@ -500,13 +504,35 @@ mod tests {
             .validate()
             .is_err());
         }
-        for shortcut in ["Alt+Shift+S", "Super+1", "Ctrl+F12"] {
+        for shortcut in ["Alt+Shift+S", "Super+1", "Ctrl+F12", "F1", "F12"] {
             assert!(Settings {
                 shortcut: shortcut.into(),
                 ..Settings::default()
             }
             .validate()
             .is_ok());
+        }
+    }
+
+    #[test]
+    fn function_keys_are_valid_without_modifiers() {
+        // F1～F12 可单独作为全局快捷键，这也是新的默认值 F1 的使用场景。
+        for n in 1..=12 {
+            assert!(Settings {
+                shortcut: format!("F{n}"),
+                ..Settings::default()
+            }
+            .validate()
+            .is_ok());
+        }
+        // F13 及字母、数字仍然需要修饰键。
+        for shortcut in ["F13", "A", "1"] {
+            assert!(Settings {
+                shortcut: shortcut.into(),
+                ..Settings::default()
+            }
+            .validate()
+            .is_err());
         }
     }
 }

@@ -10,7 +10,7 @@ export interface Settings { shortcut: string; delaySeconds: 0 | 3 | 5; export: E
 
 /** 每次返回独立对象，避免编辑草稿时改动“恢复默认”的值。 */
 export function defaultSettings(): Settings {
-  return { shortcut: 'Alt+F4', delaySeconds: 0, export: {
+  return { shortcut: 'F1', delaySeconds: 0, export: {
     format: 'png', jpegQuality: 90, filenamePrefix: 'SnapDesk', includeDimensions: false, rememberDirectory: true,
   } }
 }

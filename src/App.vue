@@ -19,7 +19,7 @@ const error = ref('')
 const disposers: (() => void)[] = []
 let disposed = false
 let delayRevision = 0
-const shortcut = computed(() => status.value?.settings.shortcut ?? 'Alt+F4')
+const shortcut = computed(() => status.value?.settings.shortcut ?? 'F1')
 const locked = computed(() => !desktop || !status.value || pending.value || saving.value || remaining.value > 0)
 async function refreshStatus() {
   const revision = delayRevision
