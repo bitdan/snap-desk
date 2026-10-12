@@ -714,7 +714,7 @@ fn transform_annotations(
             s.points = s.points.into_iter().map(map).collect();
             if matches!(
                 s.kind,
-                Kind::Text | Kind::Number | Kind::Mosaic | Kind::Blur
+                Kind::Text | Kind::Number | Kind::Mosaic | Kind::Blur | Kind::Magnify
             ) {
                 let a = s.start;
                 let b = s.end;
@@ -937,6 +937,43 @@ mod tests {
         assign_group(&mut images, &["pin-1".into()], "").unwrap();
         assert_eq!(images["pin-1"].group, "");
     }
+    #[test]
+    fn effects_survive_pin_rotation_and_flip() {
+        let mut png = Cursor::new(Vec::new());
+        let pixels = RgbaImage::from_fn(2, 3, |x, y| {
+            image::Rgba([x as u8 * 80, y as u8 * 60, 20, 255])
+        });
+        pixels.write_to(&mut png, image::ImageFormat::Png).unwrap();
+        let lens: crate::annotations::Annotation = serde_json::from_value(serde_json::json!({
+            "kind":"magnify", "start":{"x":10,"y":5}, "end":{"x":30,"y":25},
+            "color":"#ff0000", "width":3, "magnification":3,
+            "raster":STANDARD.encode(png.into_inner())
+        }))
+        .unwrap();
+        let spotlight: crate::annotations::Annotation = serde_json::from_value(serde_json::json!({
+            "kind":"spotlight", "start":{"x":10,"y":5}, "end":{"x":30,"y":25},
+            "color":"#000000", "width":3, "opacity":0.7
+        }))
+        .unwrap();
+        let source = vec![lens, spotlight];
+        let rotated = transform_annotations(&source, 100, 50, Transform::RotateRight).unwrap();
+        crate::annotations::validate(&rotated, 50, 100).unwrap();
+        assert_eq!(rotated[0].magnification, Some(3.0));
+        assert_eq!(
+            crate::annotations::raster(&rotated[0]).unwrap(),
+            image::imageops::rotate90(&pixels)
+        );
+        assert_eq!(rotated[1].start.x, 45.0);
+        assert_eq!(rotated[1].end.x, 25.0);
+        let flipped = transform_annotations(&source, 100, 50, Transform::FlipHorizontal).unwrap();
+        crate::annotations::validate(&flipped, 100, 50).unwrap();
+        assert_eq!(
+            crate::annotations::raster(&flipped[0]).unwrap(),
+            image::imageops::flip_horizontal(&pixels)
+        );
+        assert!(flipped[1].raster.is_none());
+    }
+
     #[test]
     fn rotating_and_flipping_keep_annotations_editable_and_in_bounds() {
         let s: crate::annotations::Annotation = serde_json::from_value(serde_json::json!({

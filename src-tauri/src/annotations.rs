@@ -24,6 +24,8 @@ pub enum Kind {
     Highlighter,
     Text,
     Number,
+    Spotlight,
+    Magnify,
     Mosaic,
     Blur,
 }
@@ -38,6 +40,9 @@ pub struct Annotation {
     pub width: f64,
     #[serde(default = "opaque")]
     pub opacity: f64,
+    /// 仅放大镜使用；前端在该倍率下采样底图，并提交受限 PNG 供预览和导出复用。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub magnification: Option<f64>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub points: Vec<Point>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -110,7 +115,7 @@ pub fn validate(shapes: &[Annotation], width: u32, height: u32) -> Result<(), St
         }
         if matches!(
             s.kind,
-            Kind::Text | Kind::Number | Kind::Mosaic | Kind::Blur
+            Kind::Text | Kind::Number | Kind::Mosaic | Kind::Blur | Kind::Magnify
         ) {
             if s.start.x >= s.end.x || s.start.y >= s.end.y {
                 return Err("文字或滤镜范围为空。".into());
@@ -121,6 +126,20 @@ pub fn validate(shapes: &[Annotation], width: u32, height: u32) -> Result<(), St
         }
         if matches!(s.kind, Kind::Mosaic | Kind::Blur) && s.opacity != 1.0 {
             return Err("遮挡滤镜必须完全不透明。".into());
+        }
+        if matches!(s.kind, Kind::Spotlight)
+            && ((s.start.x - s.end.x).abs() < 1.0 || (s.start.y - s.end.y).abs() < 1.0)
+        {
+            return Err("聚光灯亮区为空。".into());
+        }
+        if matches!(s.kind, Kind::Magnify) {
+            if s.magnification
+                .is_none_or(|zoom| !zoom.is_finite() || !(2.0..=4.0).contains(&zoom))
+            {
+                return Err("放大倍数须为 2～4。".into());
+            }
+        } else if s.magnification.is_some() {
+            return Err("此标注类型不接受放大倍数。".into());
         }
         // 序号沿用 text 字段传递数字，但只接受 1～999 的规范十进制表示。
         if matches!(s.kind, Kind::Number)
@@ -165,7 +184,9 @@ fn segments(s: &Annotation) -> Vec<(Point, Point)> {
         Kind::Pen | Kind::Highlighter | Kind::Polyline => {
             s.points.windows(2).map(|p| (p[0], p[1])).collect()
         }
-        Kind::Text | Kind::Number | Kind::Mosaic | Kind::Blur => vec![],
+        Kind::Text | Kind::Number | Kind::Mosaic | Kind::Blur | Kind::Magnify | Kind::Spotlight => {
+            vec![]
+        }
         Kind::Line => vec![(a, b)],
         Kind::Ellipse => {
             let rx = (b.x - a.x).abs() / 2.0;
@@ -226,10 +247,49 @@ fn segments(s: &Annotation) -> Vec<(Point, Point)> {
 
 /// 原图坐标减去裁剪原点后才是输出图片坐标；超出选区的笔画自然裁掉。
 pub fn render(image: &mut RgbaImage, shapes: &[Annotation], origin: Point) -> Result<(), String> {
+    let mut spotlight_drawn = false;
     for s in shapes {
+        if matches!(s.kind, Kind::Spotlight) {
+            if spotlight_drawn {
+                continue;
+            }
+            spotlight_drawn = true;
+            // 全部亮区共用一个覆盖掩码，在首个聚光灯所在图层只混色一次。
+            // 取最大覆盖率，重复或重叠亮区不会加深背景，也不会重新遮住已有亮区。
+            let mut bright = vec![0u8; image.width() as usize * image.height() as usize];
+            for spot in shapes
+                .iter()
+                .filter(|shape| matches!(shape.kind, Kind::Spotlight))
+            {
+                let left = spot.start.x.min(spot.end.x) - origin.x;
+                let top = spot.start.y.min(spot.end.y) - origin.y;
+                let right = spot.start.x.max(spot.end.x) - origin.x;
+                let bottom = spot.start.y.max(spot.end.y) - origin.y;
+                for y in
+                    top.floor().max(0.0) as u32..bottom.ceil().min(f64::from(image.height())) as u32
+                {
+                    for x in left.floor().max(0.0) as u32
+                        ..right.ceil().min(f64::from(image.width())) as u32
+                    {
+                        let fx = f64::from(x);
+                        let fy = f64::from(y);
+                        let inside_x = ((fx + 1.0).min(right) - fx.max(left)).clamp(0.0, 1.0);
+                        let inside_y = ((fy + 1.0).min(bottom) - fy.max(top)).clamp(0.0, 1.0);
+                        let index = y as usize * image.width() as usize + x as usize;
+                        bright[index] =
+                            bright[index].max((inside_x * inside_y * 255.0).round() as u8);
+                    }
+                }
+            }
+            let rgb = color(&s.color)?;
+            for (pixel, coverage) in image.pixels_mut().zip(bright) {
+                blend(pixel, rgb, (1.0 - f64::from(coverage) / 255.0) * s.opacity);
+            }
+            continue;
+        }
         if matches!(
             s.kind,
-            Kind::Text | Kind::Number | Kind::Mosaic | Kind::Blur
+            Kind::Text | Kind::Number | Kind::Mosaic | Kind::Blur | Kind::Magnify
         ) {
             let source = raster(s)?;
             let left = s.start.x - origin.x;
@@ -363,6 +423,88 @@ fn line(
 mod tests {
     use super::*;
     #[test]
+    fn repeated_and_overlapping_spotlights_do_not_darken_background() {
+        let mut a = shape();
+        a.kind = Kind::Spotlight;
+        a.color = "#000000".into();
+        a.opacity = 0.5;
+        a.start = Point { x: 2.0, y: 2.0 };
+        a.end = Point { x: 8.0, y: 8.0 };
+        let mut b = a.clone();
+        b.start = Point { x: 6.0, y: 6.0 };
+        b.end = Point { x: 12.0, y: 12.0 };
+        let base = RgbaImage::from_pixel(16, 16, image::Rgba([200, 200, 200, 255]));
+        let mut single = base.clone();
+        render(&mut single, &[a.clone()], Point { x: 0.0, y: 0.0 }).unwrap();
+        let mut duplicate = base.clone();
+        render(
+            &mut duplicate,
+            &[a.clone(), a.clone()],
+            Point { x: 0.0, y: 0.0 },
+        )
+        .unwrap();
+        assert_eq!(single, duplicate);
+        let mut combined = base;
+        render(&mut combined, &[a, b], Point { x: 0.0, y: 0.0 }).unwrap();
+        assert_eq!(combined.get_pixel(0, 0).0, [100, 100, 100, 255]);
+        for (x, y) in [(3, 3), (7, 7), (10, 10)] {
+            assert_eq!(combined.get_pixel(x, y).0, [200, 200, 200, 255]);
+        }
+    }
+
+    #[test]
+    fn spotlight_keeps_bright_area_and_shades_crop_with_reverse_coordinates() {
+        let mut s = shape();
+        s.kind = Kind::Spotlight;
+        s.color = "#000000".into();
+        s.opacity = 0.5;
+        s.start = Point { x: 18.0, y: 18.0 };
+        s.end = Point { x: 12.0, y: 12.0 };
+        validate(std::slice::from_ref(&s), 32, 32).unwrap();
+        let mut image = RgbaImage::from_pixel(10, 10, image::Rgba([200, 200, 200, 255]));
+        render(
+            &mut image,
+            std::slice::from_ref(&s),
+            Point { x: 10.0, y: 10.0 },
+        )
+        .unwrap();
+        assert_eq!(image.get_pixel(4, 4).0, [200, 200, 200, 255]);
+        assert_eq!(image.get_pixel(0, 0).0, [100, 100, 100, 255]);
+        assert_eq!(image.get_pixel(9, 9).0, [100, 100, 100, 255]);
+        s.end = s.start;
+        assert!(validate(&[s], 32, 32).is_err());
+    }
+
+    #[test]
+    fn magnifier_requires_bounded_zoom_and_exports_pixels() {
+        let mut png = Cursor::new(Vec::new());
+        RgbaImage::from_pixel(2, 2, image::Rgba([20, 40, 60, 255]))
+            .write_to(&mut png, image::ImageFormat::Png)
+            .unwrap();
+        let mut s = shape();
+        s.kind = Kind::Magnify;
+        s.raster = Some(STANDARD.encode(png.into_inner()));
+        for zoom in [None, Some(1.0), Some(5.0), Some(f64::NAN)] {
+            s.magnification = zoom;
+            assert!(validate(std::slice::from_ref(&s), 32, 32).is_err());
+        }
+        s.magnification = Some(3.0);
+        validate(std::slice::from_ref(&s), 32, 32).unwrap();
+        let mut image = RgbaImage::new(32, 32);
+        render(
+            &mut image,
+            std::slice::from_ref(&s),
+            Point { x: 0.0, y: 0.0 },
+        )
+        .unwrap();
+        assert_eq!(image.get_pixel(15, 15).0, [20, 40, 60, 255]);
+        s.raster = None;
+        assert!(validate(std::slice::from_ref(&s), 32, 32).is_err());
+        s.kind = Kind::Rectangle;
+        assert!(validate(&[s], 32, 32).is_err());
+    }
+
+    #[test]
     fn number_annotations_validate_labels_and_export_raster() {
         let mut png = Cursor::new(Vec::new());
         RgbaImage::from_pixel(2, 2, image::Rgba([255, 0, 0, 255]))
@@ -475,6 +617,7 @@ mod tests {
             color: "#ff0000".into(),
             width: 2.0,
             opacity: 1.0,
+            magnification: None,
             points: vec![],
             text: None,
             font_size: None,

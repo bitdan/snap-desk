@@ -8,7 +8,7 @@ export type AnnotationTool = 'edit' | 'eraser' | Annotation['kind']
 export function useAnnotations(bounds: () => Rect, imageUrl: () => string, disabled: () => boolean, persist?: (shapes: Annotation[]) => Promise<void>) {
   const state = reactive({ history: emptyHistory(), tool: 'edit' as AnnotationTool, selected: -1,
     draft: null as Annotation | null, pending: false, interacting: false, textEditing: false, error: '',
-    color: '#ef4444', width: 3, opacity: 1, text: '', fontSize: 24, fontFamily: 'sans' as NonNullable<Annotation['fontFamily']> })
+    color: '#ef4444', width: 3, opacity: 1, magnification: 2, text: '', fontSize: 24, fontFamily: 'sans' as NonNullable<Annotation['fontFamily']> })
   let gesture: { start: Point; shape: Annotation; mode: 'draw' | 'move' | Handle | 'start' | 'end' } | null = null
   let generation = 0
   // 输入框和最终字形使用同一原图坐标区域，缩放/DPI 仅由 SVG 负责换算。
@@ -30,12 +30,16 @@ export function useAnnotations(bounds: () => Rect, imageUrl: () => string, disab
   function select(index: number) {
     state.selected = index
     const s = state.history.present[index]
-    if (s) { state.color = s.color; state.width = s.width; state.opacity = s.opacity ?? 1; state.text = s.text ?? ''; state.fontSize = s.fontSize ?? 24; state.fontFamily = s.fontFamily ?? 'sans' }
+    if (s) { state.color = s.color; state.width = s.width; state.opacity = s.opacity ?? 1; state.magnification = s.magnification ?? 2; state.text = s.text ?? ''; state.fontSize = s.fontSize ?? 24; state.fontFamily = s.fontFamily ?? 'sans' }
   }
   function setTool(tool: AnnotationTool) {
     if (locked() || state.interacting) return
     state.tool = tool; state.selected = -1
     if (tool === 'highlighter') { state.width = 20; state.opacity = 0.35 }
+    else if (tool === 'spotlight') {
+      const existing = state.history.present.find(s => s.kind === 'spotlight')
+      state.color = existing?.color ?? '#000000'; state.opacity = existing?.opacity ?? 0.7; state.width = 3
+    }
     else if (tool === 'mosaic' || tool === 'blur') { state.width = 16; state.opacity = 1 }
     else { state.width = 3; state.opacity = 1 }
   }
@@ -68,6 +72,7 @@ export function useAnnotations(bounds: () => Rect, imageUrl: () => string, disab
     if (state.history.present.length >= 100) { state.error = '最多支持 100 个标注。'; return }
     state.selected = -1
     const shape: Annotation = { kind: state.tool, start: p, end: p, color: state.color, width: state.width, opacity: state.opacity }
+    if (shape.kind === 'magnify') shape.magnification = state.magnification
     if (shape.kind === 'number') {
       const b = bounds(), size = Math.min(36, b.width, b.height), value = nextNumber(state.history.present)
       if (value > 999 || size < 12) { state.error = value > 999 ? '序号最多为 999。' : '选区太小，无法放置序号。'; return }
@@ -103,12 +108,12 @@ export function useAnnotations(bounds: () => Rect, imageUrl: () => string, disab
     const editing = state.selected >= 0 && gesture?.mode !== 'draw'
     if (editing && JSON.stringify(shape) === JSON.stringify(state.history.present[state.selected])) { abort(); return }
     const dx = Math.abs(shape.end.x - shape.start.x), dy = Math.abs(shape.end.y - shape.start.y)
-    if (editing && ['rectangle', 'ellipse', 'text', 'number', 'mosaic', 'blur'].includes(shape.kind) && (dx < 1 || dy < 1)) { abort(); return }
+    if (editing && ['rectangle', 'ellipse', 'text', 'number', 'mosaic', 'blur', 'spotlight', 'magnify'].includes(shape.kind) && (dx < 1 || dy < 1)) { abort(); return }
     if (!editing && shape.kind !== 'text' && (shape.points ? shape.points.length < 2 : ['line', 'arrow'].includes(shape.kind) ? Math.hypot(dx, dy) < 1 : dx < 1 || dy < 1)) { abort(); return }
     const version = generation
     state.pending = true
     try {
-      if (shape.kind === 'mosaic' || shape.kind === 'blur' || ((shape.kind === 'text' || shape.kind === 'number') && !editing)) shape = await prepareRaster(shape, imageUrl(), bounds())
+      if (shape.kind === 'mosaic' || shape.kind === 'blur' || shape.kind === 'magnify' || ((shape.kind === 'text' || shape.kind === 'number') && !editing)) shape = await prepareRaster(shape, imageUrl(), bounds())
     } catch (e) { state.error = String(e); abort(); state.pending = false; return }
     state.pending = false
     if (version !== generation) return
@@ -129,20 +134,30 @@ export function useAnnotations(bounds: () => Rect, imageUrl: () => string, disab
     if (version !== generation) return
     if (await apply(commit(state.history, [...state.history.present, shape]))) abort()
   }
-  async function style(patch: Partial<Pick<Annotation, 'color' | 'width' | 'opacity' | 'text' | 'fontSize' | 'fontFamily'>>) {
+  async function style(patch: Partial<Pick<Annotation, 'color' | 'width' | 'opacity' | 'text' | 'fontSize' | 'fontFamily' | 'magnification'>>) {
     if (locked() || state.interacting) return
+    if (patch.magnification !== undefined && (!Number.isFinite(patch.magnification) || patch.magnification < 2 || patch.magnification > 4)) { state.error = '放大倍数须为 2～4。'; return }
     Object.assign(state, patch)
     const original = state.history.present[state.selected]
-    if (!original) return
+    if (!original) {
+      if (state.tool === 'spotlight' && state.history.present.some(s => s.kind === 'spotlight') && ('color' in patch || 'opacity' in patch)) {
+        await apply(commit(state.history, state.history.present.map(s => s.kind === 'spotlight' ? { ...s, color: state.color, opacity: state.opacity } : s)))
+      }
+      return
+    }
     const version = generation
     let shape = { ...original, ...patch }
     state.pending = true
     try {
-      if (shape.kind === 'text' || (shape.kind === 'number' && 'color' in patch) || shape.kind === 'mosaic' || shape.kind === 'blur') shape = await prepareRaster(shape, imageUrl(), bounds(), !('text' in patch || 'fontSize' in patch || 'fontFamily' in patch))
+      if (shape.kind === 'text' || (shape.kind === 'number' && 'color' in patch) || shape.kind === 'mosaic' || shape.kind === 'blur' || shape.kind === 'magnify') shape = await prepareRaster(shape, imageUrl(), bounds(), !('text' in patch || 'fontSize' in patch || 'fontFamily' in patch))
     } catch (e) { state.error = String(e); state.pending = false; return }
     state.pending = false
     if (version !== generation) return
-    await apply(commit(state.history, state.history.present.map((s, i) => i === state.selected ? shape : s)))
+    // 多个亮区共用一层遮罩；编辑任意亮区的颜色/透明度同步到整组，并只提交一步历史。
+    await apply(commit(state.history, state.history.present.map((s, i) =>
+      original.kind === 'spotlight' && s.kind === 'spotlight'
+        ? { ...s, color: shape.color, opacity: shape.opacity }
+        : i === state.selected ? shape : s)))
     select(state.selected)
   }
   async function travel(direction: 'undo' | 'redo') {

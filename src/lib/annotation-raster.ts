@@ -1,4 +1,4 @@
-import { isRaster, shapeBounds, type Annotation } from './annotations'
+import { isRaster, shapeBounds, magnifierSource, type Annotation } from './annotations'
 import { clamp, type Rect } from './selection'
 
 const fonts = { sans: 'sans-serif', serif: 'serif', mono: 'monospace' }
@@ -58,7 +58,15 @@ export async function prepareRaster(shape: Annotation, imageUrl: string, crop: R
     await image.decode()
     const scale = Math.min(1, 1024 / Math.max(box.width, box.height))
     canvas.width = Math.max(1, Math.ceil(box.width * scale)); canvas.height = Math.max(1, Math.ceil(box.height * scale))
-    if (shape.kind === 'blur') {
+    if (shape.kind === 'magnify') {
+      const source = magnifierSource(shape)
+      context.imageSmoothingEnabled = true
+      context.drawImage(image, source.x, source.y, source.width, source.height, 0, 0, canvas.width, canvas.height)
+      // 边框画在镜框内部，避免导出时越界；只放大底图，不合并其他标注。
+      const border = Math.min(shape.width * scale, canvas.width / 2, canvas.height / 2)
+      context.strokeStyle = shape.color; context.lineWidth = border
+      context.strokeRect(border / 2, border / 2, canvas.width - border, canvas.height - border)
+    } else if (shape.kind === 'blur') {
       // 扩展边缘后再模糊，避免透明的模糊边缘露出底下未处理的原图。
       const radius = Math.max(2, shape.width * scale), pad = Math.ceil(radius * 3)
       const padded = document.createElement('canvas'), w = canvas.width, h = canvas.height
@@ -84,5 +92,5 @@ export async function prepareRaster(shape: Annotation, imageUrl: string, crop: R
   const raster = canvas.toDataURL('image/png').split(',')[1]
   if (raster.length > 2_000_000) throw new Error('此标注图片过大，请缩小区域。')
   return { ...shape, start: { x: box.x, y: box.y }, end: { x: box.x + box.width, y: box.y + box.height }, raster,
-    opacity: shape.kind === 'text' || shape.kind === 'number' ? shape.opacity ?? 1 : 1 }
+    opacity: ['text', 'number', 'magnify'].includes(shape.kind) ? shape.opacity ?? 1 : 1 }
 }

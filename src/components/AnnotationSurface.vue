@@ -37,6 +37,9 @@ const shapes = computed(() => {
   return e.selected >= 0 ? e.history.present.map((s, i) => i === e.selected ? e.draft! : s) : [...e.history.present, e.draft]
 })
 const chosen = computed(() => props.editor.selected >= 0 ? shapes.value[props.editor.selected] : null)
+const spotlights = computed(() => shapes.value.filter(s => s.kind === 'spotlight'))
+const spotlightIndex = computed(() => shapes.value.findIndex(s => s.kind === 'spotlight'))
+const spotlightMaskId = `${clipId}-spotlight`
 const handles = computed(() => {
   const s = chosen.value
   if (!s) return []
@@ -63,10 +66,20 @@ function down(event: PointerEvent) {
 <template>
   <svg class="annotation-surface" :class="{ enabled }" :viewBox="`0 0 ${width} ${height}`" preserveAspectRatio="none"
     @pointerdown.stop="down" @pointermove.stop="editor.drag(point($event))" @pointerup.stop="editor.finish()" @pointercancel.stop="!editor.pending && editor.abort()" @contextmenu.stop.prevent="!editor.pending && editor.abort()">
-    <defs><clipPath :id="clipId"><rect :x="bounds.x" :y="bounds.y" :width="bounds.width" :height="bounds.height" /></clipPath></defs>
+    <defs>
+      <clipPath :id="clipId"><rect :x="bounds.x" :y="bounds.y" :width="bounds.width" :height="bounds.height" /></clipPath>
+      <!-- 黑色亮区在同一遮罩内取并集，重叠区域不会像 evenodd 那样重新变暗。 -->
+      <mask :id="spotlightMaskId" maskUnits="userSpaceOnUse" maskContentUnits="userSpaceOnUse" :x="bounds.x" :y="bounds.y" :width="bounds.width" :height="bounds.height" style="mask-type: luminance">
+        <rect :x="bounds.x" :y="bounds.y" :width="bounds.width" :height="bounds.height" fill="white" />
+        <rect v-for="(s, index) in spotlights" :key="index" :x="shapeBounds(s).x" :y="shapeBounds(s).y" :width="shapeBounds(s).width" :height="shapeBounds(s).height" fill="black" />
+      </mask>
+    </defs>
     <g :clip-path="`url(#${clipId})`">
       <template v-for="(s, index) in shapes" :key="index">
-        <image v-if="isRaster(s) && s.raster" :href="`data:image/png;base64,${s.raster}`" :x="shapeBounds(s).x" :y="shapeBounds(s).y" :width="shapeBounds(s).width" :height="shapeBounds(s).height" preserveAspectRatio="none" :opacity="s.opacity ?? 1" />
+        <template v-if="s.kind === 'spotlight'">
+          <rect v-if="index === spotlightIndex" :x="bounds.x" :y="bounds.y" :width="bounds.width" :height="bounds.height" :mask="`url(#${spotlightMaskId})`" :fill="s.color" :opacity="s.opacity ?? 1" />
+        </template>
+        <image v-else-if="isRaster(s) && s.raster" :href="`data:image/png;base64,${s.raster}`" :x="shapeBounds(s).x" :y="shapeBounds(s).y" :width="shapeBounds(s).width" :height="shapeBounds(s).height" preserveAspectRatio="none" :opacity="s.opacity ?? 1" />
         <rect v-else-if="isRaster(s)" :x="shapeBounds(s).x" :y="shapeBounds(s).y" :width="shapeBounds(s).width" :height="shapeBounds(s).height" fill="#94a3b844" stroke="#8b5cf6" vector-effect="non-scaling-stroke" />
         <path v-else :d="shapePath(s)" :stroke="s.color" :stroke-width="s.width" :opacity="s.opacity ?? 1" fill="none" stroke-linecap="round" stroke-linejoin="round" />
       </template>

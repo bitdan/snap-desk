@@ -2,12 +2,14 @@ import { clamp, resize, type Handle, type Point, type Rect, type Size } from './
 
 // 标注始终使用原图物理像素坐标，预览和 Rust 导出共用数据，避免 DPI 缩放错位。
 export interface Annotation {
-  kind: 'rectangle' | 'arrow' | 'ellipse' | 'line' | 'polyline' | 'pen' | 'highlighter' | 'text' | 'number' | 'mosaic' | 'blur'
+  kind: 'rectangle' | 'arrow' | 'ellipse' | 'line' | 'polyline' | 'pen' | 'highlighter' | 'text' | 'number' | 'mosaic' | 'blur' | 'spotlight' | 'magnify'
   start: Point
   end: Point
   color: string
   width: number
   opacity?: number
+  /** 仅放大镜使用，表示原图中心采样区域的放大倍数（2～4）。 */
+  magnification?: number
   points?: Point[]
   text?: string
   fontSize?: number
@@ -101,7 +103,21 @@ export function hitTest(shapes: Annotation[], p: Point, tolerance = 6): number {
   for (let index = shapes.length - 1; index >= 0; index--) if (hit(shapes[index])) return index
   return -1
 }
-export const isRaster = (s: Annotation) => ['text', 'number', 'mosaic', 'blur'].includes(s.kind)
+export const isRaster = (s: Annotation) => ['text', 'number', 'mosaic', 'blur', 'magnify'].includes(s.kind)
+
+/** 聚光灯保留矩形孔洞，外部路径配合 evenodd 填充，仅覆盖当前图片/截图选区。 */
+export function spotlightPath(shape: Annotation, crop: Rect): string {
+  const b = shapeBounds(shape)
+  return `M ${crop.x} ${crop.y} h ${crop.width} v ${crop.height} h ${-crop.width} Z M ${b.x} ${b.y} h ${b.width} v ${b.height} h ${-b.width} Z`
+}
+
+/** 放大镜采样中心区域；区域始终在镜框内部，不读取截图选区外的像素。 */
+export function magnifierSource(shape: Annotation): Rect {
+  const b = shapeBounds(shape), zoom = shape.magnification ?? 2
+  if (!Number.isFinite(zoom) || zoom < 2 || zoom > 4) throw new Error('放大倍数须为 2～4。')
+  const width = b.width / zoom, height = b.height / zoom
+  return { x: b.x + (b.width - width) / 2, y: b.y + (b.height - height) / 2, width, height }
+}
 
 /** 序号由当前历史推导：撤销/删除末项后可复用，删除中间项不重排已有标注。 */
 export function nextNumber(shapes: Annotation[]): number {
