@@ -13,6 +13,8 @@ const target = resolve(root, 'src-tauri', 'target')
 const env = rustEnvironment()
 console.log(`构建输出：${target}`)
 console.log('请先从托盘退出 Snap Desk，避免 Windows 阻止覆盖正在运行的 EXE。')
+// 系统编码 API 由 Windows 提供；构建脚本不下载或捆绑外部编码程序。
+console.log('Windows 录屏使用系统 Media Foundation；无需附带外部编码程序。')
 const result = spawnSync(process.execPath, [cli, 'build', ...process.argv.slice(2)], {
   cwd: root,
   env: { ...env, CARGO_TARGET_DIR: target },

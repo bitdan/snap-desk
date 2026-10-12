@@ -13,6 +13,8 @@ use std::{
 use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
+#[path = "recording.rs"]
+pub mod recording;
 #[path = "scroll_capture.rs"]
 pub mod scroll_capture;
 
@@ -360,6 +362,9 @@ impl Drop for Operation<'_> {
 }
 
 pub fn cancel_active(app: &AppHandle) -> Result<(), String> {
+    if recording::request_stop(app, true) {
+        return Ok(());
+    }
     let state = app.state::<CaptureState>();
     let _operation = Operation::acquire(&state.operation)?;
     let id = state

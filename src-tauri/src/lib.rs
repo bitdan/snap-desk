@@ -58,6 +58,9 @@ fn trigger(app: &AppHandle) {
     if capture::scroll_capture::stop(app) {
         return;
     }
+    if capture::recording::request_stop(app, false) {
+        return;
+    }
     if app.state::<CaptureState>().active.load(Ordering::SeqCst) {
         return;
     }
@@ -77,6 +80,7 @@ pub fn run() {
             }
         }))
         .manage(CaptureState::default())
+        .manage(capture::recording::RecordingState::default())
         .manage(pins::PinState::default())
         .plugin(
             tauri_plugin_log::Builder::new()
@@ -123,6 +127,19 @@ pub fn run() {
             let scroll_cancel =
                 MenuItem::with_id(app, "scroll-cancel", "取消当前截图", true, None::<&str>)?;
             let open = MenuItem::with_id(app, "open", "打开 Snap Desk", true, None::<&str>)?;
+            let record_pause = MenuItem::with_id(
+                app,
+                "record-pause",
+                "暂停录屏 / 打开控制",
+                true,
+                None::<&str>,
+            )?;
+            let record_resume =
+                MenuItem::with_id(app, "record-resume", "恢复录屏", true, None::<&str>)?;
+            let record_stop =
+                MenuItem::with_id(app, "record-stop", "停止录屏并导出 MP4", true, None::<&str>)?;
+            let record_cancel =
+                MenuItem::with_id(app, "record-cancel", "取消录屏并清理", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
             let menu = Menu::with_items(
                 app,
@@ -131,6 +148,10 @@ pub fn run() {
                     &cancel,
                     &scroll_stop,
                     &scroll_cancel,
+                    &record_pause,
+                    &record_resume,
+                    &record_stop,
+                    &record_cancel,
                     &open,
                     &quit,
                 ],
@@ -143,6 +164,30 @@ pub fn run() {
                 .menu(&menu)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "capture" => trigger(app),
+                    "record-pause" | "record-resume" => {
+                        let app = app.clone();
+                        let resume = event.id.as_ref() == "record-resume";
+                        tauri::async_runtime::spawn_blocking(move || {
+                            use capture::recording::RecordingAction;
+                            if let Err(error) = capture::recording::control(
+                                &app,
+                                None,
+                                if resume {
+                                    RecordingAction::Resume
+                                } else {
+                                    RecordingAction::Pause
+                                },
+                            ) {
+                                capture::report_error(&app, error);
+                            }
+                        });
+                    }
+                    "record-stop" => {
+                        capture::recording::request_stop(app, false);
+                    }
+                    "record-cancel" => {
+                        capture::recording::request_stop(app, true);
+                    }
                     "scroll-cancel" => {
                         if let Err(error) = capture::cancel_active(app) {
                             capture::report_error(app, error);
@@ -159,15 +204,34 @@ pub fn run() {
                             show_main(app);
                         }
                     }
-                    "quit" => app.exit(0),
+                    // 先完成正在录制的视频；导出完成后可再次从托盘退出。
+                    "quit" => {
+                        if !capture::recording::request_stop(app, false) {
+                            app.exit(0);
+                        }
+                    }
                     _ => {}
                 })
                 .build(app)?;
             Ok(())
         })
         .on_window_event(|window, event| {
+            if matches!(event, tauri::WindowEvent::Resized(_)) && window.label().contains("-edge-")
+            {
+                if let Some(webview) = window.app_handle().get_webview_window(window.label()) {
+                    if let Err(error) = capture::scroll_capture::chrome::restore_edge(&webview) {
+                        let _ = webview.hide();
+                        log::error!("选区边框裁剪恢复失败：{error}");
+                    }
+                }
+            }
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                if window.label() == "main" {
+                if window.label() == "recording-controls"
+                    || window.label().starts_with("recording-edge-")
+                {
+                    // 录屏范围与控制条不能被 Alt+F4 关闭，只在停止/取消完成后统一收起。
+                    api.prevent_close();
+                } else if window.label() == "main" {
                     api.prevent_close();
                     let _ = window.hide();
                 } else if matches!(window.label(), "scroll-preview" | "scroll-controls") {
@@ -207,6 +271,9 @@ pub fn run() {
             capture::scroll_capture::start_scroll,
             capture::scroll_capture::current_scroll,
             capture::scroll_capture::control_scroll,
+            capture::recording::start_recording,
+            capture::recording::current_recording,
+            capture::recording::control_recording,
             pins::pin_clipboard,
             pins::pin_file,
             pin_content::pin_color,

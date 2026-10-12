@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { Camera, Keyboard, Settings2, Info, Scan, PanelLeftClose, Monitor, Check, Command, Pin } from 'lucide-vue-next'
+import { Camera, Keyboard, Settings2, Info, Scan, PanelLeftClose, Monitor, Check, Command, Pin, Video } from 'lucide-vue-next'
+import RecordingPanel from '@/components/RecordingPanel.vue'
 import PinManager from '@/components/PinManager.vue'
 import Button from '@/components/ui/button/Button.vue'
 import { api, desktop, onDelay, onError, onResult, type AppStatus, type Settings } from '@/lib/api'
@@ -8,7 +9,7 @@ import { defaultSettings, exportFilenamePreview, validateExportSettings } from '
 import { errorMessage } from '@/lib/errors'
 
 const page = ref('截图')
-const items = [{ name: '截图', icon: Camera }, { name: '贴图', icon: Pin }, { name: '快捷键', icon: Keyboard }, { name: '设置', icon: Settings2 }, { name: '关于', icon: Info }]
+const items = [{ name: '截图', icon: Camera }, { name: '录屏', icon: Video }, { name: '贴图', icon: Pin }, { name: '快捷键', icon: Keyboard }, { name: '设置', icon: Settings2 }, { name: '关于', icon: Info }]
 const status = ref<AppStatus | null>(null)
 const pending = ref(false)
 const saving = ref(false)
@@ -68,7 +69,7 @@ async function initialize() {
   if (!desktop || initializing.value || disposed) return
   initializing.value = true; initializationFailed.value = false; error.value = ''
   try {
-    for (const subscribe of [() => onError(e => { error.value = e }), () => onResult(result => { message.value = result }), () => onDelay(value => { delayRevision++; remaining.value = value })]) {
+    for (const subscribe of [() => onError(e => { error.value = e }), () => onResult(result => { message.value = result; if (result.startsWith('录屏')) page.value = '录屏' }), () => onDelay(value => { delayRevision++; remaining.value = value })]) {
       const off = await subscribe()
       if (disposed) { off(); return }
       disposers.push(off)
@@ -130,6 +131,7 @@ onUnmounted(() => { disposed = true; disposers.splice(0).forEach(off => off()) }
           <p class="scope-note"><Monitor :size="15" />当前截取主显示器。关闭窗口后可从托盘或快捷键继续截图。</p>
         </template>
 
+        <RecordingPanel v-else-if="page === '录屏'" />
         <PinManager v-else-if="page === '贴图'" />
         <template v-else-if="page === '快捷键'">
           <h1>快捷键</h1><p class="subtitle">应用运行时，全局快捷键可在其他窗口中使用。</p>

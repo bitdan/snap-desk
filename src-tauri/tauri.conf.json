@@ -33,6 +33,21 @@
         "backgroundColor": "#15141b"
       },
       {
+        "label": "recording-controls",
+        "title": "录屏控制",
+        "url": "index.html?window=recording-controls",
+        "visible": false,
+        "decorations": false,
+        "resizable": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "shadow": false,
+        "focus": false,
+        "contentProtected": true,
+        "width": 480,
+        "height": 48
+      },
+      {
         "label": "scroll-preview",
         "title": "长截图实时预览",
         "url": "index.html?window=scroll-preview",

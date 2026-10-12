@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue'
-import { Copy, Save, X, Maximize, Scan, Move, Pin, Pipette, ArrowDownToLine } from 'lucide-vue-next'
+import { Copy, Save, X, Maximize, Scan, Move, Pin, Pipette, ArrowDownToLine, Video } from 'lucide-vue-next'
 import { api, onFrame, onScroll, type CaptureFrame, type ColorFormat, type ScrollView } from '@/lib/api'
 import { clamp, move, normalize, resize, toPixels, nudgeSelection, type Handle, type Point, type Rect } from '@/lib/selection'
 import { useAnnotations, type AnnotationTool } from '@/lib/use-annotations'
@@ -20,6 +20,7 @@ const busy = ref(false)
 const error = ref('')
 const scroll = ref<ScrollView | null>(null)
 const scrollSetup = ref(false)
+const recordingSetup = ref(false)
 const automaticScroll = ref(true)
 const saveScrollFrames = ref(true)
 const viewport = ref({ width: innerWidth, height: innerHeight })
@@ -29,7 +30,7 @@ const imageReady = ref(false)
 const pointer = ref<Point | null>(null)
 const picking = ref(false)
 const colorFormat = ref<ColorFormat>('hex')
-const showMagnifier = computed(() => frame.value && imageReady.value && screenImage.value && pointer.value && !busy.value && !scrollSetup.value && (picking.value || (!annotating.value && !marked.value)))
+const showMagnifier = computed(() => frame.value && imageReady.value && screenImage.value && pointer.value && !busy.value && !scrollSetup.value && !recordingSetup.value && (picking.value || (!annotating.value && !marked.value)))
 const editor = useAnnotations(() => pixels.value ?? { x: 0, y: 0, width: 0, height: 0 }, () => frame.value?.dataUrl ?? '', () => busy.value)
 const marked = computed(() => editor.history.present.length > 0)
 const handles: Handle[] = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w']
@@ -82,6 +83,14 @@ async function startScroll() {
   catch (e) { error.value = String(e) }
   finally { busy.value = false }
 }
+/** 使用与截图相同的原图像素选区，成功后录屏后端接管会话及快捷键。 */
+async function startRecording() {
+  if (!frame.value || !pixels.value || !valid.value || busy.value || marked.value || editor.pending || editor.interacting || gesture) return
+  busy.value = true; error.value = ''
+  try { await api.startRecording(frame.value.id, pixels.value); recordingSetup.value = false; frame.value = null }
+  catch (e) { error.value = String(e) }
+  finally { busy.value = false }
+}
 /** 切换取色不清空选区或标注；Esc / 右键先退出取色，再次按才取消截图。 */
 function togglePicker() {
   if (busy.value || gesture || editor.pending || editor.interacting) return
@@ -125,7 +134,7 @@ function drag(e: PointerEvent) {
 function up() { gesture = null }
 function abortGesture() { gesture = null }
 function selectAll() { if (!busy.value && !picking.value && !marked.value && !editor.interacting) { editor.reset(); selection.value = { x: 0, y: 0, ...viewport.value } } }
-function receive(value: CaptureFrame) { busy.value = false; reselect(); scroll.value = null; scrollSetup.value = false; imageReady.value = false; frame.value = value }
+function receive(value: CaptureFrame) { busy.value = false; reselect(); scroll.value = null; scrollSetup.value = false; recordingSetup.value = false; imageReady.value = false; frame.value = value }
 async function loaded() {
   if (!frame.value) return
   imageReady.value = true
@@ -154,6 +163,10 @@ async function finish(action: 'copy' | 'save' | 'pin') {
 }
 function key(e: KeyboardEvent) {
   if (scroll.value) return
+  if (recordingSetup.value) {
+    if (e.key === 'Escape' && !busy.value) { e.preventDefault(); recordingSetup.value = false }
+    return
+  }
   if (scrollSetup.value) {
     if (e.key === 'Escape' && !busy.value) { e.preventDefault(); scrollSetup.value = false }
     else if (e.key === 'Enter' && !e.repeat && !(e.target as HTMLElement).closest('button')) { e.preventDefault(); void startScroll() }
@@ -247,6 +260,7 @@ onUnmounted(() => { disposed = true; off?.(); offScroll?.(); window.removeEventL
           <button :disabled="busy || editor.pending || editor.interacting" title="清空标注并重新框选" aria-label="重新框选" @click="reselect"><Scan :size="16" /></button>
           <button :disabled="busy || editor.pending || editor.interacting || marked" title="全屏选区" aria-label="全屏选区" @click="selectAll"><Maximize :size="16" /></button>
           <button :disabled="busy || editor.pending || editor.interacting || marked" title="长截图" @click="scrollSetup = true"><ArrowDownToLine :size="16" />长截图</button>
+          <button :disabled="busy || editor.pending || editor.interacting || marked" title="录制当前选区" @click="recordingSetup = true"><Video :size="16" />录屏</button>
         <button :disabled="busy || editor.pending || editor.interacting" title="贴图 Ctrl/⌘+P" @click="finish('pin')"><Pin :size="16" />贴图</button>
         <button :disabled="busy || editor.pending || editor.interacting" @click="finish('save')"><Save :size="16" />保存</button>
         <button class="copy-button" :disabled="busy || editor.pending || editor.interacting" @click="finish('copy')"><Copy :size="16" />{{ busy ? '处理中' : '复制' }}</button>
@@ -255,6 +269,15 @@ onUnmounted(() => { disposed = true; off?.(); offScroll?.(); window.removeEventL
       </AnnotationToolbar>
     </div>
     <CaptureMagnifier v-if="showMagnifier && screenImage && pointer && frame" :image="screenImage" :point="pointer" :viewport="viewport" :image-size="frame" :show-color="picking" />
+    <div v-if="recordingSetup" class="scroll-setup-shade" @pointerdown.stop @pointermove.stop @contextmenu.stop.prevent>
+      <section class="scroll-setup" role="dialog" aria-modal="true" aria-label="开始录屏">
+        <h2>录制当前选区 · MP4</h2>
+        <p>确认选区后，下方显示录屏控制条；点击“开始录制”才计时采集。支持暂停、继续、结束保存和取消。无声录制，目标 10 fps，最多 3 分钟 / 512 MiB 帧缓存。</p>
+        <p>当前使用 Windows 系统视频编码。视频自动保存到本地，停止后显示路径；其他平台原生录屏待实现。</p>
+        <p v-if="error" class="scroll-setup-error" role="alert">{{ error }}</p>
+        <div><button :disabled="busy" @click="recordingSetup = false">返回选区</button><button :disabled="busy" @click="startRecording">{{ busy ? '准备中…' : '确认选区' }}</button></div>
+      </section>
+    </div>
     <div v-if="scrollSetup" class="scroll-setup-shade" @pointerdown.stop @pointermove.stop @contextmenu.stop.prevent>
       <section class="scroll-setup" role="dialog" aria-modal="true" aria-label="开始长截图">
         <h2>滚动长截图</h2>
@@ -264,7 +287,7 @@ onUnmounted(() => { disposed = true; off?.(); offScroll?.(); window.removeEventL
         <div><button :disabled="busy" @click="scrollSetup = false">返回调整选区</button><button :disabled="busy" @click="startScroll">{{ busy ? '准备中…' : '开始滚动采集' }}</button></div>
       </section>
     </div>
-    <div v-if="error && !scrollSetup" class="overlay-error" role="alert" @pointerdown.stop>{{ error }}</div>
+    <div v-if="error && !scrollSetup && !recordingSetup" class="overlay-error" role="alert" @pointerdown.stop>{{ error }}</div>
   </div>
 </template>
 

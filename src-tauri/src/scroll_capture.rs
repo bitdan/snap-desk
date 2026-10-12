@@ -9,10 +9,10 @@ use crate::stitch::{Match, Stitch};
 use archive::Archive;
 use driver::Driver;
 #[path = "scroll_chrome.rs"]
-pub(super) mod chrome;
+pub(crate) mod chrome;
 
 #[derive(PartialEq)]
-struct Screen {
+pub(super) struct Screen {
     name: Option<String>,
     x: i32,
     y: i32,
@@ -21,7 +21,7 @@ struct Screen {
     scale: u64,
 }
 
-fn screen(app: &AppHandle) -> Result<Screen, String> {
+pub(super) fn screen(app: &AppHandle) -> Result<Screen, String> {
     let monitor = app
         .primary_monitor()
         .map_err(err)?
