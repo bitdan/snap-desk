@@ -170,7 +170,7 @@ pub fn run() {
                 if window.label() == "main" {
                     api.prevent_close();
                     let _ = window.hide();
-                } else if window.label() == "scroll-preview" {
+                } else if matches!(window.label(), "scroll-preview" | "scroll-controls") {
                     api.prevent_close();
                     capture::scroll_capture::stop(window.app_handle());
                 } else if window.label() == "capture" {

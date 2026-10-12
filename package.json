@@ -1,6 +1,8 @@
 {
   "name": "snap-desk",
   "private": true,
+  "license": "GPL-3.0-only",
+  "repository": { "type": "git", "url": "https://github.com/bitdan/snap-desk.git" },
   "version": "0.1.3",
   "type": "module",
   "scripts": {

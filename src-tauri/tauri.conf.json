@@ -45,6 +45,20 @@
         "focus": false,
         "width": 220,
         "height": 420
+      },
+      {
+        "label": "scroll-controls",
+        "title": "长截图操作",
+        "url": "index.html?window=scroll-controls",
+        "visible": false,
+        "decorations": false,
+        "resizable": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "shadow": false,
+        "focus": false,
+        "width": 320,
+        "height": 48
       }
     ],
     "security": {
@@ -55,6 +69,9 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "resources": {
+      "../LICENSE": "LICENSE"
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

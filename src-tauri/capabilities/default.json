@@ -6,7 +6,8 @@
     "main",
     "capture",
     "pin-*",
-    "scroll-preview"
+    "scroll-preview",
+    "scroll-controls"
   ],
   "permissions": [
     "core:event:allow-listen",

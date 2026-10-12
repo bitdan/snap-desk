@@ -318,9 +318,7 @@ pub fn show_capture(app: AppHandle, window: WebviewWindow, id: u64) -> Result<()
 fn cleanup(app: &AppHandle, restore_main: bool) -> Result<(), String> {
     // Keep the session recoverable if hiding fails; don't expose a dead overlay.
     overlay(app)?.hide().map_err(err)?;
-    if let Some(preview) = app.get_webview_window("scroll-preview") {
-        let _ = preview.hide();
-    }
+    scroll_capture::chrome::hide(app);
     let state = app.state::<CaptureState>();
     state.scroll_stop.store(true, Ordering::SeqCst);
     state.scroll_collecting.store(false, Ordering::SeqCst);

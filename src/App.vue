@@ -155,7 +155,7 @@ onUnmounted(() => { disposed = true; disposers.splice(0).forEach(off => off()) }
 
         <template v-else>
           <h1>关于 Snap Desk</h1><p class="subtitle">桌面截图与标注工具</p>
-          <section class="settings-card about"><span class="brand-icon"><Scan :size="30" /></span><h2>Snap Desk <span class="pill">0.1.3</span></h2><p>基于 Tauri 2、Vue 3、TypeScript 与 Rust。截图和贴图在本地处理；长截图可选保存原始帧，取消后仍保留，需自行清理；快捷键、延时、导出偏好及最近保存目录保存在本机。</p><p>当前范围：主屏区域截图、图形 / 画笔 / 文字 / 马赛克标注、撤销重做、贴图内继续标注与二次编辑，以及多贴图管理和基础图片处理。支持区域滚动长截图；OCR 与录屏将按项目 TODO 分期实现。</p><p>Windows / macOS / Linux X11 使用原生截图后端，尚待各平台实机验收。macOS 截图需要屏幕录制权限，自动滚动另需辅助功能权限；Wayland 暂未开放。</p></section>
+          <section class="settings-card about"><span class="brand-icon"><Scan :size="30" /></span><h2>Snap Desk <span class="pill">0.1.3</span></h2><p>基于 Tauri 2、Vue 3、TypeScript 与 Rust。截图和贴图在本地处理；长截图可选保存原始帧，取消后仍保留，需自行清理；快捷键、延时、导出偏好及最近保存目录保存在本机。</p><p>当前范围：主屏区域截图、图形 / 画笔 / 文字 / 马赛克标注、撤销重做、贴图内继续标注与二次编辑，以及多贴图管理和基础图片处理。支持区域滚动长截图；OCR 与录屏将按项目 TODO 分期实现。</p><p>Windows / macOS / Linux X11 使用原生截图后端，尚待各平台实机验收。macOS 截图需要屏幕录制权限，自动滚动另需辅助功能权限；Wayland 暂未开放。</p><p>项目地址：<a href="https://github.com/bitdan/snap-desk" target="_blank" rel="noopener noreferrer" class="text-blue-600 underline">github.com/bitdan/snap-desk</a></p><p>许可证：<a href="https://github.com/bitdan/snap-desk/blob/HEAD/LICENSE" target="_blank" rel="noopener noreferrer" class="text-blue-600 underline">GPL-3.0 License</a>（GPL-3.0-only）。第三方依赖遵循各自许可证。</p></section>
         </template>
       </div>
     </main>

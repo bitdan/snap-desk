@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, shallowRef } from 'vue'
+import { computed, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue'
 import { Copy, Save, X, Maximize, Scan, Move, Pin, Pipette, ArrowDownToLine } from 'lucide-vue-next'
 import { api, onFrame, onScroll, type CaptureFrame, type ColorFormat, type ScrollView } from '@/lib/api'
 import { clamp, move, normalize, resize, toPixels, nudgeSelection, type Handle, type Point, type Rect } from '@/lib/selection'
@@ -40,10 +40,21 @@ let disposed = false
 const pixels = computed(() => selection.value && frame.value ? toPixels(selection.value, viewport.value, frame.value) : null)
 const valid = computed(() => pixels.value && pixels.value.width > 0 && pixels.value.height > 0)
 const boxStyle = computed(() => selection.value ? { left: `${selection.value.x}px`, top: `${selection.value.y}px`, width: `${selection.value.width}px`, height: `${selection.value.height}px` } : {})
+const toolbar = ref<HTMLElement | null>(null)
+const toolbarSize = ref({ width: 1100, height: 46 })
+// 工具完整展开为一排；窄屏按实际内容宽度整体缩小，不把尾部操作藏进横向滚动区。
+watch(toolbar, (element, _, cleanup) => {
+  if (!element) return
+  const observer = new ResizeObserver(() => { toolbarSize.value = { width: element.offsetWidth, height: element.offsetHeight } })
+  observer.observe(element)
+  cleanup(() => observer.disconnect())
+})
 const toolbarStyle = computed(() => {
   const r = selection.value
   if (!r) return {}
-  return { left: `${clamp(r.x, 8, Math.max(8, viewport.value.width - 960))}px`, top: `${clamp(r.y + r.height + 12, 8, Math.max(8, viewport.value.height - 106))}px` }
+  const scale = Math.min(1, Math.max(1, viewport.value.width - 16) / toolbarSize.value.width)
+  const width = toolbarSize.value.width * scale, height = toolbarSize.value.height * scale
+  return { left: `${clamp(r.x, 8, Math.max(8, viewport.value.width - width - 8))}px`, top: `${clamp(r.y + r.height + 12, 8, Math.max(8, viewport.value.height - height - 8))}px`, transform: `scale(${scale})`, transformOrigin: 'top left' }
 })
 // 所有图形保存在原图坐标系内；选区只负责裁剪和限制绘制区域。
 function chooseTool(tool: AnnotationTool) { if (busy.value || editor.pending || editor.interacting) return; editor.setTool(tool); annotating.value = true }
@@ -211,7 +222,7 @@ onUnmounted(() => { disposed = true; off?.(); offScroll?.(); window.removeEventL
 </script>
 
 <template>
-  <div v-if="scroll" class="scroll-running" role="status">正在自动拼接，结束后直接保存并复制。</div>
+  <div v-if="scroll" />
   <div v-else class="capture-overlay" @pointerdown.capture="pickDown" @pointerdown="down($event)" @pointermove.capture="drag" @pointerleave="pointer = null" @pointerup="up" @pointercancel="abortGesture(); pointer = null" @contextmenu.prevent="contextMenu">
     <img v-if="frame" :key="frame.id" ref="screenImage" class="screen-image" :src="frame.dataUrl" alt="当前屏幕截图" draggable="false" @load="loaded" @error="imageFailed" />
     <div v-if="!selection" class="initial-shade" />
@@ -229,13 +240,13 @@ onUnmounted(() => { disposed = true; off?.(); offScroll?.(); window.removeEventL
       <template v-if="!marked && !annotating"><span v-for="handle in handles" :key="handle" :class="['resize-handle', handle]" @pointerdown.stop="down($event, handle)" /></template>
     </div>
     <AnnotationSurface v-if="frame && pixels" :editor="editor" :width="frame.width" :height="frame.height" :bounds="pixels" :enabled="annotating && !busy && !picking" />
-    <div v-if="valid && !picking" class="capture-toolbar annotation-toolbar" :style="toolbarStyle" @pointerdown.stop @contextmenu.stop.prevent>
+    <div v-if="valid && !picking" ref="toolbar" class="capture-toolbar annotation-toolbar" :style="toolbarStyle" @pointerdown.stop @contextmenu.stop.prevent>
       <AnnotationToolbar :editor="editor" :disabled="busy" :active="annotating" @tool="chooseTool">
         <template #leading><button :disabled="busy || editor.pending || editor.interacting || marked" :aria-pressed="!annotating" title="调整选区" aria-label="调整选区" @click="annotating = false"><Move :size="16" /></button></template>
         <template #actions>
           <button :disabled="busy || editor.pending || editor.interacting" title="清空标注并重新框选" aria-label="重新框选" @click="reselect"><Scan :size="16" /></button>
           <button :disabled="busy || editor.pending || editor.interacting || marked" title="全屏选区" aria-label="全屏选区" @click="selectAll"><Maximize :size="16" /></button>
-          <button :disabled="busy || editor.pending || editor.interacting || marked" title="长截图：选区不要包含固定标题栏或滚动条；请先清空标注" @click="scrollSetup = true"><ArrowDownToLine :size="16" />长截图</button>
+          <button :disabled="busy || editor.pending || editor.interacting || marked" title="长截图" @click="scrollSetup = true"><ArrowDownToLine :size="16" />长截图</button>
         <button :disabled="busy || editor.pending || editor.interacting" title="贴图 Ctrl/⌘+P" @click="finish('pin')"><Pin :size="16" />贴图</button>
         <button :disabled="busy || editor.pending || editor.interacting" @click="finish('save')"><Save :size="16" />保存</button>
         <button class="copy-button" :disabled="busy || editor.pending || editor.interacting" @click="finish('copy')"><Copy :size="16" />{{ busy ? '处理中' : '复制' }}</button>
@@ -248,12 +259,8 @@ onUnmounted(() => { disposed = true; off?.(); offScroll?.(); window.removeEventL
       <section class="scroll-setup" role="dialog" aria-modal="true" aria-label="开始长截图">
         <h2>滚动长截图</h2>
         <p v-if="error" class="scroll-setup-error" role="alert">{{ error }}</p>
-        <p>选区 {{ pixels?.width }} × {{ pixels?.height }} px。只框选可滚动的内容，避开固定标题栏、滚动条和悬浮按钮。</p>
-        <label><input v-model="automaticScroll" type="checkbox" :disabled="busy" /> 自动向下滚动（移动鼠标结束）</label>
-        <label><input v-model="saveScrollFrames" type="checkbox" :disabled="busy" /> 保存原始帧到本地（取消后仍保留，需自行清理）</label>
-        <p v-if="automaticScroll">开始后有 2 秒将鼠标放到选区内的可滚动内容上，并保持不动。小步滚动，画面稳定后继续，连续多次没有位移后停止。目标应用需能接收鼠标所在位置的滚轮。</p>
-        <p v-else>开始后在原窗口向下滚动，每次短暂停顿，等预览更新后继续，建议保留至少半屏重叠。</p>
-        <p>再次按截图快捷键、从托盘结束或移动鼠标后，自动保存 PNG 并复制。拼接重试失败会自动结束，只输出已确认部分，无需手动处理。</p>
+        <label><input v-model="automaticScroll" type="checkbox" :disabled="busy" /> 自动滚动</label>
+        <label><input v-model="saveScrollFrames" type="checkbox" :disabled="busy" /> 保留原始帧</label>
         <div><button :disabled="busy" @click="scrollSetup = false">返回调整选区</button><button :disabled="busy" @click="startScroll">{{ busy ? '准备中…' : '开始滚动采集' }}</button></div>
       </section>
     </div>
@@ -262,6 +269,9 @@ onUnmounted(() => { disposed = true; off?.(); offScroll?.(); window.removeEventL
 </template>
 
 <style scoped>
+.capture-toolbar.annotation-toolbar { max-width: none; }
+.capture-toolbar :deep(.annotation-tools) { width: max-content; max-width: none; }
+.capture-toolbar :deep(.annotation-tool-row) { overflow: visible; }
 .capture-modebar { position: absolute; top: 8px; left: 8px; z-index: 4; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; max-width: calc(100vw - 16px); border-radius: 6px; padding: 6px 8px; background: #242330ed; color: white; font-size: 12px; cursor: default; }
 .capture-modebar button { display: flex; align-items: center; gap: 5px; padding: 3px; }
 .capture-modebar button[aria-pressed=true] { color: #c4b5fd; }

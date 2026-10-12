@@ -9,4 +9,4 @@ const windowKind = new URLSearchParams(location.search).get('window')
 const overlay = windowKind === 'capture'
 document.documentElement.classList.toggle('capture-window', overlay)
 document.documentElement.classList.toggle('pin-window', windowKind === 'pin')
-createApp(windowKind === 'scroll-preview' ? ScrollPreview : overlay ? CaptureOverlay : windowKind === 'pin' ? PinWindow : App).mount('#app')
+createApp(windowKind === 'scroll-preview' || windowKind === 'scroll-controls' ? ScrollPreview : overlay ? CaptureOverlay : windowKind === 'pin' ? PinWindow : App).mount('#app')

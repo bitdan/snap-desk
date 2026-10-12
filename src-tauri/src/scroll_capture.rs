@@ -8,6 +8,8 @@ mod driver;
 use crate::stitch::{Match, Stitch};
 use archive::Archive;
 use driver::Driver;
+#[path = "scroll_chrome.rs"]
+pub(super) mod chrome;
 
 #[derive(PartialEq)]
 struct Screen {
@@ -43,7 +45,7 @@ pub(super) struct ScrollSession {
     stitch: Stitch,
     message: String,
     automatic: bool,
-    preview_overlaps: bool,
+    obscuring_windows: Vec<String>,
     archive: Option<Archive>,
 }
 
@@ -96,64 +98,6 @@ fn view(session: &ScrollSession, collecting: bool) -> Result<ScrollView, String>
     })
 }
 
-/// 优先右侧，其次左侧、下方、上方；无空位时靠屏幕右侧，并在取样时隐藏。
-fn place_preview(app: &AppHandle, screen: &Screen, rect: Rect) -> Result<bool, String> {
-    let window = app
-        .get_webview_window("scroll-preview")
-        .ok_or("实时预览窗口不可用。")?;
-    let scale = f64::from_bits(screen.scale);
-    let w = (220.0 * scale) as u32;
-    let h = ((420.0 * scale) as u32).min(screen.height);
-    let w = w.min(screen.width);
-    let gap = (12.0 * scale) as u32;
-    let candidates = [
-        (
-            i64::from(rect.x + rect.width + gap),
-            i64::from(rect.y.min(screen.height - h)),
-        ),
-        (
-            i64::from(rect.x) - i64::from(w + gap),
-            i64::from(rect.y.min(screen.height - h)),
-        ),
-        (
-            i64::from(rect.x.min(screen.width - w)),
-            i64::from(rect.y + rect.height + gap),
-        ),
-        (
-            i64::from(rect.x.min(screen.width - w)),
-            i64::from(rect.y) - i64::from(h + gap),
-        ),
-    ];
-    let position = candidates.into_iter().find(|&(x, y)| {
-        x >= 0
-            && y >= 0
-            && x + i64::from(w) <= i64::from(screen.width)
-            && y + i64::from(h) <= i64::from(screen.height)
-    });
-    let overlaps = position.is_none();
-    let (x, y) = position.unwrap_or((i64::from(screen.width - w), 0));
-    window
-        .set_size(tauri::PhysicalSize::new(w, h))
-        .map_err(err)?;
-    window
-        .set_position(tauri::PhysicalPosition::new(
-            screen.x + x as i32,
-            screen.y + y as i32,
-        ))
-        .map_err(err)?;
-    Ok(overlaps)
-}
-
-/// 降级位置可能覆盖选区，取样前隐藏；离开函数的所有路径都会恢复预览。
-struct PreviewSample(Option<WebviewWindow>);
-impl Drop for PreviewSample {
-    fn drop(&mut self) {
-        if let Some(w) = &self.0 {
-            let _ = w.show();
-        }
-    }
-}
-
 #[tauri::command]
 pub fn control_scroll(
     app: AppHandle,
@@ -161,7 +105,9 @@ pub fn control_scroll(
     id: u64,
     cancel: bool,
 ) -> Result<(), String> {
-    require_window(&window, "scroll-preview")?;
+    if !matches!(window.label(), "scroll-preview" | "scroll-controls") {
+        return Err("窗口无权控制长截图。".into());
+    }
     let state = app.state::<CaptureState>();
     let guard = state.scroll.lock().map_err(err)?;
     if !guard.as_ref().is_some_and(|s| s.id == id) {
@@ -277,18 +223,13 @@ fn sample_pair(
         if screen(app)? != session.screen {
             return Err("主显示器位置、尺寸或 DPI 发生变化，已结束采集，仅输出已确认部分。".into());
         }
-        (session.rect, session.source_size, session.preview_overlaps)
+        (
+            session.rect,
+            session.source_size,
+            session.obscuring_windows.clone(),
+        )
     };
-    let preview = if overlaps {
-        app.get_webview_window("scroll-preview")
-    } else {
-        None
-    };
-    if let Some(window) = &preview {
-        window.hide().map_err(err)?;
-        std::thread::sleep(Duration::from_millis(80));
-    }
-    let _preview_guard = PreviewSample(preview);
+    let _preview_guard = chrome::hide_for_sample(app, &overlaps)?;
     let mut reference = sample(app, rect, source_size)?;
     let mut quiet_samples = 0;
     let mut settled = None;
@@ -345,6 +286,7 @@ fn sample_pair(
         let update = view(session, true)?;
         // 只有追加成功时推送，重复帧不会反复编码或发送。
         let _ = app.emit_to("scroll-preview", "scroll-updated", &update);
+        let _ = app.emit_to("scroll-controls", "scroll-updated", &update);
     }
     Ok(Some(result))
 }
@@ -479,17 +421,9 @@ fn collect(app: AppHandle, id: u64, first_delay: u64) {
                         .lock()
                         .map_err(err)?
                         .as_ref()
-                        .is_some_and(|s| s.preview_overlaps);
-                    let preview = if overlaps {
-                        app.get_webview_window("scroll-preview")
-                    } else {
-                        None
-                    };
-                    if let Some(window) = &preview {
-                        window.hide().map_err(err)?;
-                        std::thread::sleep(Duration::from_millis(80));
-                    }
-                    let _preview_guard = PreviewSample(preview);
+                        .map(|s| s.obscuring_windows.clone())
+                        .unwrap_or_default();
+                    let _preview_guard = chrome::hide_for_sample(&app, &overlaps)?;
                     // 将反馈得到的 1～6 格拆开匀速发送；每格前都检查鼠标和停止状态。
                     // 整组结束后才采集，既减轻页面跳动，也避免把动画中间帧拼进去。
                     for tick in 0..driver.step {
@@ -555,9 +489,7 @@ fn collect(app: AppHandle, id: u64, first_delay: u64) {
             let _ = close_session(&app, id);
             break;
         }
-        if let Some(preview) = app.get_webview_window("scroll-preview") {
-            let _ = preview.hide();
-        }
+        chrome::hide(&app);
         state.scroll_collecting.store(false, Ordering::SeqCst);
         state.scroll_stop.store(true, Ordering::SeqCst);
         let mut failure = None;
@@ -628,13 +560,13 @@ pub async fn start_scroll(
             archive.frame(stitch.last())?;
         }
         let screen = screen(&app)?;
-        let preview_overlaps = place_preview(&app, &screen, rect)?;
+        let obscuring_windows = chrome::place(&app, &screen, rect)?;
         let session = ScrollSession {
             id,
             revision: 1,
             rect,
             screen,
-            preview_overlaps,
+            obscuring_windows,
             source_size,
             stitch,
             message: String::new(),
@@ -647,16 +579,13 @@ pub async fn start_scroll(
         state.scroll_cancel.store(false, Ordering::SeqCst);
         state.scroll_stop.store(false, Ordering::SeqCst);
         state.scroll_collecting.store(true, Ordering::SeqCst);
-        if let Some(preview) = app.get_webview_window("scroll-preview") {
-            let _ = app.emit_to("scroll-preview", "scroll-updated", &result);
-            let _ = preview.show();
+        for label in ["scroll-preview", "scroll-controls"] {
+            let _ = app.emit_to(label, "scroll-updated", &result);
         }
-        if let Err(error) = launch(&app, id, 2000) {
+        if let Err(error) = chrome::show(&app).and_then(|_| launch(&app, id, 2000)) {
             state.scroll_collecting.store(false, Ordering::SeqCst);
             *state.scroll.lock().map_err(err)? = None;
-            if let Some(preview) = app.get_webview_window("scroll-preview") {
-                let _ = preview.hide();
-            }
+            chrome::hide(&app);
             let _ = window.show();
             return Err(error);
         }
@@ -671,7 +600,10 @@ pub async fn current_scroll(
     app: AppHandle,
     window: WebviewWindow,
 ) -> Result<Option<ScrollView>, String> {
-    if window.label() != "capture" && window.label() != "scroll-preview" {
+    if !matches!(
+        window.label(),
+        "capture" | "scroll-preview" | "scroll-controls"
+    ) {
         return Err("窗口无权读取长截图。".into());
     }
     tauri::async_runtime::spawn_blocking(move || {
