@@ -96,7 +96,7 @@ function menuKey(event: KeyboardEvent) {
 async function action(value: PinAction) {
   await run(async () => {
     const result = await api.pinAction(value)
-    message.value = value === 'copy' ? '已复制' : value === 'save' ? result ? '已保存 PNG' : '已取消保存' : ''
+    message.value = value === 'copy' ? '已复制' : value === 'save' ? result ? '图片已保存' : '已取消保存' : ''
   })
 }
 async function transform(value: PinTransform) {
@@ -181,7 +181,7 @@ function closeOnResize() { closeMenu() }
           <button :disabled="!editable" title="放大" aria-label="放大" @click="zoom(1)"><Plus :size="16" /></button>
           <span class="pin-divider" />
           <button :disabled="busy" title="复制 Ctrl/⌘+C" aria-label="复制" @click="action('copy')"><Copy :size="16" /></button>
-          <button :disabled="busy" title="保存 PNG Ctrl/⌘+S" aria-label="保存 PNG" @click="action('save')"><Save :size="16" /></button>
+          <button :disabled="busy" title="保存图片 Ctrl/⌘+S" aria-label="保存图片" @click="action('save')"><Save :size="16" /></button>
           <button :disabled="busy" title="隐藏 Esc" aria-label="隐藏" @click="action('hide')"><EyeOff :size="16" /></button>
           <button :disabled="busy" title="关闭 Ctrl/⌘+W" aria-label="关闭" @click="action('close')"><X :size="16" /></button>
           <button :disabled="busy" title="收起工具（Tab）" aria-label="收起工具" @click="toggleControls"><ChevronDown :size="16" /></button>

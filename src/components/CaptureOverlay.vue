@@ -10,9 +10,12 @@ import CaptureMagnifier from './CaptureMagnifier.vue'
 import { magnifierSample } from '@/lib/magnifier'
 import { nudgeColorPoint } from '@/lib/color-picker'
 import { newerScroll } from '@/lib/scroll-capture'
+import { readRecentSelection, restoreRecentSelection, writeRecentSelection } from '@/lib/recent-selection'
 
 const frame = ref<CaptureFrame | null>(null)
 const selection = ref<Rect | null>(null)
+const recentSelection = ref(readRecentSelection())
+const recentRect = computed(() => frame.value ? restoreRecentSelection(recentSelection.value, frame.value, viewport.value) : null)
 const busy = ref(false)
 const error = ref('')
 const scroll = ref<ScrollView | null>(null)
@@ -48,6 +51,12 @@ function selectionDown(e: PointerEvent) { if (!annotating.value) down(e, 'move')
 function reselect() {
   if (busy.value) return
   editor.reset(); selection.value = null; gesture = null; annotating.value = false; error.value = ''; pointer.value = null; picking.value = false
+}
+/** 恢复只替换空白选区，已有标注、文字草稿和进行中的拖动都必须先完成。 */
+function restoreSelection() {
+  if (!recentRect.value || busy.value || picking.value || scrollSetup.value || gesture || marked.value || editor.pending || editor.interacting) return
+  const rect = { ...recentRect.value }
+  reselect(); selection.value = rect
 }
 function receiveScroll(value: ScrollView) {
   const next = newerScroll(scroll.value, value, frame.value?.id)
@@ -121,8 +130,14 @@ async function finish(action: 'copy' | 'save' | 'pin') {
   if (!frame.value || picking.value || !valid.value || !pixels.value || busy.value || editor.pending || editor.interacting || gesture) return
   busy.value = true; error.value = ''
   try {
-    const result = await api[action](frame.value.id, pixels.value, editor.history.present)
-    if (result !== false) frame.value = null
+    // 保存调用前的快照；取消对话框或导出失败均不覆盖上次成功的范围。
+    const image = { width: frame.value.width, height: frame.value.height }
+    const rect = { ...pixels.value }
+    const result = await api[action](frame.value.id, rect, editor.history.present)
+    if (result !== false) {
+      recentSelection.value = writeRecentSelection(rect, image)
+      frame.value = null
+    }
   } catch (e) { error.value = String(e) }
   finally { busy.value = false }
 }
@@ -153,6 +168,7 @@ function key(e: KeyboardEvent) {
   // 工具栏控件编辑时保留原生按键（例如下拉框的方向键和 Enter）。
   const target = e.target as HTMLElement
   if (['INPUT', 'SELECT', 'BUTTON'].includes(target.tagName) && e.key !== 'Escape' && !command) return
+  if (!command && !e.altKey && !e.repeat && e.key.toLowerCase() === 'r') { e.preventDefault(); restoreSelection(); return }
   // 方向键允许长按连续微调；绘制、导出或已有标注时不改变裁剪范围。
   const directions: Record<string, Point> = { ArrowLeft: { x: -1, y: 0 }, ArrowRight: { x: 1, y: 0 }, ArrowUp: { x: 0, y: -1 }, ArrowDown: { x: 0, y: 1 } }
   const direction = directions[e.key]
@@ -199,8 +215,9 @@ onUnmounted(() => { disposed = true; off?.(); offScroll?.(); window.removeEventL
   <div v-else class="capture-overlay" @pointerdown.capture="pickDown" @pointerdown="down($event)" @pointermove.capture="drag" @pointerleave="pointer = null" @pointerup="up" @pointercancel="abortGesture(); pointer = null" @contextmenu.prevent="contextMenu">
     <img v-if="frame" :key="frame.id" ref="screenImage" class="screen-image" :src="frame.dataUrl" alt="当前屏幕截图" draggable="false" @load="loaded" @error="imageFailed" />
     <div v-if="!selection" class="initial-shade" />
-    <div v-if="!selection && !picking" class="capture-tip">拖动框选屏幕 <span>Esc / 右键取消 · Ctrl / ⌘ + A 全屏 · I 取色</span></div>
+    <div v-if="!selection && !picking" class="capture-tip">拖动框选屏幕 <span>Esc / 右键取消 · Ctrl / ⌘ + A 全屏 · I 取色 · R 最近选区</span></div>
     <div v-if="frame" class="capture-modebar" @pointerdown.stop @contextmenu.stop.prevent>
+      <button v-if="!picking" :disabled="!recentRect || busy || marked || editor.pending || editor.interacting" :title="recentRect ? '恢复上次成功复制、保存或贴图的选区（R）' : '暂无最近选区，或当前屏幕分辨率已变化'" @click="restoreSelection"><Scan :size="15" />最近选区 R</button>
       <button :disabled="busy || editor.pending || editor.interacting" :aria-pressed="picking" title="取色 I" @click="togglePicker"><Pipette :size="15" />{{ picking ? '返回框选' : '取色 I' }}</button>
       <template v-if="picking">
         <select v-model="colorFormat" :disabled="busy" aria-label="复制色值格式"><option value="hex">HEX</option><option value="rgb">RGB</option></select>

@@ -4,6 +4,7 @@ import { Camera, Keyboard, Settings2, Info, Scan, PanelLeftClose, Monitor, Check
 import PinManager from '@/components/PinManager.vue'
 import Button from '@/components/ui/button/Button.vue'
 import { api, desktop, onDelay, onError, onResult, type AppStatus, type Settings } from '@/lib/api'
+import { defaultSettings, exportFilenamePreview, validateExportSettings } from '@/lib/settings'
 
 const page = ref('截图')
 const items = [{ name: '截图', icon: Camera }, { name: '贴图', icon: Pin }, { name: '快捷键', icon: Keyboard }, { name: '设置', icon: Settings2 }, { name: '关于', icon: Info }]
@@ -12,7 +13,7 @@ const pending = ref(false)
 const saving = ref(false)
 const remaining = ref(0)
 // 表单草稿与已生效配置分开：保存失败时快捷键提示仍显示原来的值。
-const draft = ref<Settings>({ shortcut: 'Alt+F4', delaySeconds: 0 })
+const draft = ref<Settings>(defaultSettings())
 const message = ref('')
 const error = ref('')
 const disposers: (() => void)[] = []
@@ -30,6 +31,8 @@ async function saveSettings(value: Settings = draft.value) {
   if (locked.value) return
   saving.value = true; error.value = ''; message.value = ''
   try {
+    const invalid = validateExportSettings(value.export)
+    if (invalid) throw new Error(invalid)
     draft.value = await api.saveSettings({ ...value, shortcut: value.shortcut.trim() })
     await refreshStatus()
     message.value = '设置已保存并生效，重启后会自动恢复。'
@@ -44,7 +47,8 @@ async function changeDelay(event: Event) {
   const select = event.target as HTMLSelectElement
   const value = Number(select.value)
   if (value === 0 || value === 3 || value === 5) {
-    await saveSettings({ shortcut: shortcut.value, delaySeconds: value })
+    // 主页仅改延时，必须保留已生效的导出偏好，不使用设置页未保存的草稿。
+    if (status.value) await saveSettings({ ...status.value.settings, delaySeconds: value })
   }
   select.value = String(status.value?.settings.delaySeconds ?? 0)
 }
@@ -64,7 +68,7 @@ onMounted(async () => {
       if (disposed) off(); else disposers.push(off)
     }
     await refreshStatus()
-    draft.value = { ...status.value!.settings }
+    draft.value = { ...status.value!.settings, export: { ...status.value!.settings.export } }
   } catch (e) { error.value = String(e) }
 })
 onUnmounted(() => { disposed = true; disposers.forEach(off => off()) })
@@ -102,8 +106,9 @@ onUnmounted(() => { disposed = true; disposers.forEach(off => off()) })
             <h2>截图中可用</h2>
             <div><span>标注</span><span>图形 / 画笔 / 文字 / 马赛克 / 二次编辑</span></div>
             <div><span>复制图片</span><kbd>Enter</kbd></div>
-            <div><span>保存 PNG</span><kbd>Ctrl / ⌘ + S</kbd></div>
+            <div><span>保存图片（格式可在设置中选择）</span><kbd>Ctrl / ⌘ + S</kbd></div>
             <div><span>截图贴图</span><kbd>Ctrl / ⌘ + P</kbd></div>
+            <div><span>恢复最近成功导出的选区</span><kbd>R</kbd></div>
             <div><span>屏幕取色（HEX / RGB）</span><kbd>I · 单击复制</kbd></div>
             <div><span>长截图</span><span>框选 → 长截图 → 自动拼接 → 结束后保存并复制</span></div>
             <div><span>撤销 / 重做</span><kbd>Ctrl / ⌘ + Z / Shift + Z</kbd></div>
@@ -115,7 +120,7 @@ onUnmounted(() => { disposed = true; disposers.forEach(off => off()) })
         <PinManager v-else-if="page === '贴图'" />
         <template v-else-if="page === '快捷键'">
           <h1>快捷键</h1><p class="subtitle">应用运行时，全局快捷键可在其他窗口中使用。</p>
-          <section class="settings-card"><div v-for="[label, key] in [['开始区域截图', shortcut], ['复制选区（包含标注）', 'Enter / Ctrl / ⌘ + C'], ['保存 PNG', 'Ctrl / ⌘ + S'], ['截图贴图', 'Ctrl / ⌘ + P'], ['选择整个主屏（无标注时）', 'Ctrl / ⌘ + A'], ['撤销标注', 'Ctrl / ⌘ + Z'], ['重做标注', 'Ctrl / ⌘ + Shift + Z / Ctrl + Y'], ['取消截图', 'Esc / 鼠标右键']]" :key="label" class="setting-row"><span>{{ label }}</span><kbd>{{ key }}</kbd></div></section>
+          <section class="settings-card"><div v-for="[label, key] in [['开始区域截图', shortcut], ['复制选区（包含标注）', 'Enter / Ctrl / ⌘ + C'], ['保存图片', 'Ctrl / ⌘ + S'], ['截图贴图', 'Ctrl / ⌘ + P'], ['选择整个主屏（无标注时）', 'Ctrl / ⌘ + A'], ['撤销标注', 'Ctrl / ⌘ + Z'], ['重做标注', 'Ctrl / ⌘ + Shift + Z / Ctrl + Y'], ['取消截图', 'Esc / 鼠标右键']]" :key="label" class="setting-row"><span>{{ label }}</span><kbd>{{ key }}</kbd></div></section>
           <p class="scope-note"><Command :size="16" />倒计时期间再次按截图键可取消。其他按键仅在截图蒙层内生效。</p>
           <Button variant="outline" class="mt-4" @click="page = '设置'">修改截图快捷键</Button>
         </template>
@@ -125,14 +130,19 @@ onUnmounted(() => { disposed = true; disposers.forEach(off => off()) })
           <form class="settings-card mb-5" @submit.prevent="saveSettings()">
             <div class="setting-row"><label for="capture-shortcut">截图快捷键</label><input id="capture-shortcut" v-model="draft.shortcut" :disabled="locked" required maxlength="48" autocomplete="off" spellcheck="false" class="w-48 rounded-lg border border-zinc-200 px-3 py-2 text-sm focus:outline-blue-500" /></div>
             <div class="setting-row"><label for="capture-delay">截图延时<small>等待时可展开菜单；结束时自动隐藏本窗口。</small></label><select id="capture-delay" v-model.number="draft.delaySeconds" :disabled="locked" class="rounded-lg border border-zinc-200 bg-white px-3 py-2"><option :value="0">立即截图</option><option :value="3">3 秒</option><option :value="5">5 秒</option></select></div>
-            <div class="flex gap-3 py-5"><Button type="submit" :disabled="locked">{{ saving ? '正在保存…' : '保存设置' }}</Button><Button type="button" variant="outline" :disabled="locked" @click="saveSettings({ shortcut: 'Alt+F4', delaySeconds: 0 })">恢复默认并保存</Button></div>
+            <div class="setting-row"><label for="export-format">保存格式<small>普通截图和贴图共用；长截图仍自动输出 PNG。</small></label><select id="export-format" v-model="draft.export.format" :disabled="locked" class="rounded-lg border border-zinc-200 bg-white px-3 py-2"><option value="png">PNG · 无损透明</option><option value="jpeg">JPEG · 白底</option><option value="webp">WebP · 无损透明</option></select></div>
+            <div v-if="draft.export.format === 'jpeg'" class="setting-row"><label for="jpeg-quality">JPEG 质量<small>1～100，越高通常越清晰、文件越大；透明区域合成到白底。</small></label><input id="jpeg-quality" v-model.number="draft.export.jpegQuality" type="number" min="1" max="100" step="1" required :disabled="locked" class="w-24 rounded-lg border border-zinc-200 px-3 py-2" /></div>
+            <div class="setting-row"><label for="filename-prefix">文件名前缀<small>自动追加毫秒时间戳，保存时可修改名称。</small></label><input id="filename-prefix" v-model="draft.export.filenamePrefix" required :disabled="locked" class="w-48 rounded-lg border border-zinc-200 px-3 py-2 text-sm" /></div>
+            <div class="setting-row"><label for="filename-dimensions">文件名包含图片尺寸<small class="break-all">示例：{{ exportFilenamePreview(draft.export) }}</small></label><input id="filename-dimensions" v-model="draft.export.includeDimensions" type="checkbox" :disabled="locked" /></div>
+            <div class="setting-row"><label for="remember-directory">记住上次保存目录<small>成功保存后更新，重启后仍有效；每次仍显示保存对话框。</small></label><input id="remember-directory" v-model="draft.export.rememberDirectory" type="checkbox" :disabled="locked" /></div>
+            <div class="flex gap-3 py-5"><Button type="submit" :disabled="locked">{{ saving ? '正在保存…' : '保存设置' }}</Button><Button type="button" variant="outline" :disabled="locked" @click="saveSettings(defaultSettings())">恢复默认并保存</Button></div>
           </form>
-          <section class="settings-card"><div class="setting-row"><span>截图范围<small>当前阶段不支持跨显示器选区</small></span><strong>主显示器</strong></div><div class="setting-row"><span>图片格式<small>按屏幕原始像素裁剪，不二次缩放</small></span><strong>PNG</strong></div><div class="setting-row"><span>截图前隐藏主窗口</span><Check :size="18" class="text-primary" /></div><div class="setting-row"><span>保存位置<small>取消保存对话框后可继续调整选区</small></span><strong>每次选择</strong></div><div class="setting-row"><span>关闭主窗口<small>从托盘菜单退出应用</small></span><strong>收起到托盘</strong></div></section>
+          <section class="settings-card"><div class="setting-row"><span>截图范围<small>当前阶段不支持跨显示器选区</small></span><strong>主显示器</strong></div><div class="setting-row"><span>图片格式<small>按屏幕原始像素裁剪，不二次缩放</small></span><strong>{{ status?.settings.export.format.toUpperCase() ?? 'PNG' }}</strong></div><div class="setting-row"><span>截图前隐藏主窗口</span><Check :size="18" class="text-primary" /></div><div class="setting-row"><span>保存位置<small>取消保存对话框后可继续调整选区</small></span><strong>{{ status?.settings.export.rememberDirectory ? '记住上次目录' : '每次选择' }}</strong></div><div class="setting-row"><span>关闭主窗口<small>从托盘菜单退出应用</small></span><strong>收起到托盘</strong></div></section>
         </template>
 
         <template v-else>
           <h1>关于 Snap Desk</h1><p class="subtitle">桌面截图与标注工具</p>
-          <section class="settings-card about"><span class="brand-icon"><Scan :size="30" /></span><h2>Snap Desk <span class="pill">0.1.3</span></h2><p>基于 Tauri 2、Vue 3、TypeScript 与 Rust。截图和贴图在本地处理；长截图可选保存原始帧，取消后仍保留，需自行清理；快捷键与延时设置保存在本机。</p><p>当前范围：主屏区域截图、图形 / 画笔 / 文字 / 马赛克标注、撤销重做、贴图内继续标注与二次编辑，以及多贴图管理和基础图片处理。支持区域滚动长截图；OCR 与录屏将按项目 TODO 分期实现。</p><p>Windows / macOS / Linux X11 使用原生截图后端，尚待各平台实机验收。macOS 截图需要屏幕录制权限，自动滚动另需辅助功能权限；Wayland 暂未开放。</p></section>
+          <section class="settings-card about"><span class="brand-icon"><Scan :size="30" /></span><h2>Snap Desk <span class="pill">0.1.3</span></h2><p>基于 Tauri 2、Vue 3、TypeScript 与 Rust。截图和贴图在本地处理；长截图可选保存原始帧，取消后仍保留，需自行清理；快捷键、延时、导出偏好及最近保存目录保存在本机。</p><p>当前范围：主屏区域截图、图形 / 画笔 / 文字 / 马赛克标注、撤销重做、贴图内继续标注与二次编辑，以及多贴图管理和基础图片处理。支持区域滚动长截图；OCR 与录屏将按项目 TODO 分期实现。</p><p>Windows / macOS / Linux X11 使用原生截图后端，尚待各平台实机验收。macOS 截图需要屏幕录制权限，自动滚动另需辅助功能权限；Wayland 暂未开放。</p></section>
         </template>
       </div>
     </main>

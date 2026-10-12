@@ -524,7 +524,7 @@ pub async fn save_capture(
         match result {
             Ok(true) => {
                 close_session(&app, id)?;
-                let _ = app.emit_to("main", "capture-result", "截图已保存为 PNG 图片。");
+                let _ = app.emit_to("main", "capture-result", "截图已保存。");
                 Ok(true)
             }
             other => {

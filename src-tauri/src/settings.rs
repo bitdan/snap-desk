@@ -12,11 +12,67 @@ use std::{
 use tauri::{AppHandle, Manager, WebviewWindow};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut};
 
+/// 普通截图和贴图共用的导出偏好；长截图的自动 PNG 存档保持独立。
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ExportFormat {
+    Png,
+    Jpeg,
+    Webp,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields, default)]
+pub struct ExportSettings {
+    pub format: ExportFormat,
+    pub jpeg_quality: u8,
+    pub filename_prefix: String,
+    pub include_dimensions: bool,
+    pub remember_directory: bool,
+}
+
+impl Default for ExportSettings {
+    fn default() -> Self {
+        Self {
+            format: ExportFormat::Png,
+            jpeg_quality: 90,
+            filename_prefix: "SnapDesk".into(),
+            include_dimensions: false,
+            remember_directory: true,
+        }
+    }
+}
+
+impl ExportSettings {
+    /// 前缀是文件名片段，不能携带路径或 Windows/macOS 不允许的字符。
+    pub fn validate(&self) -> Result<(), String> {
+        if !(1..=100).contains(&self.jpeg_quality) {
+            return Err("JPEG 质量必须为 1～100 的整数。".into());
+        }
+        let prefix = &self.filename_prefix;
+        if prefix.is_empty()
+            || prefix.chars().count() > 48
+            || prefix.trim() != prefix
+            || prefix == "."
+            || prefix == ".."
+            || prefix
+                .chars()
+                .any(|c| c.is_control() || "<>:\"/\\|?*".contains(c))
+        {
+            return Err("文件名前缀须为 1～48 个字符，不能包含路径、控制字符或 <>:\"/\\|?*，首尾不能有空白。".into());
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Settings {
     pub shortcut: String,
     pub delay_seconds: u8,
+    // 老版本配置没有此字段时补默认值，不改动原来的快捷键或延时。
+    #[serde(default)]
+    pub export: ExportSettings,
 }
 
 impl Default for Settings {
@@ -24,6 +80,7 @@ impl Default for Settings {
         Self {
             shortcut: "Alt+F4".into(),
             delay_seconds: 0,
+            export: ExportSettings::default(),
         }
     }
 }
@@ -32,6 +89,7 @@ impl Settings {
     /// 与前端录入规则一致：至少一个修饰键，搭配字母、数字或 F1～F12。
     /// 后端必须再次校验，不能假设所有 IPC 请求都来自正常表单。
     pub fn validate(&self) -> Result<Shortcut, String> {
+        self.export.validate()?;
         if ![0, 3, 5].contains(&self.delay_seconds) {
             return Err("截图延时只能为 0、3 或 5 秒。".into());
         }
@@ -221,6 +279,58 @@ pub async fn save_settings(
 mod tests {
     use super::*;
     #[test]
+    fn legacy_config_adds_export_defaults_without_changing_shortcut_or_delay() {
+        let value: Settings =
+            serde_json::from_str(r#"{"shortcut":"Ctrl+F8","delaySeconds":5}"#).unwrap();
+        assert_eq!(value.shortcut, "Ctrl+F8");
+        assert_eq!(value.delay_seconds, 5);
+        assert_eq!(value.export, ExportSettings::default());
+        assert!(value.validate().is_ok());
+    }
+
+    #[test]
+    fn export_preferences_round_trip_and_validate_untrusted_values() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        let mut value = Settings::default();
+        value.export = ExportSettings {
+            format: ExportFormat::Webp,
+            jpeg_quality: 75,
+            filename_prefix: "工作截图".into(),
+            include_dimensions: true,
+            remember_directory: false,
+        };
+        persist(&path, &value).unwrap();
+        assert_eq!(load(&path), (value.clone(), None));
+        for prefix in [
+            "",
+            "../escape",
+            "a\\b",
+            "a:b",
+            " a",
+            "a ",
+            ".",
+            "..",
+            "a\n",
+            "a\u{0085}b",
+        ] {
+            value.export.filename_prefix = prefix.into();
+            assert!(value.validate().is_err());
+        }
+        value.export.filename_prefix = "字".repeat(49);
+        assert!(value.validate().is_err());
+        value.export.filename_prefix = "字".repeat(48);
+        for quality in [0, 101, 255] {
+            value.export.jpeg_quality = quality;
+            assert!(value.validate().is_err());
+        }
+        for quality in [1, 100] {
+            value.export.jpeg_quality = quality;
+            assert!(value.validate().is_ok());
+        }
+    }
+
+    #[test]
     fn preserves_saved_shortcuts_and_delay() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("settings.json");
@@ -228,6 +338,7 @@ mod tests {
             let old = Settings {
                 shortcut: key.into(),
                 delay_seconds: 5,
+                ..Settings::default()
             };
             persist(&path, &old).unwrap();
             let bytes = fs::read(&path).unwrap();
@@ -367,6 +478,7 @@ mod tests {
         let value = Settings {
             shortcut: "Ctrl+Shift+F8".into(),
             delay_seconds: 5,
+            ..Settings::default()
         };
         persist(&path, &value).unwrap();
         assert_eq!(load(&path), (value, None));

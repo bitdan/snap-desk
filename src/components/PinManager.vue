@@ -85,7 +85,7 @@ onUnmounted(() => { disposed = true; off?.() })
     <div><span>移动 / 缩放</span><span>拖动图片 / 滚轮</span></div>
     <div><span>编辑标注 / 更多操作</span><span>图片右键菜单</span></div>
     <div><span>显示 / 收起工具</span><span>Tab · 工具按钮</span></div>
-    <div><span>复制 / 保存 PNG</span><kbd>Ctrl / ⌘ + C / S</kbd></div>
+    <div><span>复制 / 保存图片</span><kbd>Ctrl / ⌘ + C / S</kbd></div>
     <div><span>隐藏 / 关闭</span><kbd>Esc / Ctrl / ⌘ + W</kbd></div>
     <div><span>图片处理</span><span>旋转 · 翻转 · 灰度 · 反色 · 恢复原图</span></div>
   </section>

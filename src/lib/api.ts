@@ -2,6 +2,8 @@ import { invoke, isTauri } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import type { Point, Rect } from './selection'
 import type { Annotation } from './annotations'
+import type { Settings } from './settings'
+export type { Settings } from './settings'
 
 export interface CaptureFrame { id: number; width: number; height: number; dataUrl: string }
 export interface PinView { zoom: number; opacity: number; locked: boolean; topmost: boolean; toolbarExpanded: boolean }
@@ -18,7 +20,6 @@ export type PinTransform = 'rotateRight' | 'rotateLeft' | 'flipHorizontal' | 'fl
 export type PinAction = 'copy' | 'save' | 'hide' | 'close'
 export type PinManageAction = 'show' | 'hide' | 'close'
 // 字段与 Rust Settings / AppStatus 的 camelCase 序列化契约保持一致。
-export interface Settings { shortcut: string; delaySeconds: 0 | 3 | 5 }
 export interface AppStatus { settings: Settings; shortcutError: string | null; configWarning: string | null; delayRemaining: number; platform: string }
 export const desktop = isTauri()
 export const api = {
