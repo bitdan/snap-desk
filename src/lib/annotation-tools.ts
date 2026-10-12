@@ -17,5 +17,6 @@ export const annotationTools = [
   { tool: 'magnify', name: '放大镜标注', icon: ZoomIn },
   { tool: 'mosaic', name: '马赛克', icon: Grid2X2 },
   { tool: 'blur', name: '模糊', icon: Droplets },
+  { tool: 'erase', name: '局部像素橡皮擦', icon: Eraser },
   { tool: 'eraser', name: '删除整项标注', icon: Eraser },
 ] satisfies { tool: AnnotationTool; name: string; icon: typeof Pencil }[]

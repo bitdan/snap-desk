@@ -22,6 +22,8 @@ pub enum Kind {
     Polyline,
     Pen,
     Highlighter,
+    /// 按原图像素直径局部擦除之前的标注，保留底图。
+    Erase,
     Text,
     Number,
     Spotlight,
@@ -106,10 +108,17 @@ pub fn validate(shapes: &[Annotation], width: u32, height: u32) -> Result<(), St
                 return Err("标注坐标超出截图边界。".into());
             }
         }
-        if matches!(s.kind, Kind::Pen | Kind::Highlighter | Kind::Polyline) && s.points.len() < 2 {
+        if matches!(
+            s.kind,
+            Kind::Pen | Kind::Highlighter | Kind::Polyline | Kind::Erase
+        ) && s.points.len() < if matches!(s.kind, Kind::Erase) { 1 } else { 2 }
+        {
             return Err("路径至少需要两个点。".into());
         }
-        if !matches!(s.kind, Kind::Pen | Kind::Highlighter | Kind::Polyline) && !s.points.is_empty()
+        if !matches!(
+            s.kind,
+            Kind::Pen | Kind::Highlighter | Kind::Polyline | Kind::Erase
+        ) && !s.points.is_empty()
         {
             return Err("此标注类型不接受路径点。".into());
         }
@@ -124,7 +133,7 @@ pub fn validate(shapes: &[Annotation], width: u32, height: u32) -> Result<(), St
         } else if s.raster.is_some() {
             return Err("此标注类型不接受像素数据。".into());
         }
-        if matches!(s.kind, Kind::Mosaic | Kind::Blur) && s.opacity != 1.0 {
+        if matches!(s.kind, Kind::Mosaic | Kind::Blur | Kind::Erase) && s.opacity != 1.0 {
             return Err("遮挡滤镜必须完全不透明。".into());
         }
         if matches!(s.kind, Kind::Spotlight)
@@ -181,7 +190,8 @@ fn segments(s: &Annotation) -> Vec<(Point, Point)> {
     let a = s.start;
     let b = s.end;
     match s.kind {
-        Kind::Pen | Kind::Highlighter | Kind::Polyline => {
+        Kind::Erase if s.points.len() == 1 => vec![(a, a)],
+        Kind::Pen | Kind::Highlighter | Kind::Polyline | Kind::Erase => {
             s.points.windows(2).map(|p| (p[0], p[1])).collect()
         }
         Kind::Text | Kind::Number | Kind::Mosaic | Kind::Blur | Kind::Magnify | Kind::Spotlight => {
@@ -247,6 +257,17 @@ fn segments(s: &Annotation) -> Vec<(Point, Point)> {
 
 /// 原图坐标减去裁剪原点后才是输出图片坐标；超出选区的笔画自然裁掉。
 pub fn render(image: &mut RgbaImage, shapes: &[Annotation], origin: Point) -> Result<(), String> {
+    // 橡皮擦只修改透明标注层，最后叠回底图，保留透明文件贴图。
+    if shapes.iter().any(|s| matches!(s.kind, Kind::Erase)) {
+        let mut layer = RgbaImage::new(image.width(), image.height());
+        render_layer(&mut layer, shapes, origin)?;
+        image::imageops::overlay(image, &layer, 0, 0);
+        return Ok(());
+    }
+    render_layer(image, shapes, origin)
+}
+
+fn render_layer(image: &mut RgbaImage, shapes: &[Annotation], origin: Point) -> Result<(), String> {
     let mut spotlight_drawn = false;
     for s in shapes {
         if matches!(s.kind, Kind::Spotlight) {
@@ -339,6 +360,12 @@ pub fn render(image: &mut RgbaImage, shapes: &[Annotation], origin: Point) -> Re
         }
         for index in touched {
             let coverage = f64::from(mask[index]) / 255.0 * s.opacity;
+            if matches!(s.kind, Kind::Erase) {
+                let pixel =
+                    image.get_pixel_mut(index as u32 % image.width(), index as u32 / image.width());
+                pixel[3] = (f64::from(pixel[3]) * (1.0 - coverage)).round() as u8;
+                continue;
+            }
             blend(
                 image.get_pixel_mut(index as u32 % image.width(), index as u32 / image.width()),
                 rgb,
@@ -422,6 +449,37 @@ fn line(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn eraser_restores_transparent_base_and_keeps_later_strokes() {
+        let mut pen = shape();
+        pen.kind = Kind::Line;
+        pen.start = Point { x: 12.0, y: 20.0 };
+        pen.end = Point { x: 38.0, y: 20.0 };
+        pen.width = 6.0;
+        let mut erase = pen.clone();
+        erase.kind = Kind::Erase;
+        erase.start = Point { x: 25.0, y: 20.0 };
+        erase.end = erase.start;
+        erase.points = vec![erase.start];
+        erase.width = 10.0;
+        validate(&[pen.clone(), erase.clone()], 40, 40).unwrap();
+        let base = RgbaImage::from_pixel(30, 30, image::Rgba([40, 80, 120, 100]));
+        let origin = Point { x: 10.0, y: 10.0 };
+        let mut output = base.clone();
+        render(&mut output, &[pen.clone(), erase.clone()], origin).unwrap();
+        assert_eq!(output.get_pixel(15, 10), base.get_pixel(15, 10));
+        assert_eq!(output.get_pixel(4, 10).0, [255, 0, 0, 255]);
+        pen.color = "#00ff00".into();
+        let mut later = base;
+        render(&mut later, &[erase.clone(), pen], origin).unwrap();
+        assert_eq!(later.get_pixel(15, 10).0, [0, 255, 0, 255]);
+        erase.opacity = 0.5;
+        assert!(validate(&[erase.clone()], 40, 40).is_err());
+        erase.opacity = 1.0;
+        erase.points.clear();
+        assert!(validate(&[erase], 40, 40).is_err());
+    }
+
     #[test]
     fn repeated_and_overlapping_spotlights_do_not_darken_background() {
         let mut a = shape();

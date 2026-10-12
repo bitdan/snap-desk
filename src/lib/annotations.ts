@@ -2,7 +2,7 @@ import { clamp, resize, type Handle, type Point, type Rect, type Size } from './
 
 // 标注始终使用原图物理像素坐标，预览和 Rust 导出共用数据，避免 DPI 缩放错位。
 export interface Annotation {
-  kind: 'rectangle' | 'arrow' | 'ellipse' | 'line' | 'polyline' | 'pen' | 'highlighter' | 'text' | 'number' | 'mosaic' | 'blur' | 'spotlight' | 'magnify'
+  kind: 'rectangle' | 'arrow' | 'ellipse' | 'line' | 'polyline' | 'pen' | 'highlighter' | 'text' | 'number' | 'mosaic' | 'blur' | 'spotlight' | 'magnify' | 'erase'
   start: Point
   end: Point
   color: string
@@ -48,6 +48,7 @@ export function arrowWings(shape: Annotation): [Point, Point] {
 }
 export function shapePath(shape: Annotation): string {
   const a = shape.start, b = shape.end
+  if (shape.kind === 'erase' && shape.points?.length === 1) return `M ${a.x} ${a.y} h .001`
   if (shape.points?.length) return shape.points.map((p, i) => `${i ? 'L' : 'M'} ${p.x} ${p.y}`).join(' ')
   if (shape.kind === 'rectangle') return `M ${a.x} ${a.y} H ${b.x} V ${b.y} H ${a.x} Z`
   if (shape.kind === 'line') return `M ${a.x} ${a.y} L ${b.x} ${b.y}`
@@ -91,6 +92,7 @@ function segmentDistance(p: Point, a: Point, b: Point): number {
 export function hitTest(shapes: Annotation[], p: Point, tolerance = 6): number {
   const hit = (s: Annotation) => {
     const b = shapeBounds(s), t = tolerance + s.width / 2
+    if (s.kind === 'erase' && s.points?.length === 1) return Math.hypot(p.x - s.start.x, p.y - s.start.y) <= t
     if (s.points?.length) return s.points.slice(1).some((v, i) => segmentDistance(p, s.points![i], v) <= t)
     if (s.kind === 'line' || s.kind === 'arrow') return segmentDistance(p, s.start, s.end) <= t || (s.kind === 'arrow' && arrowWings(s).some(v => segmentDistance(p, v, s.end) <= t))
     if (s.kind === 'ellipse') {

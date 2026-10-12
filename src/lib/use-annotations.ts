@@ -40,6 +40,7 @@ export function useAnnotations(bounds: () => Rect, imageUrl: () => string, disab
       const existing = state.history.present.find(s => s.kind === 'spotlight')
       state.color = existing?.color ?? '#000000'; state.opacity = existing?.opacity ?? 0.7; state.width = 3
     }
+    else if (tool === 'erase') { state.width = 24; state.opacity = 1 }
     else if (tool === 'mosaic' || tool === 'blur') { state.width = 16; state.opacity = 1 }
     else { state.width = 3; state.opacity = 1 }
   }
@@ -79,7 +80,7 @@ export function useAnnotations(bounds: () => Rect, imageUrl: () => string, disab
       const x = clamp(p.x - size / 2, b.x, b.x + b.width - size), y = clamp(p.y - size / 2, b.y, b.y + b.height - size)
       shape.start = { x, y }; shape.end = { x: x + size, y: y + size }; shape.text = String(value)
     }
-    if (['pen', 'highlighter', 'polyline'].includes(shape.kind)) shape.points = [p]
+    if (['pen', 'highlighter', 'polyline', 'erase'].includes(shape.kind)) shape.points = [p]
     if (shape.kind === 'text') {
       // 先放置空输入框，临近右/下边缘时让出可输入的空间，不复用上一次文字。
       const b = bounds()
@@ -109,7 +110,7 @@ export function useAnnotations(bounds: () => Rect, imageUrl: () => string, disab
     if (editing && JSON.stringify(shape) === JSON.stringify(state.history.present[state.selected])) { abort(); return }
     const dx = Math.abs(shape.end.x - shape.start.x), dy = Math.abs(shape.end.y - shape.start.y)
     if (editing && ['rectangle', 'ellipse', 'text', 'number', 'mosaic', 'blur', 'spotlight', 'magnify'].includes(shape.kind) && (dx < 1 || dy < 1)) { abort(); return }
-    if (!editing && shape.kind !== 'text' && (shape.points ? shape.points.length < 2 : ['line', 'arrow'].includes(shape.kind) ? Math.hypot(dx, dy) < 1 : dx < 1 || dy < 1)) { abort(); return }
+    if (!editing && shape.kind !== 'text' && shape.kind !== 'erase' && (shape.points ? shape.points.length < 2 : ['line', 'arrow'].includes(shape.kind) ? Math.hypot(dx, dy) < 1 : dx < 1 || dy < 1)) { abort(); return }
     const version = generation
     state.pending = true
     try {

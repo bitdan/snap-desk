@@ -1,5 +1,6 @@
-import { invoke, isTauri } from '@tauri-apps/api/core'
-import { listen } from '@tauri-apps/api/event'
+import { invoke as nativeInvoke, isTauri, type InvokeArgs } from '@tauri-apps/api/core'
+import { listen as nativeListen, type EventCallback } from '@tauri-apps/api/event'
+import { errorMessage } from './errors'
 import type { Point, Rect } from './selection'
 import type { Annotation } from './annotations'
 import type { Settings } from './settings'
@@ -22,6 +23,15 @@ export type PinManageAction = 'show' | 'hide' | 'close'
 // 字段与 Rust Settings / AppStatus 的 camelCase 序列化契约保持一致。
 export interface AppStatus { settings: Settings; shortcutError: string | null; configWarning: string | null; delayRemaining: number; platform: string }
 export const desktop = isTauri()
+// 在唯一的 API 边界解码错误，截图、贴图与主页均能看到原生错误正文及失败操作。
+async function invoke<T>(command: string, args?: InvokeArgs): Promise<T> {
+  try { return await nativeInvoke<T>(command, args) }
+  catch (error) { throw new Error(`${command}：${errorMessage(error)}`) }
+}
+async function listen<T>(event: string, callback: EventCallback<T>) {
+  try { return await nativeListen<T>(event, callback) }
+  catch (error) { throw new Error(`订阅 ${event}：${errorMessage(error)}`) }
+}
 export const api = {
   status: () => invoke<AppStatus>('app_status'),
   saveSettings: (settings: Settings) => invoke<Settings>('save_settings', { settings }),

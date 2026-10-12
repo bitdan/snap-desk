@@ -8,7 +8,7 @@ const emit = defineEmits<{ tool: [tool: AnnotationTool] }>()
 
 const locked = computed(() => props.disabled || props.editor.pending || props.editor.interacting)
 const textMode = computed(() => props.editor.tool === 'text' || props.editor.history.present[props.editor.selected]?.kind === 'text')
-const filterMode = computed(() => ['mosaic', 'blur'].includes(props.editor.history.present[props.editor.selected]?.kind ?? props.editor.tool))
+const filterMode = computed(() => ['mosaic', 'blur', 'erase'].includes(props.editor.history.present[props.editor.selected]?.kind ?? props.editor.tool))
 const numberMode = computed(() => (props.editor.history.present[props.editor.selected]?.kind ?? props.editor.tool) === 'number')
 const spotlightMode = computed(() => (props.editor.history.present[props.editor.selected]?.kind ?? props.editor.tool) === 'spotlight')
 const magnifyMode = computed(() => (props.editor.history.present[props.editor.selected]?.kind ?? props.editor.tool) === 'magnify')
@@ -31,7 +31,7 @@ function value(event: Event) { return (event.target as HTMLInputElement).value }
     </div>
     <div v-if="active && (editor.tool !== 'edit' || editor.selected >= 0)" class="annotation-tool-row annotation-options" aria-label="标注样式">
       <label>颜色 <input type="color" :value="editor.color" :disabled="locked || filterMode" @change="editor.style({ color: value($event) })" /></label>
-      <label v-if="!numberMode && !spotlightMode">{{ magnifyMode ? '边框' : '粗细' }} <input type="number" min="1" max="64" :value="editor.width" :disabled="locked" @change="editor.style({ width: Math.min(64, Math.max(1, Number(value($event)) || 3)) })" /></label>
+      <label v-if="!numberMode && !spotlightMode">{{ magnifyMode ? '边框' : editor.tool === 'erase' ? '直径' : '粗细' }} <input type="number" min="1" max="64" :value="editor.width" :disabled="locked" @change="editor.style({ width: Math.min(64, Math.max(1, Number(value($event)) || 3)) })" /></label>
       <label v-if="magnifyMode">倍率 <select :value="editor.magnification" :disabled="locked" @change="editor.style({ magnification: Number(value($event)) })"><option :value="2">2×</option><option :value="3">3×</option><option :value="4">4×</option></select></label>
       <label>不透明度 <select :value="editor.opacity" :disabled="locked || filterMode" @change="editor.style({ opacity: Number(value($event)) })"><option :value="1">100%</option><option :value="0.7">70%</option><option :value="0.35">35%</option><option :value="0.15">15%</option></select></label>
       <template v-if="textMode">
@@ -40,7 +40,7 @@ function value(event: Event) { return (event.target as HTMLInputElement).value }
       <label>字号 <input type="number" min="8" max="128" :value="editor.fontSize" :disabled="locked" @change="editor.style({ fontSize: Math.min(128, Math.max(8, Number(value($event)) || 24)) })" /></label>
       <select aria-label="字体" :value="editor.fontFamily" :disabled="locked" @change="editor.style({ fontFamily: value($event) as 'sans' | 'serif' | 'mono' })"><option value="sans">无衬线</option><option value="serif">衬线</option><option value="mono">等宽</option></select>
       </template>
-      <span v-else class="annotation-hint">{{ spotlightMode ? '拖框保留亮区，框外覆盖遮罩' : magnifyMode ? '拖框放大中心底图；移动后重新取样' : numberMode ? '点击连续放置序号；选择 / 编辑可移动和缩放' : editor.tool === 'polyline' ? '逐点点击，Enter 完成' : '选择箭头指针可二次编辑' }}</span>
+      <span v-else class="annotation-hint">{{ editor.tool === 'erase' ? '拖动擦除已有标注并露出底图；可撤销' : spotlightMode ? '拖框保留亮区，框外覆盖遮罩' : magnifyMode ? '拖框放大中心底图；移动后重新取样' : numberMode ? '点击连续放置序号；选择 / 编辑可移动和缩放' : editor.tool === 'polyline' ? '逐点点击，Enter 完成' : '选择箭头指针可二次编辑' }}</span>
     </div>
     <slot v-else name="options" />
     <p v-if="editor.error" class="annotation-error" role="alert" :title="editor.error">{{ editor.error }}</p>

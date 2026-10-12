@@ -5,6 +5,7 @@ import PinManager from '@/components/PinManager.vue'
 import Button from '@/components/ui/button/Button.vue'
 import { api, desktop, onDelay, onError, onResult, type AppStatus, type Settings } from '@/lib/api'
 import { defaultSettings, exportFilenamePreview, validateExportSettings } from '@/lib/settings'
+import { errorMessage } from '@/lib/errors'
 
 const page = ref('截图')
 const items = [{ name: '截图', icon: Camera }, { name: '贴图', icon: Pin }, { name: '快捷键', icon: Keyboard }, { name: '设置', icon: Settings2 }, { name: '关于', icon: Info }]
@@ -19,8 +20,10 @@ const error = ref('')
 const disposers: (() => void)[] = []
 let disposed = false
 let delayRevision = 0
-const shortcut = computed(() => status.value?.settings.shortcut ?? 'F1')
-const locked = computed(() => !desktop || !status.value || pending.value || saving.value || remaining.value > 0)
+const initializing = ref(false)
+const initializationFailed = ref(false)
+const shortcut = computed(() => status.value?.settings.shortcut ?? (desktop ? '未读取' : 'F1'))
+const locked = computed(() => !desktop || !status.value || initializing.value || initializationFailed.value || pending.value || saving.value || remaining.value > 0)
 async function refreshStatus() {
   const revision = delayRevision
   status.value = await api.status()
@@ -60,18 +63,28 @@ async function start() {
 async function hide() {
   try { await api.hide() } catch (e) { error.value = String(e) }
 }
-onMounted(async () => {
-  if (!desktop) return
+/** 初始化失败可以重试；清理本轮已注册的监听器，避免反复重试后重复接收事件。 */
+async function initialize() {
+  if (!desktop || initializing.value || disposed) return
+  initializing.value = true; initializationFailed.value = false; error.value = ''
   try {
     for (const subscribe of [() => onError(e => { error.value = e }), () => onResult(result => { message.value = result }), () => onDelay(value => { delayRevision++; remaining.value = value })]) {
       const off = await subscribe()
-      if (disposed) off(); else disposers.push(off)
+      if (disposed) { off(); return }
+      disposers.push(off)
     }
     await refreshStatus()
     draft.value = { ...status.value!.settings, export: { ...status.value!.settings.export } }
-  } catch (e) { error.value = String(e) }
-})
-onUnmounted(() => { disposed = true; disposers.forEach(off => off()) })
+  } catch (e) {
+    if (!disposed) {
+      initializationFailed.value = true
+      error.value = `桌面初始化失败：${errorMessage(e)}`
+    }
+    for (const off of disposers.splice(0)) off()
+  } finally { initializing.value = false }
+}
+onMounted(initialize)
+onUnmounted(() => { disposed = true; disposers.splice(0).forEach(off => off()) })
 </script>
 
 <template>
@@ -86,7 +99,7 @@ onUnmounted(() => { disposed = true; disposers.forEach(off => off()) })
       <header class="topbar"><span>{{ page }}</span><Button variant="ghost" :disabled="!desktop" @click="hide"><PanelLeftClose :size="15" />收起到托盘</Button></header>
       <div class="page-content">
         <div v-if="!desktop" class="notice">当前为网页预览。请通过桌面应用启动以使用屏幕截图和全局快捷键。</div>
-        <div v-if="error || status?.shortcutError" class="notice error" role="alert">{{ error || status?.shortcutError }}</div>
+        <div v-if="error || status?.shortcutError" class="notice error" role="alert">{{ error || status?.shortcutError }}<Button v-if="initializationFailed" variant="outline" :disabled="initializing" @click="initialize">重新连接</Button></div>
         <div v-if="status?.configWarning" class="notice" role="alert">{{ status.configWarning }}</div>
         <div v-if="remaining > 0" class="notice flex items-center justify-between" role="status"><span>{{ remaining }} 秒后截图，可切换到目标窗口；再次按截图快捷键可取消。</span><Button variant="outline" @click="cancelPending">取消截图</Button></div>
         <div v-if="message" class="notice success" role="status">{{ message }}</div>
