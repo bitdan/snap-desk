@@ -361,7 +361,7 @@ tests/pins.test.ts              缩放范围、连续步进与锁定条件测试
 
 - 进入“录屏 → 选择录制范围”，框选后点击工具栏“录屏”；Ctrl / ⌘ + A 选择整个主屏。可选目标 30 / 60 FPS、是否录制鼠标指针，以及立即 / 3 秒 / 5 秒开始；当前输出无声 MP4。
 - 录屏页“保存位置 → 选择文件夹”可指定 MP4 保存目录，选择后立即记住并跨重启生效；取消不修改，恢复默认不移动或删除已有视频。默认位置为应用数据目录的 `recordings`，与图片导出目录独立。自定义目录被删除或不可写时会在录屏准备阶段报错，需要重新选择。
-- Windows 10 2004+：WGC / D3D11 捕获主屏并按物理像素裁剪，Media Foundation 持续写入系统 H.264 / MP4。第一版经 CPU RGBA → NV12 转换，奇数宽高在右侧 / 底部补黑到偶数；不引入 FFmpeg。
+- Windows 10 2004+：WGC / D3D11 捕获主屏并按物理像素裁剪，Media Foundation 持续写入系统 H.264 / MP4。当前经 CPU BGRA → NV12 转换并复用转换缓冲，奇数宽高在右侧 / 底部补黑到偶数；不引入 FFmpeg。
 - 确认选区后准备设备并显示待开始控制条，点击“开始录制”后按配置进入倒计时，到期才启动捕获和计时。倒计时期间可取消，托盘停止或截图快捷键也按取消处理，不生成视频；恢复暂停中的录制不再倒计时。可暂停、继续、结束保存或取消；托盘和截图快捷键继续使用同一会话。暂停时间不进入视频，旧会话命令不会操作新录屏，重复停止 / 取消安全。
 - 编码可选自动（默认，允许系统使用硬件转换器）或软件兼容模式。准备时按选区尺寸与帧率试写并封装一帧；自动模式试写失败则以独立临时文件重试软件，成功后固定本次模式，主页保留回退原因。两种模式均失败会保留选区并报告错误，正式录制中失败不会重启编码器覆盖已录内容。
 - 主页仅在读取到硬件转换器标识时显示“硬件编码”；自动模式无法确认类型时显示“系统自动（类型未确认）”。软件模式关闭硬件转换器许可。当前仍有 CPU 像素转换与纹理回读，不代表全 GPU 或零拷贝编码；高分辨率下可降低帧率或缩小选区。
@@ -377,7 +377,9 @@ tests/pins.test.ts              缩放范围、连续步进与锁定条件测试
 
 依赖继续固定 `windows = 0.62.2`，仅新增 WGC、D3D11、WinRT、QPC 及窗口捕获排除所需 feature，无新运行库或外部程序。能力查询检查 WGC / 光标 API 并试写小尺寸 MP4；准备时按选区尺寸与帧率再次试写封装，并创建捕获设备。Windows N 版本需启用 Media Feature Pack。接口参考 [Microsoft WGC 文档](https://learn.microsoft.com/en-us/windows/uwp/audio-video-camera/screen-capture) 与 [Sink Writer 编码文档](https://learn.microsoft.com/en-us/windows/win32/medfound/tutorial--using-the-sink-writer-to-encode-video)。当前采集格式为 SDR BGRA8，HDR 色彩映射仍需另行适配和验收。
 
-原 `recording.rs`、`recording_encoder.rs`、`windows_recording.rs` 暂时保留为未接入的迁移参考；程序入口已指向 `recorder/manager.rs`，没有自动降级回 PNG 链路。新链路实机验收后再删除旧文件。
+未接入的旧 PNG 离线录屏文件 `recording.rs`、`recording_encoder.rs`、`windows_recording.rs` 已删除；程序入口仍指向 `recorder/manager.rs`。普通截图及长截图的 xcap 采集、PNG 导出与 `scroll_archive.rs` 存档继续保留。
+
+后续计划统一维护于 [项目 TODO](跨平台截图工具_TODO.md) 的“5.2 录屏优化 TODO”和“5.3 长截图优化 TODO”，包含目标架构图、Raw Input、帧合成及长截图优化任务；实现状态与原生验收分别记录。
 
 ### 录屏定向验收
 
