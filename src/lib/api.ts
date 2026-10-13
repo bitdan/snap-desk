@@ -4,7 +4,7 @@ import { errorMessage } from './errors'
 import type { Point, Rect } from './selection'
 import type { Annotation } from './annotations'
 import type { Settings } from './settings'
-import type { RecorderCapabilities, RecorderConfig, RecordingAction, RecordingView } from './recording'
+import type { RecorderCapabilities, RecorderConfig, RecordingAction, RecordingDirectory, RecordingView } from './recording'
 export type { Settings } from './settings'
 
 export interface CaptureFrame { id: number; width: number; height: number; dataUrl: string }
@@ -50,6 +50,8 @@ export const api = {
   currentScroll: () => invoke<ScrollView | null>('current_scroll'),
   startRecording: (id: number, rect: Rect, config?: RecorderConfig) => invoke<void>('start_recording', { id, rect, config }),
   recordingCapabilities: () => invoke<RecorderCapabilities>('recording_capabilities'),
+  currentRecordingDirectory: () => invoke<RecordingDirectory>('current_recording_directory'),
+  chooseRecordingDirectory: (reset = false) => invoke<RecordingDirectory | null>('choose_recording_directory', { reset }),
   currentRecording: () => invoke<RecordingView | null>('current_recording'),
   controlRecording: (id: number, action: RecordingAction) => invoke<void>('control_recording', { id, action }),
   pinClipboard: () => invoke<void>('pin_clipboard'),

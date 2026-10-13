@@ -274,6 +274,8 @@ pub fn run() {
             capture::recording::start_recording,
             capture::recording::current_recording,
             capture::recording::recording_capabilities,
+            capture::recording::output::current_recording_directory,
+            capture::recording::output::choose_recording_directory,
             capture::recording::control_recording,
             pins::pin_clipboard,
             pins::pin_file,

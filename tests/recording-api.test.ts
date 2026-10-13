@@ -7,6 +7,19 @@ vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn() }))
 import { api } from '../src/lib/api'
 
 describe('录屏 IPC 契约', () => {
+  it('查询、选择和恢复录屏目录，取消原生选择器不产生新目录', async () => {
+    const directory = { path: 'D:\\Videos\\录屏', isDefault: false }
+    invoke.mockResolvedValueOnce(directory)
+    expect(await api.currentRecordingDirectory()).toEqual(directory)
+    expect(invoke).toHaveBeenLastCalledWith('current_recording_directory', undefined)
+    invoke.mockResolvedValueOnce(null)
+    expect(await api.chooseRecordingDirectory()).toBeNull()
+    expect(invoke).toHaveBeenLastCalledWith('choose_recording_directory', { reset: false })
+    const defaultDirectory = { path: 'C:\\AppData\\recordings', isDefault: true }
+    invoke.mockResolvedValueOnce(defaultDirectory)
+    expect(await api.chooseRecordingDirectory(true)).toEqual(defaultDirectory)
+    expect(invoke).toHaveBeenLastCalledWith('choose_recording_directory', { reset: true })
+  })
   it('保持原命令及会话 ID，同时发送配置和物理像素选区', async () => {
     const rect = { x: 13, y: 21, width: 101, height: 99 }
     const config = recordingConfig(rect, 60, false)

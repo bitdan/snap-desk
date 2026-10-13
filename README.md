@@ -360,17 +360,18 @@ tests/pins.test.ts              缩放范围、连续步进与锁定条件测试
 ## Windows 持续录屏（代码已接入，原生编译与实机待验收）
 
 - 进入“录屏 → 选择录制范围”，框选后点击工具栏“录屏”；Ctrl / ⌘ + A 选择整个主屏。可选目标 30 / 60 FPS、是否录制鼠标指针；当前输出无声 MP4。
+- 录屏页“保存位置 → 选择文件夹”可指定 MP4 保存目录，选择后立即记住并跨重启生效；取消不修改，恢复默认不移动或删除已有视频。默认位置为应用数据目录的 `recordings`，与图片导出目录独立。自定义目录被删除或不可写时会在录屏准备阶段报错，需要重新选择。
 - Windows 10 2004+：WGC / D3D11 捕获主屏并按物理像素裁剪，Media Foundation 持续写入系统 H.264 / MP4。第一版经 CPU RGBA → NV12 转换，奇数宽高在右侧 / 底部补黑到偶数；不引入 FFmpeg。
 - 确认选区后准备设备并显示待开始控制条，点击“开始录制”才启动捕获和计时。可暂停、继续、结束保存或取消；托盘和截图快捷键继续使用同一会话。暂停时间不进入视频，旧会话命令不会操作新录屏，重复停止 / 取消安全。
 - WGC 使用两帧池、一个 staging 纹理；编码队列最多两帧，拥堵时释放新到帧并累计丢帧数。静态画面或采集较慢时延长上一帧的 sample duration，不用目标帧率代替实际帧数；主页显示实际提交帧数和丢帧数，控制条显示目标帧率。
 - 边框与控制条在原生窗口创建时启用 Windows 捕获排除；准备和显示后先回读属性，已经生效时不再重复设置，避免 WebView2 初始化后的重复调用失败。属性未生效才补设，失败拒绝开始并提示具体窗口。底部不足时沿用上方 / 屏幕内避让。W0 的按钮可见性、细边框、DPI 与防录入效果仍待实机验收。
 - 新链路不再生成 PNG 帧目录、`timing.json` 或批量编码；1800 帧 / 512 MiB PNG 限制不适用。长时间资源验收前仍保留有效录制时长 3 分钟上限，达到后自动停止保存。
-- 停止先释放 WGC，再排空有效队列、完成 MP4 封装并同步文件，最后将临时目录中的 `video.mp4` 重命名到应用数据目录 `recordings/recording-pending-*.mp4`。仅成功后显示最终路径；取消、零帧、采集或编码失败清理临时目录。进程被强制终止可能留下 `recording-pending-*` 临时目录，需手动清理。
+- 停止先释放 WGC，再排空有效队列、完成 MP4 封装并同步文件，最后将临时目录中的 `video.mp4` 重命名为所选保存目录中的 `recording-pending-*.mp4`。仅成功后显示最终路径；取消、零帧、采集或编码失败清理临时目录。进程被强制终止可能留下 `recording-pending-*` 临时目录，需手动清理。
 - macOS / Linux 返回 `UnsupportedPlatform`，前端禁用入口并展示原因。窗口来源、多显示器、声音、点击 / 按键效果、GPU 零回读编码、GIF / WebP 与视频裁剪仍未实现。
 
 ### 录屏模块与运行时依赖
 
-`src-tauri/src/recorder/manager.rs` 承接原 `start_recording` / `control_recording` / `current_recording` 命令，新增 `recording_capabilities`；`config.rs` 定义强类型配置，`timeline.rs` 把 WGC 同源 QPC 时间换算为扣除暂停的 PTS，`capture/windows.rs` 拥有 WGC / D3D11 资源，`encoder/media_foundation.rs` 拥有 COM / MF 编码资源。视频帧只在 Rust 内流动。
+`src-tauri/src/recorder/manager.rs` 承接原 `start_recording` / `control_recording` / `current_recording` 命令，新增 `recording_capabilities`；`output.rs` 管理原生目录选择、独立目录记录与写权限校验，`config.rs` 定义强类型配置，`timeline.rs` 把 WGC 同源 QPC 时间换算为扣除暂停的 PTS，`capture/windows.rs` 拥有 WGC / D3D11 资源，`encoder/media_foundation.rs` 拥有 COM / MF 编码资源。视频帧只在 Rust 内流动。
 
 依赖继续固定 `windows = 0.62.2`，仅新增 WGC、D3D11、WinRT、QPC 及窗口捕获排除所需 feature，无新运行库或外部程序。能力查询检查 WGC / 光标 API 并试写小尺寸 MP4；准备时按选区尺寸与帧率再次试写封装，并创建捕获设备。Windows N 版本需启用 Media Feature Pack。接口参考 [Microsoft WGC 文档](https://learn.microsoft.com/en-us/windows/uwp/audio-video-camera/screen-capture) 与 [Sink Writer 编码文档](https://learn.microsoft.com/en-us/windows/win32/medfound/tutorial--using-the-sink-writer-to-encode-video)。当前采集格式为 SDR BGRA8，HDR 色彩映射仍需另行适配和验收。
 

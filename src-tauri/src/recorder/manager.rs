@@ -9,6 +9,7 @@ mod capture;
 mod config;
 mod encoder;
 mod frame;
+pub mod output;
 mod timeline;
 use super::scroll_capture::chrome;
 use config::{CaptureSource, OutputFormat, RecorderCapabilities, RecorderConfig};
@@ -277,12 +278,8 @@ pub async fn start_recording(
         }
         config.validate(size)?;
         capture::supported()?;
-        let root = app
-            .path()
-            .app_local_data_dir()
-            .map_err(err)?
-            .join("recordings");
-        fs::create_dir_all(&root).map_err(err)?;
+        // 准备时固定本次目录；临时 MP4 和最终文件同盘，停止时无需跨盘移动。
+        let root = output::prepare(&app)?;
         encoder::probe(&root, rect.width, rect.height, config.fps)?;
         let screen = super::scroll_capture::screen(&app)?;
         chrome::place_recording(&app, &screen, rect)?;

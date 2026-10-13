@@ -1,5 +1,7 @@
 import type { Rect } from './selection'
 
+export interface RecordingDirectory { path: string; isDefault: boolean }
+
 /** 与 Rust RecorderConfig / RecorderCapabilities 保持一致；声音不发送隐式默认开启值。 */
 export interface RecorderConfig {
   source: 'primaryMonitor'; region: Rect; fps: 30 | 60; captureCursor: boolean;
