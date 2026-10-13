@@ -3,18 +3,19 @@ import type { Rect } from './selection'
 export interface RecordingDirectory { path: string; isDefault: boolean }
 
 /** 与 Rust RecorderConfig / RecorderCapabilities 保持一致；声音不发送隐式默认开启值。 */
+export type RecordingQuality = 'economy' | 'balanced' | 'high'
 export type EncodingPreference = 'auto' | 'software'
 export const encoderLabels = { hardware: '硬件编码', software: '软件编码', system: '系统自动（类型未确认）' } as const
 export interface RecorderConfig {
   source: 'primaryMonitor'; region: Rect; fps: 30 | 60; captureCursor: boolean;
-  format: 'mp4'; systemAudio: boolean; microphone: boolean; countdownSeconds: 0 | 3 | 5; encoding: EncodingPreference
+  format: 'mp4'; systemAudio: boolean; microphone: boolean; countdownSeconds: 0 | 3 | 5; encoding: EncodingPreference; quality: RecordingQuality
 }
 export interface RecorderCapabilities {
   available: boolean; reason: string | null; sources: 'primaryMonitor'[];
   frameRates: number[]; captureCursor: boolean; systemAudio: boolean; microphone: boolean; formats: 'mp4'[]
 }
-export function recordingConfig(region: Rect, fps: 30 | 60 = 30, captureCursor = true, countdownSeconds: 0 | 3 | 5 = 0, encoding: EncodingPreference = 'auto'): RecorderConfig {
-  return { source: 'primaryMonitor', region: { ...region }, fps, captureCursor, format: 'mp4', systemAudio: false, microphone: false, countdownSeconds, encoding }
+export function recordingConfig(region: Rect, fps: 30 | 60 = 30, captureCursor = true, countdownSeconds: 0 | 3 | 5 = 0, encoding: EncodingPreference = 'auto', quality: RecordingQuality = 'balanced'): RecorderConfig {
+  return { source: 'primaryMonitor', region: { ...region }, fps, captureCursor, format: 'mp4', systemAudio: false, microphone: false, countdownSeconds, encoding, quality }
 }
 /** 与 Rust RecordingView / RecordingAction 保持一致，不使用前端计时推测视频长度。 */
 export type RecordingPhase = 'ready' | 'countdown' | 'recording' | 'paused' | 'encoding' | 'completed' | 'cancelled' | 'failed'
@@ -22,6 +23,7 @@ export type RecordingAction = 'start' | 'pause' | 'resume' | 'stop' | 'cancel'
 export interface RecordingView {
   id: number; revision: number; phase: RecordingPhase; seconds: number;
   encoderKind: keyof typeof encoderLabels; encoderFallback: string | null;
+  encodingMillis: number; targetBitrate: number;
   frames: number; droppedFrames: number; targetFps: number; countdownRemaining: number; message: string; path: string | null
 }
 export function recordingActive(view: RecordingView | null): boolean {
@@ -44,4 +46,11 @@ export function newerRecording(current: RecordingView | null, next: RecordingVie
 export function recordingTime(seconds: number): string {
   const value = Math.max(0, Math.floor(seconds))
   return `${Math.floor(value / 60).toString().padStart(2, '0')}:${(value % 60).toString().padStart(2, '0')}`
+}
+
+/** 全程平均有效 FPS，不含暂停；静态桌面无新帧时数值下降，不等同于丢帧。 */
+export function recordingStats(view: RecordingView): string {
+  const fps = view.seconds > 0 ? view.frames / view.seconds : 0
+  const millis = view.frames > 0 ? view.encodingMillis / view.frames : 0
+  return `平均 ${fps.toFixed(1)} FPS · 编码提交 ${millis.toFixed(1)} ms/帧`
 }

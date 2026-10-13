@@ -11,6 +11,8 @@ fn session() -> Session {
             frames: 0,
             dropped_frames: 0,
             target_fps: 30,
+            encoding_millis: 0.0,
+            target_bitrate: 8_087_040,
             encoder_kind: encoder::EncoderKind::System,
             encoder_fallback: None,
             countdown_remaining: 0,

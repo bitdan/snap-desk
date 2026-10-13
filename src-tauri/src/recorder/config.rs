@@ -23,6 +23,16 @@ pub enum EncodingPreference {
     Software,
 }
 
+/// 按分辨率、帧率和质量估算目标码率，不保证输出恒定码率。
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum RecordingQuality {
+    Economy,
+    #[default]
+    Balanced,
+    High,
+}
+
 #[derive(Clone, Copy, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RecorderConfig {
@@ -30,6 +40,8 @@ pub struct RecorderConfig {
     /// 相对主屏的物理像素；与截图 Rect 使用相同坐标系。
     pub region: Rect,
     pub fps: u32,
+    #[serde(default)]
+    pub quality: RecordingQuality,
     #[serde(default)]
     pub encoding: EncodingPreference,
     pub capture_cursor: bool,
@@ -47,6 +59,7 @@ impl RecorderConfig {
             source: CaptureSource::PrimaryMonitor,
             region,
             fps: 30,
+            quality: RecordingQuality::Balanced,
             encoding: EncodingPreference::Auto,
             capture_cursor: true,
             countdown_seconds: 0,
@@ -54,6 +67,21 @@ impl RecorderConfig {
             system_audio: false,
             microphone: false,
         }
+    }
+
+    /// 整数计算 0.08/0.13/0.20 bit/pixel/frame，限制在 1–80 Mbps。
+    pub fn target_bitrate(&self) -> u32 {
+        let weight = match self.quality {
+            RecordingQuality::Economy => 8,
+            RecordingQuality::Balanced => 13,
+            RecordingQuality::High => 20,
+        };
+        (u64::from(self.region.width)
+            * u64::from(self.region.height)
+            * u64::from(self.fps)
+            * weight
+            / 100)
+            .clamp(1_000_000, 80_000_000) as u32
     }
 
     pub fn validate(&self, size: (u32, u32)) -> Result<(), String> {
@@ -96,6 +124,27 @@ pub struct RecorderCapabilities {
 mod tests {
     use super::*;
     #[test]
+    fn bitrate_scales_with_size_rate_and_quality() {
+        let mut config = RecorderConfig::for_region(Rect {
+            x: 0,
+            y: 0,
+            width: 1920,
+            height: 1080,
+        });
+        assert_eq!(config.target_bitrate(), 8_087_040);
+        config.fps = 60;
+        assert_eq!(config.target_bitrate(), 16_174_080);
+        config.quality = RecordingQuality::High;
+        assert_eq!(config.target_bitrate(), 24_883_200);
+        config.region.width = 3840;
+        config.region.height = 2160;
+        assert_eq!(config.target_bitrate(), 80_000_000);
+        config.region.width = 2;
+        config.region.height = 2;
+        assert_eq!(config.target_bitrate(), 1_000_000);
+    }
+
+    #[test]
     fn rejects_audio_bad_rates_and_region_overflow() {
         let mut config = RecorderConfig::for_region(Rect {
             x: 0,
@@ -127,6 +176,14 @@ mod tests {
             EncodingPreference::Auto
         );
         config.countdown_seconds = 0;
+        let mut old = serde_json::to_value(config).unwrap();
+        old.as_object_mut().unwrap().remove("quality");
+        assert!(matches!(
+            serde_json::from_value::<RecorderConfig>(old)
+                .unwrap()
+                .quality,
+            RecordingQuality::Balanced
+        ));
         config.system_audio = true;
         assert!(config.validate((1920, 1080)).is_err());
         config.system_audio = false;

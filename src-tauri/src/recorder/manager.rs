@@ -45,6 +45,9 @@ pub struct RecordingView {
     frames: usize,
     dropped_frames: usize,
     target_fps: u32,
+    /// push 的累计墙钟耗时，包含转换和同步提交，不代表 GPU 内部延迟。
+    encoding_millis: f64,
+    target_bitrate: u32,
     encoder_kind: encoder::EncoderKind,
     encoder_fallback: Option<String>,
     countdown_remaining: u8,
@@ -269,7 +272,15 @@ pub async fn recording_capabilities(window: WebviewWindow) -> Result<RecorderCap
     tauri::async_runtime::spawn_blocking(|| {
         let result = capture::supported().and_then(|_| {
             let root = tempfile::tempdir().map_err(err)?;
-            encoder::probe(root.path(), 64, 64, 30, config::EncodingPreference::Auto).map(|_| ())
+            encoder::probe(
+                root.path(),
+                64,
+                64,
+                30,
+                1_000_000,
+                config::EncodingPreference::Auto,
+            )
+            .map(|_| ())
         });
         let available = result.is_ok();
         RecorderCapabilities {
@@ -332,8 +343,14 @@ pub async fn start_recording(
         capture::supported()?;
         // 准备时固定本次目录；临时 MP4 和最终文件同盘，停止时无需跨盘移动。
         let root = output::prepare(&app)?;
-        let (encoder_kind, selected_encoding, encoder_fallback) =
-            encoder::probe(&root, rect.width, rect.height, config.fps, config.encoding)?;
+        let (encoder_kind, selected_encoding, encoder_fallback) = encoder::probe(
+            &root,
+            rect.width,
+            rect.height,
+            config.fps,
+            config.target_bitrate(),
+            config.encoding,
+        )?;
         config.encoding = selected_encoding;
         let screen = super::scroll_capture::screen(&app)?;
         chrome::place_recording(&app, &screen, rect)?;
@@ -348,6 +365,8 @@ pub async fn start_recording(
                 frames: 0,
                 dropped_frames: 0,
                 target_fps: config.fps,
+                encoding_millis: 0.0,
+                target_bitrate: config.target_bitrate(),
                 encoder_kind,
                 encoder_fallback,
                 countdown_remaining: 0,
@@ -435,7 +454,6 @@ fn collect(
             let mut waiting_since = None;
             let collected = (|| -> Result<(), String> {
                 loop {
-                    let tick = Instant::now();
                     let running = {
                         let mut guard = state.0.lock().map_err(err)?;
                         let s = guard
@@ -510,8 +528,12 @@ fn collect(
                     } else {
                         waiting_since = None;
                     }
-                    // 用较短轮询排空 WGC 两帧缓冲，按源时间戳限制 30/60 FPS。
-                    std::thread::sleep(Duration::from_millis(4).saturating_sub(tick.elapsed()));
+                    // 帧事件唤醒采集；超时使静态桌面也能检查停止和设备状态。
+                    if running {
+                        backend.wait_for_frame(Duration::from_millis(50));
+                    } else {
+                        std::thread::sleep(Duration::from_millis(50));
+                    }
                 }
                 Ok(())
             })();
@@ -606,6 +628,7 @@ fn write_video(
         config.region.width,
         config.region.height,
         config.fps,
+        config.target_bitrate(),
         config.encoding,
     )?;
     let state = app.state::<RecordingState>();
@@ -637,10 +660,13 @@ fn write_video(
             }
             // 在锁内确认归属即视为提交；原生 WriteSample 不持有状态锁，按钮可及时响应。
         }
+        let encoding_started = Instant::now();
         encoder.push(&frame.image, frame.pts)?;
+        let encoding_millis = encoding_started.elapsed().as_secs_f64() * 1000.0;
         let mut guard = state.0.lock().map_err(err)?;
         if let Some(s) = guard.as_mut().filter(|s| s.view.id == id) {
             s.view.frames += 1;
+            s.view.encoding_millis += encoding_millis;
             s.view.revision += 1;
         }
     }

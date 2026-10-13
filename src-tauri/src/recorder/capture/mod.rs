@@ -4,6 +4,8 @@ use super::{config::RecorderConfig, frame::VideoFrame};
 pub trait CaptureBackend {
     /// 返回最新一帧；静态桌面可能暂时没有帧，编码端延长上一帧显示时间。
     fn next_frame(&mut self) -> Result<Option<VideoFrame>, String>;
+    /// 等待帧到达；超时用于检查停止和设备状态，不无限阻塞控制操作。
+    fn wait_for_frame(&self, timeout: std::time::Duration);
 }
 
 #[cfg(target_os = "windows")]

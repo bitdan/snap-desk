@@ -7,6 +7,7 @@ use std::{
     rc::Rc,
     sync::{
         atomic::{AtomicBool, Ordering},
+        mpsc::{self, Receiver},
         Arc,
     },
 };
@@ -89,6 +90,8 @@ pub struct Capture {
     pool: Direct3D11CaptureFramePool,
     item: GraphicsCaptureItem,
     closed_token: i64,
+    arrived_token: i64,
+    arrived: Receiver<()>,
     closed: Arc<AtomicBool>,
     staging: ID3D11Texture2D,
     context: ID3D11DeviceContext,
@@ -191,11 +194,30 @@ impl Capture {
                     return Err(e);
                 }
             };
+            // 容量为 1 的通知合并高频回调；像素复制仍在采集线程完成。
+            let (notify, arrived) = mpsc::sync_channel(1);
+            let arrived_token = match pool.FrameArrived(&TypedEventHandler::<
+                Direct3D11CaptureFramePool,
+                windows::core::IInspectable,
+            >::new(move |_, _| {
+                let _ = notify.try_send(());
+                Ok(())
+            })) {
+                Ok(token) => token,
+                Err(e) => {
+                    let _ = item.RemoveClosed(closed_token);
+                    let _ = session.Close();
+                    let _ = pool.Close();
+                    return Err(error(e));
+                }
+            };
             Ok(Self {
                 session,
                 pool,
                 item,
                 closed_token,
+                arrived_token,
+                arrived,
                 closed,
                 staging,
                 context,
@@ -241,18 +263,16 @@ impl Capture {
             self.context
                 .Map(&self.staging, 0, D3D11_MAP_READ, 0, Some(&mut mapped))
                 .map_err(error)?;
-            let mut image = image::RgbaImage::new(r.width, r.height);
-            // RowPitch 可能包含行尾对齐；只复制有效像素并将 BGRA 转成 RGBA。
+            let mut image = super::super::frame::BgraImage::new(r.width, r.height);
+            // RowPitch 可能包含行尾对齐；整行复制 BGRA，不逐像素交换通道。
             for y in 0..r.height as usize {
                 let row = std::slice::from_raw_parts(
                     (mapped.pData as *const u8).add(y * mapped.RowPitch as usize),
                     r.width as usize * 4,
                 );
                 let target =
-                    &mut image.as_mut()[y * r.width as usize * 4..(y + 1) * r.width as usize * 4];
-                for (src, dst) in row.chunks_exact(4).zip(target.chunks_exact_mut(4)) {
-                    dst.copy_from_slice(&[src[2], src[1], src[0], 255]);
-                }
+                    &mut image.data[y * r.width as usize * 4..(y + 1) * r.width as usize * 4];
+                target.copy_from_slice(row);
             }
             self.context.Unmap(&self.staging, 0);
             Ok(VideoFrame { source_time, image })
@@ -261,6 +281,10 @@ impl Capture {
 }
 
 impl CaptureBackend for Capture {
+    fn wait_for_frame(&self, timeout: std::time::Duration) {
+        let _ = self.arrived.recv_timeout(timeout);
+    }
+
     fn next_frame(&mut self) -> Result<Option<VideoFrame>, String> {
         // 待开始只准备设备和帧池，用户点击开始后第一次拉帧才启动系统捕获。
         if !self.started {
@@ -290,6 +314,7 @@ impl CaptureBackend for Capture {
 
 impl Drop for Capture {
     fn drop(&mut self) {
+        let _ = self.pool.RemoveFrameArrived(self.arrived_token);
         let _ = self.session.Close();
         let _ = self.item.RemoveClosed(self.closed_token);
         let _ = self.pool.Close();

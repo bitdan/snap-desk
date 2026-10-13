@@ -1,5 +1,5 @@
 //! 平台编码器独占写入线程。Drop 即取消，临时文件由管理器清理；finish 才完成封装。
-use super::config::EncodingPreference;
+use super::{config::EncodingPreference, frame::BgraImage};
 use serde::Serialize;
 use std::path::Path;
 #[cfg(target_os = "windows")]
@@ -17,7 +17,7 @@ pub enum EncoderKind {
 
 pub trait Encoder {
     fn kind(&self) -> EncoderKind;
-    fn push(&mut self, image: &image::RgbaImage, pts: i64) -> Result<(), String>;
+    fn push(&mut self, image: &BgraImage, pts: i64) -> Result<(), String>;
     fn finish(&mut self, end: i64) -> Result<(), String>;
 }
 
@@ -26,17 +26,19 @@ pub fn create(
     width: u32,
     height: u32,
     fps: u32,
+    bitrate: u32,
     preference: EncodingPreference,
 ) -> Result<Box<dyn Encoder>, String> {
     #[cfg(target_os = "windows")]
     return Ok(Box::new(
-        media_foundation::MediaFoundation::new(path, width, height, fps, preference).map_err(
-            |e| format!("无法初始化系统 H.264 编码器：{e}。请检查媒体组件、分辨率和磁盘空间。"),
-        )?,
+        media_foundation::MediaFoundation::new(path, width, height, fps, bitrate, preference)
+            .map_err(|e| {
+                format!("无法初始化系统 H.264 编码器：{e}。请检查媒体组件、分辨率和磁盘空间。")
+            })?,
     ));
     #[cfg(not(target_os = "windows"))]
     {
-        let _ = (path, width, height, fps, preference);
+        let _ = (path, width, height, fps, bitrate, preference);
         Err("UnsupportedPlatform：当前平台尚未实现原生录屏编码。".into())
     }
 }
@@ -68,12 +70,20 @@ pub fn probe(
     width: u32,
     height: u32,
     fps: u32,
+    bitrate: u32,
     preference: EncodingPreference,
 ) -> Result<(EncoderKind, EncodingPreference, Option<String>), String> {
     with_fallback(preference, |mode| {
         let temp = tempfile::tempdir_in(root).map_err(|e| e.to_string())?;
-        let mut encoder = create(&temp.path().join("probe.mp4"), width, height, fps, mode)?;
-        encoder.push(&image::RgbaImage::new(width, height), 0)?;
+        let mut encoder = create(
+            &temp.path().join("probe.mp4"),
+            width,
+            height,
+            fps,
+            bitrate,
+            mode,
+        )?;
+        encoder.push(&BgraImage::new(width, height), 0)?;
         encoder.finish(10_000_000 / i64::from(fps))?;
         Ok(encoder.kind())
     })

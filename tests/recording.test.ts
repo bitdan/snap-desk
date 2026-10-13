@@ -1,8 +1,15 @@
 import { describe, expect, it } from 'vitest'
-import { newerRecording, recordingActive, recordingConfig, recordingStatus, recordingTime, type RecordingView } from '../src/lib/recording'
+import { newerRecording, recordingStats, recordingActive, recordingConfig, recordingStatus, recordingTime, type RecordingView } from '../src/lib/recording'
 
-const view: RecordingView = { id: 7, revision: 3, phase: 'paused', seconds: 23, frames: 180, droppedFrames: 2, targetFps: 30, encoderKind: 'system', encoderFallback: null, countdownRemaining: 0, message: '', path: null }
+const view: RecordingView = { id: 7, revision: 3, phase: 'paused', seconds: 23, frames: 180, droppedFrames: 2, targetFps: 30, encodingMillis: 360, targetBitrate: 8_087_040, encoderKind: 'system', encoderFallback: null, countdownRemaining: 0, message: '', path: null }
 describe('录屏会话状态', () => {
+  it('画质显式传递，默认均衡；统计处理无帧及有效录制时间', () => {
+    const region = { x: 0, y: 0, width: 1920, height: 1080 }
+    expect(recordingConfig(region).quality).toBe('balanced')
+    expect(recordingConfig(region, 60, true, 0, 'auto', 'high').quality).toBe('high')
+    expect(recordingStats({ ...view, seconds: 6 })).toBe('平均 30.0 FPS · 编码提交 2.0 ms/帧')
+    expect(recordingStats({ ...view, seconds: 0, frames: 0 })).toBe('平均 0.0 FPS · 编码提交 0.0 ms/帧')
+  })
   it('编码默认自动，显式软件模式与倒计时独立传递', () => {
     const region = { x: 0, y: 0, width: 100, height: 100 }
     expect(recordingConfig(region).encoding).toBe('auto')
@@ -24,7 +31,7 @@ describe('录屏会话状态', () => {
     const region = { x: 12, y: 18, width: 101, height: 99 }
     const config = recordingConfig(region, 60, false)
     region.x = 99
-    expect(config).toEqual({ source: 'primaryMonitor', region: { x: 12, y: 18, width: 101, height: 99 }, fps: 60, captureCursor: false, format: 'mp4', systemAudio: false, microphone: false, countdownSeconds: 0, encoding: 'auto' })
+    expect(config).toEqual({ source: 'primaryMonitor', region: { x: 12, y: 18, width: 101, height: 99 }, fps: 60, captureCursor: false, format: 'mp4', systemAudio: false, microphone: false, countdownSeconds: 0, encoding: 'auto', quality: 'balanced' })
     expect(recordingConfig(region).fps).toBe(30)
     expect(recordingConfig(region).captureCursor).toBe(true)
   })

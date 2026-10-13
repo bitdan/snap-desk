@@ -1,6 +1,6 @@
 //! Windows Media Foundation Sink Writer：NV12 → 系统 H.264 编码器 → MP4。
 //! 所有 COM 对象只在创建它们的后台线程使用，先释放 writer，再关闭 MF 和 COM。
-use super::{pixels::nv12, EncoderKind, EncodingPreference};
+use super::{pixels::nv12_into, BgraImage, EncoderKind, EncodingPreference};
 use std::{marker::PhantomData, path::Path, rc::Rc};
 use windows::{
     core::{Interface, Result as WinResult, GUID, HSTRING},
@@ -52,6 +52,7 @@ impl MediaFoundation {
         width: u32,
         height: u32,
         fps: u32,
+        bitrate: u32,
         preference: EncodingPreference,
     ) -> WinResult<Self> {
         let runtime = Runtime::new()?;
@@ -71,7 +72,7 @@ impl MediaFoundation {
             let writer =
                 MFCreateSinkWriterFromURL(&HSTRING::from(path.as_os_str()), None, &attributes)?;
             let output = media_type(width, height, fps, &MFVideoFormat_H264)?;
-            output.SetUINT32(&MF_MT_AVG_BITRATE, 8_000_000)?;
+            output.SetUINT32(&MF_MT_AVG_BITRATE, bitrate)?;
             let stream = writer.AddStream(&output)?;
             let input = media_type(width, height, fps, &MFVideoFormat_NV12)?;
             input.SetUINT32(&MF_MT_DEFAULT_STRIDE, width)?;
@@ -176,20 +177,24 @@ impl super::Encoder for MediaFoundation {
         EncoderKind::System
     }
 
-    fn push(&mut self, image: &image::RgbaImage, pts: i64) -> Result<(), String> {
+    fn push(&mut self, image: &BgraImage, pts: i64) -> Result<(), String> {
         if image.dimensions() != self.original {
             return Err("编码帧尺寸发生变化。".into());
         }
-        if let Some((time, data)) = self.pending.take() {
+        if let Some((time, mut data)) = self.pending.take() {
             if pts <= time {
                 self.pending = Some((time, data));
                 return Err("编码时间戳必须严格递增。".into());
             }
             self.write(&data, time, pts - time).map_err(native_error)?;
-            self.pending = Some((pts, nv12(image).2));
+            // WriteSample 已复制到 MF 自有内存，可安全复用转换缓冲。
+            nv12_into(image, &mut data);
+            self.pending = Some((pts, data));
         } else {
             // 首帧覆盖开始到首次采集之间的短间隔，输出时长与有效录制时间一致。
-            self.pending = Some((0, nv12(image).2));
+            let mut data = Vec::new();
+            nv12_into(image, &mut data);
+            self.pending = Some((0, data));
         }
         Ok(())
     }
