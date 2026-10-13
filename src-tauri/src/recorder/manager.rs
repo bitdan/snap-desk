@@ -459,8 +459,9 @@ fn measured_capture(
         .ok_or("录屏会话已过期。")?;
     s.view.stats.capture_polls += 1;
     s.view.stats.capture_millis += millis;
-    if matches!(&result, Ok(Some(_))) {
+    if let Ok(Some(frame)) = &result {
         s.view.stats.captured_frames += 1;
+        s.view.stats.capture_copy_bytes += frame.image.data.len() as u64;
     }
     s.view.revision += 1;
     result
@@ -619,6 +620,8 @@ fn collect(
                                             .filter(|s| s.view.id == id)
                                             .ok_or("录屏会话已过期。")?;
                                         s.view.stats.composed_frames += 1;
+                                        s.view.stats.composition_copy_bytes +=
+                                            image.data.len() as u64;
                                         s.view.stats.composition_millis += composition_millis;
                                         s.view.revision += 1;
                                         if !s.stop
@@ -858,6 +861,7 @@ fn write_video(
         if let Some(s) = guard.as_mut().filter(|s| s.view.id == id) {
             s.view.frames += 1;
             s.view.encoding_millis += encoding_millis;
+            s.view.stats.nv12_output_bytes = encoder.converted_bytes();
             // push 期间仍可暂停；旧代次已提交帧计入累计值，但不污染恢复后的窗口。
             if frame.generation == s.timeline.generation {
                 s.fps_window.submitted(frame.pts);

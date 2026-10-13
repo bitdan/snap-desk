@@ -47,6 +47,7 @@ export type RecordingAction = 'start' | 'pause' | 'resume' | 'stop' | 'cancel'
 /** 与 Rust RecordingStats 一致，耗时为累计毫秒；空取样不是丢帧。 */
 export interface RecordingDiagnostics {
   capturePolls: number; capturedFrames: number; captureMillis: number;
+  captureCopyBytes: number; compositionCopyBytes: number; nv12OutputBytes: number;
   throttledSamples: number; composedFrames: number; compositionMillis: number;
   queuedFrames: number; queueDroppedFrames: number; staleQueuedFrames: number;
   rejectedCaptureFrames: number; rejectedComposedFrames: number; recentFps: number
@@ -91,4 +92,10 @@ export function recordingStageTimes(view: RecordingView): string {
   const average = (millis: number, count: number) => (count > 0 ? millis / count : 0).toFixed(1)
   const stats = view.stats
   return `采集 ${average(stats.captureMillis, stats.capturePolls)} ms/次 · 合成 ${average(stats.compositionMillis, stats.composedFrames)} ms/帧 · 编码提交 ${average(view.encodingMillis, view.frames)} ms/帧`
+}
+
+/** 只汇总应用可观测的 CPU 像素传输，不推测显卡驱动或系统编码器内部复制。 */
+export function recordingCopyStats(view: RecordingView): string {
+  const mib = (bytes: number) => (bytes / 1_048_576).toFixed(1)
+  return `采集复制 ${mib(view.stats.captureCopyBytes)} MiB · 合成复制 ${mib(view.stats.compositionCopyBytes)} MiB · NV12 输出 ${mib(view.stats.nv12OutputBytes)} MiB`
 }

@@ -17,6 +17,8 @@ pub enum EncoderKind {
 
 pub trait Encoder {
     fn kind(&self) -> EncoderKind;
+    /// 成功转换并交给编码器拥有的 NV12 字节数，不计系统编码器内部拷贝。
+    fn converted_bytes(&self) -> u64;
     fn push(&mut self, image: &BgraImage, pts: i64) -> Result<(), String>;
     fn finish(&mut self, end: i64) -> Result<(), String>;
 }

@@ -1,7 +1,10 @@
 //! Windows Media Foundation Sink Writer：NV12 → 系统 H.264 编码器 → MP4。
 //! 所有 COM 对象只在创建它们的后台线程使用，先释放 writer，再关闭 MF 和 COM。
-use super::{pixels::nv12_into, BgraImage, EncoderKind, EncodingPreference};
-use std::{marker::PhantomData, path::Path, rc::Rc};
+use super::{
+    pixels::{nv12_into, nv12_len},
+    BgraImage, EncoderKind, EncodingPreference,
+};
+use std::{marker::PhantomData, mem::MaybeUninit, path::Path, rc::Rc};
 use windows::{
     core::{Interface, Result as WinResult, GUID, HSTRING},
     Win32::{Media::MediaFoundation::*, System::Com::*},
@@ -37,13 +40,70 @@ impl Drop for Runtime {
 pub struct MediaFoundation {
     // Rust 按声明顺序释放字段：writer 必须比 runtime 先释放。
     writer: IMFSinkWriter,
-    _runtime: Runtime,
     stream: u32,
     preference: EncodingPreference,
-    width: u32,
-    height: u32,
+    input_size: u32,
+    converted_bytes: u64,
     original: (u32, u32),
-    pending: Option<(i64, Vec<u8>)>,
+    /// 每帧拥有独立 MF 缓冲；待下一帧到达后才确定持续时间，不借用 CPU 图像。
+    pending: Option<(i64, IMFMediaBuffer)>,
+    // 包括 pending 在内的全部 COM 对象均先于 MF / COM 运行时释放。
+    _runtime: Runtime,
+}
+
+/// 即使转换失败或发生 panic，也先解锁再释放缓冲。显式解锁失败由调用者上报。
+struct BufferLock<'a> {
+    buffer: &'a IMFMediaBuffer,
+    locked: bool,
+}
+impl BufferLock<'_> {
+    fn unlock(mut self) -> WinResult<()> {
+        self.locked = false;
+        unsafe { self.buffer.Unlock() }
+    }
+}
+impl Drop for BufferLock<'_> {
+    fn drop(&mut self) {
+        if self.locked {
+            unsafe {
+                let _ = self.buffer.Unlock();
+            }
+        }
+    }
+}
+
+/// 分配后直接转换到 MF 独占内存；提交以后绝不再次写入或归还到 CPU 缓冲池。
+/// Sink Writer 可以异步持有 sample/buffer 的 COM 引用，WriteSample 返回不表示已消费完。
+fn converted_buffer(image: &BgraImage) -> Result<IMFMediaBuffer, String> {
+    let len = nv12_len(image.width, image.height)?;
+    if len > isize::MAX as usize {
+        return Err("NV12 缓冲超过当前进程寻址范围。".into());
+    }
+    let length = u32::try_from(len).map_err(|_| "NV12 缓冲超过系统编码器容量。")?;
+    unsafe {
+        let buffer = MFCreateMemoryBuffer(length).map_err(native_error)?;
+        let mut pointer = std::ptr::null_mut();
+        let mut capacity = 0;
+        buffer
+            .Lock(&mut pointer, Some(&mut capacity), None)
+            .map_err(native_error)?;
+        let lock = BufferLock {
+            buffer: &buffer,
+            locked: true,
+        };
+        if pointer.is_null() || capacity < length {
+            return Err("系统编码缓冲容量不足。".into());
+        }
+        {
+            // MF 内存可能尚未初始化；使用 MaybeUninit 而不是先构造 &[u8]，
+            // 转换函数只写不读，并覆盖全部 Y/UV（包括奇数尺寸补边），免去预清零。
+            let data = std::slice::from_raw_parts_mut(pointer.cast::<MaybeUninit<u8>>(), len);
+            nv12_into(image, data)?;
+        }
+        lock.unlock().map_err(native_error)?;
+        buffer.SetCurrentLength(length).map_err(native_error)?;
+        Ok(buffer)
+    }
 }
 
 impl MediaFoundation {
@@ -84,26 +144,18 @@ impl MediaFoundation {
                 _runtime: runtime,
                 stream,
                 preference,
-                width,
-                height,
+                input_size: width * height * 3 / 2,
+                converted_bytes: 0,
                 original,
                 pending: None,
             })
         }
     }
 
-    fn write(&self, data: &[u8], time: i64, duration: i64) -> WinResult<()> {
-        debug_assert_eq!(data.len(), (self.width * self.height * 3 / 2) as usize);
+    fn write(&self, buffer: &IMFMediaBuffer, time: i64, duration: i64) -> WinResult<()> {
         unsafe {
-            let buffer = MFCreateMemoryBuffer(data.len() as u32)?;
-            let mut pointer = std::ptr::null_mut();
-            buffer.Lock(&mut pointer, None, None)?;
-            // 容量由上面的 data.len() 指定，锁定期间复制等长字节，不保存裸指针。
-            std::ptr::copy_nonoverlapping(data.as_ptr(), pointer, data.len());
-            buffer.Unlock()?;
-            buffer.SetCurrentLength(data.len() as u32)?;
             let sample = MFCreateSample()?;
-            sample.AddBuffer(&buffer)?;
+            sample.AddBuffer(buffer)?;
             sample.SetSampleTime(time)?;
             sample.SetSampleDuration(duration)?;
             self.writer.WriteSample(self.stream, &sample)
@@ -138,6 +190,10 @@ unsafe fn media_type(
 }
 
 impl super::Encoder for MediaFoundation {
+    fn converted_bytes(&self) -> u64 {
+        self.converted_bytes
+    }
+
     fn kind(&self) -> EncoderKind {
         if self.preference == EncodingPreference::Software {
             return EncoderKind::Software;
@@ -181,21 +237,19 @@ impl super::Encoder for MediaFoundation {
         if image.dimensions() != self.original {
             return Err("编码帧尺寸发生变化。".into());
         }
-        if let Some((time, mut data)) = self.pending.take() {
+        if let Some((time, buffer)) = self.pending.take() {
             if pts <= time {
-                self.pending = Some((time, data));
+                self.pending = Some((time, buffer));
                 return Err("编码时间戳必须严格递增。".into());
             }
-            self.write(&data, time, pts - time).map_err(native_error)?;
-            // WriteSample 已复制到 MF 自有内存，可安全复用转换缓冲。
-            nv12_into(image, &mut data);
-            self.pending = Some((pts, data));
+            self.write(&buffer, time, pts - time)
+                .map_err(native_error)?;
+            self.pending = Some((pts, converted_buffer(image)?));
         } else {
             // 首帧覆盖开始到首次采集之间的短间隔，输出时长与有效录制时间一致。
-            let mut data = Vec::new();
-            nv12_into(image, &mut data);
-            self.pending = Some((0, data));
+            self.pending = Some((0, converted_buffer(image)?));
         }
+        self.converted_bytes += u64::from(self.input_size);
         Ok(())
     }
 
@@ -207,5 +261,47 @@ impl super::Encoder for MediaFoundation {
         self.write(&data, time, (end - time).max(1))
             .map_err(native_error)?;
         MediaFoundation::finish(self).map_err(native_error)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn bytes(buffer: &IMFMediaBuffer) -> Vec<u8> {
+        unsafe {
+            let mut pointer = std::ptr::null_mut();
+            let mut length = 0;
+            buffer.Lock(&mut pointer, None, Some(&mut length)).unwrap();
+            let lock = BufferLock {
+                buffer,
+                locked: true,
+            };
+            let result = std::slice::from_raw_parts(pointer, length as usize).to_vec();
+            lock.unlock().unwrap();
+            result
+        }
+    }
+
+    #[test]
+    fn later_conversion_does_not_overwrite_retained_mf_buffer() {
+        let _runtime = Runtime::new().unwrap();
+        let mut image = BgraImage::new(3, 3);
+        for pixel in image.data.chunks_exact_mut(4) {
+            pixel.copy_from_slice(&[0, 0, 255, 255]);
+        }
+        let first = converted_buffer(&image).unwrap();
+        let expected = bytes(&first);
+        assert_eq!(expected.len(), 24);
+        // 模拟编码器继续持有上一帧的 COM 引用，采集端已改写并释放原始图像。
+        let retained = first.clone();
+        drop(first);
+        image.data.fill(0);
+        let second = converted_buffer(&image).unwrap();
+        drop(image);
+        assert_eq!(bytes(&retained), expected);
+        assert_ne!(bytes(&retained), bytes(&second));
+        assert_eq!(&bytes(&second)[..16], &[16; 16]);
+        assert_eq!(&bytes(&second)[16..], &[128; 8]);
     }
 }

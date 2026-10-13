@@ -2,7 +2,7 @@
 import { onMounted, onUnmounted, ref } from 'vue'
 import Button from './ui/button/Button.vue'
 import { api, desktop } from '@/lib/api'
-import { encoderLabels, recordingStats, recordingStageTimes, newerRecording, recordingActive, recordingStatus, recordingTime, type RecorderCapabilities, type RecordingAction, type RecordingDirectory, type RecordingView } from '@/lib/recording'
+import { encoderLabels, recordingStats, recordingStageTimes, recordingCopyStats, newerRecording, recordingActive, recordingStatus, recordingTime, type RecorderCapabilities, type RecordingAction, type RecordingDirectory, type RecordingView } from '@/lib/recording'
 
 const view = ref<RecordingView | null>(null)
 const error = ref('')
@@ -78,6 +78,8 @@ onUnmounted(() => { disposed = true; clearTimeout(timer) })
         <div class="setting-row"><span>队列满 / 旧代次丢弃</span><span>{{ view.stats.queueDroppedFrames }} / {{ view.stats.staleQueuedFrames }} 帧</span></div>
         <div class="setting-row"><span>采集 / 合成后失效</span><span>{{ view.stats.rejectedCaptureFrames }} / {{ view.stats.rejectedComposedFrames }} 帧</span></div>
         <p class="py-2">{{ recordingStageTimes(view) }}</p>
+        <p class="pb-2">{{ recordingCopyStats(view) }}</p>
+        <p class="pb-2 text-zinc-500">NV12 转换直接写入编码缓冲，输出量不代表额外复制；统计不含 GPU 和系统编码器内部传输。</p>
         <p class="text-zinc-500">采集耗时按 {{ view.stats.capturePolls }} 次取样平均，包含空取样、GPU 回读和像素复制，不含等待帧事件。合成仅统计键鼠特效重绘；编码提交包含色彩转换与同步写入，不代表 GPU 内部延迟。</p>
         <p class="pt-2 text-zinc-500">采集统计后端实际取出的帧，不含系统帧池内部丢弃；动画可复用底图生成多帧。节流次数包含延后重绘，不能与各阶段帧数相加。暂停、停止期间的帧会单独记为失效。</p>
       </details>

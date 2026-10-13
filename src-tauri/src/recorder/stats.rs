@@ -10,6 +10,12 @@ pub struct RecordingStats {
     pub captured_frames: usize,
     /// next_frame 的总耗时，含 GPU 回读和 CPU 拷贝，不含帧事件等待。
     pub capture_millis: f64,
+    /// 从映射的屏幕纹理复制到独占 BGRA 图像的累计字节数，不含 GPU 内部复制。
+    pub capture_copy_bytes: u64,
+    /// 特效重绘复制干净底图的累计字节数，与采集和编码帧数相互独立。
+    pub composition_copy_bytes: u64,
+    /// BGRA 转换后直接写入 MF 缓冲的 NV12 输出量，不是额外的 memcpy。
+    pub nv12_output_bytes: u64,
     /// 有画面或动画需要提交，但被目标帧率拒绝的次数。
     pub throttled_samples: usize,
     pub composed_frames: usize,

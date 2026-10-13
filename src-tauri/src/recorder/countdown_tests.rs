@@ -116,6 +116,7 @@ fn capture_statistics_count_polls_separately_and_preserve_errors() {
     let view = &guard.as_ref().unwrap().view;
     assert_eq!(view.stats.capture_polls, 3);
     assert_eq!(view.stats.captured_frames, 1);
+    assert_eq!(view.stats.capture_copy_bytes, 16);
     assert_eq!(view.dropped_frames, 0);
     assert_eq!(view.frames, 0);
     assert_eq!(view.revision, 4);
