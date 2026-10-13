@@ -2,7 +2,7 @@
 import { onMounted, onUnmounted, ref } from 'vue'
 import { Pause, Play, Square, X } from 'lucide-vue-next'
 import { api } from '@/lib/api'
-import { newerRecording, recordingActive, recordingLabels, recordingTime, type RecordingAction, type RecordingView } from '@/lib/recording'
+import { newerRecording, recordingActive, recordingStatus, recordingTime, type RecordingAction, type RecordingView } from '@/lib/recording'
 
 const view = ref<RecordingView | null>(null)
 const busy = ref(false)
@@ -35,9 +35,10 @@ onUnmounted(() => { disposed = true; clearTimeout(timer) })
   <main class="recording-controls" aria-label="录屏控制条">
     <span class="dot" :class="{ paused: view?.phase !== 'recording' }" />
     <span class="time" role="timer">{{ recordingTime(view?.seconds ?? 0) }}</span>
-    <span class="status" role="status">{{ view ? recordingLabels[view.phase] : '连接中…' }}</span>
-    <span class="fps" :title="`已写入 ${view?.frames ?? 0} 帧，丢弃 ${view?.droppedFrames ?? 0} 帧`">目标 {{ view?.targetFps ?? 30 }} FPS</span>
+    <span class="status" role="status">{{ view ? recordingStatus(view) : '连接中…' }}</span>
+    <span v-if="view?.phase !== 'countdown'" class="fps" :title="`已写入 ${view?.frames ?? 0} 帧，丢弃 ${view?.droppedFrames ?? 0} 帧`">目标 {{ view?.targetFps ?? 30 }} FPS</span>
     <button v-if="view?.phase === 'ready'" class="start" :disabled="busy" @click="control('start')"><Play :size="15" />开始录制</button>
+    <button v-else-if="view?.phase === 'countdown'" disabled><Play :size="15" />等待开始</button>
     <button v-else-if="view?.phase === 'paused'" :disabled="busy" @click="control('resume')"><Play :size="15" />继续</button>
     <button v-else :disabled="busy || view?.phase !== 'recording'" @click="control('pause')"><Pause :size="15" />暂停</button>
     <button :disabled="busy || !view || !['recording', 'paused'].includes(view.phase)" @click="control('stop')"><Square :size="15" />结束保存</button>

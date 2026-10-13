@@ -25,6 +25,7 @@ const recordingSetup = ref(false)
 const recordingCapabilities = ref<RecorderCapabilities | null>(null)
 const recordingCapabilityError = ref('')
 const recordingFps = ref<30 | 60>(30)
+const recordingCountdown = ref<0 | 3 | 5>(0)
 const captureCursor = ref(true)
 const automaticScroll = ref(true)
 const saveScrollFrames = ref(true)
@@ -92,7 +93,7 @@ async function startScroll() {
 async function startRecording() {
   if (!frame.value || !pixels.value || !valid.value || busy.value || marked.value || editor.pending || editor.interacting || gesture) return
   busy.value = true; error.value = ''
-  try { await api.startRecording(frame.value.id, pixels.value, recordingConfig(pixels.value, recordingFps.value, captureCursor.value)); recordingSetup.value = false; frame.value = null }
+  try { await api.startRecording(frame.value.id, pixels.value, recordingConfig(pixels.value, recordingFps.value, captureCursor.value, recordingCountdown.value)); recordingSetup.value = false; frame.value = null }
   catch (e) { error.value = String(e) }
   finally { busy.value = false }
 }
@@ -279,8 +280,10 @@ onUnmounted(() => { disposed = true; off?.(); offScroll?.(); window.removeEventL
     <div v-if="recordingSetup" class="scroll-setup-shade" @pointerdown.stop @pointermove.stop @contextmenu.stop.prevent>
       <section class="scroll-setup" role="dialog" aria-modal="true" aria-label="开始录屏">
         <h2>录制当前选区 · MP4</h2>
-        <p>点击控制条“开始录制”才计时。支持暂停、继续、结束保存和取消；无声 MP4，单次最多 3 分钟。</p>
+        <p>点击控制条“开始录制”后按下方设置开始。支持暂停、继续、结束保存和取消；无声 MP4，单次最多 3 分钟。</p>
         <label>目标帧率 <select v-model="recordingFps" :disabled="busy"><option :value="30">30 FPS</option><option :value="60">60 FPS</option></select></label>
+        <label>开始倒计时 <select v-model="recordingCountdown" :disabled="busy"><option :value="0">立即</option><option :value="3">3 秒</option><option :value="5">5 秒</option></select></label>
+        <p>点击控制条“开始录制”后倒计时，可随时取消；倒计时不计入视频时长。</p>
         <label><input v-model="captureCursor" type="checkbox" :disabled="busy" /> 录制鼠标指针</label>
         <p>视频自动保存到本地，停止后显示路径。静态画面延长上一帧显示；实际帧数取决于采集和编码速度。</p>
         <p v-if="error" class="scroll-setup-error" role="alert">{{ error }}</p>

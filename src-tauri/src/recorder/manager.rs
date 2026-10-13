@@ -7,6 +7,9 @@ use std::{
 };
 mod capture;
 mod config;
+#[cfg(test)]
+#[path = "countdown_tests.rs"]
+mod countdown_tests;
 mod encoder;
 mod frame;
 pub mod output;
@@ -19,10 +22,11 @@ use timeline::Timeline;
 const MAX_SECONDS: f64 = 180.0;
 // 尚未完成长时间资源验收，保留 3 分钟限制；不再限制 PNG 字节数或 1800 帧。
 
-#[derive(Clone, Copy, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Phase {
     Ready,
+    Countdown,
     Recording,
     Paused,
     Encoding,
@@ -41,6 +45,7 @@ pub struct RecordingView {
     frames: usize,
     dropped_frames: usize,
     target_fps: u32,
+    countdown_remaining: u8,
     message: String,
     path: Option<String>,
 }
@@ -49,6 +54,8 @@ pub struct RecordingView {
 struct Session {
     view: RecordingView,
     timeline: Timeline,
+    countdown_seconds: u8,
+    countdown_until: Option<i64>,
     stop: bool,
     cancel: bool,
 }
@@ -57,8 +64,55 @@ impl Session {
         Duration::from_nanos(self.timeline.elapsed(capture::now()).max(0) as u64 * 100)
     }
     fn freeze(&mut self) {
+        self.countdown_until = None;
+        self.view.countdown_remaining = 0;
         self.timeline.stop(capture::now());
         self.view.seconds = self.elapsed().as_secs_f64();
+    }
+
+    /// 仅首次开始使用倒计时；恢复不延时。源时间轴在真正开始采集前保持停止。
+    fn begin(&mut self, now: i64, delay: u8) {
+        if delay == 0 {
+            self.countdown_until = None;
+            self.view.countdown_remaining = 0;
+            self.timeline.resume(now);
+            self.view.phase = Phase::Recording;
+            self.view.message = "录屏中；托盘可暂停，截图快捷键可停止。".into();
+        } else {
+            self.countdown_until = Some(now + i64::from(delay) * 10_000_000);
+            self.view.countdown_remaining = delay;
+            self.view.phase = Phase::Countdown;
+            self.view.message = format!("将在 {delay} 秒后开始录屏，可取消。");
+        }
+        self.view.revision += 1;
+    }
+
+    /// 工作线程短周期推进，不阻塞命令；停止/取消与到期转换在同一状态锁内裁决。
+    fn advance_countdown(&mut self, now: i64) {
+        if self.stop || self.cancel || self.view.phase != Phase::Countdown {
+            return;
+        }
+        let Some(deadline) = self.countdown_until else {
+            return;
+        };
+        if now >= deadline {
+            // 使用实际推进时刻而非计划到期时刻，线程调度延迟不计入视频。
+            self.begin(now, 0);
+        } else {
+            let remaining = ((deadline - now + 9_999_999) / 10_000_000) as u8;
+            if remaining != self.view.countdown_remaining {
+                self.view.countdown_remaining = remaining;
+                self.view.message = format!("将在 {remaining} 秒后开始录屏，可取消。");
+                self.view.revision += 1;
+            }
+        }
+    }
+
+    fn stop_requested(&mut self, cancel: bool) {
+        self.cancel |= cancel || matches!(self.view.phase, Phase::Ready | Phase::Countdown);
+        self.freeze();
+        self.stop = true;
+        self.view.revision += 1;
     }
 }
 
@@ -68,7 +122,7 @@ pub struct RecordingState(Mutex<Option<Session>>, Mutex<()>, AtomicBool);
 fn active(phase: Phase) -> bool {
     matches!(
         phase,
-        Phase::Ready | Phase::Recording | Phase::Paused | Phase::Encoding
+        Phase::Ready | Phase::Countdown | Phase::Recording | Phase::Paused | Phase::Encoding
     )
 }
 
@@ -81,10 +135,7 @@ pub fn request_stop(app: &AppHandle, cancel: bool) -> bool {
     let Some(s) = guard.as_mut().filter(|s| active(s.view.phase)) else {
         return false;
     };
-    s.freeze();
-    s.stop = true;
-    s.cancel |= cancel || s.view.phase == Phase::Ready;
-    s.view.revision += 1;
+    s.stop_requested(cancel);
     true
 }
 
@@ -152,21 +203,20 @@ pub fn control(app: &AppHandle, id: Option<u64>, action: RecordingAction) -> Res
                 .as_mut()
                 .filter(|s| s.view.id == session_id && s.view.phase == expected_phase && !s.stop)
                 .ok_or("录屏已停止。")?;
-            s.timeline.resume(capture::now());
-            s.view.phase = Phase::Recording;
-            s.view.message = "录屏中；托盘可暂停，截图快捷键可停止。".into();
-            s.view.revision += 1;
+            let delay = if expected_phase == Phase::Ready {
+                s.countdown_seconds
+            } else {
+                0
+            };
+            s.begin(capture::now(), delay);
             return Ok(());
         }
         RecordingAction::Stop | RecordingAction::Cancel => {
-            s.freeze();
-            s.stop = true;
-            s.cancel |= matches!(action, RecordingAction::Cancel) || s.view.phase == Phase::Ready;
+            s.stop_requested(matches!(action, RecordingAction::Cancel));
+            return Ok(());
         }
         _ => return Err("当前录屏状态不支持此操作。".into()),
     }
-    s.view.revision += 1;
-    Ok(())
 }
 
 #[tauri::command]
@@ -294,10 +344,13 @@ pub async fn start_recording(
                 frames: 0,
                 dropped_frames: 0,
                 target_fps: config.fps,
+                countdown_remaining: 0,
                 message: "录屏选区已准备，请点击下方“开始录制”。".into(),
                 path: None,
             },
             timeline: Timeline::default(),
+            countdown_seconds: config.countdown_seconds,
+            countdown_until: None,
             stop: false,
             cancel: false,
         });
@@ -386,6 +439,7 @@ fn collect(
                         if s.cancel || s.stop {
                             break;
                         }
+                        s.advance_countdown(capture::now());
                         if s.elapsed().as_secs_f64() >= MAX_SECONDS {
                             s.freeze();
                             s.stop = true;

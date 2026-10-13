@@ -1,13 +1,23 @@
 import { describe, expect, it } from 'vitest'
-import { newerRecording, recordingActive, recordingConfig, recordingTime, type RecordingView } from '../src/lib/recording'
+import { newerRecording, recordingActive, recordingConfig, recordingStatus, recordingTime, type RecordingView } from '../src/lib/recording'
 
-const view: RecordingView = { id: 7, revision: 3, phase: 'paused', seconds: 23, frames: 180, droppedFrames: 2, targetFps: 30, message: '', path: null }
+const view: RecordingView = { id: 7, revision: 3, phase: 'paused', seconds: 23, frames: 180, droppedFrames: 2, targetFps: 30, countdownRemaining: 0, message: '', path: null }
 describe('录屏会话状态', () => {
+  it('倒计时只展示后端剩余时间，取消及开始后忽略迟到状态', () => {
+    const countdown: RecordingView = { ...view, phase: 'countdown', countdownRemaining: 3, seconds: 0, frames: 0 }
+    expect(recordingStatus(countdown)).toBe('3 秒后开始')
+    const running: RecordingView = { ...countdown, phase: 'recording', countdownRemaining: 0, revision: 4 }
+    expect(newerRecording(running, countdown)).toBe(running)
+    expect(recordingStatus(running)).toBe('录制中')
+    const cancelled: RecordingView = { ...countdown, phase: 'cancelled', countdownRemaining: 0, revision: 5 }
+    expect(newerRecording(cancelled, countdown)).toBe(cancelled)
+    expect(recordingActive(cancelled)).toBe(false)
+  })
   it('选区使用物理像素快照，30/60 FPS 与光标偏好传到 Rust，默认无声', () => {
     const region = { x: 12, y: 18, width: 101, height: 99 }
     const config = recordingConfig(region, 60, false)
     region.x = 99
-    expect(config).toEqual({ source: 'primaryMonitor', region: { x: 12, y: 18, width: 101, height: 99 }, fps: 60, captureCursor: false, format: 'mp4', systemAudio: false, microphone: false })
+    expect(config).toEqual({ source: 'primaryMonitor', region: { x: 12, y: 18, width: 101, height: 99 }, fps: 60, captureCursor: false, format: 'mp4', systemAudio: false, microphone: false, countdownSeconds: 0 })
     expect(recordingConfig(region).fps).toBe(30)
     expect(recordingConfig(region).captureCursor).toBe(true)
   })
@@ -24,7 +34,7 @@ describe('录屏会话状态', () => {
     expect(newerRecording(null, null)).toBeNull()
   })
   it('编码完成前保持占用，终态允许重新录制', () => {
-    for (const phase of ['ready', 'recording', 'paused', 'encoding'] as const) expect(recordingActive({ ...view, phase })).toBe(true)
+    for (const phase of ['ready', 'countdown', 'recording', 'paused', 'encoding'] as const) expect(recordingActive({ ...view, phase })).toBe(true)
     for (const phase of ['completed', 'cancelled', 'failed'] as const) expect(recordingActive({ ...view, phase })).toBe(false)
     expect(recordingActive(null)).toBe(false)
   })

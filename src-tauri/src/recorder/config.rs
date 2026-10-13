@@ -22,6 +22,9 @@ pub struct RecorderConfig {
     pub region: Rect,
     pub fps: u32,
     pub capture_cursor: bool,
+    /// 点击开始后的倒计时，与截图自身的延时设置相互独立；旧调用默认立即开始。
+    #[serde(default)]
+    pub countdown_seconds: u8,
     pub format: OutputFormat,
     pub system_audio: bool,
     pub microphone: bool,
@@ -34,6 +37,7 @@ impl RecorderConfig {
             region,
             fps: 30,
             capture_cursor: true,
+            countdown_seconds: 0,
             format: OutputFormat::Mp4,
             system_audio: false,
             microphone: false,
@@ -42,6 +46,9 @@ impl RecorderConfig {
 
     pub fn validate(&self, size: (u32, u32)) -> Result<(), String> {
         let r = self.region;
+        if !matches!(self.countdown_seconds, 0 | 3 | 5) {
+            return Err("录屏倒计时仅支持立即、3 秒或 5 秒。".into());
+        }
         if !matches!(self.fps, 30 | 60) {
             return Err("录屏帧率仅支持 30 / 60 FPS。".into());
         }
@@ -85,6 +92,21 @@ mod tests {
             height: 99,
         });
         assert!(config.validate((1920, 1080)).is_ok());
+        for delay in [0, 3, 5] {
+            config.countdown_seconds = delay;
+            assert!(config.validate((1920, 1080)).is_ok());
+        }
+        config.countdown_seconds = 2;
+        assert!(config.validate((1920, 1080)).is_err());
+        let mut old = serde_json::to_value(config).unwrap();
+        old.as_object_mut().unwrap().remove("countdownSeconds");
+        assert_eq!(
+            serde_json::from_value::<RecorderConfig>(old)
+                .unwrap()
+                .countdown_seconds,
+            0
+        );
+        config.countdown_seconds = 0;
         config.system_audio = true;
         assert!(config.validate((1920, 1080)).is_err());
         config.system_audio = false;
