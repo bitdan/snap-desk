@@ -6,12 +6,14 @@ use std::{
     sync::mpsc::{self, TrySendError},
 };
 mod capture;
+mod compositor;
 mod config;
 #[cfg(test)]
 #[path = "countdown_tests.rs"]
 mod countdown_tests;
 mod encoder;
 mod frame;
+mod input;
 pub mod output;
 mod timeline;
 use super::scroll_capture::chrome;
@@ -429,7 +431,7 @@ pub async fn start_recording(
     .map_err(err)?
 }
 
-/// 采集线程绝不等待编码队列；内存最多为帧池、一个裁剪缓冲、两帧队列及编码当前帧。
+/// 采集线程绝不等待编码队列；开启特效时额外保留一帧干净底图，动画与事件数量有界。
 fn collect(
     app: AppHandle,
     id: u64,
@@ -452,9 +454,14 @@ fn collect(
             let mut last_sample = None;
             let mut check_screen = Instant::now();
             let mut waiting_since = None;
+            let mut listener: Option<input::Listener> = None;
+            let mut effects_generation = None;
+            let mut compositor = compositor::Compositor::new(config.input_effects, config.region);
+            let mut base: Option<frame::BgraImage> = None;
+            let mut base_dirty = false;
             let collected = (|| -> Result<(), String> {
                 loop {
-                    let running = {
+                    let (running, generation) = {
                         let mut guard = state.0.lock().map_err(err)?;
                         let s = guard
                             .as_mut()
@@ -470,8 +477,19 @@ fn collect(
                             s.view.message = "达到 3 分钟验证期上限，正在保存。".into();
                             break;
                         }
-                        s.view.phase == Phase::Recording
+                        (s.view.phase == Phase::Recording, s.timeline.generation)
                     };
+                    if effects_generation != Some(generation) || !running {
+                        // 先停止并 join 消息线程，再清缓存；恢复使用新监听器，不继承按住状态。
+                        listener = None;
+                        compositor.clear();
+                        base = None;
+                        base_dirty = false;
+                        if running && config.input_effects.enabled() {
+                            backend.refresh()?;
+                        }
+                        effects_generation = Some(generation);
+                    }
                     if writer.is_finished() {
                         return Err("录屏编码线程已提前结束。".into());
                     }
@@ -483,7 +501,94 @@ fn collect(
                     }
                     if running {
                         waiting_since.get_or_insert_with(Instant::now);
-                        if let Some(frame) = backend.next_frame()? {
+                        if config.input_effects.enabled() {
+                            if listener.is_none() {
+                                listener = Some(input::Listener::start(config.input_effects)?);
+                            }
+                            let frame = backend.next_frame()?;
+                            let events = listener.as_ref().unwrap().drain()?;
+                            // 先取完源事件，再取 QPC，避免给未来事件分配更早的视频时间戳。
+                            let now = capture::now();
+                            let projected = {
+                                let guard = state.0.lock().map_err(err)?;
+                                let s = guard
+                                    .as_ref()
+                                    .filter(|s| s.view.id == id)
+                                    .ok_or("录屏会话已过期。")?;
+                                if s.stop
+                                    || s.cancel
+                                    || s.view.phase != Phase::Recording
+                                    || s.timeline.generation != generation
+                                {
+                                    None
+                                } else {
+                                    let frame = frame.filter(|f| {
+                                        s.timeline.project(f.source_time).is_some()
+                                            && f.source_time <= now
+                                    });
+                                    let events = events
+                                        .into_iter()
+                                        .filter_map(|event| {
+                                            s.timeline
+                                                .project(event.source_time)
+                                                .filter(|(_, pts)| *pts <= s.timeline.elapsed(now))
+                                                .map(|(_, pts)| (pts, event.kind))
+                                        })
+                                        .collect::<Vec<_>>();
+                                    s.timeline.project(now).map(|(_, pts)| (pts, frame, events))
+                                }
+                            };
+                            if let Some((pts, frame, events)) = projected {
+                                if let Some(frame) = frame {
+                                    base = Some(frame.image);
+                                    base_dirty = true;
+                                    waiting_since = None;
+                                }
+                                for (time, event) in events {
+                                    compositor.ingest(time, event);
+                                }
+                                if let Some(clean) = base.as_ref() {
+                                    if (base_dirty || compositor.needs_frame())
+                                        && timeline::accept_sample(
+                                            &mut last_sample,
+                                            generation,
+                                            pts,
+                                            config.fps,
+                                        )
+                                    {
+                                        // 合成在锁外；重绘时只读未叠加的底图，帧时间用同源 QPC 的当前媒体时间。
+                                        let image = compositor.render(clean, pts);
+                                        let mut guard = state.0.lock().map_err(err)?;
+                                        let s = guard
+                                            .as_mut()
+                                            .filter(|s| s.view.id == id)
+                                            .ok_or("录屏会话已过期。")?;
+                                        if !s.stop
+                                            && !s.cancel
+                                            && s.view.phase == Phase::Recording
+                                            && s.timeline.generation == generation
+                                        {
+                                            match sender.try_send(QueuedFrame {
+                                                generation,
+                                                pts,
+                                                image,
+                                            }) {
+                                                Ok(()) => base_dirty = false,
+                                                Err(TrySendError::Full(_)) => {
+                                                    // 包括效果结束后的干净帧，拥堵后也必须重试，防止光圈冻结。
+                                                    base_dirty = true;
+                                                    s.view.dropped_frames += 1;
+                                                    s.view.revision += 1;
+                                                }
+                                                Err(TrySendError::Disconnected(_)) => {
+                                                    return Err("录屏编码线程已停止。".into())
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        } else if let Some(frame) = backend.next_frame()? {
                             let mut guard = state.0.lock().map_err(err)?;
                             let s = guard
                                 .as_mut()
@@ -520,8 +625,11 @@ fn collect(
                             }
                         }
                         // 从未收到有效帧时不能无限等待；已有帧的静态桌面允许无新帧。
-                        if last_sample.is_none()
-                            && waiting_since.is_some_and(|t| t.elapsed() > Duration::from_secs(5))
+                        if (if config.input_effects.enabled() {
+                            base.is_none()
+                        } else {
+                            last_sample.is_none()
+                        }) && waiting_since.is_some_and(|t| t.elapsed() > Duration::from_secs(5))
                         {
                             return Err("屏幕采集未返回画面，请检查权限或图形驱动。".into());
                         }
@@ -530,13 +638,24 @@ fn collect(
                     }
                     // 帧事件唤醒采集；超时使静态桌面也能检查停止和设备状态。
                     if running {
-                        backend.wait_for_frame(Duration::from_millis(50));
+                        // Raw Input 独立消息线程不会触发 WGC；特效模式按帧率限制最长等待，
+                        // 静态画面也能及时消费输入，并在动画结束后提交一帧干净底图。
+                        let timeout = if config.input_effects.enabled() {
+                            Duration::from_nanos(1_000_000_000 / u64::from(config.fps))
+                        } else {
+                            Duration::from_millis(50)
+                        };
+                        backend.wait_for_frame(timeout);
                     } else {
                         std::thread::sleep(Duration::from_millis(50));
                     }
                 }
                 Ok(())
             })();
+            // 无论停止、取消、采集失败或编码线程提前退出，都在封装 MP4 前停止输入监听。
+            drop(listener);
+            compositor.clear();
+            drop(base);
             if collected.is_err() {
                 abort.store(true, Ordering::Release);
             }

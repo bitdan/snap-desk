@@ -33,6 +33,59 @@ pub enum RecordingQuality {
     High,
 }
 
+/// 默认关闭；所有样式采用输出视频物理像素，颜色为 RGB，避免前端传任意样式表达式。
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
+pub struct InputEffects {
+    pub keyboard: bool,
+    pub clicks: bool,
+    pub movement: bool,
+    pub drag: bool,
+    pub wheel: bool,
+    pub size: u32,
+    pub duration_ms: u32,
+    pub position: KeyPosition,
+    pub left_color: [u8; 3],
+    pub right_color: [u8; 3],
+    pub double_color: [u8; 3],
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum KeyPosition {
+    BottomLeft,
+    BottomRight,
+}
+
+impl Default for InputEffects {
+    fn default() -> Self {
+        Self {
+            keyboard: false,
+            clicks: false,
+            movement: false,
+            drag: false,
+            wheel: false,
+            size: 28,
+            duration_ms: 700,
+            position: KeyPosition::BottomLeft,
+            left_color: [64, 160, 255],
+            right_color: [255, 112, 80],
+            double_color: [190, 100, 255],
+        }
+    }
+}
+impl InputEffects {
+    pub fn enabled(&self) -> bool {
+        self.keyboard || self.clicks || self.movement || self.drag || self.wheel
+    }
+    pub fn validate(&self) -> Result<(), String> {
+        if !(12..=64).contains(&self.size) || !(200..=2000).contains(&self.duration_ms) {
+            return Err("键鼠特效尺寸需为 12–64 像素，持续时间需为 200–2000 毫秒。".into());
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, Copy, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RecorderConfig {
@@ -45,6 +98,8 @@ pub struct RecorderConfig {
     #[serde(default)]
     pub encoding: EncodingPreference,
     pub capture_cursor: bool,
+    #[serde(default)]
+    pub input_effects: InputEffects,
     /// 点击开始后的倒计时，与截图自身的延时设置相互独立；旧调用默认立即开始。
     #[serde(default)]
     pub countdown_seconds: u8,
@@ -62,6 +117,7 @@ impl RecorderConfig {
             quality: RecordingQuality::Balanced,
             encoding: EncodingPreference::Auto,
             capture_cursor: true,
+            input_effects: InputEffects::default(),
             countdown_seconds: 0,
             format: OutputFormat::Mp4,
             system_audio: false,
@@ -85,6 +141,7 @@ impl RecorderConfig {
     }
 
     pub fn validate(&self, size: (u32, u32)) -> Result<(), String> {
+        self.input_effects.validate()?;
         let r = self.region;
         if !matches!(self.countdown_seconds, 0 | 3 | 5) {
             return Err("录屏倒计时仅支持立即、3 秒或 5 秒。".into());
@@ -123,6 +180,34 @@ pub struct RecorderCapabilities {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn input_effects_default_compatibility_and_validation() {
+        let config = RecorderConfig::for_region(Rect {
+            x: 0,
+            y: 0,
+            width: 100,
+            height: 100,
+        });
+        let mut json = serde_json::to_value(config).unwrap();
+        json.as_object_mut().unwrap().remove("inputEffects");
+        let restored: RecorderConfig = serde_json::from_value(json).unwrap();
+        assert!(!restored.input_effects.enabled());
+        let effects: InputEffects = serde_json::from_str(r#"{"keyboard":true}"#).unwrap();
+        assert!(effects.keyboard && !effects.clicks);
+        assert_eq!(effects.size, 28);
+        assert!(effects.validate().is_ok());
+        for (size, duration_ms) in [(0, 700), (65, 700), (28, 199), (28, 2001)] {
+            assert!(InputEffects {
+                size,
+                duration_ms,
+                ..effects
+            }
+            .validate()
+            .is_err());
+        }
+        assert!(serde_json::from_str::<InputEffects>(r#"{"showText":true}"#).is_err());
+        assert!(serde_json::from_str::<InputEffects>(r#"{"leftColor":[999,0,0]}"#).is_err());
+    }
     #[test]
     fn bitrate_scales_with_size_rate_and_quality() {
         let mut config = RecorderConfig::for_region(Rect {

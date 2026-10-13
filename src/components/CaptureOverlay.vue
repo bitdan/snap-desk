@@ -10,7 +10,8 @@ import CaptureMagnifier from './CaptureMagnifier.vue'
 import { magnifierSample } from '@/lib/magnifier'
 import { nudgeColorPoint } from '@/lib/color-picker'
 import { newerScroll } from '@/lib/scroll-capture'
-import { recordingConfig, type EncodingPreference, type RecordingQuality, type RecorderCapabilities } from '@/lib/recording'
+import { defaultInputEffects, recordingConfig, type EncodingPreference, type RecordingQuality, type RecorderCapabilities } from '@/lib/recording'
+import RecordingInputSettings from './RecordingInputSettings.vue'
 import { readRecentSelection, restoreRecentSelection, writeRecentSelection } from '@/lib/recent-selection'
 
 const frame = ref<CaptureFrame | null>(null)
@@ -29,6 +30,7 @@ const recordingEncoding = ref<EncodingPreference>('auto')
 const recordingQuality = ref<RecordingQuality>('balanced')
 const recordingCountdown = ref<0 | 3 | 5>(0)
 const captureCursor = ref(true)
+const recordingEffects = ref(defaultInputEffects())
 const automaticScroll = ref(true)
 const saveScrollFrames = ref(true)
 const viewport = ref({ width: innerWidth, height: innerHeight })
@@ -95,7 +97,7 @@ async function startScroll() {
 async function startRecording() {
   if (!frame.value || !pixels.value || !valid.value || busy.value || marked.value || editor.pending || editor.interacting || gesture) return
   busy.value = true; error.value = ''
-  try { await api.startRecording(frame.value.id, pixels.value, recordingConfig(pixels.value, recordingFps.value, captureCursor.value, recordingCountdown.value, recordingEncoding.value, recordingQuality.value)); recordingSetup.value = false; frame.value = null }
+  try { await api.startRecording(frame.value.id, pixels.value, recordingConfig(pixels.value, recordingFps.value, captureCursor.value, recordingCountdown.value, recordingEncoding.value, recordingQuality.value, recordingEffects.value)); recordingSetup.value = false; frame.value = null }
   catch (e) { error.value = String(e) }
   finally { busy.value = false }
 }
@@ -289,7 +291,8 @@ onUnmounted(() => { disposed = true; off?.(); offScroll?.(); window.removeEventL
         <label>开始倒计时 <select v-model="recordingCountdown" :disabled="busy"><option :value="0">立即</option><option :value="3">3 秒</option><option :value="5">5 秒</option></select></label>
         <p>点击控制条“开始录制”后倒计时，可随时取消；倒计时不计入视频时长。</p>
         <label><input v-model="captureCursor" type="checkbox" :disabled="busy" /> 录制鼠标指针</label>
-        <p>视频自动保存到本地，停止后显示路径。静态画面延长上一帧显示；实际帧数取决于采集和编码速度。</p>
+        <RecordingInputSettings v-model="recordingEffects" :disabled="busy" />
+        <p>视频自动保存到本地，停止后显示路径。静态画面有键鼠动画时会继续绘制；实际帧数取决于采集和编码速度。</p>
         <p v-if="error" class="scroll-setup-error" role="alert">{{ error }}</p>
         <div><button :disabled="busy" @click="recordingSetup = false">返回选区</button><button :disabled="busy" @click="startRecording">{{ busy ? '准备中…' : '确认选区' }}</button></div>
       </section>
@@ -318,7 +321,7 @@ onUnmounted(() => { disposed = true; off?.(); offScroll?.(); window.removeEventL
 .capture-modebar select { background: #3f3f46; color: white; border-radius: 3px; padding: 3px; }
 .capture-modebar span { color: #d4d4d8; }
 .scroll-setup-shade { position: absolute; inset: 0; z-index: 5; display: grid; place-items: center; background: #0005; cursor: default; }
-.scroll-setup { width: min(480px, calc(100vw - 32px)); padding: 20px; border-radius: 8px; background: white; color: #27272a; font-size: 13px; box-shadow: 0 8px 30px #0005; }
+.scroll-setup { width: min(480px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow-y: auto; padding: 20px; border-radius: 8px; background: white; color: #27272a; font-size: 13px; box-shadow: 0 8px 30px #0005; }
 .scroll-setup h2 { font-size: 16px; font-weight: 600; margin-bottom: 12px; }.scroll-setup p { margin-bottom: 12px; line-height: 1.6; }
 .scroll-setup-error { color: #991b1b; background: #fee2e2; padding: 8px; border-radius: 4px; }
 .scroll-setup div { display: flex; justify-content: flex-end; gap: 10px; }.scroll-setup button { padding: 8px 12px; border: 1px solid #d4d4d8; border-radius: 5px; }.scroll-setup button:last-child { background: #2563eb; color: white; }

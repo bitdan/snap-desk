@@ -6,16 +6,30 @@ export interface RecordingDirectory { path: string; isDefault: boolean }
 export type RecordingQuality = 'economy' | 'balanced' | 'high'
 export type EncodingPreference = 'auto' | 'software'
 export const encoderLabels = { hardware: '硬件编码', software: '软件编码', system: '系统自动（类型未确认）' } as const
+/** 与 Rust InputEffects 一致；默认关闭监听，不支持普通文字输入显示。 */
+export interface InputEffects {
+  keyboard: boolean; clicks: boolean; movement: boolean; drag: boolean; wheel: boolean;
+  size: number; durationMs: number; position: 'bottomLeft' | 'bottomRight';
+  leftColor: [number, number, number]; rightColor: [number, number, number]; doubleColor: [number, number, number]
+}
+export function defaultInputEffects(): InputEffects {
+  return { keyboard: false, clicks: false, movement: false, drag: false, wheel: false,
+    size: 28, durationMs: 700, position: 'bottomLeft',
+    leftColor: [64, 160, 255], rightColor: [255, 112, 80], doubleColor: [190, 100, 255] }
+}
 export interface RecorderConfig {
   source: 'primaryMonitor'; region: Rect; fps: 30 | 60; captureCursor: boolean;
   format: 'mp4'; systemAudio: boolean; microphone: boolean; countdownSeconds: 0 | 3 | 5; encoding: EncodingPreference; quality: RecordingQuality
+  inputEffects: InputEffects
 }
 export interface RecorderCapabilities {
   available: boolean; reason: string | null; sources: 'primaryMonitor'[];
   frameRates: number[]; captureCursor: boolean; systemAudio: boolean; microphone: boolean; formats: 'mp4'[]
 }
-export function recordingConfig(region: Rect, fps: 30 | 60 = 30, captureCursor = true, countdownSeconds: 0 | 3 | 5 = 0, encoding: EncodingPreference = 'auto', quality: RecordingQuality = 'balanced'): RecorderConfig {
-  return { source: 'primaryMonitor', region: { ...region }, fps, captureCursor, format: 'mp4', systemAudio: false, microphone: false, countdownSeconds, encoding, quality }
+export function recordingConfig(region: Rect, fps: 30 | 60 = 30, captureCursor = true, countdownSeconds: 0 | 3 | 5 = 0, encoding: EncodingPreference = 'auto', quality: RecordingQuality = 'balanced', effects: InputEffects = defaultInputEffects()): RecorderConfig {
+  // 拷贝颜色数组，确认选区后改动表单不能改变已提交的配置快照。
+  const inputEffects: InputEffects = { ...effects, leftColor: [...effects.leftColor], rightColor: [...effects.rightColor], doubleColor: [...effects.doubleColor] }
+  return { source: 'primaryMonitor', region: { ...region }, fps, captureCursor, format: 'mp4', systemAudio: false, microphone: false, countdownSeconds, encoding, quality, inputEffects }
 }
 /** 与 Rust RecordingView / RecordingAction 保持一致，不使用前端计时推测视频长度。 */
 export type RecordingPhase = 'ready' | 'countdown' | 'recording' | 'paused' | 'encoding' | 'completed' | 'cancelled' | 'failed'

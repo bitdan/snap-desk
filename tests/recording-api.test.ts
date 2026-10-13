@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { recordingConfig } from '../src/lib/recording'
+import { defaultInputEffects, recordingConfig } from '../src/lib/recording'
 
 const invoke = vi.hoisted(() => vi.fn())
 vi.mock('@tauri-apps/api/core', () => ({ invoke, isTauri: () => true }))
@@ -22,10 +22,12 @@ describe('录屏 IPC 契约', () => {
   })
   it('保持原命令及会话 ID，同时发送配置和物理像素选区', async () => {
     const rect = { x: 13, y: 21, width: 101, height: 99 }
-    const config = recordingConfig(rect, 60, false, 5, 'software', 'high')
+    const effects = { ...defaultInputEffects(), keyboard: true, wheel: true, drag: true }
+    const config = recordingConfig(rect, 60, false, 5, 'software', 'high', effects)
     expect(config.countdownSeconds).toBe(5)
     expect(config.encoding).toBe('software')
     expect(config.quality).toBe('high')
+    expect(config.inputEffects).toEqual(effects)
     invoke.mockResolvedValueOnce(undefined)
     await api.startRecording(42, rect, config)
     expect(invoke).toHaveBeenLastCalledWith('start_recording', { id: 42, rect, config })

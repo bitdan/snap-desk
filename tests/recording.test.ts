@@ -1,8 +1,24 @@
 import { describe, expect, it } from 'vitest'
-import { newerRecording, recordingStats, recordingActive, recordingConfig, recordingStatus, recordingTime, type RecordingView } from '../src/lib/recording'
+import { defaultInputEffects, newerRecording, recordingStats, recordingActive, recordingConfig, recordingStatus, recordingTime, type RecordingView } from '../src/lib/recording'
 
 const view: RecordingView = { id: 7, revision: 3, phase: 'paused', seconds: 23, frames: 180, droppedFrames: 2, targetFps: 30, encodingMillis: 360, targetBitrate: 8_087_040, encoderKind: 'system', encoderFallback: null, countdownRemaining: 0, message: '', path: null }
 describe('录屏会话状态', () => {
+  it('键鼠特效默认关闭，提交配置独立于表单和后续会话', () => {
+    const region = { x: 0, y: 0, width: 1920, height: 1080 }
+    const effects = defaultInputEffects()
+    for (const field of ['keyboard', 'clicks', 'movement', 'drag', 'wheel'] as const) expect(effects[field]).toBe(false)
+    effects.keyboard = true
+    effects.clicks = true
+    effects.position = 'bottomRight'
+    const config = recordingConfig(region, 30, true, 0, 'auto', 'balanced', effects)
+    effects.leftColor[0] = 0
+    effects.keyboard = false
+    expect(config.inputEffects.keyboard).toBe(true)
+    expect(config.inputEffects.clicks).toBe(true)
+    expect(config.inputEffects.leftColor).toEqual([64, 160, 255])
+    expect(config.inputEffects.position).toBe('bottomRight')
+    expect(recordingConfig(region).inputEffects.keyboard).toBe(false)
+  })
   it('画质显式传递，默认均衡；统计处理无帧及有效录制时间', () => {
     const region = { x: 0, y: 0, width: 1920, height: 1080 }
     expect(recordingConfig(region).quality).toBe('balanced')
@@ -31,7 +47,7 @@ describe('录屏会话状态', () => {
     const region = { x: 12, y: 18, width: 101, height: 99 }
     const config = recordingConfig(region, 60, false)
     region.x = 99
-    expect(config).toEqual({ source: 'primaryMonitor', region: { x: 12, y: 18, width: 101, height: 99 }, fps: 60, captureCursor: false, format: 'mp4', systemAudio: false, microphone: false, countdownSeconds: 0, encoding: 'auto', quality: 'balanced' })
+    expect(config).toEqual({ source: 'primaryMonitor', region: { x: 12, y: 18, width: 101, height: 99 }, fps: 60, captureCursor: false, format: 'mp4', systemAudio: false, microphone: false, countdownSeconds: 0, encoding: 'auto', quality: 'balanced', inputEffects: defaultInputEffects() })
     expect(recordingConfig(region).fps).toBe(30)
     expect(recordingConfig(region).captureCursor).toBe(true)
   })

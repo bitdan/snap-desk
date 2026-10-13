@@ -6,6 +6,8 @@ pub trait CaptureBackend {
     fn next_frame(&mut self) -> Result<Option<VideoFrame>, String>;
     /// 等待帧到达；超时用于检查停止和设备状态，不无限阻塞控制操作。
     fn wait_for_frame(&self, timeout: std::time::Duration);
+    /// 恢复特效录制时请求一张新底图，静态桌面也不能重放暂停前的捕获帧。
+    fn refresh(&mut self) -> Result<(), String>;
 }
 
 #[cfg(target_os = "windows")]

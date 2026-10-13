@@ -86,6 +86,7 @@ pub fn supported() -> Result<(), String> {
 }
 
 pub struct Capture {
+    config: RecorderConfig,
     session: GraphicsCaptureSession,
     pool: Direct3D11CaptureFramePool,
     item: GraphicsCaptureItem,
@@ -212,6 +213,7 @@ impl Capture {
                 }
             };
             Ok(Self {
+                config: *config,
                 session,
                 pool,
                 item,
@@ -281,6 +283,15 @@ impl Capture {
 }
 
 impl CaptureBackend for Capture {
+    fn refresh(&mut self) -> Result<(), String> {
+        if self.started {
+            // 新会话首次 StartCapture 会提供当前桌面，旧池随赋值释放并注销回调。
+            // 创建失败交给 manager 统一结束，不能回退到过期底图。
+            *self = Self::new(&self.config, self.size)?;
+        }
+        Ok(())
+    }
+
     fn wait_for_frame(&self, timeout: std::time::Duration) {
         let _ = self.arrived.recv_timeout(timeout);
     }
