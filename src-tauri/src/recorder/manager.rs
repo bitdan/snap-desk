@@ -45,6 +45,8 @@ pub struct RecordingView {
     frames: usize,
     dropped_frames: usize,
     target_fps: u32,
+    encoder_kind: encoder::EncoderKind,
+    encoder_fallback: Option<String>,
     countdown_remaining: u8,
     message: String,
     path: Option<String>,
@@ -267,7 +269,7 @@ pub async fn recording_capabilities(window: WebviewWindow) -> Result<RecorderCap
     tauri::async_runtime::spawn_blocking(|| {
         let result = capture::supported().and_then(|_| {
             let root = tempfile::tempdir().map_err(err)?;
-            encoder::probe(root.path(), 64, 64, 30)
+            encoder::probe(root.path(), 64, 64, 30, config::EncodingPreference::Auto).map(|_| ())
         });
         let available = result.is_ok();
         RecorderCapabilities {
@@ -316,7 +318,7 @@ pub async fn start_recording(
             .filter(|s| s.frame.id == id)
             .map(|s| s.image.dimensions())
             .ok_or("截图已过期。")?;
-        let config = config.unwrap_or_else(|| RecorderConfig::for_region(rect));
+        let mut config = config.unwrap_or_else(|| RecorderConfig::for_region(rect));
         if (
             config.region.x,
             config.region.y,
@@ -330,7 +332,9 @@ pub async fn start_recording(
         capture::supported()?;
         // 准备时固定本次目录；临时 MP4 和最终文件同盘，停止时无需跨盘移动。
         let root = output::prepare(&app)?;
-        encoder::probe(&root, rect.width, rect.height, config.fps)?;
+        let (encoder_kind, selected_encoding, encoder_fallback) =
+            encoder::probe(&root, rect.width, rect.height, config.fps, config.encoding)?;
+        config.encoding = selected_encoding;
         let screen = super::scroll_capture::screen(&app)?;
         chrome::place_recording(&app, &screen, rect)?;
         window.hide().map_err(err)?;
@@ -344,6 +348,8 @@ pub async fn start_recording(
                 frames: 0,
                 dropped_frames: 0,
                 target_fps: config.fps,
+                encoder_kind,
+                encoder_fallback,
                 countdown_remaining: 0,
                 message: "录屏选区已准备，请点击下方“开始录制”。".into(),
                 path: None,
@@ -600,8 +606,17 @@ fn write_video(
         config.region.width,
         config.region.height,
         config.fps,
+        config.encoding,
     )?;
     let state = app.state::<RecordingState>();
+    let encoder_kind = encoder.kind();
+    {
+        let mut guard = state.0.lock().map_err(err)?;
+        if let Some(s) = guard.as_mut().filter(|s| s.view.id == id) {
+            s.view.encoder_kind = encoder_kind;
+            s.view.revision += 1;
+        }
+    }
     for frame in receiver {
         if abort.load(Ordering::Acquire) {
             return Err("录屏采集已中止。".into());

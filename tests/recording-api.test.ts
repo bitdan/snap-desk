@@ -22,8 +22,9 @@ describe('录屏 IPC 契约', () => {
   })
   it('保持原命令及会话 ID，同时发送配置和物理像素选区', async () => {
     const rect = { x: 13, y: 21, width: 101, height: 99 }
-    const config = recordingConfig(rect, 60, false, 5)
+    const config = recordingConfig(rect, 60, false, 5, 'software')
     expect(config.countdownSeconds).toBe(5)
+    expect(config.encoding).toBe('software')
     invoke.mockResolvedValueOnce(undefined)
     await api.startRecording(42, rect, config)
     expect(invoke).toHaveBeenLastCalledWith('start_recording', { id: 42, rect, config })

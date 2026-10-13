@@ -2,7 +2,7 @@
 import { onMounted, onUnmounted, ref } from 'vue'
 import Button from './ui/button/Button.vue'
 import { api, desktop } from '@/lib/api'
-import { newerRecording, recordingActive, recordingStatus, recordingTime, type RecorderCapabilities, type RecordingAction, type RecordingDirectory, type RecordingView } from '@/lib/recording'
+import { encoderLabels, newerRecording, recordingActive, recordingStatus, recordingTime, type RecorderCapabilities, type RecordingAction, type RecordingDirectory, type RecordingView } from '@/lib/recording'
 
 const view = ref<RecordingView | null>(null)
 const error = ref('')
@@ -70,6 +70,8 @@ onUnmounted(() => { disposed = true; clearTimeout(timer) })
       <div class="setting-row"><span>单次上限<small>达到上限自动结束并保存</small></span><span>3 分钟</span></div>
       <p v-if="!capabilities?.available" class="py-3 text-sm" role="status">{{ capabilities?.reason ?? (desktop ? '正在检查录屏能力…' : '请在桌面应用中使用录屏。') }}</p>
       <div v-if="view" class="setting-row"><span>{{ recordingStatus(view) }}</span><span>{{ recordingTime(view.seconds) }} · {{ view.frames }} 帧 · 丢弃 {{ view.droppedFrames }} 帧</span></div>
+      <div v-if="view" class="setting-row"><span>编码方式</span><span>{{ encoderLabels[view.encoderKind] }}</span></div>
+      <p v-if="view?.encoderFallback" class="notice break-all" role="status">{{ view.encoderFallback }}</p>
       <p v-if="view" class="py-3 text-sm break-all" role="status">{{ view.message }}</p>
       <div class="flex gap-2 py-4">
         <Button v-if="!recordingActive(view)" :disabled="!desktop || busy || changingDirectory || !capabilities?.available" @click="select">选择录制范围</Button>
@@ -80,7 +82,7 @@ onUnmounted(() => { disposed = true; clearTimeout(timer) })
         <Button v-if="recordingActive(view)" variant="outline" :disabled="busy" @click="control('cancel')">取消并清理</Button>
       </div>
     </div>
-    <p class="scope-note">确认选区时可选择立即、3 秒或 5 秒开始；点击控制条“开始录制”后进入倒计时，期间可取消，不计入视频时长。暂停后继续不重复倒计时。MP4 自动保存到上方目录，完成后显示文件路径；目录跨重启记住，恢复默认不会移动已有视频。</p>
+    <p class="scope-note">确认选区时可选择自动或软件编码；自动试写失败会尝试软件编码。像素转换仍使用 CPU，高分辨率下可降低帧率或缩小选区。确认选区时可选择立即、3 秒或 5 秒开始；点击控制条“开始录制”后进入倒计时，期间可取消，不计入视频时长。暂停后继续不重复倒计时。MP4 自动保存到上方目录，完成后显示文件路径；目录跨重启记住，恢复默认不会移动已有视频。</p>
     <p class="scope-note">需要 Windows 10 2004 或更新版本，无需安装外部编码工具。帧率为采集目标，静态画面延长上一帧显示，实际帧数取决于采集和编码速度。macOS / Linux、窗口录制、声音、点击效果及 GIF / WebP 尚未实现。</p>
   </section>
 </template>

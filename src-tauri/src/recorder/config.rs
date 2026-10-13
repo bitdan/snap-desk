@@ -14,6 +14,15 @@ pub enum OutputFormat {
     Mp4,
 }
 
+/// 自动模式允许系统选择硬件编码器；软件模式用于驱动兼容性排查。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum EncodingPreference {
+    #[default]
+    Auto,
+    Software,
+}
+
 #[derive(Clone, Copy, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RecorderConfig {
@@ -21,6 +30,8 @@ pub struct RecorderConfig {
     /// 相对主屏的物理像素；与截图 Rect 使用相同坐标系。
     pub region: Rect,
     pub fps: u32,
+    #[serde(default)]
+    pub encoding: EncodingPreference,
     pub capture_cursor: bool,
     /// 点击开始后的倒计时，与截图自身的延时设置相互独立；旧调用默认立即开始。
     #[serde(default)]
@@ -36,6 +47,7 @@ impl RecorderConfig {
             source: CaptureSource::PrimaryMonitor,
             region,
             fps: 30,
+            encoding: EncodingPreference::Auto,
             capture_cursor: true,
             countdown_seconds: 0,
             format: OutputFormat::Mp4,
@@ -105,6 +117,14 @@ mod tests {
                 .unwrap()
                 .countdown_seconds,
             0
+        );
+        let mut old = serde_json::to_value(config).unwrap();
+        old.as_object_mut().unwrap().remove("encoding");
+        assert_eq!(
+            serde_json::from_value::<RecorderConfig>(old)
+                .unwrap()
+                .encoding,
+            EncodingPreference::Auto
         );
         config.countdown_seconds = 0;
         config.system_audio = true;

@@ -1,9 +1,9 @@
 //! Windows Media Foundation Sink Writer：NV12 → 系统 H.264 编码器 → MP4。
 //! 所有 COM 对象只在创建它们的后台线程使用，先释放 writer，再关闭 MF 和 COM。
-use super::pixels::nv12;
+use super::{pixels::nv12, EncoderKind, EncodingPreference};
 use std::{marker::PhantomData, path::Path, rc::Rc};
 use windows::{
-    core::{Result as WinResult, HSTRING},
+    core::{Interface, Result as WinResult, GUID, HSTRING},
     Win32::{Media::MediaFoundation::*, System::Com::*},
 };
 
@@ -39,6 +39,7 @@ pub struct MediaFoundation {
     writer: IMFSinkWriter,
     _runtime: Runtime,
     stream: u32,
+    preference: EncodingPreference,
     width: u32,
     height: u32,
     original: (u32, u32),
@@ -46,17 +47,27 @@ pub struct MediaFoundation {
 }
 
 impl MediaFoundation {
-    pub fn new(path: &Path, width: u32, height: u32, fps: u32) -> WinResult<Self> {
+    pub fn new(
+        path: &Path,
+        width: u32,
+        height: u32,
+        fps: u32,
+        preference: EncodingPreference,
+    ) -> WinResult<Self> {
         let runtime = Runtime::new()?;
         let original = (width, height);
         let width = (width + 1) & !1;
         let height = (height + 1) & !1;
         unsafe {
             let mut attributes = None;
-            MFCreateAttributes(&mut attributes, 1)?;
+            MFCreateAttributes(&mut attributes, 2)?;
             let attributes = attributes.unwrap();
             // 采集线程负责节奏；写入线程不按播放速度限流，拥堵由有界队列丢帧。
             attributes.SetUINT32(&MF_SINK_WRITER_DISABLE_THROTTLING, 1)?;
+            attributes.SetUINT32(
+                &MF_READWRITE_ENABLE_HARDWARE_TRANSFORMS,
+                u32::from(preference == EncodingPreference::Auto),
+            )?;
             let writer =
                 MFCreateSinkWriterFromURL(&HSTRING::from(path.as_os_str()), None, &attributes)?;
             let output = media_type(width, height, fps, &MFVideoFormat_H264)?;
@@ -71,6 +82,7 @@ impl MediaFoundation {
                 writer,
                 _runtime: runtime,
                 stream,
+                preference,
                 width,
                 height,
                 original,
@@ -125,6 +137,45 @@ unsafe fn media_type(
 }
 
 impl super::Encoder for MediaFoundation {
+    fn kind(&self) -> EncoderKind {
+        if self.preference == EncodingPreference::Software {
+            return EncoderKind::Software;
+        }
+        // 开启硬件许可不等于实际使用硬件；无法枚举或未提供标识时不猜测。
+        unsafe {
+            if let Ok(writer) = self.writer.cast::<IMFSinkWriterEx>() {
+                for index in 0..16 {
+                    let mut category = GUID::zeroed();
+                    let mut transform = None;
+                    if writer
+                        .GetTransformForStream(
+                            self.stream,
+                            index,
+                            Some(&mut category),
+                            &mut transform,
+                        )
+                        .is_err()
+                    {
+                        break;
+                    }
+                    if category == MFT_CATEGORY_VIDEO_ENCODER {
+                        if let Some(transform) = transform {
+                            if let Ok(attributes) = transform.GetAttributes() {
+                                if attributes
+                                    .GetStringLength(&MFT_ENUM_HARDWARE_URL_Attribute)
+                                    .is_ok_and(|length| length > 0)
+                                {
+                                    return EncoderKind::Hardware;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        EncoderKind::System
+    }
+
     fn push(&mut self, image: &image::RgbaImage, pts: i64) -> Result<(), String> {
         if image.dimensions() != self.original {
             return Err("编码帧尺寸发生变化。".into());

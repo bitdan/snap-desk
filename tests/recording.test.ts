@@ -1,8 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import { newerRecording, recordingActive, recordingConfig, recordingStatus, recordingTime, type RecordingView } from '../src/lib/recording'
 
-const view: RecordingView = { id: 7, revision: 3, phase: 'paused', seconds: 23, frames: 180, droppedFrames: 2, targetFps: 30, countdownRemaining: 0, message: '', path: null }
+const view: RecordingView = { id: 7, revision: 3, phase: 'paused', seconds: 23, frames: 180, droppedFrames: 2, targetFps: 30, encoderKind: 'system', encoderFallback: null, countdownRemaining: 0, message: '', path: null }
 describe('录屏会话状态', () => {
+  it('编码默认自动，显式软件模式与倒计时独立传递', () => {
+    const region = { x: 0, y: 0, width: 100, height: 100 }
+    expect(recordingConfig(region).encoding).toBe('auto')
+    const config = recordingConfig(region, 60, true, 5, 'software')
+    expect(config.encoding).toBe('software')
+    expect(config.countdownSeconds).toBe(5)
+  })
   it('倒计时只展示后端剩余时间，取消及开始后忽略迟到状态', () => {
     const countdown: RecordingView = { ...view, phase: 'countdown', countdownRemaining: 3, seconds: 0, frames: 0 }
     expect(recordingStatus(countdown)).toBe('3 秒后开始')
@@ -17,7 +24,7 @@ describe('录屏会话状态', () => {
     const region = { x: 12, y: 18, width: 101, height: 99 }
     const config = recordingConfig(region, 60, false)
     region.x = 99
-    expect(config).toEqual({ source: 'primaryMonitor', region: { x: 12, y: 18, width: 101, height: 99 }, fps: 60, captureCursor: false, format: 'mp4', systemAudio: false, microphone: false, countdownSeconds: 0 })
+    expect(config).toEqual({ source: 'primaryMonitor', region: { x: 12, y: 18, width: 101, height: 99 }, fps: 60, captureCursor: false, format: 'mp4', systemAudio: false, microphone: false, countdownSeconds: 0, encoding: 'auto' })
     expect(recordingConfig(region).fps).toBe(30)
     expect(recordingConfig(region).captureCursor).toBe(true)
   })
