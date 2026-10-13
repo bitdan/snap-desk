@@ -10,6 +10,7 @@ import CaptureMagnifier from './CaptureMagnifier.vue'
 import { magnifierSample } from '@/lib/magnifier'
 import { nudgeColorPoint } from '@/lib/color-picker'
 import { newerScroll } from '@/lib/scroll-capture'
+import { recordingConfig, type RecorderCapabilities } from '@/lib/recording'
 import { readRecentSelection, restoreRecentSelection, writeRecentSelection } from '@/lib/recent-selection'
 
 const frame = ref<CaptureFrame | null>(null)
@@ -21,6 +22,10 @@ const error = ref('')
 const scroll = ref<ScrollView | null>(null)
 const scrollSetup = ref(false)
 const recordingSetup = ref(false)
+const recordingCapabilities = ref<RecorderCapabilities | null>(null)
+const recordingCapabilityError = ref('')
+const recordingFps = ref<30 | 60>(30)
+const captureCursor = ref(true)
 const automaticScroll = ref(true)
 const saveScrollFrames = ref(true)
 const viewport = ref({ width: innerWidth, height: innerHeight })
@@ -87,7 +92,7 @@ async function startScroll() {
 async function startRecording() {
   if (!frame.value || !pixels.value || !valid.value || busy.value || marked.value || editor.pending || editor.interacting || gesture) return
   busy.value = true; error.value = ''
-  try { await api.startRecording(frame.value.id, pixels.value); recordingSetup.value = false; frame.value = null }
+  try { await api.startRecording(frame.value.id, pixels.value, recordingConfig(pixels.value, recordingFps.value, captureCursor.value)); recordingSetup.value = false; frame.value = null }
   catch (e) { error.value = String(e) }
   finally { busy.value = false }
 }
@@ -219,6 +224,8 @@ async function imageFailed() {
   await cancel()
 }
 onMounted(async () => {
+  void api.recordingCapabilities().then(value => { if (!disposed) recordingCapabilities.value = value })
+    .catch(e => { if (!disposed) recordingCapabilityError.value = String(e) })
   window.addEventListener('keydown', key); window.addEventListener('resize', resized)
   try {
     off = await onFrame(receive)
@@ -260,7 +267,7 @@ onUnmounted(() => { disposed = true; off?.(); offScroll?.(); window.removeEventL
           <button :disabled="busy || editor.pending || editor.interacting" title="清空标注并重新框选" aria-label="重新框选" @click="reselect"><Scan :size="16" /></button>
           <button :disabled="busy || editor.pending || editor.interacting || marked" title="全屏选区" aria-label="全屏选区" @click="selectAll"><Maximize :size="16" /></button>
           <button :disabled="busy || editor.pending || editor.interacting || marked" title="长截图" @click="scrollSetup = true"><ArrowDownToLine :size="16" />长截图</button>
-          <button :disabled="busy || editor.pending || editor.interacting || marked" title="录制当前选区" @click="recordingSetup = true"><Video :size="16" />录屏</button>
+          <button :disabled="busy || editor.pending || editor.interacting || marked || !recordingCapabilities?.available" :title="recordingCapabilities?.reason ?? (recordingCapabilityError || (recordingCapabilities ? '录制当前选区' : '正在检查录屏能力…'))" @click="recordingSetup = true"><Video :size="16" />录屏</button>
         <button :disabled="busy || editor.pending || editor.interacting" title="贴图 Ctrl/⌘+P" @click="finish('pin')"><Pin :size="16" />贴图</button>
         <button :disabled="busy || editor.pending || editor.interacting" @click="finish('save')"><Save :size="16" />保存</button>
         <button class="copy-button" :disabled="busy || editor.pending || editor.interacting" @click="finish('copy')"><Copy :size="16" />{{ busy ? '处理中' : '复制' }}</button>
@@ -272,8 +279,10 @@ onUnmounted(() => { disposed = true; off?.(); offScroll?.(); window.removeEventL
     <div v-if="recordingSetup" class="scroll-setup-shade" @pointerdown.stop @pointermove.stop @contextmenu.stop.prevent>
       <section class="scroll-setup" role="dialog" aria-modal="true" aria-label="开始录屏">
         <h2>录制当前选区 · MP4</h2>
-        <p>确认选区后，下方显示录屏控制条；点击“开始录制”才计时采集。支持暂停、继续、结束保存和取消。无声录制，目标 10 fps，最多 3 分钟 / 512 MiB 帧缓存。</p>
-        <p>当前使用 Windows 系统视频编码。视频自动保存到本地，停止后显示路径；其他平台原生录屏待实现。</p>
+        <p>点击控制条“开始录制”才计时。支持暂停、继续、结束保存和取消；无声 MP4，单次最多 3 分钟。</p>
+        <label>目标帧率 <select v-model="recordingFps" :disabled="busy"><option :value="30">30 FPS</option><option :value="60">60 FPS</option></select></label>
+        <label><input v-model="captureCursor" type="checkbox" :disabled="busy" /> 录制鼠标指针</label>
+        <p>视频自动保存到本地，停止后显示路径。静态画面延长上一帧显示；实际帧数取决于采集和编码速度。</p>
         <p v-if="error" class="scroll-setup-error" role="alert">{{ error }}</p>
         <div><button :disabled="busy" @click="recordingSetup = false">返回选区</button><button :disabled="busy" @click="startRecording">{{ busy ? '准备中…' : '确认选区' }}</button></div>
       </section>

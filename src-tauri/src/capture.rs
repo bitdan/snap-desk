@@ -13,7 +13,7 @@ use std::{
 use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
-#[path = "recording.rs"]
+#[path = "recorder/manager.rs"]
 pub mod recording;
 #[path = "scroll_capture.rs"]
 pub mod scroll_capture;
@@ -55,7 +55,7 @@ pub struct Frame {
     data_url: String,
 }
 
-#[derive(Clone, Copy, Deserialize)]
+#[derive(Clone, Copy, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Rect {
     x: u32,

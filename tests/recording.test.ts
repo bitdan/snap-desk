@@ -1,8 +1,16 @@
 import { describe, expect, it } from 'vitest'
-import { newerRecording, recordingActive, recordingTime, type RecordingView } from '../src/lib/recording'
+import { newerRecording, recordingActive, recordingConfig, recordingTime, type RecordingView } from '../src/lib/recording'
 
-const view: RecordingView = { id: 7, revision: 3, phase: 'paused', seconds: 23, frames: 180, message: '', path: null }
+const view: RecordingView = { id: 7, revision: 3, phase: 'paused', seconds: 23, frames: 180, droppedFrames: 2, targetFps: 30, message: '', path: null }
 describe('录屏会话状态', () => {
+  it('选区使用物理像素快照，30/60 FPS 与光标偏好传到 Rust，默认无声', () => {
+    const region = { x: 12, y: 18, width: 101, height: 99 }
+    const config = recordingConfig(region, 60, false)
+    region.x = 99
+    expect(config).toEqual({ source: 'primaryMonitor', region: { x: 12, y: 18, width: 101, height: 99 }, fps: 60, captureCursor: false, format: 'mp4', systemAudio: false, microphone: false })
+    expect(recordingConfig(region).fps).toBe(30)
+    expect(recordingConfig(region).captureCursor).toBe(true)
+  })
   it('暂停、结束后不被迟到的采集查询覆盖', () => {
     expect(newerRecording(view, { ...view, revision: 2, phase: 'recording' })).toBe(view)
     const completed: RecordingView = { ...view, revision: 5, phase: 'completed' }

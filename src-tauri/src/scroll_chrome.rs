@@ -235,6 +235,9 @@ fn place_windows(
                 .focused(false)
                 .focusable(false)
                 .visible(false)
+                // 在原生 HWND 创建时设置，早于 WebView2 挂载和合成表面初始化。
+                // 与 recording-controls 的 contentProtected 配置保持一致。
+                .content_protected(recording)
                 .background_color(Color(139, 92, 246, 255))
                 .build()
                 .map_err(err)?
@@ -246,7 +249,10 @@ fn place_windows(
         }
         if recording {
             // Windows 映射为 WDA_EXCLUDEFROMCAPTURE，满屏时也无需反复隐藏窗口。
+            #[cfg(not(target_os = "windows"))]
             window.set_content_protected(true).map_err(err)?;
+            #[cfg(target_os = "windows")]
+            protect_recording_window(&window)?;
         }
         // 同时覆盖复用窗口的约束；使用物理像素，避免 DPI 再次放大下限。
         window
@@ -316,6 +322,40 @@ fn place_windows(
     Ok(overlaps)
 }
 
+/// 已排除的窗口只读校验，避免 WebView2 初始化后重复设置触发系统错误。
+/// 创建期未生效时才补设；不接受 WDA_MONITOR（它会将窗口录成黑块）。
+#[cfg(target_os = "windows")]
+fn protect_recording_window(window: &Window) -> Result<(), String> {
+    use windows::Win32::{
+        Foundation::HWND,
+        UI::WindowsAndMessaging::{
+            GetWindowDisplayAffinity, SetWindowDisplayAffinity, WDA_EXCLUDEFROMCAPTURE,
+        },
+    };
+    let hwnd = HWND(window.hwnd().map_err(err)?.0);
+    let label = window.label();
+    unsafe {
+        let mut affinity = 0;
+        GetWindowDisplayAffinity(hwnd, &mut affinity)
+            .map_err(|e| format!("无法读取录屏辅助窗口 {label} 的捕获排除状态：{e}"))?;
+        if affinity == WDA_EXCLUDEFROMCAPTURE.0 {
+            return Ok(());
+        }
+        // 不清除已经生效的保护，不把失败降级成黑块或静默录入辅助界面。
+        SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE).map_err(|e| {
+            format!("无法排除录屏辅助窗口 {label}（当前状态 0x{affinity:02X}）：{e}")
+        })?;
+        GetWindowDisplayAffinity(hwnd, &mut affinity)
+            .map_err(|e| format!("无法确认录屏辅助窗口 {label} 的捕获排除状态：{e}"))?;
+        if affinity != WDA_EXCLUDEFROMCAPTURE.0 {
+            return Err(format!(
+                "录屏辅助窗口 {label} 未启用捕获排除（当前状态 0x{affinity:02X}）。"
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn show_recording(app: &AppHandle) -> Result<(), String> {
     // 先显示四条边框，再显示并激活按钮窗，避免辅助窗口的置顶顺序遮住操作区。
     for label in &RECORDING_LABELS[1..] {
@@ -323,6 +363,11 @@ pub(crate) fn show_recording(app: &AppHandle) -> Result<(), String> {
     }
     let controls = window(app, "recording-controls").ok_or("录屏控制窗口不可用。")?;
     show_window(&controls)?;
+    // 显示和窗口样式更新后再次校验；此时还未启动 WGC，不会泄漏辅助界面。
+    #[cfg(target_os = "windows")]
+    for label in RECORDING_LABELS {
+        protect_recording_window(&window(app, label).ok_or("录屏辅助窗口不可用。")?)?;
+    }
     controls.set_focus().map_err(err)?;
     Ok(())
 }
