@@ -1,8 +1,24 @@
 import { describe, expect, it } from 'vitest'
-import { defaultInputEffects, newerRecording, recordingStats, recordingActive, recordingConfig, recordingStatus, recordingTime, type RecordingView } from '../src/lib/recording'
+import { defaultInputEffects, newerRecording, recordingBitrate, recordingStats, recordingStageTimes, recordingActive, recordingConfig, recordingStatus, recordingTime, type RecordingView } from '../src/lib/recording'
 
-const view: RecordingView = { id: 7, revision: 3, phase: 'paused', seconds: 23, frames: 180, droppedFrames: 2, targetFps: 30, encodingMillis: 360, targetBitrate: 8_087_040, encoderKind: 'system', encoderFallback: null, countdownRemaining: 0, message: '', path: null }
+const emptyStats = { capturePolls: 0, capturedFrames: 0, captureMillis: 0, throttledSamples: 0, composedFrames: 0, compositionMillis: 0, queuedFrames: 0, queueDroppedFrames: 0, staleQueuedFrames: 0, rejectedCaptureFrames: 0, rejectedComposedFrames: 0, recentFps: 0 }
+const view: RecordingView = { id: 7, revision: 3, phase: 'paused', seconds: 23, frames: 180, droppedFrames: 2, targetFps: 30, encodingMillis: 360, targetBitrate: 8_087_040, encoderKind: 'system', encoderFallback: null, countdownRemaining: 0, message: '', path: null, stats: emptyStats }
 describe('录屏会话状态', () => {
+  it('自定义码率换算单位、接受边界与小数，留空恢复自动', () => {
+    expect(recordingBitrate('')).toBeNull()
+    expect(recordingBitrate('  ')).toBeNull()
+    expect(recordingBitrate(1)).toBe(1_000_000)
+    expect(recordingBitrate('80')).toBe(80_000_000)
+    expect(recordingBitrate('8.5')).toBe(8_500_000)
+    for (const value of [0, -1, 0.99, 80.01, NaN, Infinity, '错误']) {
+      expect(() => recordingBitrate(value)).toThrow('1–80 Mbps')
+    }
+    const region = { x: 0, y: 0, width: 100, height: 100 }
+    expect(recordingConfig(region).bitrate).toBeNull()
+    for (const value of [0, 999_999, 80_000_001, 1_000_000.5, NaN, Infinity]) {
+      expect(() => recordingConfig(region, 30, true, 0, 'auto', 'balanced', defaultInputEffects(), value)).toThrow('1–80 Mbps')
+    }
+  })
   it('键鼠特效默认关闭，提交配置独立于表单和后续会话', () => {
     const region = { x: 0, y: 0, width: 1920, height: 1080 }
     const effects = defaultInputEffects()
@@ -23,8 +39,13 @@ describe('录屏会话状态', () => {
     const region = { x: 0, y: 0, width: 1920, height: 1080 }
     expect(recordingConfig(region).quality).toBe('balanced')
     expect(recordingConfig(region, 60, true, 0, 'auto', 'high').quality).toBe('high')
-    expect(recordingStats({ ...view, seconds: 6 })).toBe('平均 30.0 FPS · 编码提交 2.0 ms/帧')
-    expect(recordingStats({ ...view, seconds: 0, frames: 0 })).toBe('平均 0.0 FPS · 编码提交 0.0 ms/帧')
+    expect(recordingStats({ ...view, seconds: 6, stats: { ...emptyStats, recentFps: 29.5 } })).toBe('平均 30.0 FPS · 近 2 秒 29.5 FPS')
+    expect(recordingStats({ ...view, seconds: 0, frames: 0 })).toBe('平均 0.0 FPS · 近 2 秒 0.0 FPS')
+  })
+  it('分阶段耗时使用独立分母，空取样及动画重绘不被当成编码帧', () => {
+    const stats = { ...emptyStats, capturedFrames: 2, capturePolls: 10, captureMillis: 5, composedFrames: 8, compositionMillis: 12 }
+    expect(recordingStageTimes({ ...view, stats })).toBe('采集 0.5 ms/次 · 合成 1.5 ms/帧 · 编码提交 2.0 ms/帧')
+    expect(recordingStageTimes({ ...view, frames: 0 })).toBe('采集 0.0 ms/次 · 合成 0.0 ms/帧 · 编码提交 0.0 ms/帧')
   })
   it('编码默认自动，显式软件模式与倒计时独立传递', () => {
     const region = { x: 0, y: 0, width: 100, height: 100 }
@@ -47,7 +68,7 @@ describe('录屏会话状态', () => {
     const region = { x: 12, y: 18, width: 101, height: 99 }
     const config = recordingConfig(region, 60, false)
     region.x = 99
-    expect(config).toEqual({ source: 'primaryMonitor', region: { x: 12, y: 18, width: 101, height: 99 }, fps: 60, captureCursor: false, format: 'mp4', systemAudio: false, microphone: false, countdownSeconds: 0, encoding: 'auto', quality: 'balanced', inputEffects: defaultInputEffects() })
+    expect(config).toEqual({ source: 'primaryMonitor', region: { x: 12, y: 18, width: 101, height: 99 }, fps: 60, captureCursor: false, format: 'mp4', systemAudio: false, microphone: false, countdownSeconds: 0, encoding: 'auto', quality: 'balanced', inputEffects: defaultInputEffects(), bitrate: null })
     expect(recordingConfig(region).fps).toBe(30)
     expect(recordingConfig(region).captureCursor).toBe(true)
   })

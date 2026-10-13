@@ -95,6 +95,9 @@ pub struct RecorderConfig {
     pub fps: u32,
     #[serde(default)]
     pub quality: RecordingQuality,
+    /// 自定义目标码率，单位 bit/s；缺省或 null 沿用画质预设，兼容旧客户端。
+    #[serde(default)]
+    pub bitrate: Option<u32>,
     #[serde(default)]
     pub encoding: EncodingPreference,
     pub capture_cursor: bool,
@@ -115,6 +118,7 @@ impl RecorderConfig {
             region,
             fps: 30,
             quality: RecordingQuality::Balanced,
+            bitrate: None,
             encoding: EncodingPreference::Auto,
             capture_cursor: true,
             input_effects: InputEffects::default(),
@@ -125,8 +129,12 @@ impl RecorderConfig {
         }
     }
 
-    /// 整数计算 0.08/0.13/0.20 bit/pixel/frame，限制在 1–80 Mbps。
+    /// 自定义值优先；自动模式按 0.08/0.13/0.20 bit/pixel/frame 计算，限制在 1–80 Mbps。
+    /// 调用前由 validate 拒绝越界配置，不静默修改用户指定的码率。
     pub fn target_bitrate(&self) -> u32 {
+        if let Some(bitrate) = self.bitrate {
+            return bitrate;
+        }
         let weight = match self.quality {
             RecordingQuality::Economy => 8,
             RecordingQuality::Balanced => 13,
@@ -142,6 +150,12 @@ impl RecorderConfig {
 
     pub fn validate(&self, size: (u32, u32)) -> Result<(), String> {
         self.input_effects.validate()?;
+        if self
+            .bitrate
+            .is_some_and(|value| !(1_000_000..=80_000_000).contains(&value))
+        {
+            return Err("自定义录屏码率需为 1–80 Mbps。".into());
+        }
         let r = self.region;
         if !matches!(self.countdown_seconds, 0 | 3 | 5) {
             return Err("录屏倒计时仅支持立即、3 秒或 5 秒。".into());
@@ -208,6 +222,48 @@ mod tests {
         assert!(serde_json::from_str::<InputEffects>(r#"{"showText":true}"#).is_err());
         assert!(serde_json::from_str::<InputEffects>(r#"{"leftColor":[999,0,0]}"#).is_err());
     }
+    #[test]
+    fn custom_bitrate_validation_and_legacy_compatibility() {
+        let mut config = RecorderConfig::for_region(Rect {
+            x: 0,
+            y: 0,
+            width: 1920,
+            height: 1080,
+        });
+        for bitrate in [1_000_000, 8_500_000, 80_000_000] {
+            config.bitrate = Some(bitrate);
+            assert!(config.validate((1920, 1080)).is_ok());
+            assert_eq!(config.target_bitrate(), bitrate);
+        }
+        // 改帧率和画质不会覆盖显式配置；恢复自动才重新应用预设。
+        config.fps = 60;
+        config.quality = RecordingQuality::High;
+        assert_eq!(config.target_bitrate(), 80_000_000);
+        for bitrate in [0, 999_999, 80_000_001, u32::MAX] {
+            config.bitrate = Some(bitrate);
+            assert!(config.validate((1920, 1080)).is_err());
+        }
+        config.bitrate = None;
+        assert_eq!(config.target_bitrate(), 24_883_200);
+        let mut json = serde_json::to_value(config).unwrap();
+        assert!(serde_json::from_value::<RecorderConfig>(json.clone())
+            .unwrap()
+            .bitrate
+            .is_none());
+        json.as_object_mut().unwrap().remove("bitrate");
+        let legacy: RecorderConfig = serde_json::from_value(json.clone()).unwrap();
+        assert_eq!(legacy.target_bitrate(), 24_883_200);
+        // IPC 不接受负数、小数 bit/s 或字符串，不能绕过 Option<u32> 契约。
+        for invalid in [
+            serde_json::json!(-1),
+            serde_json::json!(1_000_000.5),
+            serde_json::json!("8000000"),
+        ] {
+            json["bitrate"] = invalid;
+            assert!(serde_json::from_value::<RecorderConfig>(json.clone()).is_err());
+        }
+    }
+
     #[test]
     fn bitrate_scales_with_size_rate_and_quality() {
         let mut config = RecorderConfig::for_region(Rect {

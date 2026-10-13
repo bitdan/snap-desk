@@ -36,7 +36,7 @@ onUnmounted(() => { disposed = true; clearTimeout(timer) })
     <span class="dot" :class="{ paused: view?.phase !== 'recording' }" />
     <span class="time" role="timer">{{ recordingTime(view?.seconds ?? 0) }}</span>
     <span class="status" role="status">{{ view ? recordingStatus(view) : '连接中…' }}</span>
-    <span v-if="view?.phase !== 'countdown'" class="fps" :title="`已写入 ${view?.frames ?? 0} 帧，丢弃 ${view?.droppedFrames ?? 0} 帧`">目标 {{ view?.targetFps ?? 30 }} FPS</span>
+    <span v-if="view?.phase !== 'countdown'" class="fps" :title="`近两秒 ${view?.stats.recentFps.toFixed(1) ?? '0.0'} FPS；编码提交 ${view?.frames ?? 0} 帧，队列满 ${view?.stats.queueDroppedFrames ?? 0} 帧，旧代次 ${view?.stats.staleQueuedFrames ?? 0} 帧；静态画面低 FPS 不等同丢帧`">目标 {{ view?.targetFps ?? 30 }} FPS</span>
     <button v-if="view?.phase === 'ready'" class="start" :disabled="busy" @click="control('start')"><Play :size="15" />开始录制</button>
     <button v-else-if="view?.phase === 'countdown'" disabled><Play :size="15" />等待开始</button>
     <button v-else-if="view?.phase === 'paused'" :disabled="busy" @click="control('resume')"><Play :size="15" />继续</button>

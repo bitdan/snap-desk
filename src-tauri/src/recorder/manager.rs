@@ -15,6 +15,7 @@ mod encoder;
 mod frame;
 mod input;
 pub mod output;
+mod stats;
 mod timeline;
 use super::scroll_capture::chrome;
 use config::{CaptureSource, OutputFormat, RecorderCapabilities, RecorderConfig};
@@ -49,6 +50,7 @@ pub struct RecordingView {
     target_fps: u32,
     /// push 的累计墙钟耗时，包含转换和同步提交，不代表 GPU 内部延迟。
     encoding_millis: f64,
+    stats: stats::RecordingStats,
     target_bitrate: u32,
     encoder_kind: encoder::EncoderKind,
     encoder_fallback: Option<String>,
@@ -61,6 +63,7 @@ pub struct RecordingView {
 struct Session {
     view: RecordingView,
     timeline: Timeline,
+    fps_window: stats::FpsWindow,
     countdown_seconds: u8,
     countdown_until: Option<i64>,
     stop: bool,
@@ -83,6 +86,7 @@ impl Session {
             self.countdown_until = None;
             self.view.countdown_remaining = 0;
             self.timeline.resume(now);
+            self.fps_window.reset(self.timeline.elapsed(now));
             self.view.phase = Phase::Recording;
             self.view.message = "录屏中；托盘可暂停，截图快捷键可停止。".into();
         } else {
@@ -253,6 +257,12 @@ pub fn current_recording(
     Ok(guard.as_ref().map(|s| {
         let mut view = s.view.clone();
         view.seconds = s.elapsed().as_secs_f64();
+        view.stats.recent_fps =
+            if matches!(view.phase, Phase::Ready | Phase::Countdown | Phase::Paused) {
+                0.0
+            } else {
+                s.fps_window.fps(s.timeline.elapsed(capture::now()))
+            };
         view
     }))
 }
@@ -368,6 +378,7 @@ pub async fn start_recording(
                 dropped_frames: 0,
                 target_fps: config.fps,
                 encoding_millis: 0.0,
+                stats: stats::RecordingStats::default(),
                 target_bitrate: config.target_bitrate(),
                 encoder_kind,
                 encoder_fallback,
@@ -376,6 +387,7 @@ pub async fn start_recording(
                 path: None,
             },
             timeline: Timeline::default(),
+            fps_window: stats::FpsWindow::default(),
             countdown_seconds: config.countdown_seconds,
             countdown_until: None,
             stop: false,
@@ -429,6 +441,29 @@ pub async fn start_recording(
     })
     .await
     .map_err(err)?
+}
+
+/// 单次取样在状态锁外计时；空取样也统计耗时，不包含 wait_for_frame 的空闲等待。
+fn measured_capture(
+    state: &RecordingState,
+    id: u64,
+    backend: &mut dyn capture::CaptureBackend,
+) -> Result<Option<frame::VideoFrame>, String> {
+    let started = Instant::now();
+    let result = backend.next_frame();
+    let millis = started.elapsed().as_secs_f64() * 1000.0;
+    let mut guard = state.0.lock().map_err(err)?;
+    let s = guard
+        .as_mut()
+        .filter(|s| s.view.id == id)
+        .ok_or("录屏会话已过期。")?;
+    s.view.stats.capture_polls += 1;
+    s.view.stats.capture_millis += millis;
+    if matches!(&result, Ok(Some(_))) {
+        s.view.stats.captured_frames += 1;
+    }
+    s.view.revision += 1;
+    result
 }
 
 /// 采集线程绝不等待编码队列；开启特效时额外保留一帧干净底图，动画与事件数量有界。
@@ -505,14 +540,14 @@ fn collect(
                             if listener.is_none() {
                                 listener = Some(input::Listener::start(config.input_effects)?);
                             }
-                            let frame = backend.next_frame()?;
+                            let frame = measured_capture(&state, id, backend.as_mut())?;
                             let events = listener.as_ref().unwrap().drain()?;
                             // 先取完源事件，再取 QPC，避免给未来事件分配更早的视频时间戳。
                             let now = capture::now();
                             let projected = {
-                                let guard = state.0.lock().map_err(err)?;
+                                let mut guard = state.0.lock().map_err(err)?;
                                 let s = guard
-                                    .as_ref()
+                                    .as_mut()
                                     .filter(|s| s.view.id == id)
                                     .ok_or("录屏会话已过期。")?;
                                 if s.stop
@@ -520,12 +555,20 @@ fn collect(
                                     || s.view.phase != Phase::Recording
                                     || s.timeline.generation != generation
                                 {
+                                    s.view.stats.rejected_capture_frames +=
+                                        usize::from(frame.is_some());
+                                    s.view.revision += 1;
                                     None
                                 } else {
+                                    let had_frame = frame.is_some();
                                     let frame = frame.filter(|f| {
                                         s.timeline.project(f.source_time).is_some()
                                             && f.source_time <= now
                                     });
+                                    if had_frame && frame.is_none() {
+                                        s.view.stats.rejected_capture_frames += 1;
+                                        s.view.revision += 1;
+                                    }
                                     let events = events
                                         .into_iter()
                                         .filter_map(|event| {
@@ -548,21 +591,36 @@ fn collect(
                                     compositor.ingest(time, event);
                                 }
                                 if let Some(clean) = base.as_ref() {
-                                    if (base_dirty || compositor.needs_frame())
+                                    let needed = base_dirty || compositor.needs_frame();
+                                    let accepted = needed
                                         && timeline::accept_sample(
                                             &mut last_sample,
                                             generation,
                                             pts,
                                             config.fps,
-                                        )
-                                    {
+                                        );
+                                    if needed && !accepted {
+                                        let mut guard = state.0.lock().map_err(err)?;
+                                        if let Some(s) = guard.as_mut().filter(|s| s.view.id == id)
+                                        {
+                                            s.view.stats.throttled_samples += 1;
+                                            s.view.revision += 1;
+                                        }
+                                    }
+                                    if accepted {
                                         // 合成在锁外；重绘时只读未叠加的底图，帧时间用同源 QPC 的当前媒体时间。
+                                        let composition_started = Instant::now();
                                         let image = compositor.render(clean, pts);
+                                        let composition_millis =
+                                            composition_started.elapsed().as_secs_f64() * 1000.0;
                                         let mut guard = state.0.lock().map_err(err)?;
                                         let s = guard
                                             .as_mut()
                                             .filter(|s| s.view.id == id)
                                             .ok_or("录屏会话已过期。")?;
+                                        s.view.stats.composed_frames += 1;
+                                        s.view.stats.composition_millis += composition_millis;
+                                        s.view.revision += 1;
                                         if !s.stop
                                             && !s.cancel
                                             && s.view.phase == Phase::Recording
@@ -573,10 +631,14 @@ fn collect(
                                                 pts,
                                                 image,
                                             }) {
-                                                Ok(()) => base_dirty = false,
+                                                Ok(()) => {
+                                                    base_dirty = false;
+                                                    s.view.stats.queued_frames += 1;
+                                                }
                                                 Err(TrySendError::Full(_)) => {
                                                     // 包括效果结束后的干净帧，拥堵后也必须重试，防止光圈冻结。
                                                     base_dirty = true;
+                                                    s.view.stats.queue_dropped_frames += 1;
                                                     s.view.dropped_frames += 1;
                                                     s.view.revision += 1;
                                                 }
@@ -584,44 +646,53 @@ fn collect(
                                                     return Err("录屏编码线程已停止。".into())
                                                 }
                                             }
+                                        } else {
+                                            s.view.stats.rejected_composed_frames += 1;
                                         }
                                     }
                                 }
                             }
-                        } else if let Some(frame) = backend.next_frame()? {
+                        } else if let Some(frame) = measured_capture(&state, id, backend.as_mut())?
+                        {
                             let mut guard = state.0.lock().map_err(err)?;
                             let s = guard
                                 .as_mut()
                                 .filter(|s| s.view.id == id)
                                 .ok_or("录屏会话已过期。")?;
-                            if !s.stop && !s.cancel {
-                                if let Some((generation, pts)) =
-                                    s.timeline.project(frame.source_time)
-                                {
-                                    // 帧池可能残留暂停前的帧；project 会拒绝恢复起点以前的数据。
-                                    if timeline::accept_sample(
-                                        &mut last_sample,
+                            s.view.revision += 1;
+                            let projected = s
+                                .timeline
+                                .project(frame.source_time)
+                                .filter(|(g, _)| !s.stop && !s.cancel && *g == generation);
+                            if let Some((generation, pts)) = projected {
+                                // 帧池可能残留暂停前的帧；project 会拒绝恢复起点以前的数据。
+                                if timeline::accept_sample(
+                                    &mut last_sample,
+                                    generation,
+                                    pts,
+                                    config.fps,
+                                ) {
+                                    waiting_since = None;
+                                    match sender.try_send(QueuedFrame {
                                         generation,
                                         pts,
-                                        config.fps,
-                                    ) {
-                                        waiting_since = None;
-                                        match sender.try_send(QueuedFrame {
-                                            generation,
-                                            pts,
-                                            image: frame.image,
-                                        }) {
-                                            Ok(()) => (),
-                                            Err(TrySendError::Full(_)) => {
-                                                s.view.dropped_frames += 1;
-                                                s.view.revision += 1;
-                                            }
-                                            Err(TrySendError::Disconnected(_)) => {
-                                                return Err("录屏编码线程已停止。".into())
-                                            }
+                                        image: frame.image,
+                                    }) {
+                                        Ok(()) => s.view.stats.queued_frames += 1,
+                                        Err(TrySendError::Full(_)) => {
+                                            s.view.stats.queue_dropped_frames += 1;
+                                            s.view.dropped_frames += 1;
+                                            s.view.revision += 1;
+                                        }
+                                        Err(TrySendError::Disconnected(_)) => {
+                                            return Err("录屏编码线程已停止。".into())
                                         }
                                     }
+                                } else {
+                                    s.view.stats.throttled_samples += 1;
                                 }
+                            } else {
+                                s.view.stats.rejected_capture_frames += 1;
                             }
                         }
                         // 从未收到有效帧时不能无限等待；已有帧的静态桌面允许无新帧。
@@ -773,6 +844,7 @@ fn write_video(
                 return Err("已取消录屏。".into());
             }
             if frame.generation != s.timeline.generation {
+                s.view.stats.stale_queued_frames += 1;
                 s.view.dropped_frames += 1;
                 s.view.revision += 1;
                 continue;
@@ -786,6 +858,10 @@ fn write_video(
         if let Some(s) = guard.as_mut().filter(|s| s.view.id == id) {
             s.view.frames += 1;
             s.view.encoding_millis += encoding_millis;
+            // push 期间仍可暂停；旧代次已提交帧计入累计值，但不污染恢复后的窗口。
+            if frame.generation == s.timeline.generation {
+                s.fps_window.submitted(frame.pts);
+            }
             s.view.revision += 1;
         }
     }

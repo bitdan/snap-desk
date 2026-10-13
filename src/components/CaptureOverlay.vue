@@ -10,7 +10,7 @@ import CaptureMagnifier from './CaptureMagnifier.vue'
 import { magnifierSample } from '@/lib/magnifier'
 import { nudgeColorPoint } from '@/lib/color-picker'
 import { newerScroll } from '@/lib/scroll-capture'
-import { defaultInputEffects, recordingConfig, type EncodingPreference, type RecordingQuality, type RecorderCapabilities } from '@/lib/recording'
+import { defaultInputEffects, recordingBitrate, recordingConfig, type EncodingPreference, type RecordingQuality, type RecorderCapabilities } from '@/lib/recording'
 import RecordingInputSettings from './RecordingInputSettings.vue'
 import { readRecentSelection, restoreRecentSelection, writeRecentSelection } from '@/lib/recent-selection'
 
@@ -28,6 +28,9 @@ const recordingCapabilityError = ref('')
 const recordingFps = ref<30 | 60>(30)
 const recordingEncoding = ref<EncodingPreference>('auto')
 const recordingQuality = ref<RecordingQuality>('balanced')
+// 空白使用自动码率；提交时才换算 bit/s，避免表单编辑影响已启动会话。
+const recordingMbps = ref<string | number>('')
+const recordingBitrateInput = ref<HTMLInputElement | null>(null)
 const recordingCountdown = ref<0 | 3 | 5>(0)
 const captureCursor = ref(true)
 const recordingEffects = ref(defaultInputEffects())
@@ -96,8 +99,14 @@ async function startScroll() {
 /** 使用与截图相同的原图像素选区，成功后录屏后端接管会话及快捷键。 */
 async function startRecording() {
   if (!frame.value || !pixels.value || !valid.value || busy.value || marked.value || editor.pending || editor.interacting || gesture) return
+  // number 输入框遇到未完成的指数等内容会把 value 置空，不能将 badInput 当作自动模式。
+  if (recordingBitrateInput.value && !recordingBitrateInput.value.validity.valid) {
+    error.value = '自定义录屏码率需为 1–80 Mbps，或清空以使用自动码率。'
+    recordingBitrateInput.value.focus()
+    return
+  }
   busy.value = true; error.value = ''
-  try { await api.startRecording(frame.value.id, pixels.value, recordingConfig(pixels.value, recordingFps.value, captureCursor.value, recordingCountdown.value, recordingEncoding.value, recordingQuality.value, recordingEffects.value)); recordingSetup.value = false; frame.value = null }
+  try { await api.startRecording(frame.value.id, pixels.value, recordingConfig(pixels.value, recordingFps.value, captureCursor.value, recordingCountdown.value, recordingEncoding.value, recordingQuality.value, recordingEffects.value, recordingBitrate(recordingMbps.value))); recordingSetup.value = false; frame.value = null }
   catch (e) { error.value = String(e) }
   finally { busy.value = false }
 }
@@ -286,7 +295,9 @@ onUnmounted(() => { disposed = true; off?.(); offScroll?.(); window.removeEventL
         <h2>录制当前选区 · MP4</h2>
         <p>点击控制条“开始录制”后按下方设置开始。支持暂停、继续、结束保存和取消；无声 MP4，单次最多 3 分钟。</p>
         <label>编码 <select v-model="recordingEncoding" :disabled="busy"><option value="auto">自动（允许硬件加速）</option><option value="software">软件（兼容模式）</option></select></label>
-        <label>画质 <select v-model="recordingQuality" :disabled="busy"><option value="economy">节省空间</option><option value="balanced">均衡</option><option value="high">高清</option></select></label>
+        <label>画质 <select v-model="recordingQuality" :disabled="busy || recordingMbps !== ''"><option value="economy">节省空间</option><option value="balanced">均衡</option><option value="high">高清</option></select></label>
+        <label>目标码率（Mbps）<input ref="recordingBitrateInput" v-model="recordingMbps" type="number" min="1" max="80" step="any" placeholder="自动" :disabled="busy" aria-describedby="recording-bitrate-help" class="w-24 rounded border border-zinc-500 bg-transparent px-2 py-1" /></label>
+        <p id="recording-bitrate-help">留空按画质自动计算；自定义 1–80 Mbps 优先于画质预设，可输入小数。实际码率和文件大小随画面变化。</p>
         <label>目标帧率 <select v-model="recordingFps" :disabled="busy"><option :value="30">30 FPS</option><option :value="60">60 FPS</option></select></label>
         <label>开始倒计时 <select v-model="recordingCountdown" :disabled="busy"><option :value="0">立即</option><option :value="3">3 秒</option><option :value="5">5 秒</option></select></label>
         <p>点击控制条“开始录制”后倒计时，可随时取消；倒计时不计入视频时长。</p>

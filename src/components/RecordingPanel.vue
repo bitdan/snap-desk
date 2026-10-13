@@ -2,7 +2,7 @@
 import { onMounted, onUnmounted, ref } from 'vue'
 import Button from './ui/button/Button.vue'
 import { api, desktop } from '@/lib/api'
-import { encoderLabels, recordingStats, newerRecording, recordingActive, recordingStatus, recordingTime, type RecorderCapabilities, type RecordingAction, type RecordingDirectory, type RecordingView } from '@/lib/recording'
+import { encoderLabels, recordingStats, recordingStageTimes, newerRecording, recordingActive, recordingStatus, recordingTime, type RecorderCapabilities, type RecordingAction, type RecordingDirectory, type RecordingView } from '@/lib/recording'
 
 const view = ref<RecordingView | null>(null)
 const error = ref('')
@@ -69,8 +69,18 @@ onUnmounted(() => { disposed = true; clearTimeout(timer) })
       </div>
       <div class="setting-row"><span>单次上限<small>达到上限自动结束并保存</small></span><span>3 分钟</span></div>
       <p v-if="!capabilities?.available" class="py-3 text-sm" role="status">{{ capabilities?.reason ?? (desktop ? '正在检查录屏能力…' : '请在桌面应用中使用录屏。') }}</p>
-      <div v-if="view" class="setting-row"><span>{{ recordingStatus(view) }}</span><span>{{ recordingTime(view.seconds) }} · {{ view.frames }} 帧 · 丢弃 {{ view.droppedFrames }} 帧</span></div>
-      <div v-if="view" class="setting-row" title="全程平均，不含暂停；编码提交耗时包含色彩转换和同步写入"><span>录屏统计</span><span>{{ recordingStats(view) }}</span></div>
+      <div v-if="view" class="setting-row"><span>{{ recordingStatus(view) }}</span><span>{{ recordingTime(view.seconds) }} · 编码提交 {{ view.frames }} 帧</span></div>
+      <div v-if="view" class="setting-row" title="成功提交编码帧的媒体时间窗口，不含暂停；恢复后重置近两秒窗口。静态画面可自然降至 0 FPS，并非丢帧。"><span>有效帧率</span><span>{{ recordingStats(view) }}</span></div>
+      <details v-if="view" class="py-3 text-sm">
+        <summary class="cursor-pointer">录屏诊断</summary>
+        <div class="setting-row"><span>采集 / 合成 / 入队</span><span>{{ view.stats.capturedFrames }} / {{ view.stats.composedFrames }} / {{ view.stats.queuedFrames }} 帧</span></div>
+        <div class="setting-row"><span>帧率节流</span><span>{{ view.stats.throttledSamples }} 次</span></div>
+        <div class="setting-row"><span>队列满 / 旧代次丢弃</span><span>{{ view.stats.queueDroppedFrames }} / {{ view.stats.staleQueuedFrames }} 帧</span></div>
+        <div class="setting-row"><span>采集 / 合成后失效</span><span>{{ view.stats.rejectedCaptureFrames }} / {{ view.stats.rejectedComposedFrames }} 帧</span></div>
+        <p class="py-2">{{ recordingStageTimes(view) }}</p>
+        <p class="text-zinc-500">采集耗时按 {{ view.stats.capturePolls }} 次取样平均，包含空取样、GPU 回读和像素复制，不含等待帧事件。合成仅统计键鼠特效重绘；编码提交包含色彩转换与同步写入，不代表 GPU 内部延迟。</p>
+        <p class="pt-2 text-zinc-500">采集统计后端实际取出的帧，不含系统帧池内部丢弃；动画可复用底图生成多帧。节流次数包含延后重绘，不能与各阶段帧数相加。暂停、停止期间的帧会单独记为失效。</p>
+      </details>
       <div v-if="view" class="setting-row"><span>目标码率</span><span>{{ (view.targetBitrate / 1_000_000).toFixed(1) }} Mbps</span></div>
       <div v-if="view" class="setting-row"><span>编码方式</span><span>{{ encoderLabels[view.encoderKind] }}</span></div>
       <p v-if="view?.encoderFallback" class="notice break-all" role="status">{{ view.encoderFallback }}</p>
