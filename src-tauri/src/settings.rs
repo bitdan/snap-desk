@@ -9,7 +9,7 @@ use std::{
     path::Path,
     sync::{atomic::Ordering, Mutex},
 };
-use tauri::{AppHandle, Manager, WebviewWindow};
+use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut};
 
 /// 普通截图和贴图共用的导出偏好；长截图的自动 PNG 存档保持独立。
@@ -69,16 +69,23 @@ impl ExportSettings {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Settings {
     pub shortcut: String,
+    /// 总开关只影响系统注册，不影响窗口内的编辑快捷键；旧配置默认启用。
+    #[serde(default = "enabled_by_default")]
+    pub shortcuts_enabled: bool,
     pub delay_seconds: u8,
     // 老版本配置没有此字段时补默认值，不改动原来的快捷键或延时。
     #[serde(default)]
     pub export: ExportSettings,
+}
+fn enabled_by_default() -> bool {
+    true
 }
 
 impl Default for Settings {
     fn default() -> Self {
         Self {
             shortcut: "F1".into(),
+            shortcuts_enabled: true,
             delay_seconds: 0,
             export: ExportSettings::default(),
         }
@@ -130,6 +137,17 @@ pub struct RuntimeSettings {
     pub config_warning: Option<String>,
 }
 pub struct SettingsState(pub Mutex<RuntimeSettings>);
+pub struct ShortcutMenu(pub tauri::menu::CheckMenuItem<tauri::Wry>);
+
+/// 持锁调用，确保并发保存时托盘勾选状态与磁盘、内存提交顺序一致。
+fn notify_settings(app: &AppHandle, value: &Settings) {
+    if let Some(menu) = app.try_state::<ShortcutMenu>() {
+        if let Err(error) = menu.0.set_checked(value.shortcuts_enabled) {
+            log::error!("快捷键托盘状态更新失败：{error}");
+        }
+    }
+    let _ = app.emit_to("main", "settings-changed", value);
+}
 
 /// 文件不存在属于首次启动；其他读取/解析错误保留原文件并向界面提示。
 pub fn load(path: &Path) -> (Settings, Option<String>) {
@@ -170,19 +188,23 @@ fn persist(path: &Path, value: &Settings) -> Result<(), String> {
 pub fn initialize(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     let path = app.path().app_config_dir()?.join("settings.json");
     let (value, config_warning) = load(&path);
-    let shortcut_error = app
-        .global_shortcut()
-        .register(value.shortcut.as_str())
-        .err()
-        .map(|e| {
-            format!(
-                "快捷键 {} 注册失败，可使用按钮或托盘，或在设置中更换：{e}",
-                value.shortcut
-            )
-        });
+    let shortcut_error = if value.shortcuts_enabled {
+        app.global_shortcut()
+            .register(value.shortcut.as_str())
+            .err()
+            .map(|e| {
+                format!(
+                    "快捷键 {} 注册失败，可使用按钮或托盘，或在设置中更换：{e}",
+                    value.shortcut
+                )
+            })
+    } else {
+        None
+    };
+    let registered = value.shortcuts_enabled && shortcut_error.is_none();
     app.manage(SettingsState(Mutex::new(RuntimeSettings {
         value,
-        registered: shortcut_error.is_none(),
+        registered,
         shortcut_error,
         config_warning,
     })));
@@ -201,7 +223,7 @@ fn apply_settings(
 ) -> Result<(), String> {
     let old_key = old.validate()?;
     let new_key = next.validate()?;
-    let replace = old_key != new_key || !registered;
+    let replace = next.shortcuts_enabled && (old_key != new_key || !registered);
     if replace {
         register(new_key).map_err(|e| format!("快捷键注册失败，原设置保持不变：{e}"))?;
     }
@@ -218,10 +240,14 @@ fn apply_settings(
                 .unwrap_or_default()
         ));
     }
-    if replace && registered {
+    if registered && (!next.shortcuts_enabled || old_key != new_key) {
         if let Err(error) = unregister(old_key) {
             let disk = write(old).err();
-            let key = unregister(new_key).err();
+            let key = if replace {
+                unregister(new_key).err()
+            } else {
+                None
+            };
             return Err(format!(
                 "旧快捷键释放失败：{error}；配置回滚：{}；新键清理：{}",
                 disk.unwrap_or_else(|| "成功".into()),
@@ -270,13 +296,72 @@ pub async fn save_settings(
             |value| persist(&path, value),
         )?;
         current.value = settings.clone();
-        current.registered = true;
+        current.registered = settings.shortcuts_enabled;
         current.shortcut_error = None;
         current.config_warning = None;
+        app.state::<CaptureState>()
+            .hotkey_pressed
+            .store(false, Ordering::SeqCst);
+        notify_settings(&app, &settings);
         Ok(settings)
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// 托盘与设置页共用总开关；None 表示在锁内切换，避免快速连点使用过期快照。
+pub fn set_shortcuts(app: &AppHandle, enabled: Option<bool>) -> Result<Settings, String> {
+    let state = app.state::<SettingsState>();
+    let mut current = state.0.lock().map_err(|e| e.to_string())?;
+    let mut next = current.value.clone();
+    next.shortcuts_enabled = enabled.unwrap_or(!next.shortcuts_enabled);
+    let path = app
+        .path()
+        .app_config_dir()
+        .map_err(|e| e.to_string())?
+        .join("settings.json");
+    let result = apply_settings(
+        &current.value,
+        &next,
+        current.registered,
+        |key| {
+            app.global_shortcut()
+                .register(key)
+                .map_err(|e| e.to_string())
+        },
+        |key| {
+            app.global_shortcut()
+                .unregister(key)
+                .map_err(|e| e.to_string())
+        },
+        |value| persist(&path, value),
+    );
+    if let Err(error) = result {
+        // 原生勾选菜单会先切换外观，失败时恢复为真正生效的设置。
+        notify_settings(app, &current.value);
+        return Err(error);
+    }
+    current.value = next.clone();
+    current.registered = next.shortcuts_enabled;
+    current.shortcut_error = None;
+    current.config_warning = None;
+    app.state::<CaptureState>()
+        .hotkey_pressed
+        .store(false, Ordering::SeqCst);
+    notify_settings(app, &next);
+    Ok(next)
+}
+
+#[tauri::command]
+pub async fn set_shortcuts_enabled(
+    app: AppHandle,
+    window: WebviewWindow,
+    enabled: bool,
+) -> Result<Settings, String> {
+    require_window(&window, "main")?;
+    tauri::async_runtime::spawn_blocking(move || set_shortcuts(&app, Some(enabled)))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[cfg(test)]
@@ -288,6 +373,7 @@ mod tests {
             serde_json::from_str(r#"{"shortcut":"Ctrl+F8","delaySeconds":5}"#).unwrap();
         assert_eq!(value.shortcut, "Ctrl+F8");
         assert_eq!(value.delay_seconds, 5);
+        assert!(value.shortcuts_enabled);
         assert_eq!(value.export, ExportSettings::default());
         assert!(value.validate().is_ok());
     }
@@ -332,6 +418,83 @@ mod tests {
             value.export.jpeg_quality = quality;
             assert!(value.validate().is_ok());
         }
+    }
+
+    #[test]
+    fn disabling_releases_key_and_disabled_edits_never_register() {
+        let old = Settings::default();
+        let mut disabled = old.clone();
+        disabled.shortcuts_enabled = false;
+        let removed = std::cell::RefCell::new(Vec::new());
+        apply_settings(
+            &old,
+            &disabled,
+            true,
+            |_| panic!("禁用不能注册快捷键"),
+            |key| {
+                removed.borrow_mut().push(key);
+                Ok(())
+            },
+            |_| Ok(()),
+        )
+        .unwrap();
+        assert_eq!(*removed.borrow(), vec![old.validate().unwrap()]);
+        let mut changed = disabled.clone();
+        changed.shortcut = "F8".into();
+        apply_settings(
+            &disabled,
+            &changed,
+            false,
+            |_| panic!("禁用时编辑不注册"),
+            |_| panic!("无注册键可释放"),
+            |_| Ok(()),
+        )
+        .unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        persist(&path, &changed).unwrap();
+        assert_eq!(load(&path), (changed, None));
+    }
+
+    #[test]
+    fn toggle_failures_keep_previous_state() {
+        let enabled = Settings::default();
+        let disabled = Settings {
+            shortcuts_enabled: false,
+            ..enabled.clone()
+        };
+        apply_settings(
+            &enabled,
+            &disabled,
+            true,
+            |_| panic!("不注册"),
+            |_| panic!("保存失败不能释放原键"),
+            |_| Err("磁盘只读".into()),
+        )
+        .unwrap_err();
+        apply_settings(
+            &disabled,
+            &enabled,
+            false,
+            |_| Err("快捷键冲突".into()),
+            |_| panic!("无旧键"),
+            |_| panic!("冲突时不落盘"),
+        )
+        .unwrap_err();
+        let writes = std::cell::RefCell::new(Vec::new());
+        apply_settings(
+            &enabled,
+            &disabled,
+            true,
+            |_| panic!("不注册"),
+            |_| Err("释放失败".into()),
+            |value| {
+                writes.borrow_mut().push(value.clone());
+                Ok(())
+            },
+        )
+        .unwrap_err();
+        assert_eq!(*writes.borrow(), vec![disabled, enabled]);
     }
 
     #[test]

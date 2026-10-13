@@ -4,6 +4,9 @@ import { defaultSettings, exportFilenamePreview, validateExportSettings } from '
 describe('导出设置', () => {
   it('草稿与恢复默认的嵌套导出对象互不影响', () => {
     const draft = defaultSettings()
+    expect(draft.shortcutsEnabled).toBe(true)
+    draft.shortcutsEnabled = false
+    expect(defaultSettings().shortcutsEnabled).toBe(true)
     draft.export.format = 'jpeg'
     draft.export.filenamePrefix = '我的截图'
     expect(defaultSettings().export.format).toBe('png')

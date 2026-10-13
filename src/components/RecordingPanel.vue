@@ -56,7 +56,7 @@ onUnmounted(() => { disposed = true; clearTimeout(timer) })
 <template>
   <section>
     <h1>录屏</h1>
-    <p class="subtitle">框选区域后点击“录屏”；Ctrl / ⌘ + A 选择整个主屏。</p>
+    <p class="subtitle">选择范围后，在工具栏设置录屏选项。</p>
     <div v-if="error" class="notice error" role="alert">{{ error }}</div>
     <div class="settings-card">
       <div class="setting-row"><span>输出</span><strong>MP4 · 无声 · 30 / 60 FPS · 可录制光标</strong></div>
@@ -67,7 +67,7 @@ onUnmounted(() => { disposed = true; clearTimeout(timer) })
           <Button variant="outline" :disabled="!desktop || busy || changingDirectory || recordingActive(view) || directory?.isDefault" @click="chooseDirectory(true)">恢复默认</Button>
         </div>
       </div>
-      <div class="setting-row"><span>单次上限<small>达到上限自动结束并保存</small></span><span>3 分钟</span></div>
+      <div class="setting-row"><span>单次上限</span><span>3 分钟</span></div>
       <p v-if="!capabilities?.available" class="py-3 text-sm" role="status">{{ capabilities?.reason ?? (desktop ? '正在检查录屏能力…' : '请在桌面应用中使用录屏。') }}</p>
       <div v-if="view" class="setting-row"><span>{{ recordingStatus(view) }}</span><span>{{ recordingTime(view.seconds) }} · 编码提交 {{ view.frames }} 帧</span></div>
       <div v-if="view" class="setting-row" title="成功提交编码帧的媒体时间窗口，不含暂停；恢复后重置近两秒窗口。静态画面可自然降至 0 FPS，并非丢帧。"><span>有效帧率</span><span>{{ recordingStats(view) }}</span></div>
@@ -96,7 +96,5 @@ onUnmounted(() => { disposed = true; clearTimeout(timer) })
         <Button v-if="recordingActive(view)" variant="outline" :disabled="busy" @click="control('cancel')">取消并清理</Button>
       </div>
     </div>
-    <p class="scope-note">确认选区时可选择自动或软件编码；自动试写失败会尝试软件编码。像素转换仍使用 CPU，高分辨率下可降低帧率或缩小选区。确认选区时可选择立即、3 秒或 5 秒开始；点击控制条“开始录制”后进入倒计时，期间可取消，不计入视频时长。暂停后继续不重复倒计时。MP4 自动保存到上方目录，完成后显示文件路径；目录跨重启记住，恢复默认不会移动已有视频。</p>
-    <p class="scope-note">需要 Windows 10 2004 或更新版本，无需安装外部编码工具。帧率为采集目标，静态画面延长上一帧显示，实际帧数取决于采集和编码速度。macOS / Linux、窗口录制、声音、点击效果及 GIF / WebP 尚未实现。</p>
   </section>
 </template>

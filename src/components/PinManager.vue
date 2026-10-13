@@ -54,7 +54,7 @@ onUnmounted(() => { disposed = true; off?.() })
 </script>
 
 <template>
-  <h1>贴图</h1><p class="subtitle">把截图、图片文件、文本或颜色贴在桌面上，边查看边工作。</p>
+  <h1>贴图</h1><p class="subtitle">将图片、文本或颜色贴在桌面。</p>
   <div v-if="error" class="notice error" role="alert">{{ error }}</div>
   <div class="pin-manager-actions">
     <Button :disabled="!desktop || busy" @click="run(api.pinClipboard)">剪贴板图片贴图</Button>
@@ -80,7 +80,7 @@ onUnmounted(() => { disposed = true; off?.() })
     <datalist id="pin-groups"><option v-for="group in groups" :key="group" :value="group" /></datalist>
     <Button type="submit" variant="outline" :disabled="!desktop || busy || !selected.length">应用分组</Button>
   </form>
-  <section class="operation-list">
+  <details class="operation-list"><summary class="cursor-pointer py-3 text-sm text-zinc-500">操作与快捷键</summary>
     <h2>贴图操作</h2>
     <div><span>移动 / 缩放</span><span>拖动图片 / 滚轮</span></div>
     <div><span>编辑标注 / 更多操作</span><span>图片右键菜单</span></div>
@@ -88,8 +88,8 @@ onUnmounted(() => { disposed = true; off?.() })
     <div><span>复制 / 保存图片</span><kbd>Ctrl / ⌘ + C / S</kbd></div>
     <div><span>隐藏 / 关闭</span><kbd>Esc / Ctrl / ⌘ + W</kbd></div>
     <div><span>图片处理</span><span>旋转 · 翻转 · 灰度 · 反色 · 恢复原图</span></div>
-  </section>
-  <p class="scope-note">最多 12 张、单张 1600 万像素、总计 3200 万像素；支持 PNG / JPEG / WebP，文件最多 64 MiB，动画 WebP 仅取首帧。分组名称最多 32 字符，空组自动消失。截图和文本贴图保留可编辑标注。关闭窗口或退出应用会清除内存图片及分组，请先保存需要保留的内容。</p>
+  </details>
+  <p class="scope-note">退出会清空贴图，请先保存需要保留的内容。</p>
 </template>
 
 <style scoped>

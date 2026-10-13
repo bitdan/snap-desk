@@ -215,32 +215,36 @@ fn place_windows(
         let window = if let Some(window) = window(app, label) {
             window
         } else if edge {
-            // 使用稳定窗口接口加载无脚本纯色页面；不挂载业务界面，也不申请 IPC 权限。
+            // 共用 Vue 入口挂载纯色边框组件；不挂载业务界面，也不申请业务 IPC 权限。
             // WindowBuilder 本身需要 unstable，不能在当前依赖配置下直接使用。
-            WebviewWindowBuilder::new(app, *label, WebviewUrl::App("scroll-edge.html".into()))
-                .title(if recording {
-                    "录屏选区"
-                } else {
-                    "长截图选区"
-                })
-                // 无边框不等于无最小尺寸：Windows 默认仍有最小跟踪宽高，
-                // 不显式设置时，2px 边框会被撑成约 136px 宽、38px 高的色块。
-                .min_inner_size(1.0, 1.0)
-                .inner_size(1.0, 1.0)
-                .decorations(false)
-                .resizable(false)
-                .always_on_top(true)
-                .skip_taskbar(true)
-                .shadow(false)
-                .focused(false)
-                .focusable(false)
-                .visible(false)
-                // 在原生 HWND 创建时设置，早于 WebView2 挂载和合成表面初始化。
-                // 与 recording-controls 的 contentProtected 配置保持一致。
-                .content_protected(recording)
-                .background_color(Color(139, 92, 246, 255))
-                .build()
-                .map_err(err)?
+            WebviewWindowBuilder::new(
+                app,
+                *label,
+                WebviewUrl::App("index.html?window=selection-edge".into()),
+            )
+            .title(if recording {
+                "录屏选区"
+            } else {
+                "长截图选区"
+            })
+            // 无边框不等于无最小尺寸：Windows 默认仍有最小跟踪宽高，
+            // 不显式设置时，2px 边框会被撑成约 136px 宽、38px 高的色块。
+            .min_inner_size(1.0, 1.0)
+            .inner_size(1.0, 1.0)
+            .decorations(false)
+            .resizable(false)
+            .always_on_top(true)
+            .skip_taskbar(true)
+            .shadow(false)
+            .focused(false)
+            .focusable(false)
+            .visible(false)
+            // 在原生 HWND 创建时设置，早于 WebView2 挂载和合成表面初始化。
+            // 与 recording-controls 的 contentProtected 配置保持一致。
+            .content_protected(recording)
+            .background_color(Color(139, 92, 246, 255))
+            .build()
+            .map_err(err)?
         } else {
             return Err(format!("长截图辅助窗口不可用：{label}"));
         };

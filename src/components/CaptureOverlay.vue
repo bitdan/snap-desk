@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue'
 import { Copy, Save, X, Maximize, Scan, Move, Pin, Pipette, ArrowDownToLine, Video } from 'lucide-vue-next'
 import { api, onFrame, onScroll, type CaptureFrame, type ColorFormat, type ScrollView } from '@/lib/api'
 import { clamp, move, normalize, resize, toPixels, nudgeSelection, type Handle, type Point, type Rect } from '@/lib/selection'
@@ -11,7 +11,7 @@ import { magnifierSample } from '@/lib/magnifier'
 import { nudgeColorPoint } from '@/lib/color-picker'
 import { newerScroll } from '@/lib/scroll-capture'
 import { defaultInputEffects, recordingBitrate, recordingConfig, type EncodingPreference, type RecordingQuality, type RecorderCapabilities } from '@/lib/recording'
-import RecordingInputSettings from './RecordingInputSettings.vue'
+import RecordingSetupMenu from './RecordingSetupMenu.vue'
 import { readRecentSelection, restoreRecentSelection, writeRecentSelection } from '@/lib/recent-selection'
 
 const frame = ref<CaptureFrame | null>(null)
@@ -23,6 +23,14 @@ const error = ref('')
 const scroll = ref<ScrollView | null>(null)
 const scrollSetup = ref(false)
 const recordingSetup = ref(false)
+const recordingTrigger = ref<HTMLButtonElement | null>(null)
+const recordingAnchor = ref<{ left: number; right: number; top: number; bottom: number } | null>(null)
+function openRecordingMenu() {
+  const rect = recordingTrigger.value?.getBoundingClientRect()
+  if (rect) recordingAnchor.value = { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom }
+  error.value = ''; recordingSetup.value = true
+}
+watch(recordingSetup, open => { if (!open && frame.value) void nextTick(() => recordingTrigger.value?.focus()) })
 const recordingCapabilities = ref<RecorderCapabilities | null>(null)
 const recordingCapabilityError = ref('')
 const recordingFps = ref<30 | 60>(30)
@@ -30,7 +38,7 @@ const recordingEncoding = ref<EncodingPreference>('auto')
 const recordingQuality = ref<RecordingQuality>('balanced')
 // 空白使用自动码率；提交时才换算 bit/s，避免表单编辑影响已启动会话。
 const recordingMbps = ref<string | number>('')
-const recordingBitrateInput = ref<HTMLInputElement | null>(null)
+
 const recordingCountdown = ref<0 | 3 | 5>(0)
 const captureCursor = ref(true)
 const recordingEffects = ref(defaultInputEffects())
@@ -70,6 +78,14 @@ const toolbarStyle = computed(() => {
   const width = toolbarSize.value.width * scale, height = toolbarSize.value.height * scale
   return { left: `${clamp(r.x, 8, Math.max(8, viewport.value.width - width - 8))}px`, top: `${clamp(r.y + r.height + 12, 8, Math.max(8, viewport.value.height - height - 8))}px`, transform: `scale(${scale})`, transformOrigin: 'top left' }
 })
+// 二级面板紧邻工具栏，空间不足时翻到选区上方，仍保持在屏幕内。
+const recordingMenuStyle = computed(() => {
+  const r = recordingAnchor.value
+  if (!r) return {}
+  const below = r.bottom + 8
+  const top = clamp(below + 340 <= viewport.value.height ? below : r.top - 340, 8, Math.max(8, viewport.value.height - 348))
+  return { left: `${clamp(r.right - 390, 8, Math.max(8, viewport.value.width - 398))}px`, top: `${top}px`, maxHeight: `${viewport.value.height - top - 8}px` }
+})
 // 所有图形保存在原图坐标系内；选区只负责裁剪和限制绘制区域。
 function chooseTool(tool: AnnotationTool) { if (busy.value || editor.pending || editor.interacting) return; editor.setTool(tool); annotating.value = true }
 function selectionDown(e: PointerEvent) { if (!annotating.value) down(e, 'move') }
@@ -99,12 +115,6 @@ async function startScroll() {
 /** 使用与截图相同的原图像素选区，成功后录屏后端接管会话及快捷键。 */
 async function startRecording() {
   if (!frame.value || !pixels.value || !valid.value || busy.value || marked.value || editor.pending || editor.interacting || gesture) return
-  // number 输入框遇到未完成的指数等内容会把 value 置空，不能将 badInput 当作自动模式。
-  if (recordingBitrateInput.value && !recordingBitrateInput.value.validity.valid) {
-    error.value = '自定义录屏码率需为 1–80 Mbps，或清空以使用自动码率。'
-    recordingBitrateInput.value.focus()
-    return
-  }
   busy.value = true; error.value = ''
   try { await api.startRecording(frame.value.id, pixels.value, recordingConfig(pixels.value, recordingFps.value, captureCursor.value, recordingCountdown.value, recordingEncoding.value, recordingQuality.value, recordingEffects.value, recordingBitrate(recordingMbps.value))); recordingSetup.value = false; frame.value = null }
   catch (e) { error.value = String(e) }
@@ -281,32 +291,17 @@ onUnmounted(() => { disposed = true; off?.(); offScroll?.(); window.removeEventL
           <button :disabled="busy || editor.pending || editor.interacting" title="清空标注并重新框选" aria-label="重新框选" @click="reselect"><Scan :size="16" /></button>
           <button :disabled="busy || editor.pending || editor.interacting || marked" title="全屏选区" aria-label="全屏选区" @click="selectAll"><Maximize :size="16" /></button>
           <button :disabled="busy || editor.pending || editor.interacting || marked" title="长截图" @click="scrollSetup = true"><ArrowDownToLine :size="16" />长截图</button>
-          <button :disabled="busy || editor.pending || editor.interacting || marked || !recordingCapabilities?.available" :title="recordingCapabilities?.reason ?? (recordingCapabilityError || (recordingCapabilities ? '录制当前选区' : '正在检查录屏能力…'))" @click="recordingSetup = true"><Video :size="16" />录屏</button>
+          <button ref="recordingTrigger" :disabled="busy || editor.pending || editor.interacting || marked || !recordingCapabilities?.available" :title="recordingCapabilities?.reason ?? (recordingCapabilityError || (recordingCapabilities ? '录屏选项' : '正在检查录屏能力…'))" aria-haspopup="dialog" :aria-expanded="recordingSetup" @click="openRecordingMenu"><Video :size="16" />录屏</button>
         <button :disabled="busy || editor.pending || editor.interacting" title="贴图 Ctrl/⌘+P" @click="finish('pin')"><Pin :size="16" />贴图</button>
-        <button :disabled="busy || editor.pending || editor.interacting" @click="finish('save')"><Save :size="16" />保存</button>
-        <button class="copy-button" :disabled="busy || editor.pending || editor.interacting" @click="finish('copy')"><Copy :size="16" />{{ busy ? '处理中' : '复制' }}</button>
-        <button :disabled="busy || editor.pending" title="取消截图" @click="cancel"><X :size="16" /></button>
+        <button :disabled="busy || editor.pending || editor.interacting" title="保存图片 Ctrl/⌘+S" aria-label="保存图片" @click="finish('save')"><Save :size="16" />保存</button>
+        <button class="copy-button" :disabled="busy || editor.pending || editor.interacting" title="复制图片 Enter" aria-label="复制图片" @click="finish('copy')"><Copy :size="16" />{{ busy ? '处理中' : '复制' }}</button>
+        <button :disabled="busy || editor.pending" title="取消截图" aria-label="取消截图" @click="cancel"><X :size="16" /></button>
         </template>
       </AnnotationToolbar>
     </div>
     <CaptureMagnifier v-if="showMagnifier && screenImage && pointer && frame" :image="screenImage" :point="pointer" :viewport="viewport" :image-size="frame" :show-color="picking" />
-    <div v-if="recordingSetup" class="scroll-setup-shade" @pointerdown.stop @pointermove.stop @contextmenu.stop.prevent>
-      <section class="scroll-setup" role="dialog" aria-modal="true" aria-label="开始录屏">
-        <h2>录制当前选区 · MP4</h2>
-        <p>点击控制条“开始录制”后按下方设置开始。支持暂停、继续、结束保存和取消；无声 MP4，单次最多 3 分钟。</p>
-        <label>编码 <select v-model="recordingEncoding" :disabled="busy"><option value="auto">自动（允许硬件加速）</option><option value="software">软件（兼容模式）</option></select></label>
-        <label>画质 <select v-model="recordingQuality" :disabled="busy || recordingMbps !== ''"><option value="economy">节省空间</option><option value="balanced">均衡</option><option value="high">高清</option></select></label>
-        <label>目标码率（Mbps）<input ref="recordingBitrateInput" v-model="recordingMbps" type="number" min="1" max="80" step="any" placeholder="自动" :disabled="busy" aria-describedby="recording-bitrate-help" class="w-24 rounded border border-zinc-500 bg-transparent px-2 py-1" /></label>
-        <p id="recording-bitrate-help">留空按画质自动计算；自定义 1–80 Mbps 优先于画质预设，可输入小数。实际码率和文件大小随画面变化。</p>
-        <label>目标帧率 <select v-model="recordingFps" :disabled="busy"><option :value="30">30 FPS</option><option :value="60">60 FPS</option></select></label>
-        <label>开始倒计时 <select v-model="recordingCountdown" :disabled="busy"><option :value="0">立即</option><option :value="3">3 秒</option><option :value="5">5 秒</option></select></label>
-        <p>点击控制条“开始录制”后倒计时，可随时取消；倒计时不计入视频时长。</p>
-        <label><input v-model="captureCursor" type="checkbox" :disabled="busy" /> 录制鼠标指针</label>
-        <RecordingInputSettings v-model="recordingEffects" :disabled="busy" />
-        <p>视频自动保存到本地，停止后显示路径。静态画面有键鼠动画时会继续绘制；实际帧数取决于采集和编码速度。</p>
-        <p v-if="error" class="scroll-setup-error" role="alert">{{ error }}</p>
-        <div><button :disabled="busy" @click="recordingSetup = false">返回选区</button><button :disabled="busy" @click="startRecording">{{ busy ? '准备中…' : '确认选区' }}</button></div>
-      </section>
+    <div v-if="recordingSetup" class="recording-menu-shade" @pointerdown.self.stop="!busy && (recordingSetup = false)" @pointermove.stop @contextmenu.stop.prevent>
+      <RecordingSetupMenu v-model:fps="recordingFps" v-model:encoding="recordingEncoding" v-model:quality="recordingQuality" v-model:mbps="recordingMbps" v-model:countdown="recordingCountdown" v-model:cursor="captureCursor" v-model:effects="recordingEffects" :busy="busy" :error="error" :style="recordingMenuStyle" @confirm="startRecording" @close="recordingSetup = false" />
     </div>
     <div v-if="scrollSetup" class="scroll-setup-shade" @pointerdown.stop @pointermove.stop @contextmenu.stop.prevent>
       <section class="scroll-setup" role="dialog" aria-modal="true" aria-label="开始长截图">
@@ -322,6 +317,7 @@ onUnmounted(() => { disposed = true; off?.(); offScroll?.(); window.removeEventL
 </template>
 
 <style scoped>
+.recording-menu-shade { position: absolute; inset: 0; z-index: 6; cursor: default; }
 .capture-toolbar.annotation-toolbar { max-width: none; }
 .capture-toolbar :deep(.annotation-tools) { width: max-content; max-width: none; }
 .capture-toolbar :deep(.annotation-tool-row) { overflow: visible; }

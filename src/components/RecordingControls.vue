@@ -36,24 +36,24 @@ onUnmounted(() => { disposed = true; clearTimeout(timer) })
     <span class="dot" :class="{ paused: view?.phase !== 'recording' }" />
     <span class="time" role="timer">{{ recordingTime(view?.seconds ?? 0) }}</span>
     <span class="status" role="status">{{ view ? recordingStatus(view) : '连接中…' }}</span>
-    <span v-if="view?.phase !== 'countdown'" class="fps" :title="`近两秒 ${view?.stats.recentFps.toFixed(1) ?? '0.0'} FPS；编码提交 ${view?.frames ?? 0} 帧，队列满 ${view?.stats.queueDroppedFrames ?? 0} 帧，旧代次 ${view?.stats.staleQueuedFrames ?? 0} 帧；静态画面低 FPS 不等同丢帧`">目标 {{ view?.targetFps ?? 30 }} FPS</span>
-    <button v-if="view?.phase === 'ready'" class="start" :disabled="busy" @click="control('start')"><Play :size="15" />开始录制</button>
+    <span v-if="view?.phase !== 'countdown'" class="fps" :title="`近两秒 ${view?.stats.recentFps.toFixed(1) ?? '0.0'} FPS；编码提交 ${view?.frames ?? 0} 帧，队列满 ${view?.stats.queueDroppedFrames ?? 0} 帧，旧代次 ${view?.stats.staleQueuedFrames ?? 0} 帧；静态画面低 FPS 不等同丢帧`">{{ view?.targetFps ?? 30 }} FPS</span>
+    <button v-if="view?.phase === 'ready'" class="start" :disabled="busy" title="开始录制" aria-label="开始录制" @click="control('start')"><Play :size="15" />开始</button>
     <button v-else-if="view?.phase === 'countdown'" disabled><Play :size="15" />等待开始</button>
-    <button v-else-if="view?.phase === 'paused'" :disabled="busy" @click="control('resume')"><Play :size="15" />继续</button>
-    <button v-else :disabled="busy || view?.phase !== 'recording'" @click="control('pause')"><Pause :size="15" />暂停</button>
-    <button :disabled="busy || !view || !['recording', 'paused'].includes(view.phase)" @click="control('stop')"><Square :size="15" />结束保存</button>
-    <button :disabled="busy || !recordingActive(view)" title="丢弃本次录屏" @click="control('cancel')"><X :size="15" />取消</button>
+    <button v-else-if="view?.phase === 'paused'" :disabled="busy" title="继续录制" aria-label="继续录制" @click="control('resume')"><Play :size="17" /></button>
+    <button v-else :disabled="busy || view?.phase !== 'recording'" title="暂停录制" aria-label="暂停录制" @click="control('pause')"><Pause :size="17" /></button>
+    <button :disabled="busy || !view || !['recording', 'paused'].includes(view.phase)" title="结束并保存视频" aria-label="结束并保存视频" @click="control('stop')"><Square :size="17" /></button>
+    <button :disabled="busy || !recordingActive(view)" title="取消并丢弃本次录屏" aria-label="取消并丢弃本次录屏" @click="control('cancel')"><X :size="17" /></button>
     <span v-if="error" class="error" role="alert" :title="error">{{ error }}</span>
   </main>
 </template>
 
 <style scoped>
-.recording-controls { height: 100vh; display: flex; align-items: center; justify-content: center; gap: 8px; padding: 5px 8px; background: #fafafa; border: 1px solid #ddd; color: #27272a; font-size: 12px; overflow: hidden; }
+.recording-controls { height: 100vh; display: flex; align-items: center; justify-content: center; gap: 8px; padding: 5px 8px; background: #fafafa; border: 1px solid #ddd; border-radius: 7px; color: #27272a; font-size: 12px; overflow: hidden; }
 .dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: #ef4444; }
 .dot.paused { background: #a1a1aa; }
 .time { font-variant-numeric: tabular-nums; white-space: nowrap; }
 .status { min-width: 42px; color: #71717a; white-space: nowrap; }
-button { display: flex; align-items: center; justify-content: center; gap: 3px; flex: none; padding: 0 7px; height: 30px; border: 1px solid #ddd; border-radius: 5px; white-space: nowrap; }
+button { min-width: 30px; display: flex; align-items: center; justify-content: center; gap: 3px; flex: none; padding: 0 7px; height: 30px; border: 1px solid #ddd; border-radius: 5px; white-space: nowrap; }
 .start { background: #7c3aed; color: white; border-color: #7c3aed; }
 .fps { color: #71717a; font-size: 11px; white-space: nowrap; }
 button:hover { background: #ede9fe; color: #7c3aed; }

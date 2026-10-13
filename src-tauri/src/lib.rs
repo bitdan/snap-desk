@@ -11,7 +11,7 @@ use capture::{require_window, show_main, CaptureState};
 use serde::Serialize;
 use std::sync::atomic::Ordering;
 use tauri::{
-    menu::{Menu, MenuItem},
+    menu::{CheckMenuItem, Menu, MenuItem},
     tray::TrayIconBuilder,
     AppHandle, Manager, WebviewWindow,
 };
@@ -30,18 +30,23 @@ struct AppStatus {
 #[tauri::command]
 async fn app_status(app: AppHandle, window: WebviewWindow) -> Result<AppStatus, String> {
     require_window(&window, "main")?;
-    let state = app.state::<settings::SettingsState>();
-    let current = state.0.lock().map_err(|e| e.to_string())?;
-    Ok(AppStatus {
-        settings: current.value.clone(),
-        shortcut_error: current.shortcut_error.clone(),
-        config_warning: current.config_warning.clone(),
-        delay_remaining: app
-            .state::<CaptureState>()
-            .delay_remaining
-            .load(Ordering::SeqCst),
-        platform: std::env::consts::OS,
+    // 设置保存会调用主线程注册快捷键/更新菜单，查询不能在主线程等待同一把锁。
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<settings::SettingsState>();
+        let current = state.0.lock().map_err(|e| e.to_string())?;
+        Ok(AppStatus {
+            settings: current.value.clone(),
+            shortcut_error: current.shortcut_error.clone(),
+            config_warning: current.config_warning.clone(),
+            delay_remaining: app
+                .state::<CaptureState>()
+                .delay_remaining
+                .load(Ordering::SeqCst),
+            platform: std::env::consts::OS,
+        })
     })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -104,6 +109,7 @@ pub fn run() {
                         .is_some_and(|state| {
                             state.0.try_lock().ok().is_some_and(|current| {
                                 current.registered
+                                    && current.value.shortcuts_enabled
                                     && current.value.validate().ok().as_ref() == Some(shortcut)
                             })
                         });
@@ -116,46 +122,26 @@ pub fn run() {
         .setup(|app| {
             settings::initialize(app.handle())?;
             let capture = MenuItem::with_id(app, "capture", "开始截图", true, None::<&str>)?;
-            let cancel = MenuItem::with_id(app, "cancel", "取消延时截图", true, None::<&str>)?;
-            let scroll_stop = MenuItem::with_id(
-                app,
-                "scroll-stop",
-                "结束长截图并自动保存",
-                true,
-                None::<&str>,
-            )?;
-            let scroll_cancel =
-                MenuItem::with_id(app, "scroll-cancel", "取消当前截图", true, None::<&str>)?;
+            let pin = MenuItem::with_id(app, "pin", "贴图", true, None::<&str>)?;
             let open = MenuItem::with_id(app, "open", "打开 Snap Desk", true, None::<&str>)?;
-            let record_pause = MenuItem::with_id(
+            let enabled = app
+                .state::<settings::SettingsState>()
+                .0
+                .lock()
+                .map_err(|e| e.to_string())?
+                .value
+                .shortcuts_enabled;
+            let shortcuts = CheckMenuItem::with_id(
                 app,
-                "record-pause",
-                "暂停录屏 / 打开控制",
+                "shortcuts",
+                "启用全局快捷键",
                 true,
+                enabled,
                 None::<&str>,
             )?;
-            let record_resume =
-                MenuItem::with_id(app, "record-resume", "恢复录屏", true, None::<&str>)?;
-            let record_stop =
-                MenuItem::with_id(app, "record-stop", "停止录屏并导出 MP4", true, None::<&str>)?;
-            let record_cancel =
-                MenuItem::with_id(app, "record-cancel", "取消录屏并清理", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
-            let menu = Menu::with_items(
-                app,
-                &[
-                    &capture,
-                    &cancel,
-                    &scroll_stop,
-                    &scroll_cancel,
-                    &record_pause,
-                    &record_resume,
-                    &record_stop,
-                    &record_cancel,
-                    &open,
-                    &quit,
-                ],
-            )?;
+            let menu = Menu::with_items(app, &[&capture, &pin, &open, &shortcuts, &quit])?;
+            app.manage(settings::ShortcutMenu(shortcuts));
             TrayIconBuilder::new()
                 .icon(tauri::image::Image::from_bytes(include_bytes!(
                     "../icons/32x32.png"
@@ -163,48 +149,33 @@ pub fn run() {
                 .tooltip("Snap Desk · 截图工具")
                 .menu(&menu)
                 .on_menu_event(|app, event| match event.id.as_ref() {
-                    "capture" => trigger(app),
-                    "record-pause" | "record-resume" => {
+                    "capture" => {
+                        // 菜单只启动截图，不复用快捷键的停止录屏语义。
                         let app = app.clone();
-                        let resume = event.id.as_ref() == "record-resume";
-                        tauri::async_runtime::spawn_blocking(move || {
-                            use capture::recording::RecordingAction;
-                            if let Err(error) = capture::recording::control(
-                                &app,
-                                None,
-                                if resume {
-                                    RecordingAction::Resume
-                                } else {
-                                    RecordingAction::Pause
-                                },
-                            ) {
+                        tauri::async_runtime::spawn(async move {
+                            if let Err(error) = capture::begin(app.clone()).await {
                                 capture::report_error(&app, error);
                             }
                         });
                     }
-                    "record-stop" => {
-                        capture::recording::request_stop(app, false);
+                    "pin" => {
+                        let app = app.clone();
+                        tauri::async_runtime::spawn_blocking(move || {
+                            if let Err(error) = pins::clipboard_pin(&app) {
+                                capture::report_error(&app, error);
+                            }
+                        });
                     }
-                    "record-cancel" => {
-                        capture::recording::request_stop(app, true);
+                    "shortcuts" => {
+                        let app = app.clone();
+                        tauri::async_runtime::spawn_blocking(move || {
+                            if let Err(error) = settings::set_shortcuts(&app, None) {
+                                capture::report_error(&app, error);
+                            }
+                        });
                     }
-                    "scroll-cancel" => {
-                        if let Err(error) = capture::cancel_active(app) {
-                            capture::report_error(app, error);
-                        }
-                    }
-                    "scroll-stop" => {
-                        capture::scroll_capture::stop(app);
-                    }
-                    "cancel" => {
-                        capture::cancel_delay(app);
-                    }
-                    "open" => {
-                        if !app.state::<CaptureState>().active.load(Ordering::SeqCst) {
-                            show_main(app);
-                        }
-                    }
-                    // 先完成正在录制的视频；导出完成后可再次从托盘退出。
+                    "open" => show_main(app),
+                    // 先完成正在录制的视频，避免退出截断输出。
                     "quit" => {
                         if !capture::recording::request_stop(app, false) {
                             app.exit(0);
@@ -259,6 +230,7 @@ pub fn run() {
             app_status,
             hide_main,
             settings::save_settings,
+            settings::set_shortcuts_enabled,
             capture::cancel_pending_capture,
             capture::start_capture,
             capture::current_capture,

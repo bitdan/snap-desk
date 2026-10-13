@@ -36,6 +36,7 @@ async function listen<T>(event: string, callback: EventCallback<T>) {
 export const api = {
   status: () => invoke<AppStatus>('app_status'),
   saveSettings: (settings: Settings) => invoke<Settings>('save_settings', { settings }),
+  setShortcutsEnabled: (enabled: boolean) => invoke<Settings>('set_shortcuts_enabled', { enabled }),
   cancelPending: () => invoke<void>('cancel_pending_capture'),
   start: () => invoke<void>('start_capture'),
   current: () => invoke<CaptureFrame | null>('current_capture'),
@@ -74,4 +75,5 @@ export const onError = (fn: (error: string) => void) => listen<string>('capture-
 export const onResult = (fn: (result: string) => void) => listen<string>('capture-result', e => fn(e.payload))
 export const onDelay = (fn: (remaining: number) => void) => listen<number>('capture-delay', e => fn(e.payload))
 export const onPinsChanged = (fn: () => void) => listen('pins-changed', fn)
+export const onSettingsChanged = (fn: () => void) => listen('settings-changed', fn)
 export const onScroll = (fn: (view: ScrollView) => void) => listen<ScrollView>('scroll-updated', e => fn(e.payload))

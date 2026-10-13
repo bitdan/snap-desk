@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { defaultInputEffects, recordingConfig } from '../src/lib/recording'
+import { defaultSettings } from '../src/lib/settings'
 
 const invoke = vi.hoisted(() => vi.fn())
 vi.mock('@tauri-apps/api/core', () => ({ invoke, isTauri: () => true }))
@@ -7,6 +8,12 @@ vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn() }))
 import { api } from '../src/lib/api'
 
 describe('录屏 IPC 契约', () => {
+  it('快捷键总开关只传布尔值，不携带其他未保存设置', async () => {
+    const settings = { ...defaultSettings(), shortcutsEnabled: false }
+    invoke.mockResolvedValueOnce(settings)
+    expect(await api.setShortcutsEnabled(false)).toEqual(settings)
+    expect(invoke).toHaveBeenLastCalledWith('set_shortcuts_enabled', { enabled: false })
+  })
   it('查询、选择和恢复录屏目录，取消原生选择器不产生新目录', async () => {
     const directory = { path: 'D:\\Videos\\录屏', isDefault: false }
     invoke.mockResolvedValueOnce(directory)

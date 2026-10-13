@@ -348,22 +348,25 @@ pub async fn pin_file(app: AppHandle, window: WebviewWindow) -> Result<bool, Str
 #[tauri::command]
 pub async fn pin_clipboard(app: AppHandle, window: WebviewWindow) -> Result<(), String> {
     crate::capture::require_window(&window, "main")?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let clipboard = app
-            .clipboard()
-            .read_image()
-            .map_err(|e| format!("剪贴板没有可读取的图片：{e}"))?;
-        validate_capacity(clipboard.width(), clipboard.height(), 0, 0)?;
-        let image = RgbaImage::from_raw(
-            clipboard.width(),
-            clipboard.height(),
-            clipboard.rgba().to_vec(),
-        )
-        .ok_or("剪贴板图片数据无效。")?;
-        create_visible(&app, image, vec![])
-    })
-    .await
-    .map_err(err)?
+    tauri::async_runtime::spawn_blocking(move || clipboard_pin(&app))
+        .await
+        .map_err(err)?
+}
+
+/// 主界面和托盘共用的剪贴板图片贴图入口。
+pub fn clipboard_pin(app: &AppHandle) -> Result<(), String> {
+    let clipboard = app
+        .clipboard()
+        .read_image()
+        .map_err(|e| format!("剪贴板没有可读取的图片：{e}"))?;
+    validate_capacity(clipboard.width(), clipboard.height(), 0, 0)?;
+    let image = RgbaImage::from_raw(
+        clipboard.width(),
+        clipboard.height(),
+        clipboard.rgba().to_vec(),
+    )
+    .ok_or("剪贴板图片数据无效。")?;
+    create_visible(app, image, vec![])
 }
 
 #[tauri::command]

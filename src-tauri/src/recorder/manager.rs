@@ -88,7 +88,7 @@ impl Session {
             self.timeline.resume(now);
             self.fps_window.reset(self.timeline.elapsed(now));
             self.view.phase = Phase::Recording;
-            self.view.message = "录屏中；托盘可暂停，截图快捷键可停止。".into();
+            self.view.message = "录制中".into();
         } else {
             self.countdown_until = Some(now + i64::from(delay) * 10_000_000);
             self.view.countdown_remaining = delay;
