@@ -22,8 +22,8 @@ pub mod scroll;
 pub struct CaptureState {
     /// 从倒计时开始到导出/取消结束只允许一个会话。
     pub active: AtomicBool,
-    /// 屏蔽操作系统长按快捷键产生的重复 Pressed 事件。
-    pub hotkey_pressed: AtomicBool,
+    /// 三个位分别记录截图、贴图、录屏键，避免长按重复触发或互相清除按下状态。
+    pub hotkey_pressed: AtomicU8,
     operation: AtomicBool,
     next_id: AtomicU64,
     session: Mutex<Option<Session>>,
@@ -52,6 +52,8 @@ pub struct Frame {
     width: u32,
     height: u32,
     data_url: String,
+    /// F3 进入录屏框选；随帧传递意图，窗口重新加载也不会丢失入口状态。
+    recording: bool,
 }
 
 #[derive(Clone, Copy, Deserialize, Serialize)]
@@ -110,6 +112,15 @@ pub fn show_main(app: &AppHandle) {
 /// 按钮、快捷键和托盘共用入口。读取设置与占用截图状态在同一把锁内完成，
 /// 避免“正在保存快捷键”与“恰好开始截图”并发导致状态不一致。
 pub async fn begin(app: AppHandle) -> Result<(), String> {
+    begin_with_mode(app, false).await
+}
+
+/// 录屏快捷键复用截图的选区能力，确认范围后再交给录屏设置与采集器。
+pub async fn begin_recording(app: AppHandle) -> Result<(), String> {
+    begin_with_mode(app, true).await
+}
+
+async fn begin_with_mode(app: AppHandle, recording: bool) -> Result<(), String> {
     let state = app.state::<CaptureState>();
     let delay = {
         let settings = app.state::<crate::settings::SettingsState>();
@@ -122,10 +133,14 @@ pub async fn begin(app: AppHandle) -> Result<(), String> {
             return Err("截图正在进行中，请先完成或取消当前截图。".into());
         }
         state.delay_cancelled.store(false, Ordering::SeqCst);
-        state
-            .delay_remaining
-            .store(settings.value.delay_seconds, Ordering::SeqCst);
-        settings.value.delay_seconds
+        // 录屏有独立倒计时，选区入口不叠加截图延时。
+        let delay = if recording {
+            0
+        } else {
+            settings.value.delay_seconds
+        };
+        state.delay_remaining.store(delay, Ordering::SeqCst);
+        delay
     };
     let worker_app = app.clone();
     // move 将句柄所有权转移给后台闭包；clone 只克隆应用句柄，不复制整个应用。
@@ -151,7 +166,7 @@ pub async fn begin(app: AppHandle) -> Result<(), String> {
             let _ = worker_app.emit_to("main", "capture-result", "已取消延时截图。");
             return Ok(());
         }
-        prepare(&worker_app)
+        prepare(&worker_app, recording)
     })
     .await
     .map_err(err)
@@ -212,7 +227,7 @@ pub fn cancel_pending_capture(app: AppHandle, window: WebviewWindow) -> Result<(
     }
 }
 
-fn prepare(app: &AppHandle) -> Result<(), String> {
+fn prepare(app: &AppHandle, recording: bool) -> Result<(), String> {
     let window = overlay(app)?;
     window.hide().map_err(err)?;
     if let Some(main) = app.get_webview_window("main") {
@@ -233,6 +248,7 @@ fn prepare(app: &AppHandle) -> Result<(), String> {
     let id = state.next_id.fetch_add(1, Ordering::SeqCst) + 1;
     let frame = Frame {
         id,
+        recording,
         width: image.width(),
         height: image.height(),
         data_url: format!(

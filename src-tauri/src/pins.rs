@@ -353,7 +353,7 @@ pub async fn pin_clipboard(app: AppHandle, window: WebviewWindow) -> Result<(), 
         .map_err(err)?
 }
 
-/// 主界面和托盘共用的剪贴板图片贴图入口。
+/// 主界面、托盘和 F2 共用的剪贴板图片贴图入口；直接读取内存像素，不要求磁盘文件。
 pub fn clipboard_pin(app: &AppHandle) -> Result<(), String> {
     let clipboard = app
         .clipboard()

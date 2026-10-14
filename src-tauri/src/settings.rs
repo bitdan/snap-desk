@@ -105,6 +105,9 @@ impl Settings {
             return Err("快捷键组合过长，最多一个主键加四个修饰键。".into());
         }
         let key = parts[parts.len() - 1];
+        if parts.len() == 1 && matches!(key, "F2" | "F3") {
+            return Err("F2 已用于剪贴板贴图，F3 已用于录屏，请选择其他截图快捷键。".into());
+        }
         let letter = key.len() == 1
             && key
                 .bytes()
@@ -127,6 +130,21 @@ impl Settings {
             .parse::<Shortcut>()
             .map_err(|e| format!("快捷键格式无效：{e}"))
     }
+}
+
+/// 固定功能键与截图键统一注册、释放；避免关闭总开关后仍占用系统按键。
+pub fn pin_shortcut() -> Shortcut {
+    "F2".parse().expect("固定 F2 快捷键有效")
+}
+pub fn recording_shortcut() -> Shortcut {
+    "F3".parse().expect("固定 F3 快捷键有效")
+}
+fn shortcut_keys(value: &Settings) -> Result<Vec<Shortcut>, String> {
+    Ok(vec![
+        value.validate()?,
+        pin_shortcut(),
+        recording_shortcut(),
+    ])
 }
 
 /// Mutex 让设置保存串行执行；注册状态单独记录，以便启动注册失败后重试同一快捷键。
@@ -189,15 +207,23 @@ pub fn initialize(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     let path = app.path().app_config_dir()?.join("settings.json");
     let (value, config_warning) = load(&path);
     let shortcut_error = if value.shortcuts_enabled {
-        app.global_shortcut()
-            .register(value.shortcut.as_str())
-            .err()
-            .map(|e| {
-                format!(
-                    "快捷键 {} 注册失败，可使用按钮或托盘，或在设置中更换：{e}",
-                    value.shortcut
-                )
-            })
+        apply_settings(
+            &value,
+            &value,
+            false,
+            |key| {
+                app.global_shortcut()
+                    .register(key)
+                    .map_err(|e| e.to_string())
+            },
+            |key| {
+                app.global_shortcut()
+                    .unregister(key)
+                    .map_err(|e| e.to_string())
+            },
+            |_| Ok(()),
+        )
+        .err()
     } else {
         None
     };
@@ -221,39 +247,72 @@ fn apply_settings(
     mut unregister: impl FnMut(Shortcut) -> Result<(), String>,
     mut write: impl FnMut(&Settings) -> Result<(), String>,
 ) -> Result<(), String> {
-    let old_key = old.validate()?;
-    let new_key = next.validate()?;
-    let replace = next.shortcuts_enabled && (old_key != new_key || !registered);
-    if replace {
-        register(new_key).map_err(|e| format!("快捷键注册失败，原设置保持不变：{e}"))?;
-    }
-    if let Err(error) = write(next) {
-        let rollback = if replace {
-            unregister(new_key).err()
-        } else {
-            None
-        };
-        return Err(format!(
-            "配置保存失败，原设置保持不变：{error}{}",
-            rollback
-                .map(|e| format!("；新快捷键清理失败，请重启应用：{e}"))
-                .unwrap_or_default()
-        ));
-    }
-    if registered && (!next.shortcuts_enabled || old_key != new_key) {
-        if let Err(error) = unregister(old_key) {
-            let disk = write(old).err();
-            let key = if replace {
-                unregister(new_key).err()
-            } else {
-                None
-            };
+    let old_keys = if registered {
+        shortcut_keys(old)?
+    } else {
+        vec![]
+    };
+    next.validate()?;
+    let new_keys = if next.shortcuts_enabled {
+        shortcut_keys(next)?
+    } else {
+        vec![]
+    };
+    let mut added = Vec::new();
+    for key in new_keys.iter().filter(|key| !old_keys.contains(key)) {
+        if let Err(error) = register(*key) {
+            let cleanup: Vec<_> = added
+                .iter()
+                .rev()
+                .filter_map(|key| unregister(*key).err())
+                .collect();
             return Err(format!(
-                "旧快捷键释放失败：{error}；配置回滚：{}；新键清理：{}",
-                disk.unwrap_or_else(|| "成功".into()),
-                key.unwrap_or_else(|| "成功".into())
+                "快捷键 {key:?} 注册失败，原设置保持不变：{error}{}",
+                if cleanup.is_empty() {
+                    String::new()
+                } else {
+                    format!("；快捷键回滚失败，请重启：{}", cleanup.join("；"))
+                }
             ));
         }
+        added.push(*key);
+    }
+    if let Err(error) = write(next) {
+        let rollback: Vec<_> = added
+            .iter()
+            .rev()
+            .filter_map(|key| unregister(*key).err())
+            .collect();
+        return Err(format!(
+            "配置保存失败，原设置保持不变：{error}{}",
+            if rollback.is_empty() {
+                String::new()
+            } else {
+                format!("；新快捷键清理失败，请重启应用：{}", rollback.join("；"))
+            }
+        ));
+    }
+    let mut removed = Vec::new();
+    for key in old_keys.iter().filter(|key| !new_keys.contains(key)) {
+        if let Err(error) = unregister(*key) {
+            let disk = write(old).err();
+            // 多键操作失败时，恢复已经释放的旧键，并撤销本轮新增键。
+            let mut failures: Vec<_> = removed
+                .iter()
+                .filter_map(|key| register(*key).err())
+                .collect();
+            failures.extend(added.iter().rev().filter_map(|key| unregister(*key).err()));
+            return Err(format!(
+                "旧快捷键释放失败：{error}；配置回滚：{}；按键回滚：{}",
+                disk.unwrap_or_else(|| "成功".into()),
+                if failures.is_empty() {
+                    "成功".into()
+                } else {
+                    failures.join("；")
+                }
+            ));
+        }
+        removed.push(*key);
     }
     Ok(())
 }
@@ -301,7 +360,7 @@ pub async fn save_settings(
         current.config_warning = None;
         app.state::<CaptureState>()
             .hotkey_pressed
-            .store(false, Ordering::SeqCst);
+            .store(0, Ordering::SeqCst);
         notify_settings(&app, &settings);
         Ok(settings)
     })
@@ -347,7 +406,7 @@ pub fn set_shortcuts(app: &AppHandle, enabled: Option<bool>) -> Result<Settings,
     current.config_warning = None;
     app.state::<CaptureState>()
         .hotkey_pressed
-        .store(false, Ordering::SeqCst);
+        .store(0, Ordering::SeqCst);
     notify_settings(app, &next);
     Ok(next)
 }
@@ -438,7 +497,7 @@ mod tests {
             |_| Ok(()),
         )
         .unwrap();
-        assert_eq!(*removed.borrow(), vec![old.validate().unwrap()]);
+        assert_eq!(*removed.borrow(), shortcut_keys(&old).unwrap());
         let mut changed = disabled.clone();
         changed.shortcut = "F8".into();
         apply_settings(
@@ -622,6 +681,86 @@ mod tests {
         .unwrap();
         assert!(registered.get());
     }
+
+    #[test]
+    fn enabling_registers_capture_pin_and_recording() {
+        let value = Settings::default();
+        let keys = std::cell::RefCell::new(Vec::new());
+        apply_settings(
+            &value,
+            &value,
+            false,
+            |key| {
+                keys.borrow_mut().push(key);
+                Ok(())
+            },
+            |_| panic!("启用成功不释放按键"),
+            |_| Ok(()),
+        )
+        .unwrap();
+        assert_eq!(*keys.borrow(), shortcut_keys(&value).unwrap());
+    }
+
+    #[test]
+    fn recording_key_conflict_rolls_back_all_new_keys_before_writing() {
+        let value = Settings::default();
+        let removed = std::cell::RefCell::new(Vec::new());
+        assert!(apply_settings(
+            &value,
+            &value,
+            false,
+            |key| if key == recording_shortcut() {
+                Err("F3 被占用".into())
+            } else {
+                Ok(())
+            },
+            |key| {
+                removed.borrow_mut().push(key);
+                Ok(())
+            },
+            |_| panic!("部分注册失败不应落盘"),
+        )
+        .is_err());
+        assert_eq!(
+            *removed.borrow(),
+            vec![pin_shortcut(), value.validate().unwrap()]
+        );
+    }
+
+    #[test]
+    fn disabling_failure_restores_previously_released_keys() {
+        let old = Settings::default();
+        let next = Settings {
+            shortcuts_enabled: false,
+            ..old.clone()
+        };
+        let restored = std::cell::RefCell::new(Vec::new());
+        let writes = std::cell::RefCell::new(Vec::new());
+        assert!(apply_settings(
+            &old,
+            &next,
+            true,
+            |key| {
+                restored.borrow_mut().push(key);
+                Ok(())
+            },
+            |key| if key == recording_shortcut() {
+                Err("释放失败".into())
+            } else {
+                Ok(())
+            },
+            |value| {
+                writes.borrow_mut().push(value.clone());
+                Ok(())
+            },
+        )
+        .is_err());
+        assert_eq!(
+            *restored.borrow(),
+            vec![old.validate().unwrap(), pin_shortcut()]
+        );
+        assert_eq!(*writes.borrow(), vec![next, old]);
+    }
     #[test]
     fn missing_corrupt_and_invalid_files_fall_back_without_overwriting() {
         let dir = tempfile::tempdir().unwrap();
@@ -680,7 +819,7 @@ mod tests {
     #[test]
     fn function_keys_are_valid_without_modifiers() {
         // F1～F12 可单独作为全局快捷键，这也是新的默认值 F1 的使用场景。
-        for n in 1..=12 {
+        for n in (1..=12).filter(|n| ![2, 3].contains(n)) {
             assert!(Settings {
                 shortcut: format!("F{n}"),
                 ..Settings::default()
@@ -689,7 +828,7 @@ mod tests {
             .is_ok());
         }
         // F13 及字母、数字仍然需要修饰键。
-        for shortcut in ["F13", "A", "1"] {
+        for shortcut in ["F2", "F3", "F13", "A", "1"] {
             assert!(Settings {
                 shortcut: shortcut.into(),
                 ..Settings::default()

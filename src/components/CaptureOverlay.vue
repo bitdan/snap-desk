@@ -38,6 +38,13 @@ function openRecordingMenu() {
   if (rect) recordingAnchor.value = { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom }
   error.value = ''; recordingSetup.value = true
 }
+/** F3 选好范围后自动进入录屏设置；等待工具栏布局完成，再定位面板。 */
+async function selectedRecordingRegion() {
+  const id = frame.value?.id
+  if (!frame.value?.recording || !valid.value) return
+  await nextTick()
+  if (frame.value?.id === id && valid.value && !busy.value && !gesture) openRecordingMenu()
+}
 watch(recordingSetup, open => { if (!open && frame.value) void nextTick(() => recordingTrigger.value?.focus()) })
 const recordingCapabilities = ref<RecorderCapabilities | null>(null)
 const recordingCapabilityError = ref('')
@@ -113,6 +120,7 @@ function restoreSelection() {
   if (!recentRect.value || busy.value || scrollSetup.value || gesture || marked.value || editor.pending || editor.interacting) return
   const rect = { ...recentRect.value }
   reselect(); selection.value = rect
+  void selectedRecordingRegion()
 }
 function receiveScroll(value: ScrollView) {
   const next = newerScroll(scroll.value, value, frame.value?.id)
@@ -165,9 +173,13 @@ function drag(e: PointerEvent) {
   const { start, initial, mode } = gesture
   selection.value = mode === 'draw' ? normalize(start, p) : mode === 'move' ? move(initial, { x: p.x - start.x, y: p.y - start.y }, viewport.value) : resize(initial, mode, p)
 }
-function up() { gesture = null }
+function up() {
+  const drawn = gesture?.mode === 'draw'
+  gesture = null
+  if (drawn) void selectedRecordingRegion()
+}
 function abortGesture() { gesture = null }
-function selectAll() { if (!busy.value && !marked.value && !editor.interacting) { editor.reset(); selection.value = { x: 0, y: 0, ...viewport.value } } }
+function selectAll() { if (!busy.value && !marked.value && !editor.interacting) { editor.reset(); selection.value = { x: 0, y: 0, ...viewport.value }; void selectedRecordingRegion() } }
 function receive(value: CaptureFrame) { busy.value = false; reselect(); scroll.value = null; scrollSetup.value = false; recordingSetup.value = false; imageReady.value = false; frame.value = value }
 async function loaded() {
   if (!frame.value) return
@@ -267,7 +279,7 @@ onUnmounted(() => { disposed = true; off?.(); offScroll?.(); window.removeEventL
   <div v-else class="capture-overlay" @pointerdown="down($event)" @pointermove.capture="drag" @pointerleave="pointer = null" @pointerup="up" @pointercancel="abortGesture(); pointer = null" @contextmenu.prevent="cancel">
     <img v-if="frame" :key="frame.id" ref="screenImage" class="screen-image" :src="frame.dataUrl" alt="当前屏幕截图" draggable="false" @load="loaded" @error="imageFailed" />
     <div v-if="!selection" class="initial-shade" />
-    <div v-if="!selection" class="capture-tip">拖动框选屏幕 <span>移动鼠标取色 · C 复制色值 · Esc / 右键取消 · Ctrl / ⌘ + A 全屏 · R 最近选区</span></div>
+    <div v-if="!selection" class="capture-tip">{{ frame?.recording ? '拖动选择录屏范围' : '拖动框选屏幕' }} <span>移动鼠标取色 · C 复制色值 · Esc / 右键取消 · Ctrl / ⌘ + A 全屏 · R 最近选区</span></div>
     <div v-if="frame" class="capture-modebar" @pointerdown.stop @contextmenu.stop.prevent>
       <button :disabled="!recentRect || busy || marked || editor.pending || editor.interacting" :title="recentRect ? '恢复上次成功复制、保存或贴图的选区（R）' : '暂无最近选区，或当前屏幕分辨率已变化'" @click="restoreSelection"><Scan :size="15" />最近选区 R</button>
     </div>

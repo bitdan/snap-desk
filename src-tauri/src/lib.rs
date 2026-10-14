@@ -85,6 +85,31 @@ fn trigger(app: &AppHandle) {
     });
 }
 
+/// F2 直接读取剪贴板内存中的图片，复用托盘贴图入口，不需要先另存文件。
+fn trigger_pin(app: &AppHandle) {
+    let app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        if let Err(error) = pins::clipboard_pin(&app) {
+            capture::report_error(&app, error);
+        }
+    });
+}
+
+/// F3 首次进入录屏选区，录制或暂停期间再次按下则结束并保存。
+fn trigger_recording(app: &AppHandle) {
+    if capture::recording::request_stop(app, false)
+        || app.state::<CaptureState>().active.load(Ordering::SeqCst)
+    {
+        return;
+    }
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        if let Err(error) = capture::begin_recording(app.clone()).await {
+            capture::report_error(&app, error);
+        }
+    });
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _, _| {
@@ -106,8 +131,15 @@ pub fn run() {
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, shortcut, event| {
                     let capture = app.state::<CaptureState>();
+                    let bit = if *shortcut == settings::pin_shortcut() {
+                        2
+                    } else if *shortcut == settings::recording_shortcut() {
+                        4
+                    } else {
+                        1
+                    };
                     if event.state() == ShortcutState::Released {
-                        capture.hotkey_pressed.store(false, Ordering::SeqCst);
+                        capture.hotkey_pressed.fetch_and(!bit, Ordering::SeqCst);
                         return;
                     }
                     // 保存设置时可能短暂注册两个键，只响应当前生效的那个。
@@ -118,11 +150,17 @@ pub fn run() {
                             state.0.try_lock().ok().is_some_and(|current| {
                                 current.registered
                                     && current.value.shortcuts_enabled
-                                    && current.value.validate().ok().as_ref() == Some(shortcut)
+                                    && (bit != 1
+                                        || current.value.validate().ok().as_ref() == Some(shortcut))
                             })
                         });
-                    if matches && !capture.hotkey_pressed.swap(true, Ordering::SeqCst) {
-                        trigger(app);
+                    if matches && capture.hotkey_pressed.fetch_or(bit, Ordering::SeqCst) & bit == 0
+                    {
+                        match bit {
+                            2 => trigger_pin(app),
+                            4 => trigger_recording(app),
+                            _ => trigger(app),
+                        }
                     }
                 })
                 .build(),
@@ -130,7 +168,8 @@ pub fn run() {
         .setup(|app| {
             settings::initialize(app.handle())?;
             let capture = MenuItem::with_id(app, "capture", "开始截图", true, None::<&str>)?;
-            let pin = MenuItem::with_id(app, "pin", "贴图", true, None::<&str>)?;
+            let pin = MenuItem::with_id(app, "pin", "剪贴板贴图 (F2)", true, None::<&str>)?;
+            let recording = MenuItem::with_id(app, "recording", "录屏 (F3)", true, None::<&str>)?;
             let open = MenuItem::with_id(app, "open", "打开 Snap Desk", true, None::<&str>)?;
             let enabled = app
                 .state::<settings::SettingsState>()
@@ -148,7 +187,8 @@ pub fn run() {
                 None::<&str>,
             )?;
             let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&capture, &pin, &open, &shortcuts, &quit])?;
+            let menu =
+                Menu::with_items(app, &[&capture, &pin, &recording, &open, &shortcuts, &quit])?;
             app.manage(settings::ShortcutMenu(shortcuts));
             TrayIconBuilder::new()
                 .icon(tauri::image::Image::from_bytes(include_bytes!(
@@ -166,14 +206,8 @@ pub fn run() {
                             }
                         });
                     }
-                    "pin" => {
-                        let app = app.clone();
-                        tauri::async_runtime::spawn_blocking(move || {
-                            if let Err(error) = pins::clipboard_pin(&app) {
-                                capture::report_error(&app, error);
-                            }
-                        });
-                    }
+                    "pin" => trigger_pin(app),
+                    "recording" => trigger_recording(app),
                     "shortcuts" => {
                         let app = app.clone();
                         tauri::async_runtime::spawn_blocking(move || {

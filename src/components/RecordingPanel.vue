@@ -56,7 +56,7 @@ onUnmounted(() => { disposed = true; clearTimeout(timer) })
 <template>
   <section>
     <h1>录屏</h1>
-    <p class="subtitle">选择范围后，在工具栏设置录屏选项。</p>
+    <p class="subtitle">F3 框选录屏范围，录制中再按 F3 停止并保存。也可先选择范围，在工具栏设置录屏选项。</p>
     <div v-if="error" class="notice error" role="alert">{{ error }}</div>
     <div class="settings-card">
       <div class="setting-row"><span>输出</span><strong>MP4 · 无声 · 30 / 60 FPS · 可录制光标</strong></div>

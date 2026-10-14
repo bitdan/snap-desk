@@ -7,7 +7,7 @@ import type { Settings } from './settings'
 import type { RecorderCapabilities, RecorderConfig, RecordingAction, RecordingDirectory, RecordingView } from './recording'
 export type { Settings } from './settings'
 
-export interface CaptureFrame { id: number; width: number; height: number; dataUrl: string }
+export interface CaptureFrame { id: number; width: number; height: number; dataUrl: string; recording: boolean }
 export interface PinView { zoom: number; opacity: number; locked: boolean; topmost: boolean; toolbarExpanded: boolean }
 export interface PinFrame { label: string; width: number; height: number; dataUrl: string; view: PinView; transparencySupported: boolean; annotations: Annotation[] }
 export interface PinSummary { label: string; width: number; height: number; visible: boolean; group: string }

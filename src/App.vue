@@ -161,10 +161,12 @@ onUnmounted(() => { disposed = true; disposers.splice(0).forEach(off => off()) }
         <RecordingPanel v-else-if="page === '录屏'" />
         <PinManager v-else-if="page === '贴图'" />
         <template v-else-if="page === '快捷键'">
-          <h1>快捷键</h1><p class="subtitle">在这里修改并保存全局截图快捷键。</p>
+          <h1>快捷键</h1><p class="subtitle">截图、剪贴板贴图与录屏快捷键共用顶部总开关。</p>
           <form class="settings-card" @submit.prevent="saveShortcut()">
             <div class="setting-row"><label for="capture-shortcut">开始区域截图<small>全局快捷键</small></label><input id="capture-shortcut" v-model="draft.shortcut" required maxlength="48" autocomplete="off" spellcheck="false" :disabled="locked" aria-describedby="shortcut-hint" class="w-48 rounded-lg border border-zinc-200 px-3 py-2 text-sm focus:outline-blue-500" @input="savedSection = ''" /></div>
-            <p id="shortcut-hint" class="py-3 text-xs text-zinc-500" >例如 F1、Ctrl+Shift+S、Alt+A。</p>
+            <p id="shortcut-hint" class="py-3 text-xs text-zinc-500" >例如 F1、Ctrl+Shift+S、Alt+A。F2、F3 已保留给贴图和录屏。</p>
+            <div class="setting-row"><label>剪贴板图片贴图<small>直接读取内存图片，无需保存文件</small></label><kbd>F2</kbd></div>
+            <div class="setting-row"><label>录屏<small>框选后设置录屏；录制中再次按下停止并保存</small></label><kbd>F3</kbd></div>
             <div class="flex items-center gap-3 py-5"><Button type="submit" :disabled="locked">{{ saving ? '正在保存…' : '保存快捷键' }}</Button><Button type="button" variant="outline" :disabled="locked" @click="saveShortcut(true)">恢复默认</Button><span v-if="savedSection === '快捷键'" class="text-sm text-zinc-500" role="status">已保存</span></div>
           </form>
         </template>
