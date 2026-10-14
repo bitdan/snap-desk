@@ -67,7 +67,7 @@ onUnmounted(() => { disposed = true; clearTimeout(timer) })
           <Button variant="outline" :disabled="!desktop || busy || changingDirectory || recordingActive(view) || directory?.isDefault" @click="chooseDirectory(true)">恢复默认</Button>
         </div>
       </div>
-      <div class="setting-row"><span>单次上限</span><span>3 分钟</span></div>
+      <div class="setting-row"><span>录制时长</span><span>不设时长上限</span></div>
       <p v-if="!capabilities?.available" class="py-3 text-sm" role="status">{{ capabilities?.reason ?? (desktop ? '正在检查录屏能力…' : '请在桌面应用中使用录屏。') }}</p>
       <div v-if="view" class="setting-row"><span>{{ recordingStatus(view) }}</span><span>{{ recordingTime(view.seconds) }} · 编码提交 {{ view.frames }} 帧</span></div>
       <div v-if="view" class="setting-row" title="成功提交编码帧的媒体时间窗口，不含暂停；恢复后重置近两秒窗口。静态画面可自然降至 0 FPS，并非丢帧。"><span>有效帧率</span><span>{{ recordingStats(view) }}</span></div>

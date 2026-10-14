@@ -65,7 +65,7 @@ onMounted(() => root.value?.querySelector<HTMLButtonElement>('[role=tab]')?.focu
       </div>
     </div>
     <p v-if="error || invalid" class="menu-error" role="alert">{{ error || invalid }}</p>
-    <footer><small>MP4 · 无声 · 最长 3 分钟</small><button class="confirm" :disabled="busy" title="确认选区后，在控制条开始录制" @click="confirm">{{ busy ? '准备中…' : '确认选区' }}</button></footer>
+    <footer><small>MP4 · 无声 · 不限时长</small><button class="confirm" :disabled="busy" title="确认选区后，在控制条开始录制" @click="confirm">{{ busy ? '准备中…' : '确认选区' }}</button></footer>
   </section>
 </template>
 

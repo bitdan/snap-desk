@@ -22,9 +22,6 @@ use config::{CaptureSource, OutputFormat, RecorderCapabilities, RecorderConfig};
 use frame::QueuedFrame;
 use timeline::Timeline;
 
-const MAX_SECONDS: f64 = 180.0;
-// 尚未完成长时间资源验收，保留 3 分钟限制；不再限制 PNG 字节数或 1800 帧。
-
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Phase {
@@ -573,12 +570,7 @@ fn collect(
                             break;
                         }
                         s.advance_countdown(capture::now());
-                        if s.elapsed().as_secs_f64() >= MAX_SECONDS {
-                            s.freeze();
-                            s.stop = true;
-                            s.view.message = "达到 3 分钟验证期上限，正在保存。".into();
-                            break;
-                        }
+                        // 不按录制时长自动停止；停止、取消和采集/编码异常仍走统一收尾。
                         (s.view.phase == Phase::Recording, s.timeline.generation)
                     };
                     if effects_generation != Some(generation) || !running {
@@ -830,18 +822,7 @@ fn collect(
         if let Some(s) = guard.as_mut().filter(|s| s.view.id == id) {
             s.freeze();
             let (phase, text, path) = match result {
-                Ok(path) => {
-                    let limit = if s.view.seconds >= MAX_SECONDS {
-                        "（达到 3 分钟上限，已自动停止）"
-                    } else {
-                        ""
-                    };
-                    (
-                        Phase::Completed,
-                        format!("录屏已保存：{path}{limit}"),
-                        Some(path),
-                    )
-                }
+                Ok(path) => (Phase::Completed, format!("录屏已保存：{path}"), Some(path)),
                 Err(_) if s.cancel => (
                     Phase::Cancelled,
                     "录屏已取消，临时视频已清理。".into(),
