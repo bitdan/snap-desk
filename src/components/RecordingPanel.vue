@@ -86,7 +86,7 @@ onUnmounted(() => { disposed = true; clearTimeout(timer) })
       <div v-if="view" class="setting-row"><span>目标码率</span><span>{{ (view.targetBitrate / 1_000_000).toFixed(1) }} Mbps</span></div>
       <div v-if="view" class="setting-row"><span>编码方式</span><span>{{ encoderLabels[view.encoderKind] }}</span></div>
       <p v-if="view?.encoderFallback" class="notice break-all" role="status">{{ view.encoderFallback }}</p>
-      <p v-if="view" class="py-3 text-sm break-all" role="status">{{ view.message }}</p>
+      <p v-if="view && view.phase !== 'completed'" class="py-3 text-sm break-all" role="status">{{ view.message }}</p>
       <div class="flex gap-2 py-4">
         <Button v-if="!recordingActive(view)" :disabled="!desktop || busy || changingDirectory || !capabilities?.available" @click="select">选择录制范围</Button>
         <Button v-if="view?.phase === 'ready'" :disabled="busy" @click="control('start')">开始录制</Button>

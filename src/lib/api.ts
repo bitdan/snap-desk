@@ -34,6 +34,7 @@ async function listen<T>(event: string, callback: EventCallback<T>) {
   catch (error) { throw new Error(`订阅 ${event}：${errorMessage(error)}`) }
 }
 export const api = {
+  openProjectHomepage: () => invoke<void>('open_project_homepage'),
   status: () => invoke<AppStatus>('app_status'),
   saveSettings: (settings: Settings) => invoke<Settings>('save_settings', { settings }),
   setShortcutsEnabled: (enabled: boolean) => invoke<Settings>('set_shortcuts_enabled', { enabled }),

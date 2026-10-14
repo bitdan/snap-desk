@@ -55,6 +55,15 @@ fn hide_main(window: WebviewWindow) -> Result<(), String> {
     window.hide().map_err(|e| e.to_string())
 }
 
+/// 关于页点击 GitHub 图标后交给系统浏览器；仅允许主窗口打开固定项目地址。
+#[tauri::command]
+async fn open_project_homepage(window: WebviewWindow) -> Result<(), String> {
+    require_window(&window, "main")?;
+    tauri::async_runtime::spawn_blocking(platform::open_project_homepage)
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 fn trigger(app: &AppHandle) {
     // 倒计时内再次按截图键代表取消；真正截图开始后不重复创建会话。
     if capture::cancel_delay(app) {
@@ -229,6 +238,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             app_status,
             hide_main,
+            open_project_homepage,
             settings::save_settings,
             settings::set_shortcuts_enabled,
             capture::cancel_pending_capture,
