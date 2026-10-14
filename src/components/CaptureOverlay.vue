@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import ScrollCaptureIcon from './ScrollCaptureIcon.vue'
 import { computed, nextTick, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue'
-import { Copy, Save, X, Monitor, RotateCcw, Scan, Move, Pin, Pipette, Video } from 'lucide-vue-next'
+import { Copy, Save, X, Monitor, RotateCcw, Scan, Move, Pin, Video } from 'lucide-vue-next'
 import { api, onFrame, onScroll, type CaptureFrame, type ColorFormat, type ScrollView } from '@/lib/api'
 import { clamp, move, normalize, resize, toPixels, nudgeSelection, type Handle, type Point, type Rect } from '@/lib/selection'
 import { useAnnotations, type AnnotationTool } from '@/lib/use-annotations'
@@ -9,7 +9,6 @@ import AnnotationSurface from './AnnotationSurface.vue'
 import AnnotationToolbar from './AnnotationToolbar.vue'
 import CaptureMagnifier from './CaptureMagnifier.vue'
 import { magnifierSample } from '@/lib/magnifier'
-import { nudgeColorPoint } from '@/lib/color-picker'
 import { newerScroll } from '@/lib/scroll-capture'
 import { defaultInputEffects, recordingBitrate, recordingConfig, type EncodingPreference, type RecordingQuality, type RecorderCapabilities } from '@/lib/recording'
 import RecordingSetupMenu from './RecordingSetupMenu.vue'
@@ -57,9 +56,10 @@ const annotating = ref(false)
 const screenImage = shallowRef<HTMLImageElement | null>(null)
 const imageReady = ref(false)
 const pointer = ref<Point | null>(null)
-const picking = ref(false)
-const colorFormat = ref<ColorFormat>('hex')
-const showMagnifier = computed(() => frame.value && imageReady.value && screenImage.value && pointer.value && !busy.value && !scrollSetup.value && !recordingSetup.value && (picking.value || (!annotating.value && !marked.value)))
+const relativeCoordinates = ref(false)
+const colorCopied = ref(false)
+const colorFormat = ref<ColorFormat>('rgb')
+const showMagnifier = computed(() => frame.value && imageReady.value && screenImage.value && pointer.value && !busy.value && !scrollSetup.value && !recordingSetup.value && (!annotating.value && !marked.value))
 const editor = useAnnotations(() => pixels.value ?? { x: 0, y: 0, width: 0, height: 0 }, () => frame.value?.dataUrl ?? '', () => busy.value)
 const marked = computed(() => editor.history.present.length > 0)
 const handles: Handle[] = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w']
@@ -106,11 +106,11 @@ function chooseTool(tool: AnnotationTool) { if (busy.value || editor.pending || 
 function selectionDown(e: PointerEvent) { if (!annotating.value) down(e, 'move') }
 function reselect() {
   if (busy.value) return
-  editor.reset(); selection.value = null; gesture = null; annotating.value = false; error.value = ''; pointer.value = null; picking.value = false
+  editor.reset(); selection.value = null; gesture = null; annotating.value = false; error.value = ''; pointer.value = null; colorCopied.value = false
 }
 /** 恢复只替换空白选区，已有标注、文字草稿和进行中的拖动都必须先完成。 */
 function restoreSelection() {
-  if (!recentRect.value || busy.value || picking.value || scrollSetup.value || gesture || marked.value || editor.pending || editor.interacting) return
+  if (!recentRect.value || busy.value || scrollSetup.value || gesture || marked.value || editor.pending || editor.interacting) return
   const rect = { ...recentRect.value }
   reselect(); selection.value = rect
 }
@@ -135,28 +135,17 @@ async function startRecording() {
   catch (e) { error.value = String(e) }
   finally { busy.value = false }
 }
-/** 切换取色不清空选区或标注；Esc / 右键先退出取色，再次按才取消截图。 */
-function togglePicker() {
-  if (busy.value || gesture || editor.pending || editor.interacting) return
-  picking.value = !picking.value; error.value = ''
-}
-function contextMenu() { if (picking.value) { if (!busy.value) picking.value = false } else void cancel() }
 async function copyColor(format = colorFormat.value) {
   if (!frame.value || !pointer.value || !imageReady.value || busy.value || editor.pending || editor.interacting) return
   const pixel = magnifierSample(pointer.value, viewport.value, frame.value).pixel
   busy.value = true; error.value = ''
-  try { await api.copyColor(frame.value.id, pixel, format); frame.value = null }
+  try { await api.copyColor(frame.value.id, pixel, format); colorCopied.value = true }
   catch (e) { error.value = String(e) }
   finally { busy.value = false }
 }
-function pickDown(e: PointerEvent) {
-  if (!picking.value || (e.target as Element).closest('.capture-toolbar, .capture-modebar, .overlay-error')) return
-  e.stopPropagation()
-  if (e.button === 0) { e.preventDefault(); pointer.value = point(e); void copyColor(e.shiftKey ? 'rgb' : colorFormat.value) }
-}
 function point(e: PointerEvent): Point { return { x: clamp(e.clientX, 0, viewport.value.width), y: clamp(e.clientY, 0, viewport.value.height) } }
 function down(e: PointerEvent, mode: 'draw' | 'move' | Handle = 'draw') {
-  if (busy.value || picking.value || e.button !== 0 || !frame.value) return
+  if (busy.value || e.button !== 0 || !frame.value) return
   // 有标注时固定选区，避免调整裁剪范围导致已画内容跳动；“重新框选”显式清空。
   if (marked.value || editor.interacting || annotating.value) return
   editor.reset()
@@ -168,6 +157,7 @@ function down(e: PointerEvent, mode: 'draw' | 'move' | Handle = 'draw') {
   ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
 }
 function drag(e: PointerEvent) {
+  colorCopied.value = false
   // 工具栏不需要像素辅助；捕获阶段监听可覆盖选区控制点的事件。
   pointer.value = (e.target as Element).closest('.capture-toolbar, .capture-modebar, .overlay-error') ? null : point(e)
   if (!gesture) return
@@ -177,7 +167,7 @@ function drag(e: PointerEvent) {
 }
 function up() { gesture = null }
 function abortGesture() { gesture = null }
-function selectAll() { if (!busy.value && !picking.value && !marked.value && !editor.interacting) { editor.reset(); selection.value = { x: 0, y: 0, ...viewport.value } } }
+function selectAll() { if (!busy.value && !marked.value && !editor.interacting) { editor.reset(); selection.value = { x: 0, y: 0, ...viewport.value } } }
 function receive(value: CaptureFrame) { busy.value = false; reselect(); scroll.value = null; scrollSetup.value = false; recordingSetup.value = false; imageReady.value = false; frame.value = value }
 async function loaded() {
   if (!frame.value) return
@@ -191,7 +181,7 @@ async function cancel() {
   finally { busy.value = false }
 }
 async function finish(action: 'copy' | 'save' | 'pin') {
-  if (!frame.value || picking.value || !valid.value || !pixels.value || busy.value || editor.pending || editor.interacting || gesture) return
+  if (!frame.value || !valid.value || !pixels.value || busy.value || editor.pending || editor.interacting || gesture) return
   busy.value = true; error.value = ''
   try {
     // 保存调用前的快照；取消对话框或导出失败均不覆盖上次成功的范围。
@@ -218,22 +208,14 @@ function key(e: KeyboardEvent) {
   }
   if ((e.target as HTMLElement).closest('input, textarea, select')) return
   const command = e.ctrlKey || e.metaKey
-  if (!command && !e.altKey && !e.repeat && e.key.toLowerCase() === 'i') { e.preventDefault(); togglePicker(); return }
-  if (picking.value) {
-    // 此模式的快捷键优先于标注编辑，避免取色时误撤销或导出原选区。
-    if (e.key === 'Escape') { e.preventDefault(); if (!busy.value) picking.value = false }
-    else if (!e.repeat && (e.key === 'Enter' || (command && e.key.toLowerCase() === 'c'))) { e.preventDefault(); void copyColor(e.shiftKey ? 'rgb' : colorFormat.value) }
-    else if (e.key.startsWith('Arrow')) {
-      e.preventDefault()
-      if (pointer.value && frame.value && !busy.value) {
-        const step = e.shiftKey ? 10 : 1
-        pointer.value = nudgeColorPoint(pointer.value, { x: e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0, y: e.key === 'ArrowUp' ? -step : e.key === 'ArrowDown' ? step : 0 }, viewport.value, frame.value)
-      }
-    }
-    return
-  }
   if (annotating.value && editor.key(e)) return
-  // 工具栏控件编辑时保留原生按键（例如下拉框的方向键和 Enter）。
+  // 取色快捷键仅在放大镜可用时生效；复制后保留选区，修饰键组合仍用于截图操作。
+  if (showMagnifier.value && !gesture && !command && !e.altKey && !e.repeat) {
+    if (e.key === 'Shift') { e.preventDefault(); colorFormat.value = colorFormat.value === 'rgb' ? 'hex' : 'rgb'; colorCopied.value = false; return }
+    if (e.key.toLowerCase() === 'c') { e.preventDefault(); void copyColor(); return }
+    if (e.key.toLowerCase() === 'p') { e.preventDefault(); relativeCoordinates.value = !relativeCoordinates.value; return }
+  }
+  // 保留按钮的 Enter / 空格行为，恢复选区后按钮仍聚焦也能使用上方的取色快捷键。
   const target = e.target as HTMLElement
   if (['INPUT', 'SELECT', 'BUTTON'].includes(target.tagName) && e.key !== 'Escape' && !command) return
   if (!command && !e.altKey && !e.repeat && e.key.toLowerCase() === 'r') { e.preventDefault(); restoreSelection(); return }
@@ -282,24 +264,19 @@ onUnmounted(() => { disposed = true; off?.(); offScroll?.(); window.removeEventL
 
 <template>
   <div v-if="scroll" />
-  <div v-else class="capture-overlay" @pointerdown.capture="pickDown" @pointerdown="down($event)" @pointermove.capture="drag" @pointerleave="pointer = null" @pointerup="up" @pointercancel="abortGesture(); pointer = null" @contextmenu.prevent="contextMenu">
+  <div v-else class="capture-overlay" @pointerdown="down($event)" @pointermove.capture="drag" @pointerleave="pointer = null" @pointerup="up" @pointercancel="abortGesture(); pointer = null" @contextmenu.prevent="cancel">
     <img v-if="frame" :key="frame.id" ref="screenImage" class="screen-image" :src="frame.dataUrl" alt="当前屏幕截图" draggable="false" @load="loaded" @error="imageFailed" />
     <div v-if="!selection" class="initial-shade" />
-    <div v-if="!selection && !picking" class="capture-tip">拖动框选屏幕 <span>Esc / 右键取消 · Ctrl / ⌘ + A 全屏 · I 取色 · R 最近选区</span></div>
+    <div v-if="!selection" class="capture-tip">拖动框选屏幕 <span>移动鼠标取色 · C 复制色值 · Esc / 右键取消 · Ctrl / ⌘ + A 全屏 · R 最近选区</span></div>
     <div v-if="frame" class="capture-modebar" @pointerdown.stop @contextmenu.stop.prevent>
-      <button v-if="!picking" :disabled="!recentRect || busy || marked || editor.pending || editor.interacting" :title="recentRect ? '恢复上次成功复制、保存或贴图的选区（R）' : '暂无最近选区，或当前屏幕分辨率已变化'" @click="restoreSelection"><Scan :size="15" />最近选区 R</button>
-      <button :disabled="busy || editor.pending || editor.interacting" :aria-pressed="picking" title="取色 I" @click="togglePicker"><Pipette :size="15" />{{ picking ? '返回框选' : '取色 I' }}</button>
-      <template v-if="picking">
-        <select v-model="colorFormat" :disabled="busy" aria-label="复制色值格式"><option value="hex">HEX</option><option value="rgb">RGB</option></select>
-        <span>单击 / Enter 复制并结束 · Shift 临时用 RGB · 方向键微调 · Esc 返回</span>
-      </template>
+      <button :disabled="!recentRect || busy || marked || editor.pending || editor.interacting" :title="recentRect ? '恢复上次成功复制、保存或贴图的选区（R）' : '暂无最近选区，或当前屏幕分辨率已变化'" @click="restoreSelection"><Scan :size="15" />最近选区 R</button>
     </div>
     <div v-if="selection" class="selection" :style="{ ...boxStyle, cursor: marked ? 'default' : 'move' }" @pointerdown.stop="selectionDown">
       <span class="size-label">{{ pixels?.width }} × {{ pixels?.height }} px · ({{ pixels?.x }}, {{ pixels?.y }})</span>
       <template v-if="!marked && !annotating"><span v-for="handle in handles" :key="handle" :class="['resize-handle', handle]" @pointerdown.stop="down($event, handle)" /></template>
     </div>
-    <AnnotationSurface v-if="frame && pixels" :editor="editor" :width="frame.width" :height="frame.height" :bounds="pixels" :enabled="annotating && !busy && !picking" />
-    <div v-if="valid && !picking" ref="toolbar" class="capture-toolbar annotation-toolbar" :style="toolbarStyle" @pointerdown.stop @contextmenu.stop.prevent>
+    <AnnotationSurface v-if="frame && pixels" :editor="editor" :width="frame.width" :height="frame.height" :bounds="pixels" :enabled="annotating && !busy" />
+    <div v-if="valid" ref="toolbar" class="capture-toolbar annotation-toolbar" :style="toolbarStyle" @pointerdown.stop @contextmenu.stop.prevent>
       <AnnotationToolbar :editor="editor" :disabled="busy" :active="annotating" @tool="chooseTool">
         <template #leading><button :disabled="busy || editor.pending || editor.interacting || marked" :aria-pressed="!annotating" title="调整选区" aria-label="调整选区" @click="annotating = false"><Move :size="16" /></button></template>
         <template #actions>
@@ -314,7 +291,7 @@ onUnmounted(() => { disposed = true; off?.(); offScroll?.(); window.removeEventL
         </template>
       </AnnotationToolbar>
     </div>
-    <CaptureMagnifier v-if="showMagnifier && screenImage && pointer && frame" :image="screenImage" :point="pointer" :viewport="viewport" :image-size="frame" :show-color="picking" />
+    <CaptureMagnifier v-if="showMagnifier && screenImage && pointer && frame" :image="screenImage" :point="pointer" :viewport="viewport" :image-size="frame" :format="colorFormat" :relative="relativeCoordinates" :origin="pixels" :copied="colorCopied" />
     <div v-if="recordingSetup" class="recording-menu-shade" @pointerdown.self.stop="!busy && (recordingSetup = false)" @pointermove.stop @contextmenu.stop.prevent>
       <RecordingSetupMenu v-model:fps="recordingFps" v-model:encoding="recordingEncoding" v-model:quality="recordingQuality" v-model:mbps="recordingMbps" v-model:countdown="recordingCountdown" v-model:cursor="captureCursor" v-model:effects="recordingEffects" :busy="busy" :error="error" :style="recordingMenuStyle" @confirm="startRecording" @close="recordingSetup = false" />
     </div>
@@ -332,8 +309,5 @@ onUnmounted(() => { disposed = true; off?.(); offScroll?.(); window.removeEventL
 .capture-toolbar :deep(.annotation-tool-row) { overflow: visible; }
 .capture-modebar { position: absolute; top: 8px; left: 8px; z-index: 4; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; max-width: calc(100vw - 16px); border-radius: 6px; padding: 6px 8px; background: #242330ed; color: white; font-size: 12px; cursor: default; }
 .capture-modebar button { display: flex; align-items: center; gap: 5px; padding: 3px; }
-.capture-modebar button[aria-pressed=true] { color: #c4b5fd; }
 .capture-modebar button:disabled { opacity: .5; }
-.capture-modebar select { background: #3f3f46; color: white; border-radius: 3px; padding: 3px; }
-.capture-modebar span { color: #d4d4d8; }
 </style>

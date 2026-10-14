@@ -460,7 +460,7 @@ fn pixel_color(
 }
 
 /// 取色只读取当前截图原始像素，不接受前端传来的任意剪贴板文本。
-/// 复制成功后结束截图；剪贴板写入失败保留会话、选区及标注，允许重试。
+/// 仅复制色值，成功或失败都保留截图会话、选区及标注，可继续取色或框选。
 #[tauri::command]
 pub async fn copy_capture_color(
     app: AppHandle,
@@ -487,7 +487,6 @@ pub async fn copy_capture_color(
         app.clipboard()
             .write_text(text.clone())
             .map_err(|e| format!("复制色值失败，请重试：{e}"))?;
-        close_session(&app, id)?;
         let _ = app.emit_to("main", "capture-result", format!("色值 {text} 已复制。"));
         Ok(())
     })

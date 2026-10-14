@@ -354,10 +354,16 @@ fn draw_label(image: &mut BgraImage, label: &str, row: i32, config: InputEffects
     let width = label.len() as i32 * 6 * scale + 12;
     let height = 7 * scale + 12;
     let x = match config.position {
-        KeyPosition::BottomLeft => 8,
+        KeyPosition::TopLeft | KeyPosition::BottomLeft => 8,
         KeyPosition::BottomRight => (image.width as i32 - width - 8).max(0),
     };
-    let y = (image.height as i32 - 8 - (row + 1) * (height + 4)).max(0);
+    // 顶部提示向下排列，底部提示向上排列，坐标均相对输出视频。
+    let y = match config.position {
+        KeyPosition::TopLeft => 8 + row * (height + 4),
+        KeyPosition::BottomLeft | KeyPosition::BottomRight => {
+            (image.height as i32 - 8 - (row + 1) * (height + 4)).max(0)
+        }
+    };
     for py in y..(y + height).min(image.height as i32) {
         for px in x..(x + width).min(image.width as i32) {
             blend(image, px, py, [20, 24, 32], alpha);

@@ -53,6 +53,7 @@ pub struct InputEffects {
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum KeyPosition {
+    TopLeft,
     BottomLeft,
     BottomRight,
 }
@@ -65,9 +66,9 @@ impl Default for InputEffects {
             movement: false,
             drag: false,
             wheel: false,
-            size: 28,
-            duration_ms: 700,
-            position: KeyPosition::BottomLeft,
+            size: 20,
+            duration_ms: 400,
+            position: KeyPosition::TopLeft,
             left_color: [64, 160, 255],
             right_color: [255, 112, 80],
             double_color: [190, 100, 255],

@@ -9,12 +9,12 @@ export const encoderLabels = { hardware: '硬件编码', software: '软件编码
 /** 与 Rust InputEffects 一致；默认关闭监听，不支持普通文字输入显示。 */
 export interface InputEffects {
   keyboard: boolean; clicks: boolean; movement: boolean; drag: boolean; wheel: boolean;
-  size: number; durationMs: number; position: 'bottomLeft' | 'bottomRight';
+  size: number; durationMs: number; position: 'topLeft' | 'bottomLeft' | 'bottomRight';
   leftColor: [number, number, number]; rightColor: [number, number, number]; doubleColor: [number, number, number]
 }
 export function defaultInputEffects(): InputEffects {
   return { keyboard: false, clicks: false, movement: false, drag: false, wheel: false,
-    size: 28, durationMs: 700, position: 'bottomLeft',
+    size: 20, durationMs: 400, position: 'topLeft',
     leftColor: [64, 160, 255], rightColor: [255, 112, 80], doubleColor: [190, 100, 255] }
 }
 export interface RecorderConfig {
