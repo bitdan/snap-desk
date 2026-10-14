@@ -4,7 +4,7 @@ import { errorMessage } from './errors'
 import type { Point, Rect } from './selection'
 import type { Annotation } from './annotations'
 import type { Settings } from './settings'
-import type { RecorderCapabilities, RecorderConfig, RecordingAction, RecordingDirectory, RecordingView } from './recording'
+import type { RecorderCapabilities, RecorderConfig, RecordingAction, RecordingDirectory, RecordingView, RecoverableRecording } from './recording'
 export type { Settings } from './settings'
 
 export interface CaptureFrame { id: number; width: number; height: number; dataUrl: string; recording: boolean }
@@ -34,6 +34,8 @@ async function listen<T>(event: string, callback: EventCallback<T>) {
   catch (error) { throw new Error(`订阅 ${event}：${errorMessage(error)}`) }
 }
 export const api = {
+  recoverableRecordings: () => invoke<RecoverableRecording[]>('recoverable_recordings'),
+  retryRecordingExport: (id: string) => invoke<string>('retry_recording_export', { id }),
   openProjectHomepage: () => invoke<void>('open_project_homepage'),
   status: () => invoke<AppStatus>('app_status'),
   saveSettings: (settings: Settings) => invoke<Settings>('save_settings', { settings }),

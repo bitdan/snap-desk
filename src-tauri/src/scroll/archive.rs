@@ -4,15 +4,20 @@ use std::{
     fs,
     io::{Cursor, Write},
     path::PathBuf,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc::{self, SyncSender},
+        Arc,
+    },
 };
 use tauri::Manager;
 
-pub struct Archive {
+struct Writer {
     pub path: PathBuf,
     count: u32,
     bytes: u64,
 }
-impl Archive {
+impl Writer {
     pub fn new(app: &tauri::AppHandle) -> Result<Self, String> {
         let root = app
             .path()
@@ -60,6 +65,92 @@ impl Archive {
         self.record(serde_json::json!({"event":"frame", "file":name}))
     }
 }
+
+enum Entry {
+    Event(serde_json::Value),
+    Frame(Arc<RgbaImage>),
+}
+
+/// 队列最多两项，帧只共享像素所有权；编码和同步落盘都在独立线程。
+/// 队列满或写盘失败立即停用调试存档，不能让慢磁盘阻塞采集。
+#[derive(Clone)]
+pub struct Archive {
+    pub path: PathBuf,
+    sender: SyncSender<Entry>,
+    failed: Arc<AtomicBool>,
+}
+impl Archive {
+    pub fn new(app: &tauri::AppHandle) -> Result<Self, String> {
+        let mut writer = Writer::new(app)?;
+        let path = writer.path.clone();
+        let (sender, receiver) = mpsc::sync_channel(2);
+        let failed = Arc::new(AtomicBool::new(false));
+        let failure = failed.clone();
+        std::thread::Builder::new()
+            .name("scroll-archive".into())
+            .spawn(move || {
+                for entry in receiver {
+                    let result = match entry {
+                        Entry::Event(event) => writer.record(event),
+                        Entry::Frame(image) => writer.frame(&image),
+                    };
+                    if let Err(error) = result {
+                        failure.store(true, Ordering::Release);
+                        log::warn!("原始帧后台存档停止：{error}");
+                        break;
+                    }
+                }
+            })
+            .map_err(err)?;
+        Ok(Self {
+            path,
+            sender,
+            failed,
+        })
+    }
+    fn enqueue(&self, entry: Entry) -> Result<(), String> {
+        if self.failed.load(Ordering::Acquire) {
+            return Err("原始帧存档已停用，截图继续。".into());
+        }
+        self.sender.try_send(entry).map_err(|_| {
+            self.failed.store(true, Ordering::Release);
+            "原始帧存档队列已满或写入失败，截图继续。".into()
+        })
+    }
+    pub fn record(&self, event: serde_json::Value) -> Result<(), String> {
+        self.enqueue(Entry::Event(event))
+    }
+    pub fn frame(&self, image: Arc<RgbaImage>) -> Result<(), String> {
+        self.enqueue(Entry::Frame(image))
+    }
+}
 fn err(e: impl std::fmt::Display) -> String {
     e.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn bounded_archive_never_waits_when_disk_worker_is_busy() {
+        let (sender, receiver) = mpsc::sync_channel(2);
+        let archive = Archive {
+            path: PathBuf::new(),
+            sender,
+            failed: Arc::new(AtomicBool::new(false)),
+        };
+        let frame = Arc::new(RgbaImage::new(32, 64));
+        archive.frame(frame.clone()).unwrap();
+        archive.frame(frame.clone()).unwrap();
+        assert!(archive.frame(frame.clone()).is_err());
+        assert!(archive.failed.load(Ordering::Acquire));
+        if let Entry::Frame(stored) = receiver.recv().unwrap() {
+            assert!(Arc::ptr_eq(&stored, &frame));
+        } else {
+            panic!("应保存帧引用");
+        }
+        assert!(archive
+            .record(serde_json::json!({"event":"match"}))
+            .is_err());
+    }
 }

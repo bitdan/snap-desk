@@ -1,7 +1,145 @@
-//! 从外部真实截图集重放拼接；不将生成的随机图片冒充真实页面验收。
+//! 内置真实帧经 Recovery 重放；派生场景与外部扩展帧集独立标明来源。
+use super::super::recovery::Recovery;
 use super::*;
 use serde::Deserialize;
 use std::path::Path;
+use std::time::{Duration, Instant};
+
+fn fixture() -> std::path::PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/scroll/qrgxj8")
+}
+fn expected(height: u32) -> RgbaImage {
+    image::imageops::crop_imm(&read(&fixture(), "expected.png"), 0, 0, 856, height).to_image()
+}
+
+#[test]
+fn real_page_replays_through_recovery_without_missing_or_duplicate_rows() {
+    let root = fixture();
+    let mut stitch = Stitch::new(read(&root, "0000.png")).unwrap();
+    let mut recovery = Recovery::default();
+    for (index, (overlap, height)) in [
+        (101, 1035),
+        (335, 1268),
+        (334, 1502),
+        (102, 1968),
+        (334, 2202),
+        (335, 2435),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        assert_eq!(
+            recovery
+                .consider(&mut stitch, read(&root, &format!("{:04}.png", index + 1)))
+                .unwrap(),
+            Match::Overlap(overlap)
+        );
+        assert_eq!(stitch.compose(), expected(height));
+    }
+    assert_eq!(
+        recovery
+            .consider(&mut stitch, read(&root, "0006.png"))
+            .unwrap(),
+        Match::Unchanged
+    );
+    assert_eq!(stitch.compose(), expected(2435));
+}
+
+#[test]
+fn real_page_skipped_frame_reconnects_only_before_cache_expiry() {
+    let root = fixture();
+    for expired in [false, true] {
+        let mut stitch = Stitch::new(read(&root, "0000.png")).unwrap();
+        let mut recovery = Recovery::default();
+        let now = Instant::now();
+        assert_eq!(
+            recovery
+                .consider_at(&mut stitch, read(&root, "0002.png"), now)
+                .unwrap(),
+            Match::Uncertain
+        );
+        assert_eq!(stitch.compose(), expected(568));
+        let later = now + Duration::from_secs(if expired { 6 } else { 1 });
+        assert_eq!(
+            recovery
+                .consider_at(&mut stitch, read(&root, "0001.png"), later)
+                .unwrap(),
+            Match::Overlap(101)
+        );
+        assert_eq!(
+            stitch.compose(),
+            expected(if expired { 1035 } else { 1268 })
+        );
+    }
+}
+
+#[test]
+fn real_page_with_derived_fixed_bands_has_no_repeated_header_or_footer() {
+    let root = fixture();
+    let first = read(&root, "0000.png");
+    let with_bands = |mut frame: RgbaImage| {
+        for y in (0..24).chain(544..568) {
+            for x in 0..856 {
+                frame.put_pixel(x, y, *first.get_pixel(x, y));
+            }
+        }
+        frame
+    };
+    let mut stitch = Stitch::new(with_bands(first.clone())).unwrap();
+    let mut recovery = Recovery::default();
+    for i in 1..7 {
+        assert!(matches!(
+            recovery
+                .consider(&mut stitch, with_bands(read(&root, &format!("{i:04}.png"))))
+                .unwrap(),
+            Match::Overlap(_)
+        ));
+    }
+    let mut truth = expected(2435);
+    for y in 0..24 {
+        for x in 0..856 {
+            truth.put_pixel(x, 2411 + y, *first.get_pixel(x, 544 + y));
+        }
+    }
+    assert_eq!(stitch.compose(), truth);
+}
+
+#[test]
+fn real_page_derived_loading_placeholder_keeps_anchor_until_content_returns() {
+    let root = fixture();
+    let mut stitch = Stitch::new(read(&root, "0000.png")).unwrap();
+    let mut recovery = Recovery::default();
+    let placeholder = RgbaImage::from_pixel(856, 568, image::Rgba([245, 245, 245, 255]));
+    assert_eq!(
+        recovery.consider(&mut stitch, placeholder).unwrap(),
+        Match::Uncertain
+    );
+    assert_eq!(stitch.compose(), expected(568));
+    assert_eq!(
+        recovery
+            .consider(&mut stitch, read(&root, "0001.png"))
+            .unwrap(),
+        Match::Overlap(101)
+    );
+    assert_eq!(stitch.compose(), expected(1035));
+}
+
+#[test]
+fn real_page_small_animation_does_not_block_stability() {
+    let root = fixture();
+    let first = read(&root, "0000.png");
+    let mut animated = first.clone();
+    for y in 120..140 {
+        for x in 300..320 {
+            animated.put_pixel(x, y, image::Rgba([255, 0, 0, 255]));
+        }
+    }
+    assert!(super::super::stability::stable(&first, &animated));
+    let mut stitch = Stitch::new(first).unwrap();
+    let mut recovery = Recovery::default();
+    let _ = recovery.consider(&mut stitch, animated).unwrap();
+    assert_eq!(stitch.compose(), expected(568));
+}
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]

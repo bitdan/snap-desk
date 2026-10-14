@@ -2,6 +2,35 @@
 use super::*;
 
 #[test]
+fn shutdown_timeout_distinguishes_finalizing_progress_and_hard_deadline() {
+    assert!(!exit_timed_out(
+        "finalizing",
+        Duration::from_secs(100),
+        Duration::from_secs(100)
+    ));
+    assert!(exit_timed_out(
+        "finalizing",
+        Duration::from_secs(180),
+        Duration::from_secs(180)
+    ));
+    assert!(exit_timed_out(
+        "syncing",
+        Duration::from_secs(90),
+        Duration::from_secs(100)
+    ));
+    assert!(!exit_timed_out(
+        "syncing",
+        Duration::from_secs(1),
+        Duration::from_secs(599)
+    ));
+    assert!(exit_timed_out(
+        "syncing",
+        Duration::from_secs(1),
+        Duration::from_secs(600)
+    ));
+}
+
+#[test]
 fn exit_waits_for_both_preparation_and_recording_cleanup() {
     let state = ExitState::default();
     state.workers.store(2, Ordering::SeqCst);

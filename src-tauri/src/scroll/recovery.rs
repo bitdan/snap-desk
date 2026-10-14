@@ -3,9 +3,9 @@ use super::{capture::FrameCache, matcher::Match, stitcher::Stitch};
 use image::RgbaImage;
 #[cfg(test)]
 use std::time::Duration;
-use std::time::Instant;
+use std::{sync::Arc, time::Instant};
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct Recovery {
     failures: u32,
     // 最多三帧、合计 800 万像素、五秒有效；不因无限重试积累内存。
@@ -13,17 +13,22 @@ pub struct Recovery {
 }
 
 impl Recovery {
-    pub fn consider(&mut self, stitch: &mut Stitch, image: RgbaImage) -> Result<Match, String> {
+    pub fn consider(
+        &mut self,
+        stitch: &mut Stitch,
+        image: impl Into<Arc<RgbaImage>>,
+    ) -> Result<Match, String> {
         self.consider_at(stitch, image, Instant::now())
     }
 
     /// 显式时钟让缓存有效期可以定向测试，不依赖机器上匹配算法的运行速度。
-    fn consider_at(
+    pub(super) fn consider_at(
         &mut self,
         stitch: &mut Stitch,
-        image: RgbaImage,
+        image: impl Into<Arc<RgbaImage>>,
         now: Instant,
     ) -> Result<Match, String> {
+        let image = image.into();
         self.recent.expire(now);
         let result = stitch.consider(image.clone())?;
         match result {

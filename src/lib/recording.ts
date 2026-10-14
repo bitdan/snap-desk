@@ -1,6 +1,7 @@
 import type { Rect } from './selection'
 
 export interface RecordingDirectory { path: string; isDefault: boolean }
+export interface RecoverableRecording { id: string; path: string; finalized: boolean; stage: string; exported: string | null }
 
 /** 与 Rust RecorderConfig / RecorderCapabilities 保持一致；声音不发送隐式默认开启值。 */
 export type RecordingQuality = 'economy' | 'balanced' | 'high'

@@ -8,6 +8,15 @@ vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn() }))
 import { api } from '../src/lib/api'
 
 describe('录屏 IPC 契约', () => {
+  it('恢复导出仅传后台标识，不允许前端指定源文件路径', async () => {
+    const items = [{ id: 'recording-pending-example', path: 'D:\\Videos\\video.mp4', finalized: true, stage: 'failed:syncing', exported: null }]
+    invoke.mockResolvedValueOnce(items)
+    expect(await api.recoverableRecordings()).toEqual(items)
+    expect(invoke).toHaveBeenLastCalledWith('recoverable_recordings', undefined)
+    invoke.mockResolvedValueOnce('D:\\Videos\\recovered.mp4')
+    expect(await api.retryRecordingExport(items[0].id)).toBe('D:\\Videos\\recovered.mp4')
+    expect(invoke).toHaveBeenLastCalledWith('retry_recording_export', { id: items[0].id })
+  })
   it('快捷键总开关只传布尔值，不携带其他未保存设置', async () => {
     const settings = { ...defaultSettings(), shortcutsEnabled: false }
     invoke.mockResolvedValueOnce(settings)

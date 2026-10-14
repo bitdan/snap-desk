@@ -1,6 +1,7 @@
 //! 分段存储可信图像，自动去重并处理固定底栏；负责容量、预览和组图。
 use super::matcher::{alignment, Match, Signature, MIN_OVERLAP};
 use image::RgbaImage;
+use std::sync::Arc;
 pub const MAX_PIXELS: u64 = 32_000_000;
 pub const MAX_HEIGHT: u32 = 60_000;
 const MAX_FRAMES: usize = 64;
@@ -9,16 +10,19 @@ const MAX_FRAMES: usize = 64;
 #[path = "regression_tests.rs"]
 mod regression_tests;
 
+#[derive(Clone)]
 struct Segment {
-    image: RgbaImage,
+    image: Arc<RgbaImage>,
     overlap: u32,
     end: u32,
 }
 
+#[derive(Clone)]
 pub struct Stitch {
+    // 快照仅复制分段边界，图片和特征共享；匹配失败可直接丢弃快照。
     segments: Vec<Segment>,
     // 仅随可信锚点更新；不确定候选不能污染下一轮匹配。
-    signature: Signature,
+    signature: Arc<Signature>,
     pub width: u32,
     pub frame_height: u32,
     pub height: u32,
@@ -38,9 +42,9 @@ impl Stitch {
             );
         }
         Ok(Self {
-            signature: Signature::new(&image),
+            signature: Arc::new(Signature::new(&image)),
             segments: vec![Segment {
-                image,
+                image: Arc::new(image),
                 overlap: 0,
                 end: height,
             }],
@@ -55,8 +59,13 @@ impl Stitch {
     pub fn last(&self) -> &RgbaImage {
         &self.segments[self.segments.len() - 1].image
     }
+    /// 存档与恢复共享不可变帧，不复制整张 RGBA 图片。
+    pub fn last_shared(&self) -> Arc<RgbaImage> {
+        self.segments[self.segments.len() - 1].image.clone()
+    }
 
-    pub fn consider(&mut self, image: RgbaImage) -> Result<Match, String> {
+    pub fn consider(&mut self, image: impl Into<Arc<RgbaImage>>) -> Result<Match, String> {
+        let image = image.into();
         if image.dimensions() != (self.width, self.frame_height) {
             return Err("采集区域尺寸发生变化，请结束本次长截图。".into());
         }
@@ -74,13 +83,13 @@ impl Stitch {
                 return Ok(Match::Uncertain);
             }
             self.append(image, overlap, bottom)?;
-            self.signature = signature;
+            self.signature = Arc::new(signature);
         }
         Ok(result)
     }
 
     /// 仅供自动匹配成功后提交；先校验所有容量，失败时锚点和成图完全不变。
-    fn append(&mut self, image: RgbaImage, overlap: u32, bottom: u32) -> Result<(), String> {
+    fn append(&mut self, image: Arc<RgbaImage>, overlap: u32, bottom: u32) -> Result<(), String> {
         if !(MIN_OVERLAP..self.frame_height).contains(&overlap) {
             return Err("重叠行数超出允许范围。".into());
         }
@@ -245,11 +254,11 @@ mod tests {
         let first = frame(&document(), 0);
         let mut stitch = Stitch::new(first.clone()).unwrap();
         for _ in 1..MAX_FRAMES {
-            stitch.append(first.clone(), 100, 0).unwrap();
+            stitch.append(Arc::new(first.clone()), 100, 0).unwrap();
         }
         let before = stitch.compose();
-        assert!(stitch.append(first.clone(), 100, 0).is_err());
-        assert!(stitch.append(first, 160, 0).is_err());
+        assert!(stitch.append(Arc::new(first.clone()), 100, 0).is_err());
+        assert!(stitch.append(Arc::new(first), 160, 0).is_err());
         assert_eq!(stitch.compose(), before);
         assert_eq!(stitch.count(), MAX_FRAMES);
     }

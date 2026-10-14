@@ -2,6 +2,7 @@
 import { onMounted, onUnmounted, ref } from 'vue'
 import Button from './ui/button/Button.vue'
 import { api, desktop } from '@/lib/api'
+import type { RecoverableRecording } from '@/lib/recording'
 import { encoderLabels, recordingStats, recordingStageTimes, recordingCopyStats, newerRecording, recordingActive, recordingStatus, recordingTime, type RecorderCapabilities, type RecordingAction, type RecordingDirectory, type RecordingView } from '@/lib/recording'
 
 const view = ref<RecordingView | null>(null)
@@ -10,10 +11,30 @@ const busy = ref(false)
 const capabilities = ref<RecorderCapabilities | null>(null)
 const directory = ref<RecordingDirectory | null>(null)
 const changingDirectory = ref(false)
+const recoveries = ref<RecoverableRecording[]>([])
+const recoveredPath = ref('')
+async function loadRecoveries() {
+  try { const items = await api.recoverableRecordings(); if (!disposed) recoveries.value = items }
+  catch (e) { if (!disposed) error.value = String(e) }
+}
+async function retryExport(id: string) {
+  if (busy.value || changingDirectory.value || recordingActive(view.value)) return
+  busy.value = true; error.value = ''; recoveredPath.value = ''
+  try { recoveredPath.value = await api.retryRecordingExport(id); await loadRecoveries() }
+  catch (e) { error.value = String(e) }
+  finally { busy.value = false }
+}
 let disposed = false
 let timer: ReturnType<typeof setTimeout> | undefined
 async function refresh() {
-  try { const next = await api.currentRecording(); if (!disposed) view.value = newerRecording(view.value, next) }
+  try {
+    const next = await api.currentRecording()
+    if (!disposed) {
+      const ended = recordingActive(view.value) && !recordingActive(next)
+      view.value = newerRecording(view.value, next)
+      if (ended) await loadRecoveries()
+    }
+  }
   catch (e) { if (!disposed) error.value = String(e) }
 }
 // 串行轮询，不在窗口后台堆积 IPC；录屏状态归 Rust 所有，重开面板仍可恢复。
@@ -45,6 +66,7 @@ async function chooseDirectory(reset = false) {
 onMounted(() => {
   if (!desktop) return
   void poll()
+  void loadRecoveries()
   void api.currentRecordingDirectory().then(value => { if (!disposed) directory.value = value })
     .catch(e => { if (!disposed) error.value = String(e) })
   void api.recordingCapabilities().then(value => { if (!disposed) capabilities.value = value })
@@ -58,6 +80,15 @@ onUnmounted(() => { disposed = true; clearTimeout(timer) })
     <h1>录屏</h1>
     <p class="subtitle">F3 框选录屏范围，录制中再按 F3 停止并保存。也可先选择范围，在工具栏设置录屏选项。</p>
     <div v-if="error" class="notice error" role="alert">{{ error }}</div>
+    <p v-if="recoveredPath" class="notice break-all" role="status">已重新导出：{{ recoveredPath }}</p>
+    <div v-if="recoveries.length" class="settings-card mb-3">
+      <div class="setting-row"><strong>待恢复视频</strong><Button variant="outline" :disabled="busy" @click="loadRecoveries">刷新</Button></div>
+      <p class="py-2 text-sm">已封装视频可重新导出到当前保存位置；也可先选择其他文件夹。</p>
+      <div v-for="item in recoveries" :key="item.id" class="setting-row gap-3">
+        <span class="min-w-0 flex-1 break-all">{{ item.path }}<small>{{ item.finalized ? '封装已完成，源文件已保留' : '封装未确认完成，源文件保留供检查' }}</small></span>
+        <Button v-if="item.finalized" :disabled="busy || changingDirectory || recordingActive(view)" @click="retryExport(item.id)">重试导出</Button>
+      </div>
+    </div>
     <div class="settings-card">
       <div class="setting-row"><span>输出</span><strong>MP4 · 无声 · 30 / 60 FPS · 可录制光标</strong></div>
       <div class="setting-row gap-3">

@@ -295,6 +295,8 @@ pub fn run() {
             capture::scroll::session::control_scroll,
             capture::recording::start_recording,
             capture::recording::current_recording,
+            capture::recording::recovery::recoverable_recordings,
+            capture::recording::recovery::retry_recording_export,
             capture::recording::recording_capabilities,
             capture::recording::output::current_recording_directory,
             capture::recording::output::choose_recording_directory,
