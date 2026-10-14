@@ -1,0 +1,85 @@
+name: Release Windows
+run-name: ${{ contains(github.ref_name, '-') && '测试版' || '正式版' }} · ${{ github.ref_name }}
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+# 同一个标签只运行一条发布流水线，避免重复上传附件。
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: Windows x64 installers
+    runs-on: windows-2022
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Checkout tagged source
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+
+      # 先从 package.json 同步版本，再执行 npm ci 和 Cargo --locked。
+      - name: Check tag and sync version
+        run: node scripts/check-release-version.mjs
+
+      # Windows runner 已安装 rustup 和 MSVC；显式选择 x64 MSVC stable 工具链。
+      - name: Setup Rust
+        run: |
+          rustup toolchain install stable-x86_64-pc-windows-msvc --profile minimal
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          rustup default stable-x86_64-pc-windows-msvc
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      # 复用本地脚本的 --ci、--locked 和 src-tauri/target 输出目录。
+      - name: Build installers
+        run: npm run desktop:package
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          $installers = @(
+            Get-ChildItem -Path 'src-tauri/target/release/bundle/nsis/*-setup.exe' -File
+            Get-ChildItem -Path 'src-tauri/target/release/bundle/msi/*.msi' -File
+          )
+          if ($installers.Count -ne 2) {
+            throw '应生成一个 NSIS EXE 和一个 MSI 安装包，请检查构建输出。'
+          }
+          # 版本后缀决定发布渠道；校验步骤已确保标签符合版本格式。
+          $isTestRelease = $env:GITHUB_REF_NAME.Contains('-')
+          $channel = if ($isTestRelease) { '测试版' } else { '正式版' }
+          $releaseArgs = @(
+            'release', 'create', $env:GITHUB_REF_NAME,
+            '--verify-tag', '--title', "Snap Desk $env:GITHUB_REF_NAME（$channel）",
+            '--generate-notes'
+          )
+          # v0.2.0-beta.1 等标签发布为预发布版本，不设为 Latest。
+          if ($isTestRelease) {
+            $releaseArgs += @('--prerelease', '--latest=false')
+          } else {
+            $releaseArgs += '--latest'
+          }
+          $releaseArgs += $installers.FullName
+          gh @releaseArgs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
