@@ -5,7 +5,6 @@ mod pin_content;
 mod pins;
 mod platform;
 mod settings;
-mod stitch;
 
 use capture::{require_window, show_main, CaptureState};
 use serde::Serialize;
@@ -69,7 +68,7 @@ fn trigger(app: &AppHandle) {
     if capture::cancel_delay(app) {
         return;
     }
-    if capture::scroll_capture::stop(app) {
+    if capture::scroll::stop(app) {
         return;
     }
     if capture::recording::request_stop(app, false) {
@@ -210,7 +209,7 @@ pub fn run() {
             if matches!(event, tauri::WindowEvent::Resized(_)) && window.label().contains("-edge-")
             {
                 if let Some(webview) = window.app_handle().get_webview_window(window.label()) {
-                    if let Err(error) = capture::scroll_capture::chrome::restore_edge(&webview) {
+                    if let Err(error) = capture::scroll::chrome::restore_edge(&webview) {
                         let _ = webview.hide();
                         log::error!("选区边框裁剪恢复失败：{error}");
                     }
@@ -227,7 +226,7 @@ pub fn run() {
                     let _ = window.hide();
                 } else if matches!(window.label(), "scroll-preview" | "scroll-controls") {
                     api.prevent_close();
-                    capture::scroll_capture::stop(window.app_handle());
+                    capture::scroll::stop(window.app_handle());
                 } else if window.label() == "capture" {
                     api.prevent_close();
                     let _ = capture::cancel_active(window.app_handle());
@@ -261,9 +260,9 @@ pub fn run() {
             capture::copy_capture_color,
             capture::save_capture,
             capture::pin_capture,
-            capture::scroll_capture::start_scroll,
-            capture::scroll_capture::current_scroll,
-            capture::scroll_capture::control_scroll,
+            capture::scroll::session::start_scroll,
+            capture::scroll::session::current_scroll,
+            capture::scroll::session::control_scroll,
             capture::recording::start_recording,
             capture::recording::current_recording,
             capture::recording::recording_capabilities,

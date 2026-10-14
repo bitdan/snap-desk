@@ -17,7 +17,7 @@ mod input;
 pub mod output;
 mod stats;
 mod timeline;
-use super::scroll_capture::chrome;
+use super::scroll::chrome;
 use config::{CaptureSource, OutputFormat, RecorderCapabilities, RecorderConfig};
 use frame::QueuedFrame;
 use timeline::Timeline;
@@ -363,7 +363,7 @@ pub async fn start_recording(
             config.encoding,
         )?;
         config.encoding = selected_encoding;
-        let screen = super::scroll_capture::screen(&app)?;
+        let screen = super::scroll::screen(&app)?;
         chrome::place_recording(&app, &screen, rect)?;
         window.hide().map_err(err)?;
         let recording = app.state::<RecordingState>();
@@ -471,7 +471,7 @@ fn collect(
     app: AppHandle,
     id: u64,
     config: RecorderConfig,
-    screen: super::scroll_capture::Screen,
+    screen: super::scroll::Screen,
     root: PathBuf,
     mut backend: Box<dyn capture::CaptureBackend>,
 ) {
@@ -529,7 +529,7 @@ fn collect(
                         return Err("录屏编码线程已提前结束。".into());
                     }
                     if check_screen.elapsed() >= Duration::from_millis(500) {
-                        if super::scroll_capture::screen(&app)? != screen {
+                        if super::scroll::screen(&app)? != screen {
                             return Err("显示器位置、尺寸或 DPI 改变，请重新录屏。".into());
                         }
                         check_screen = Instant::now();

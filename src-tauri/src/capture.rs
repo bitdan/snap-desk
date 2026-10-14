@@ -15,8 +15,8 @@ use tauri_plugin_clipboard_manager::ClipboardExt;
 
 #[path = "recorder/manager.rs"]
 pub mod recording;
-#[path = "scroll_capture.rs"]
-pub mod scroll_capture;
+#[path = "scroll/mod.rs"]
+pub mod scroll;
 
 #[derive(Default)]
 pub struct CaptureState {
@@ -27,7 +27,7 @@ pub struct CaptureState {
     operation: AtomicBool,
     next_id: AtomicU64,
     session: Mutex<Option<Session>>,
-    scroll: Mutex<Option<scroll_capture::ScrollSession>>,
+    scroll: Mutex<Option<scroll::ScrollSession>>,
     /// 全局快捷键只写原子停止标志，不等待后台拼接持有的图片锁。
     scroll_collecting: AtomicBool,
     scroll_stop: AtomicBool,
@@ -312,7 +312,7 @@ pub fn show_capture(app: AppHandle, window: WebviewWindow, id: u64) -> Result<()
 fn cleanup(app: &AppHandle) -> Result<(), String> {
     // Keep the session recoverable if hiding fails; don't expose a dead overlay.
     overlay(app)?.hide().map_err(err)?;
-    scroll_capture::chrome::hide(app);
+    scroll::chrome::hide(app);
     let state = app.state::<CaptureState>();
     state.scroll_stop.store(true, Ordering::SeqCst);
     state.scroll_collecting.store(false, Ordering::SeqCst);

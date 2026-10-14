@@ -1,5 +1,6 @@
 //! 长截图辅助窗口：边框放在选区外，不盖住原页面；右侧预览和下方操作条独立显示。
-use super::{err, Rect, Screen};
+use super::super::{err, Rect};
+use super::session::Screen;
 #[cfg(target_os = "windows")]
 use std::{collections::BTreeMap, sync::Mutex};
 use std::{thread, time::Duration};
@@ -186,7 +187,12 @@ pub(super) fn place(app: &AppHandle, screen: &Screen, rect: Rect) -> Result<Vec<
 }
 
 /// 录屏复用细边框和操作条定位；排除预览窗，并通过系统捕获保护保持窗口常显。
-pub(crate) fn place_recording(app: &AppHandle, screen: &Screen, rect: Rect) -> Result<(), String> {
+/// 仅供 capture 模块内部调用，可见范围与 Screen 保持一致。
+pub(in crate::capture) fn place_recording(
+    app: &AppHandle,
+    screen: &Screen,
+    rect: Rect,
+) -> Result<(), String> {
     let result = place_windows(
         app,
         screen,

@@ -1,24 +1,36 @@
-//! 截图会话内的长截图工作流。采集时隐藏蒙层，让鼠标滚轮直接作用于原应用。
-//! 用户手动滚动原应用，截图快捷键或控制条结束采集；不注入鼠标滚轮。
-use super::*;
-#[path = "scroll_archive.rs"]
-mod archive;
-use crate::stitch::{Match, Stitch};
-use archive::Archive;
-#[path = "scroll_chrome.rs"]
-pub(crate) mod chrome;
+//! 会话状态、命令、采集循环和资源生命周期；协调采集、恢复、拼接和输出。
+use super::super::{
+    close_session, crop, err, report_error, require_window, CaptureState, Operation, Rect,
+};
+use super::{
+    archive::Archive,
+    capture::{self, wait},
+    chrome,
+    matcher::Match,
+    recovery, stability,
+    stitcher::Stitch,
+};
+use base64::{engine::general_purpose::STANDARD, Engine};
+use image::ImageFormat;
+use serde::Serialize;
+use std::{
+    io::Cursor,
+    sync::atomic::Ordering,
+    time::{Duration, Instant},
+};
+use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
 
 #[derive(PartialEq)]
-pub(super) struct Screen {
-    name: Option<String>,
-    x: i32,
-    y: i32,
-    width: u32,
-    height: u32,
-    scale: u64,
+pub(in crate::capture) struct Screen {
+    pub(super) name: Option<String>,
+    pub(super) x: i32,
+    pub(super) y: i32,
+    pub(super) width: u32,
+    pub(super) height: u32,
+    pub(super) scale: u64,
 }
 
-pub(super) fn screen(app: &AppHandle) -> Result<Screen, String> {
+pub(in crate::capture) fn screen(app: &AppHandle) -> Result<Screen, String> {
     let monitor = app
         .primary_monitor()
         .map_err(err)?
@@ -33,13 +45,14 @@ pub(super) fn screen(app: &AppHandle) -> Result<Screen, String> {
     })
 }
 
-pub(super) struct ScrollSession {
+pub(in crate::capture) struct ScrollSession {
     id: u64,
     revision: u64,
     rect: Rect,
     screen: Screen,
     source_size: (u32, u32),
     stitch: Stitch,
+    recovery: recovery::Recovery,
     message: String,
     obscuring_windows: Vec<String>,
     archive: Option<Archive>,
@@ -122,7 +135,6 @@ fn complete(app: &AppHandle, id: u64, message: &str) -> Result<(), String> {
         let Some(s) = guard.as_mut().filter(|s| s.id == id) else {
             return Ok(());
         };
-        s.stitch.pending = None;
         s.revision += 1;
         s.message = message.into();
         (s.stitch.compose(), view(s, false)?)
@@ -177,29 +189,6 @@ pub fn stop(app: &AppHandle) -> bool {
     true
 }
 
-fn wait(state: &CaptureState, millis: u64) -> bool {
-    let deadline = Instant::now() + Duration::from_millis(millis);
-    while Instant::now() < deadline {
-        if state.scroll_stop.load(Ordering::SeqCst) {
-            return false;
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    }
-    true
-}
-
-fn sample(app: &AppHandle, region: Rect, source_size: (u32, u32)) -> Result<RgbaImage, String> {
-    let image = crate::platform::capture_primary()?;
-    if image.dimensions() != source_size {
-        return Err("显示器像素尺寸发生变化，已结束采集，仅输出已确认部分。".into());
-    }
-    region.validate(image.width(), image.height())?;
-    Ok(
-        image::imageops::crop_imm(&image, region.x, region.y, region.width, region.height)
-            .to_image(),
-    )
-}
-
 /// 调用方持有截图操作锁。结束前的最后取样忽略停止标志，但仍必须通过稳定性检查。
 fn sample_pair(
     app: &AppHandle,
@@ -222,38 +211,14 @@ fn sample_pair(
             session.obscuring_windows.clone(),
         )
     };
+    // 辅助窗口隐藏的生命周期覆盖采集与提交，避免提前恢复后污染后续取样。
     let _preview_guard = chrome::hide_for_sample(app, &overlaps)?;
-    let mut reference = sample(app, rect, source_size)?;
-    let mut quiet_samples = 0;
-    let mut settled = None;
-    // 每 80 ms 检查，连续 240 ms 稳定即可继续，不再每轮固定停顿近一秒。
-    // 始终与本段静止期的首帧比较，防止缓慢动画的逐帧小变化累积成错位。
-    // 最多等待约 1.3 秒；持续运动交由外层重试，期间绝不再发送滚轮。
-    for _ in 0..16 {
-        if finishing {
-            if state.scroll_cancel.load(Ordering::SeqCst) {
-                return Ok(None);
-            }
-            std::thread::sleep(Duration::from_millis(80));
-        } else if !wait(state, 80) {
-            return Ok(None);
-        }
-        let candidate = sample(app, rect, source_size)?;
-        if !finishing && state.scroll_stop.load(Ordering::SeqCst) {
-            return Ok(None);
-        }
-        if crate::stitch::stable(&reference, &candidate) {
-            quiet_samples += 1;
-            if quiet_samples >= 3 {
-                settled = Some(candidate);
-                break;
-            }
-        } else {
-            reference = candidate;
-            quiet_samples = 0;
-        }
-    }
+    let settled = capture::sample_pair(state, rect, source_size, finishing)?;
     let Some(second) = settled else {
+        let mut guard = state.scroll.lock().map_err(err)?;
+        if let Some(session) = guard.as_mut().filter(|s| s.id == id) {
+            publish_progress(app, session, None)?;
+        }
         return Ok(None);
     };
     let mut guard = state.scroll.lock().map_err(err)?;
@@ -262,26 +227,44 @@ fn sample_pair(
         .filter(|s| s.id == id)
         .ok_or("长截图会话已结束。")?;
     // 匹配之前保存候选帧，失败时也能排查；重复静止帧不重复写盘。
-    if !crate::stitch::stable(session.stitch.last(), &second) {
+    if !stability::stable(session.stitch.last(), &second) {
         if let Some(archive) = &mut session.archive {
-            archive.frame(&second)?;
+            if let Err(error) = archive.frame(&second) {
+                // 调试存档达到限额或磁盘不可写，不应终止自动匹配和锚点恢复。
+                log::warn!("停止原始帧存档，长截图继续：{error}");
+                session.archive = None;
+            }
         }
     }
-    let result = session.stitch.consider(second)?;
+    let result = session.recovery.consider(&mut session.stitch, second)?;
     if let Some(archive) = &session.archive {
-        archive.record(
+        if let Err(error) = archive.record(
             serde_json::json!({"event":"match", "result":format!("{result:?}"),
             "frames":session.stitch.count(), "height":session.stitch.height}),
-        )?;
+        ) {
+            log::warn!("停止匹配日志存档，长截图继续：{error}");
+            session.archive = None;
+        }
     }
-    if matches!(result, Match::Overlap(_)) {
+    publish_progress(app, session, Some(result))?;
+    Ok(Some(result))
+}
+
+/// 恢复提示与成图进度共用已有事件；提示变化也更新版本，静止重试不重复编码预览。
+fn publish_progress(
+    app: &AppHandle,
+    session: &mut ScrollSession,
+    result: Option<Match>,
+) -> Result<(), String> {
+    let message = session.recovery.message(result);
+    if session.message != message || matches!(result, Some(Match::Overlap(_))) {
+        session.message = message.into();
         session.revision += 1;
         let update = view(session, true)?;
-        // 只有追加成功时推送，重复帧不会反复编码或发送。
         let _ = app.emit_to("scroll-preview", "scroll-updated", &update);
         let _ = app.emit_to("scroll-controls", "scroll-updated", &update);
     }
-    Ok(Some(result))
+    Ok(())
 }
 
 fn collect(app: AppHandle, id: u64, first_delay: u64) {
@@ -290,7 +273,6 @@ fn collect(app: AppHandle, id: u64, first_delay: u64) {
     let mut message = "长截图采集结束。".to_string();
     let mut finish_latest = true;
     let mut delay = first_delay;
-    let mut manual_retries = 0;
     while finish_latest && wait(&state, delay) {
         delay = 80;
         if Instant::now() >= deadline {
@@ -302,19 +284,14 @@ fn collect(app: AppHandle, id: u64, first_delay: u64) {
             continue;
         };
         let decision = (|| -> Result<(), String> {
-            let result = sample_pair(&app, &state, id, false)?;
+            sample_pair(&app, &state, id, false)?;
             if state.scroll_stop.load(Ordering::SeqCst) {
                 return Ok(());
             }
-            // 手动滚动后等待稳定画面，匹配不确定时延迟重试，避免追加错误接缝。
-            if result == Some(Match::Uncertain) {
-                manual_retries += 1;
-                delay = 1200;
-                if manual_retries > 2 {
-                    return Err("重叠匹配重试失败，已自动结束，仅输出已确认部分。".into());
-                }
-            } else {
-                manual_retries = 0;
+            // 不确定匹配只退避重采，可信锚点始终保留，不按重试次数结束。
+            let guard = state.scroll.lock().map_err(err)?;
+            if let Some(session) = guard.as_ref().filter(|s| s.id == id) {
+                delay = session.recovery.delay();
             }
             Ok(())
         })();
@@ -437,7 +414,8 @@ pub async fn start_scroll(
             obscuring_windows,
             source_size,
             stitch,
-            message: String::new(),
+            recovery: recovery::Recovery::default(),
+            message: "自动拼接中，请正常滚动页面，完成后点击完成。".into(),
             archive,
         };
         let result = view(&session, true)?;

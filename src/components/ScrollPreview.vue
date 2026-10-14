@@ -12,7 +12,7 @@ const busy = ref(false)
 const error = ref('')
 const cancelling = ref(false)
 const status = computed(() => busy.value ? (cancelling.value ? '正在取消…' : '正在保存…')
-  : !view.value ? '准备中…' : !view.value.collecting ? '采集结束' : '手动采集')
+  : !view.value ? '准备中…' : !view.value.collecting ? '采集结束' : '自动拼接')
 const hint = computed(() => error.value || view.value?.message || '滚动后稍作停顿，等待拼接')
 let off: (() => void) | undefined
 let disposed = false
@@ -64,10 +64,10 @@ onUnmounted(() => { disposed = true; off?.() })
     <footer v-else>
       <div class="progress" :title="hint">
         <span class="status"><i :class="{ stopped: busy || !view?.collecting }" />{{ status }}</span>
-        <small v-if="view">{{ view.frames }} 帧 · {{ view.height }} px</small>
+        <small v-if="view" aria-live="polite">{{ view.message || `${view.frames} 帧 · ${view.height} px` }}</small>
       </div>
       <span v-if="error" class="error-indicator" role="alert" :title="error" :aria-label="error"><AlertCircle :size="16" /></span>
-      <button class="save" :disabled="busy || !view" title="结束采集，保存并复制长截图" @click="finish(false)"><Save :size="15" />保存</button>
+      <button class="save" :disabled="busy || !view" title="结束采集，保存并复制长截图" @click="finish(false)"><Save :size="15" />完成</button>
       <button class="cancel" :disabled="busy || !view" title="取消长截图（已保留的原始帧不会删除）" aria-label="取消长截图" @click="finish(true)"><X :size="17" /></button>
     </footer>
   </main>

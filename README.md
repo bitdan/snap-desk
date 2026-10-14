@@ -100,7 +100,7 @@ npm run desktop:dev
 | `src/components/`、`src/lib/api.ts` | 界面与 Tauri API 调用 |
 | `src-tauri/src/capture.rs` | 截图会话与命令入口 |
 | `src-tauri/src/annotations.rs`、`pins.rs` | 标注合成、贴图与窗口生命周期 |
-| `src-tauri/src/scroll_capture.rs`、`stitch.rs` | 长截图采集与拼接 |
+| `src-tauri/src/scroll/` | 长截图采集、稳定检测、匹配、拼接、失败恢复与会话管理 |
 | `src-tauri/src/recorder/` | WGC 采集、Raw Input、QPC 时间轴、特效合成及 Media Foundation 编码 |
 | `src-tauri/src/settings.rs`、`image_io.rs` | 配置、图片导出与剪贴板 |
 | `tests/` | 前端定向测试；Rust 用例位于对应模块 |
