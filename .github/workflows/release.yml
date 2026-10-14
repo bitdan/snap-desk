@@ -16,7 +16,7 @@ permissions:
 
 jobs:
   release:
-    name: Windows x64 installers
+    name: Windows x64 executable and installers
     runs-on: windows-2022
     timeout-minutes: 60
     permissions:
@@ -51,7 +51,7 @@ jobs:
         run: npm ci
 
       # 复用本地脚本的 --ci、--locked 和 src-tauri/target 输出目录。
-      - name: Build installers
+      - name: Build executable and installers
         run: npm run desktop:package
 
       - name: Publish GitHub Release
@@ -59,15 +59,29 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
         run: |
+          # 测试版只收集 NSIS，避免读取不存在的 MSI 目录或上传旧 MSI。
+          $isTestRelease = $env:GITHUB_REF_NAME.Contains('-')
           $installers = @(
             Get-ChildItem -Path 'src-tauri/target/release/bundle/nsis/*-setup.exe' -File
-            Get-ChildItem -Path 'src-tauri/target/release/bundle/msi/*.msi' -File
           )
-          if ($installers.Count -ne 2) {
-            throw '应生成一个 NSIS EXE 和一个 MSI 安装包，请检查构建输出。'
+          if ($installers.Count -ne 1) {
+            throw '应生成一个 NSIS EXE 安装包，请检查构建输出。'
           }
+          if (-not $isTestRelease) {
+            $msi = @(Get-ChildItem -Path 'src-tauri/target/release/bundle/msi/*.msi' -File)
+            if ($msi.Count -ne 1) {
+              throw '正式版应额外生成一个 MSI 安装包，请检查构建输出。'
+            }
+            $installers += $msi
+          }
+          # 打包本身已经生成主程序，无需再编译；复制并命名以区别于 *-setup.exe。
+          $executable = 'src-tauri/target/release/snap-desk.exe'
+          if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) {
+            throw '缺少可运行的 snap-desk.exe，请检查构建输出。'
+          }
+          $standalone = "src-tauri/target/release/snap-desk-$env:GITHUB_REF_NAME-windows-x64-standalone.exe"
+          Copy-Item -LiteralPath $executable -Destination $standalone
           # 版本后缀决定发布渠道；校验步骤已确保标签符合版本格式。
-          $isTestRelease = $env:GITHUB_REF_NAME.Contains('-')
           $channel = if ($isTestRelease) { '测试版' } else { '正式版' }
           $releaseArgs = @(
             'release', 'create', $env:GITHUB_REF_NAME,
@@ -81,5 +95,7 @@ jobs:
             $releaseArgs += '--latest'
           }
           $releaseArgs += $installers.FullName
+          # 单独分发主程序时一并提供许可证；它仍需要系统已安装 WebView2。
+          $releaseArgs += @($standalone, 'LICENSE')
           gh @releaseArgs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

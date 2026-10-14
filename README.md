@@ -80,6 +80,17 @@ npm run desktop:dev
 
 构建前从托盘退出程序。脚本固定复用 `src-tauri/target/`，已包含 `--ci` 和 `--locked`；Windows 程序位于 `src-tauri/target/release/snap-desk.exe`，安装包位于 `release/bundle/`。无需日常执行 clean，清理后会重新编译依赖。各平台安装包需在对应系统构建。
 
+`npm run desktop:package` 会同时保留可运行的 `src-tauri/target/release/snap-desk.exe` 和安装包。GitHub Release 的 Windows x64 附件按以下规则提供，另附 `LICENSE`：
+
+| 版本示例 | 可直接启动的程序 | EXE 安装包 | MSI 安装包 | Release 标记 |
+| --- | --- | --- | --- | --- |
+| `0.1.4-beta.1`、`0.1.4-rc.1` | `snap-desk-v版本-windows-x64-standalone.exe` | `*-setup.exe` | 不提供 | Pre-release |
+| `0.1.4` | `snap-desk-v版本-windows-x64-standalone.exe` | `*-setup.exe` | `*.msi` | Latest |
+
+`standalone.exe` 是主程序，下载后可直接启动，需要系统已安装 WebView2；`setup.exe` 和 `.msi` 是安装程序。主程序仍使用系统应用数据目录保存配置，不代表数据全部保存在 EXE 同目录的便携模式。
+
+版本只维护 `package.json` 的 `version`，Git 标签在前面加 `v`。例如测试版 `0.1.4-beta.2` 对应 `v0.1.4-beta.2`，正式版 `0.1.4` 对应 `v0.1.4`。MSI 的版本字段有数字限制，无法直接使用 `beta.1` / `rc.1` 这样的文本后缀，所以测试版跳过 MSI。正式版采用三段数字，主版本和次版本最多 255，修订版本最多 65535；参见 [MSI ProductVersion](https://learn.microsoft.com/en-us/windows/win32/msi/productversion)。
+
 开发协作默认不执行编译、打包或全量测试，按 [AGENTS.md](AGENTS.md) 做定向验证。需要原生检查时使用锁定依赖，例如 `cargo check --manifest-path src-tauri/Cargo.toml --locked`。
 
 ## 代码入口
