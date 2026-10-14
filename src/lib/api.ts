@@ -22,7 +22,9 @@ export type PinTransform = 'rotateRight' | 'rotateLeft' | 'flipHorizontal' | 'fl
 export type PinAction = 'copy' | 'save' | 'hide' | 'close'
 export type PinManageAction = 'show' | 'hide' | 'close'
 // 字段与 Rust Settings / AppStatus 的 camelCase 序列化契约保持一致。
-export interface AppStatus { settings: Settings; shortcutError: string | null; configWarning: string | null; delayRemaining: number; platform: string }
+export type AppDirectory = 'config' | 'captures' | 'recordings' | 'scrollResults'
+export interface DirectoryView { kind: AppDirectory; path: string | null; error: string | null }
+export interface AppStatus { version: string; settings: Settings; shortcutError: string | null; configWarning: string | null; delayRemaining: number; platform: string }
 export const desktop = isTauri()
 // 在唯一的 API 边界解码错误，截图、贴图与主页均能看到原生错误正文及失败操作。
 async function invoke<T>(command: string, args?: InvokeArgs): Promise<T> {
@@ -34,12 +36,20 @@ async function listen<T>(event: string, callback: EventCallback<T>) {
   catch (error) { throw new Error(`订阅 ${event}：${errorMessage(error)}`) }
 }
 export const api = {
+  completeOnboarding: () => invoke<Settings>('complete_onboarding'),
+  appDirectories: () => invoke<DirectoryView[]>('app_directories'),
+  openAppDirectory: (kind: AppDirectory) => invoke<void>('open_app_directory', { kind }),
+  copyAppDirectory: (kind: AppDirectory) => invoke<void>('copy_app_directory', { kind }),
+  copyShortcutExample: () => invoke<void>('copy_shortcut_example'),
+  exportSettings: () => invoke<boolean>('export_settings'),
+  selectRecordingArea: () => invoke<void>('select_recording_area'),
   recoverableRecordings: () => invoke<RecoverableRecording[]>('recoverable_recordings'),
   retryRecordingExport: (id: string) => invoke<string>('retry_recording_export', { id }),
   openProjectHomepage: () => invoke<void>('open_project_homepage'),
   status: () => invoke<AppStatus>('app_status'),
   saveSettings: (settings: Settings) => invoke<Settings>('save_settings', { settings }),
   setShortcutsEnabled: (enabled: boolean) => invoke<Settings>('set_shortcuts_enabled', { enabled }),
+  setShortcutEditing: (editing: boolean) => invoke<void>('set_shortcut_editing', { editing }),
   cancelPending: () => invoke<void>('cancel_pending_capture'),
   start: () => invoke<void>('start_capture'),
   current: () => invoke<CaptureFrame | null>('current_capture'),

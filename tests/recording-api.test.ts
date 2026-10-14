@@ -8,6 +8,24 @@ vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn() }))
 import { api } from '../src/lib/api'
 
 describe('录屏 IPC 契约', () => {
+  it('主窗口录屏选区有独立入口，不走普通截图命令', async () => {
+    await api.selectRecordingArea()
+    expect(invoke).toHaveBeenLastCalledWith('select_recording_area', undefined)
+  })
+  it('目录 IPC 只发送固定种类，导出与引导完成不携带草稿', async () => {
+    await api.openAppDirectory('config')
+    expect(invoke).toHaveBeenLastCalledWith('open_app_directory', { kind: 'config' })
+    await api.copyAppDirectory('scrollResults')
+    expect(invoke).toHaveBeenLastCalledWith('copy_app_directory', { kind: 'scrollResults' })
+    await api.exportSettings()
+    expect(invoke).toHaveBeenLastCalledWith('export_settings', undefined)
+    await api.completeOnboarding()
+    expect(invoke).toHaveBeenLastCalledWith('complete_onboarding', undefined)
+    await api.setShortcutEditing(true)
+    expect(invoke).toHaveBeenLastCalledWith('set_shortcut_editing', { editing: true })
+    await api.setShortcutEditing(false)
+    expect(invoke).toHaveBeenLastCalledWith('set_shortcut_editing', { editing: false })
+  })
   it('恢复导出仅传后台标识，不允许前端指定源文件路径', async () => {
     const items = [{ id: 'recording-pending-example', path: 'D:\\Videos\\video.mp4', finalized: true, stage: 'failed:syncing', exported: null }]
     invoke.mockResolvedValueOnce(items)

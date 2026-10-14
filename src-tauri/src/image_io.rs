@@ -132,6 +132,11 @@ fn read_directory(path: &Path) -> Option<PathBuf> {
     (directory.is_absolute() && directory.is_dir()).then_some(directory)
 }
 
+/// 通用设置只查看已有目录记录，不为尚未保存过图片的用户猜测位置。
+pub(crate) fn current_directory(app: &AppHandle) -> Result<Option<PathBuf>, String> {
+    Ok(read_directory(&directory_record(app)?))
+}
+
 fn remember_directory(record: &Path, directory: &Path) -> Result<(), String> {
     let parent = record.parent().ok_or("目录记录路径无效。")?;
     fs::create_dir_all(parent).map_err(|e| e.to_string())?;

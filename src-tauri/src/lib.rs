@@ -5,6 +5,7 @@ mod pin_content;
 mod pins;
 mod platform;
 mod settings;
+mod storage;
 
 use capture::{require_window, show_main, CaptureState};
 use serde::Serialize;
@@ -24,6 +25,7 @@ struct AppStatus {
     config_warning: Option<String>,
     delay_remaining: u8,
     platform: &'static str,
+    version: String,
 }
 
 #[tauri::command]
@@ -42,6 +44,7 @@ async fn app_status(app: AppHandle, window: WebviewWindow) -> Result<AppStatus, 
                 .delay_remaining
                 .load(Ordering::SeqCst),
             platform: std::env::consts::OS,
+            version: app.package_info().version.to_string(),
         })
     })
     .await
@@ -61,6 +64,13 @@ async fn open_project_homepage(window: WebviewWindow) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(platform::open_project_homepage)
         .await
         .map_err(|e| e.to_string())?
+}
+
+/// 主窗口的录屏按钮直接进入录屏框选，复用全局录屏动作的采集入口。
+#[tauri::command]
+async fn select_recording_area(app: AppHandle, window: WebviewWindow) -> Result<(), String> {
+    require_window(&window, "main")?;
+    capture::begin_recording(app).await
 }
 
 fn trigger(app: &AppHandle) {
@@ -115,6 +125,7 @@ pub fn run() {
             }
         }))
         .manage(CaptureState::default())
+        .manage(settings::ShortcutPressState::default())
         .manage(capture::recording::RecordingState::default())
         .manage(capture::recording::ExitState::default())
         .manage(pins::PinState::default())
@@ -128,37 +139,37 @@ pub fn run() {
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, shortcut, event| {
-                    let capture = app.state::<CaptureState>();
-                    let bit = if *shortcut == settings::pin_shortcut() {
-                        2
-                    } else if *shortcut == settings::recording_shortcut() {
-                        4
-                    } else {
-                        1
-                    };
+                    let pressed = app.state::<settings::ShortcutPressState>();
                     if event.state() == ShortcutState::Released {
-                        capture.hotkey_pressed.fetch_and(!bit, Ordering::SeqCst);
+                        if let Ok(mut keys) = pressed.0.lock() {
+                            keys.retain(|key| key != shortcut);
+                        }
                         return;
                     }
-                    // 保存设置时可能短暂注册两个键，只响应当前生效的那个。
-                    // try_lock 不阻塞主线程，避免与后台注册快捷键的任务互相等待。
-                    let matches = app
+                    // 按已提交映射响应事件；try_lock 避免阻塞系统事件线程。
+                    let action = app
                         .try_state::<settings::SettingsState>()
-                        .is_some_and(|state| {
-                            state.0.try_lock().ok().is_some_and(|current| {
-                                current.registered.contains(shortcut)
-                                    && current.value.shortcuts_enabled
-                                    && (bit != 1
-                                        || current.value.validate().ok().as_ref() == Some(shortcut))
-                            })
+                        .and_then(|state| {
+                            let current = state.0.try_lock().ok()?;
+                            if current.editing
+                                || !current.value.shortcuts_enabled
+                                || !current.registered.contains(shortcut)
+                            {
+                                return None;
+                            }
+                            let action = current.value.action_for(shortcut)?;
+                            let mut keys = pressed.0.lock().ok()?;
+                            if keys.contains(shortcut) {
+                                return None;
+                            }
+                            keys.push(*shortcut);
+                            Some(action)
                         });
-                    if matches && capture.hotkey_pressed.fetch_or(bit, Ordering::SeqCst) & bit == 0
-                    {
-                        match bit {
-                            2 => trigger_pin(app),
-                            4 => trigger_recording(app),
-                            _ => trigger(app),
-                        }
+                    match action {
+                        Some(settings::ShortcutAction::Capture) => trigger(app),
+                        Some(settings::ShortcutAction::Pin) => trigger_pin(app),
+                        Some(settings::ShortcutAction::Record) => trigger_recording(app),
+                        None => {}
                     }
                 })
                 .build(),
@@ -166,8 +177,8 @@ pub fn run() {
         .setup(|app| {
             settings::initialize(app.handle())?;
             let capture = MenuItem::with_id(app, "capture", "开始截图", true, None::<&str>)?;
-            let pin = MenuItem::with_id(app, "pin", "剪贴板贴图 (F2)", true, None::<&str>)?;
-            let recording = MenuItem::with_id(app, "recording", "录屏 (F3)", true, None::<&str>)?;
+            let pin = MenuItem::with_id(app, "pin", "剪贴板贴图", true, None::<&str>)?;
+            let recording = MenuItem::with_id(app, "recording", "录屏", true, None::<&str>)?;
             let open = MenuItem::with_id(app, "open", "打开 Snap Desk", true, None::<&str>)?;
             let enabled = app
                 .state::<settings::SettingsState>()
@@ -236,6 +247,22 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
+            // 按已提交映射响应事件；try_lock 避免阻塞系统事件线程。??
+            if window.label() == "main"
+                && matches!(
+                    event,
+                    tauri::WindowEvent::Focused(false)
+                        | tauri::WindowEvent::CloseRequested { .. }
+                        | tauri::WindowEvent::Destroyed
+                )
+            {
+                let app = window.app_handle().clone();
+                tauri::async_runtime::spawn_blocking(move || {
+                    if let Err(error) = settings::set_editing(&app, false) {
+                        capture::report_error(&app, error);
+                    }
+                });
+            }
             if matches!(event, tauri::WindowEvent::Resized(_)) && window.label().contains("-edge-")
             {
                 if let Some(webview) = window.app_handle().get_webview_window(window.label()) {
@@ -277,10 +304,18 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             app_status,
+            select_recording_area,
+            storage::app_directories,
+            storage::open_app_directory,
+            storage::copy_app_directory,
+            storage::export_settings,
+            storage::copy_shortcut_example,
+            settings::complete_onboarding,
             hide_main,
             open_project_homepage,
             settings::save_settings,
             settings::set_shortcuts_enabled,
+            settings::set_shortcut_editing,
             capture::cancel_pending_capture,
             capture::start_capture,
             capture::current_capture,

@@ -51,7 +51,7 @@ async function control(action: RecordingAction) {
 }
 async function select() {
   busy.value = true; error.value = ''
-  try { await api.start() } catch (e) { error.value = String(e) }
+  try { await api.selectRecordingArea() } catch (e) { error.value = String(e) }
   finally { busy.value = false }
 }
 async function chooseDirectory(reset = false) {
@@ -78,7 +78,7 @@ onUnmounted(() => { disposed = true; clearTimeout(timer) })
 <template>
   <section>
     <h1>录屏</h1>
-    <p class="subtitle">F3 框选录屏范围，录制中再按 F3 停止并保存。也可先选择范围，在工具栏设置录屏选项。</p>
+    <p class="subtitle">选择录制范围后设置录屏选项。录屏快捷键可在设置中修改，录制中再次按下停止并保存。</p>
     <div v-if="error" class="notice error" role="alert">{{ error }}</div>
     <p v-if="recoveredPath" class="notice break-all" role="status">已重新导出：{{ recoveredPath }}</p>
     <div v-if="recoveries.length" class="settings-card mb-3">

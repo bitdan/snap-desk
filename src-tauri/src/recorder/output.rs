@@ -49,7 +49,7 @@ fn persist(record: &Path, directory: Option<&Path>) -> Result<(), String> {
     Ok(())
 }
 
-fn resolve(app: &AppHandle) -> Result<(PathBuf, bool), String> {
+pub(crate) fn resolve(app: &AppHandle) -> Result<(PathBuf, bool), String> {
     match read(&record(app)?)? {
         Some(path) => Ok((path, false)),
         None => Ok((

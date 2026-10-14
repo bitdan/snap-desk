@@ -28,6 +28,27 @@ pub fn open_project_homepage() -> Result<(), String> {
     }
 }
 
+/// 只接收后端解析的目录，独立参数交给系统文件管理器，不经过 shell 拼接。
+pub fn open_directory(path: &std::path::Path) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    let mut command = {
+        use std::os::windows::process::CommandExt;
+        let mut command = std::process::Command::new("explorer.exe");
+        command.creation_flags(0x08000000);
+        command
+    };
+    #[cfg(target_os = "macos")]
+    let mut command = std::process::Command::new("open");
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    let mut command = std::process::Command::new("xdg-open");
+    // Explorer 可以把请求交给已有进程，其退出码不能作为打开失败的依据。
+    command
+        .arg(path)
+        .spawn()
+        .map_err(|e| format!("无法打开目录：{e}"))?;
+    Ok(())
+}
+
 // Keep OS capture details behind one boundary; overlay, crop and export never depend on xcap.
 pub fn capture_primary() -> Result<RgbaImage, String> {
     #[cfg(target_os = "linux")]

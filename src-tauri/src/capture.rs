@@ -22,8 +22,6 @@ pub mod scroll;
 pub struct CaptureState {
     /// 从倒计时开始到导出/取消结束只允许一个会话。
     pub active: AtomicBool,
-    /// 三个位分别记录截图、贴图、录屏键，避免长按重复触发或互相清除按下状态。
-    pub hotkey_pressed: AtomicU8,
     operation: AtomicBool,
     next_id: AtomicU64,
     session: Mutex<Option<Session>>,
