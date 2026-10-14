@@ -188,9 +188,8 @@ pub fn control(app: &AppHandle, id: Option<u64>, action: RecordingAction) -> Res
             s.view.message = "录屏已暂停，可恢复或停止导出。".into();
             s.view.revision += 1;
             drop(guard);
-            // 悬浮条暂停不展开主窗口，录制范围及控制条持续可见；托盘仍可打开主页。
+            // 所有入口暂停都不展开主窗口，继续通过悬浮控制条恢复或停止。
             if id.is_none() {
-                show_main(app);
                 let _ = app.emit_to("main", "capture-result", "录屏已暂停，可恢复或停止导出。");
             }
             return Ok(());
@@ -799,7 +798,7 @@ fn collect(
         .active
         .store(false, Ordering::SeqCst);
     let _ = app.emit_to("main", "capture-result", &message);
-    show_main(&app);
+    // 导出、取消或失败后保持主界面隐藏，由用户从托盘主动打开。
 }
 
 /// 临时目录在 writer 释放后删除；只有 Finalize、sync_all 成功才原子发布最终文件。

@@ -164,7 +164,6 @@ fn complete(app: &AppHandle, id: u64, message: &str) -> Result<(), String> {
     close_session(app, id)?;
     let _ = app.emit_to("capture", "scroll-updated", &result);
     let _ = app.emit_to("main", "capture-result", format!("{message} {output}"));
-    show_main(app);
     Ok(())
 }
 
@@ -378,7 +377,6 @@ fn collect(app: AppHandle, id: u64, first_delay: u64) {
         }
         if let Some(error) = failure {
             report_error(&app, format!("长截图输出重试失败，内存结果仍保留：{error}"));
-            show_main(&app);
         }
         break;
     }

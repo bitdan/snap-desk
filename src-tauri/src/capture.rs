@@ -42,7 +42,6 @@ pub struct CaptureState {
 struct Session {
     frame: Frame,
     image: RgbaImage,
-    restore_main: bool,
     shown: bool,
 }
 
@@ -128,10 +127,6 @@ pub async fn begin(app: AppHandle) -> Result<(), String> {
             .store(settings.value.delay_seconds, Ordering::SeqCst);
         settings.value.delay_seconds
     };
-    let restore_main = app
-        .get_webview_window("main")
-        .and_then(|window| window.is_visible().ok())
-        .unwrap_or(false);
     let worker_app = app.clone();
     // move 将句柄所有权转移给后台闭包；clone 只克隆应用句柄，不复制整个应用。
     let result = tauri::async_runtime::spawn_blocking(move || {
@@ -156,7 +151,7 @@ pub async fn begin(app: AppHandle) -> Result<(), String> {
             let _ = worker_app.emit_to("main", "capture-result", "已取消延时截图。");
             return Ok(());
         }
-        prepare(&worker_app, restore_main)
+        prepare(&worker_app)
     })
     .await
     .map_err(err)
@@ -164,9 +159,8 @@ pub async fn begin(app: AppHandle) -> Result<(), String> {
     if let Err(error) = &result {
         state.delay_remaining.store(0, Ordering::SeqCst);
         let _ = app.emit_to("main", "capture-delay", 0u8);
-        if cleanup(&app, restore_main).is_err() {
+        if cleanup(&app).is_err() {
             state.active.store(false, Ordering::SeqCst);
-            show_main(&app);
         }
         log::error!("Capture preparation failed: {error}");
     }
@@ -218,7 +212,7 @@ pub fn cancel_pending_capture(app: AppHandle, window: WebviewWindow) -> Result<(
     }
 }
 
-fn prepare(app: &AppHandle, restore_main: bool) -> Result<(), String> {
+fn prepare(app: &AppHandle) -> Result<(), String> {
     let window = overlay(app)?;
     window.hide().map_err(err)?;
     if let Some(main) = app.get_webview_window("main") {
@@ -249,7 +243,6 @@ fn prepare(app: &AppHandle, restore_main: bool) -> Result<(), String> {
     *state.session.lock().map_err(err)? = Some(Session {
         frame: frame.clone(),
         image,
-        restore_main,
         shown: false,
     });
     app.emit_to("capture", "capture-ready", &frame)
@@ -280,11 +273,9 @@ fn prepare(app: &AppHandle, restore_main: bool) -> Result<(), String> {
 }
 
 pub fn report_error(app: &AppHandle, message: String) {
+    // 错误保留在日志和主界面提示中，不因后台操作失败抢走当前应用焦点。
     log::warn!("{message}");
     let _ = app.emit_to("main", "capture-error", &message);
-    if !app.state::<CaptureState>().active.load(Ordering::SeqCst) {
-        show_main(app);
-    }
 }
 
 #[tauri::command]
@@ -317,7 +308,8 @@ pub fn show_capture(app: AppHandle, window: WebviewWindow, id: u64) -> Result<()
     Ok(())
 }
 
-fn cleanup(app: &AppHandle, restore_main: bool) -> Result<(), String> {
+/// 完成、取消或失败后仅清理采集窗口和会话，不自动返回主界面。
+fn cleanup(app: &AppHandle) -> Result<(), String> {
     // Keep the session recoverable if hiding fails; don't expose a dead overlay.
     overlay(app)?.hide().map_err(err)?;
     scroll_capture::chrome::hide(app);
@@ -326,24 +318,20 @@ fn cleanup(app: &AppHandle, restore_main: bool) -> Result<(), String> {
     state.scroll_collecting.store(false, Ordering::SeqCst);
     *state.scroll.lock().map_err(err)? = None;
     *state.session.lock().map_err(err)? = None;
-    if restore_main {
-        show_main(app);
-    }
     state.active.store(false, Ordering::SeqCst);
     Ok(())
 }
 
 fn close_session(app: &AppHandle, id: u64) -> Result<(), String> {
     let state = app.state::<CaptureState>();
-    let restore = state
+    state
         .session
         .lock()
         .map_err(err)?
         .as_ref()
         .filter(|s| s.frame.id == id)
-        .map(|s| s.restore_main)
         .ok_or("截图已过期。")?;
-    cleanup(app, restore)
+    cleanup(app)
 }
 
 // 导出与取消互斥；Drop 在正常返回和 ? 提前返回时都会释放占用标志。
