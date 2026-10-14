@@ -24,7 +24,7 @@ onMounted(() => root.value?.querySelector<HTMLButtonElement>('.start')?.focus())
     <header><strong>长截图</strong><button :disabled="busy" title="关闭长截图选项" aria-label="关闭长截图选项" @click="emit('close')"><X :size="16" /></button></header>
     <div class="options">
       <p class="hint">手动向下滚动，停顿后拼接</p>
-      <label title="额外保存采集到的原始图片"><input v-model="saveFrames" type="checkbox" :disabled="busy" />保留原始帧</label>
+      <label title="调试时保存原始图片，会增加磁盘占用和采集耗时"><input v-model="saveFrames" type="checkbox" :disabled="busy" />保留原始帧（调试）</label>
     </div>
     <p v-if="error" class="error" role="alert">{{ error }}</p>
     <footer><button class="start" :disabled="busy" title="开始采集当前选区" @click="emit('confirm')"><ScrollCaptureIcon :size="15" />{{ busy ? '准备中…' : '开始长截图' }}</button></footer>

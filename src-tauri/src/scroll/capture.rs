@@ -61,15 +61,22 @@ pub(super) fn wait(state: &CaptureState, millis: u64) -> bool {
 }
 
 fn sample(region: Rect, source_size: (u32, u32)) -> Result<RgbaImage, String> {
+    let started = Instant::now();
     let image = crate::platform::capture_primary()?;
     if image.dimensions() != source_size {
         return Err("显示器像素尺寸发生变化，已结束采集，仅输出已确认部分。".into());
     }
     region.validate(image.width(), image.height())?;
-    Ok(
+    let cropped =
         image::imageops::crop_imm(&image, region.x, region.y, region.width, region.height)
-            .to_image(),
-    )
+            .to_image();
+    log::debug!(
+        "长截图采集：source={source_size:?}, roi={}x{}, millis={:.2}",
+        region.width,
+        region.height,
+        started.elapsed().as_secs_f64() * 1000.0
+    );
+    Ok(cropped)
 }
 
 /// 连续取样并等待区域稳定；结束前允许最后一次取样，取消仍立即生效。

@@ -1,9 +1,13 @@
 //! 分段存储可信图像，自动去重并处理固定底栏；负责容量、预览和组图。
-use super::matcher::{alignment, Match, MIN_OVERLAP};
+use super::matcher::{alignment, Match, Signature, MIN_OVERLAP};
 use image::RgbaImage;
 pub const MAX_PIXELS: u64 = 32_000_000;
 pub const MAX_HEIGHT: u32 = 60_000;
 const MAX_FRAMES: usize = 64;
+
+#[cfg(test)]
+#[path = "regression_tests.rs"]
+mod regression_tests;
 
 struct Segment {
     image: RgbaImage,
@@ -13,6 +17,8 @@ struct Segment {
 
 pub struct Stitch {
     segments: Vec<Segment>,
+    // 仅随可信锚点更新；不确定候选不能污染下一轮匹配。
+    signature: Signature,
     pub width: u32,
     pub frame_height: u32,
     pub height: u32,
@@ -32,6 +38,7 @@ impl Stitch {
             );
         }
         Ok(Self {
+            signature: Signature::new(&image),
             segments: vec![Segment {
                 image,
                 overlap: 0,
@@ -53,7 +60,13 @@ impl Stitch {
         if image.dimensions() != (self.width, self.frame_height) {
             return Err("采集区域尺寸发生变化，请结束本次长截图。".into());
         }
-        let (result, bottom) = alignment(self.last(), &image);
+        let started = std::time::Instant::now();
+        let signature = Signature::new(&image);
+        let (result, bottom) = alignment(self.last(), &image, &self.signature, &signature);
+        log::debug!(
+            "长截图匹配：result={result:?}, bottom={bottom}, millis={:.2}",
+            started.elapsed().as_secs_f64() * 1000.0
+        );
         if let Match::Overlap(overlap) = result {
             let last = &self.segments[self.segments.len() - 1];
             // 底栏布局刚变化时，不能用新推断裁掉已提交内容；按不确定匹配重试。
@@ -61,6 +74,7 @@ impl Stitch {
                 return Ok(Match::Uncertain);
             }
             self.append(image, overlap, bottom)?;
+            self.signature = signature;
         }
         Ok(result)
     }

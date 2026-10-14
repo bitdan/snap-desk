@@ -3,14 +3,14 @@ use image::RgbaImage;
 pub const MIN_OVERLAP: u32 = 32;
 const COLUMNS: usize = 48;
 
-struct Signature {
+pub(super) struct Signature {
     pixels: Vec<[u8; 3]>,
     edges: Vec<bool>,
     height: u32,
 }
 
 impl Signature {
-    fn new(image: &RgbaImage) -> Self {
+    pub(super) fn new(image: &RgbaImage) -> Self {
         let mut pixels = Vec::with_capacity(image.height() as usize * COLUMNS);
         let mut edges = Vec::with_capacity(pixels.capacity());
         // 均匀抽取列但保留每一行，位移仍精确到原图像素，不按 DPI 粗略取整。
@@ -55,14 +55,8 @@ pub enum Match {
 }
 
 /// 在纵向位移范围内匹配内容边缘。白色背景不计作匹配证据，多个近似解拒绝自动拼接。
-fn match_region(previous: &RgbaImage, next: &RgbaImage) -> Match {
-    if previous.dimensions() != next.dimensions() || previous.width() < 32 || previous.height() < 64
-    {
-        return Match::Uncertain;
-    }
-    let a = Signature::new(previous);
-    let b = Signature::new(next);
-    if unchanged(&a, &b) {
+fn match_region(a: &Signature, b: &Signature) -> Match {
+    if unchanged(a, b) {
         return Match::Unchanged;
     }
     let mut scores = Vec::new();
@@ -125,14 +119,20 @@ fn match_region(previous: &RgbaImage, next: &RgbaImage) -> Match {
     }
     scores.sort_by(|a, b| a.0.total_cmp(&b.0));
     let Some(&(score, shift)) = scores.first() else {
+        log::debug!("长截图匹配失败：没有通过行投票和纹理校验的位移候选");
         return Match::Uncertain;
     };
+    log::debug!(
+        "长截图候选：shift={shift}, error={score:.3}, candidates={}",
+        scores.len()
+    );
     if score > 8.0
         || scores
             .iter()
             .skip(1)
             .any(|&(other, delta)| delta.abs_diff(shift) > 2 && other <= score + 1.5)
     {
+        log::debug!("长截图匹配失败：候选误差过大或存在歧义位移");
         return Match::Uncertain;
     }
     Match::Overlap(a.height - shift)
@@ -165,8 +165,11 @@ fn fixed_bands(a: &RgbaImage, b: &RgbaImage) -> (u32, u32) {
 }
 
 /// 行特征筛选后用更密的原始像素复核，避免采样列恰好落在重复背景上。
-fn verified_region(a: &RgbaImage, b: &RgbaImage) -> Match {
-    let result = match_region(a, b);
+fn verified_region(a: &RgbaImage, b: &RgbaImage, sa: &Signature, sb: &Signature) -> Match {
+    if a.width() < 32 || a.height() < 64 {
+        return Match::Uncertain;
+    }
+    let result = match_region(sa, sb);
     if let Match::Overlap(overlap) = result {
         let shift = a.height() - overlap;
         let mut good = 0u64;
@@ -181,6 +184,7 @@ fn verified_region(a: &RgbaImage, b: &RgbaImage) -> Match {
             }
         }
         if good * 100 < count * 90 {
+            log::debug!("长截图匹配失败：原始像素复核不足 90%");
             return Match::Uncertain;
         }
     }
@@ -189,19 +193,35 @@ fn verified_region(a: &RgbaImage, b: &RgbaImage) -> Match {
 
 /// 返回可靠重叠与固定底栏高度；多个区域必须给出同一像素位移。
 /// 局部动画/浮层可使一个区域失败，但两个区域冲突时绝不猜测接缝。
-pub(super) fn alignment(previous: &RgbaImage, next: &RgbaImage) -> (Match, u32) {
+pub(super) fn alignment(
+    previous: &RgbaImage,
+    next: &RgbaImage,
+    previous_signature: &Signature,
+    next_signature: &Signature,
+) -> (Match, u32) {
     if previous.dimensions() != next.dimensions() || previous.width() < 32 || previous.height() < 64
     {
         return (Match::Uncertain, 0);
     }
-    if unchanged(&Signature::new(previous), &Signature::new(next)) {
+    if unchanged(previous_signature, next_signature) {
         return (Match::Unchanged, 0);
     }
     let (top, bottom) = fixed_bands(previous, next);
     let height = previous.height() - top - bottom;
-    let a = image::imageops::crop_imm(previous, 0, top, previous.width(), height).to_image();
-    let b = image::imageops::crop_imm(next, 0, top, next.width(), height).to_image();
-    let full = verified_region(&a, &b);
+    // 没有固定栏时直接借用原图和缓存特征，省去两次整帧复制和重复计算。
+    let cropped;
+    let signatures;
+    let (a, b, sa, sb) = if top == 0 && bottom == 0 {
+        (previous, next, previous_signature, next_signature)
+    } else {
+        cropped = (
+            image::imageops::crop_imm(previous, 0, top, previous.width(), height).to_image(),
+            image::imageops::crop_imm(next, 0, top, next.width(), height).to_image(),
+        );
+        signatures = (Signature::new(&cropped.0), Signature::new(&cropped.1));
+        (&cropped.0, &cropped.1, &signatures.0, &signatures.1)
+    };
+    let full = verified_region(a, b, sa, sb);
     let matched = if matches!(full, Match::Overlap(_)) || a.width() < 96 {
         full
     } else {
@@ -209,9 +229,11 @@ pub(super) fn alignment(previous: &RgbaImage, next: &RgbaImage) -> (Match, u32) 
         for region in 0..3 {
             let left = region * a.width() / 3;
             let width = (region + 1) * a.width() / 3 - left;
-            let ra = image::imageops::crop_imm(&a, left, 0, width, height).to_image();
-            let rb = image::imageops::crop_imm(&b, left, 0, width, height).to_image();
-            if let Match::Overlap(overlap) = verified_region(&ra, &rb) {
+            let ra = image::imageops::crop_imm(a, left, 0, width, height).to_image();
+            let rb = image::imageops::crop_imm(b, left, 0, width, height).to_image();
+            if let Match::Overlap(overlap) =
+                verified_region(&ra, &rb, &Signature::new(&ra), &Signature::new(&rb))
+            {
                 votes.push(overlap);
             }
         }
@@ -229,7 +251,17 @@ pub(super) fn alignment(previous: &RgbaImage, next: &RgbaImage) -> (Match, u32) 
 
 #[cfg(test)]
 pub fn find_overlap(previous: &RgbaImage, next: &RgbaImage) -> Match {
-    alignment(previous, next).0
+    if previous.dimensions() != next.dimensions() || previous.width() < 32 || previous.height() < 64
+    {
+        return Match::Uncertain;
+    }
+    alignment(
+        previous,
+        next,
+        &Signature::new(previous),
+        &Signature::new(next),
+    )
+    .0
 }
 
 #[cfg(test)]

@@ -132,7 +132,7 @@ impl Settings {
     }
 }
 
-/// 固定功能键与截图键统一注册、释放；避免关闭总开关后仍占用系统按键。
+/// 固定功能键独立注册；总开关关闭时释放所有实际注册成功的按键。
 pub fn pin_shortcut() -> Shortcut {
     "F2".parse().expect("固定 F2 快捷键有效")
 }
@@ -150,7 +150,7 @@ fn shortcut_keys(value: &Settings) -> Result<Vec<Shortcut>, String> {
 /// Mutex 让设置保存串行执行；注册状态单独记录，以便启动注册失败后重试同一快捷键。
 pub struct RuntimeSettings {
     pub value: Settings,
-    pub registered: bool,
+    pub registered: Vec<Shortcut>,
     pub shortcut_error: Option<String>,
     pub config_warning: Option<String>,
 }
@@ -206,11 +206,12 @@ fn persist(path: &Path, value: &Settings) -> Result<(), String> {
 pub fn initialize(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     let path = app.path().app_config_dir()?.join("settings.json");
     let (value, config_warning) = load(&path);
+    let mut registered = Vec::new();
     let shortcut_error = if value.shortcuts_enabled {
         apply_settings(
             &value,
             &value,
-            false,
+            &mut registered,
             |key| {
                 app.global_shortcut()
                     .register(key)
@@ -223,11 +224,10 @@ pub fn initialize(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
             },
             |_| Ok(()),
         )
-        .err()
+        .unwrap_or_else(Some)
     } else {
         None
     };
-    let registered = value.shortcuts_enabled && shortcut_error.is_none();
     app.manage(SettingsState(Mutex::new(RuntimeSettings {
         value,
         registered,
@@ -242,15 +242,23 @@ pub fn initialize(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
 fn apply_settings(
     old: &Settings,
     next: &Settings,
-    registered: bool,
+    registered: &mut Vec<Shortcut>,
     mut register: impl FnMut(Shortcut) -> Result<(), String>,
     mut unregister: impl FnMut(Shortcut) -> Result<(), String>,
     mut write: impl FnMut(&Settings) -> Result<(), String>,
-) -> Result<(), String> {
-    let old_keys = if registered {
-        shortcut_keys(old)?
-    } else {
-        vec![]
+) -> Result<Option<String>, String> {
+    let old_keys = registered.clone();
+    // 每次系统调用成功后同步实际占用，回滚失败时也不虚报注册状态。
+    let actual = std::cell::RefCell::new(registered);
+    let mut register = |key| {
+        register(key)?;
+        actual.borrow_mut().push(key);
+        Ok::<_, String>(())
+    };
+    let mut unregister = |key| {
+        unregister(key)?;
+        actual.borrow_mut().retain(|registered| *registered != key);
+        Ok::<_, String>(())
     };
     next.validate()?;
     let new_keys = if next.shortcuts_enabled {
@@ -258,9 +266,23 @@ fn apply_settings(
     } else {
         vec![]
     };
+    let mut conflicts = Vec::new();
     let mut added = Vec::new();
     for key in new_keys.iter().filter(|key| !old_keys.contains(key)) {
         if let Err(error) = register(*key) {
+            let feature = if *key == pin_shortcut() {
+                "剪贴板贴图 (F2)".to_string()
+            } else if *key == recording_shortcut() {
+                "录屏 (F3)".to_string()
+            } else {
+                format!("截图 ({})", next.shortcut)
+            };
+            // 启动时逐项尝试，固定功能冲突不能撤销其他成功的键。
+            // 修改截图键冲突时仍保留旧截图键和原设置。
+            if *key != next.validate()? || !old_keys.contains(&old.validate()?) {
+                conflicts.push(format!("{feature} 注册失败：{error}"));
+                continue;
+            }
             let cleanup: Vec<_> = added
                 .iter()
                 .rev()
@@ -314,7 +336,7 @@ fn apply_settings(
         }
         removed.push(*key);
     }
-    Ok(())
+    Ok((!conflicts.is_empty()).then(|| conflicts.join("；")))
 }
 
 /// 命令在后台线程执行：系统快捷键注册可能调度主线程，不能在主线程持锁等待。
@@ -337,11 +359,12 @@ pub async fn save_settings(
             .app_config_dir()
             .map_err(|e| e.to_string())?
             .join("settings.json");
-        // 新键注册成功前不释放旧键；所有步骤成功后才更新内存中的已生效设置。
-        apply_settings(
-            &current.value,
+        // 新截图键成功前保留旧键，固定功能冲突作为独立警告返回。
+        let old = current.value.clone();
+        let warning = apply_settings(
+            &old,
             &settings,
-            current.registered,
+            &mut current.registered,
             |key| {
                 app.global_shortcut()
                     .register(key)
@@ -355,8 +378,7 @@ pub async fn save_settings(
             |value| persist(&path, value),
         )?;
         current.value = settings.clone();
-        current.registered = settings.shortcuts_enabled;
-        current.shortcut_error = None;
+        current.shortcut_error = warning;
         current.config_warning = None;
         app.state::<CaptureState>()
             .hotkey_pressed
@@ -379,10 +401,11 @@ pub fn set_shortcuts(app: &AppHandle, enabled: Option<bool>) -> Result<Settings,
         .app_config_dir()
         .map_err(|e| e.to_string())?
         .join("settings.json");
+    let old = current.value.clone();
     let result = apply_settings(
-        &current.value,
+        &old,
         &next,
-        current.registered,
+        &mut current.registered,
         |key| {
             app.global_shortcut()
                 .register(key)
@@ -395,14 +418,16 @@ pub fn set_shortcuts(app: &AppHandle, enabled: Option<bool>) -> Result<Settings,
         },
         |value| persist(&path, value),
     );
-    if let Err(error) = result {
-        // 原生勾选菜单会先切换外观，失败时恢复为真正生效的设置。
-        notify_settings(app, &current.value);
-        return Err(error);
-    }
+    let warning = match result {
+        Ok(warning) => warning,
+        Err(error) => {
+            // 原生勾选菜单会先切换外观，失败时恢复为真正生效的设置。
+            notify_settings(app, &current.value);
+            return Err(error);
+        }
+    };
     current.value = next.clone();
-    current.registered = next.shortcuts_enabled;
-    current.shortcut_error = None;
+    current.shortcut_error = warning;
     current.config_warning = None;
     app.state::<CaptureState>()
         .hotkey_pressed
@@ -488,7 +513,7 @@ mod tests {
         apply_settings(
             &old,
             &disabled,
-            true,
+            &mut shortcut_keys(&Settings::default()).unwrap(),
             |_| panic!("禁用不能注册快捷键"),
             |key| {
                 removed.borrow_mut().push(key);
@@ -503,7 +528,7 @@ mod tests {
         apply_settings(
             &disabled,
             &changed,
-            false,
+            &mut Vec::new(),
             |_| panic!("禁用时编辑不注册"),
             |_| panic!("无注册键可释放"),
             |_| Ok(()),
@@ -525,26 +550,30 @@ mod tests {
         apply_settings(
             &enabled,
             &disabled,
-            true,
+            &mut shortcut_keys(&Settings::default()).unwrap(),
             |_| panic!("不注册"),
             |_| panic!("保存失败不能释放原键"),
             |_| Err("磁盘只读".into()),
         )
         .unwrap_err();
-        apply_settings(
+        let warning = apply_settings(
             &disabled,
             &enabled,
-            false,
+            &mut Vec::new(),
             |_| Err("快捷键冲突".into()),
             |_| panic!("无旧键"),
-            |_| panic!("冲突时不落盘"),
+            |_| Ok(()),
         )
-        .unwrap_err();
+        .unwrap()
+        .unwrap();
+        assert!(warning.contains("截图 (F1)"));
+        assert!(warning.contains("剪贴板贴图 (F2)"));
+        assert!(warning.contains("录屏 (F3)"));
         let writes = std::cell::RefCell::new(Vec::new());
         apply_settings(
             &enabled,
             &disabled,
-            true,
+            &mut shortcut_keys(&Settings::default()).unwrap(),
             |_| panic!("不注册"),
             |_| Err("释放失败".into()),
             |value| {
@@ -592,7 +621,7 @@ mod tests {
         assert!(apply_settings(
             &Settings::default(),
             &next,
-            true,
+            &mut shortcut_keys(&Settings::default()).unwrap(),
             |_| Err("occupied".into()),
             |_| panic!("不应释放旧键"),
             |_| panic!("不应修改文件")
@@ -609,7 +638,7 @@ mod tests {
         assert!(apply_settings(
             &Settings::default(),
             &next,
-            true,
+            &mut shortcut_keys(&Settings::default()).unwrap(),
             |_| Ok(()),
             |key| {
                 removed.borrow_mut().push(key);
@@ -632,7 +661,7 @@ mod tests {
         assert!(apply_settings(
             &old,
             &next,
-            true,
+            &mut shortcut_keys(&Settings::default()).unwrap(),
             |_| Ok(()),
             |key| {
                 removed.borrow_mut().push(key);
@@ -660,7 +689,7 @@ mod tests {
         apply_settings(
             &value,
             &value,
-            true,
+            &mut shortcut_keys(&Settings::default()).unwrap(),
             |_| panic!("无需重新注册"),
             |_| panic!("无需释放"),
             |_| Ok(()),
@@ -670,7 +699,7 @@ mod tests {
         apply_settings(
             &value,
             &value,
-            false,
+            &mut Vec::new(),
             |_| {
                 registered.set(true);
                 Ok(())
@@ -689,7 +718,7 @@ mod tests {
         apply_settings(
             &value,
             &value,
-            false,
+            &mut Vec::new(),
             |key| {
                 keys.borrow_mut().push(key);
                 Ok(())
@@ -702,29 +731,68 @@ mod tests {
     }
 
     #[test]
-    fn recording_key_conflict_rolls_back_all_new_keys_before_writing() {
+    fn conflicts_are_independent_and_only_failed_keys_are_retried() {
         let value = Settings::default();
-        let removed = std::cell::RefCell::new(Vec::new());
+        for conflict in shortcut_keys(&value).unwrap() {
+            let mut registered = Vec::new();
+            let warning = apply_settings(
+                &value,
+                &value,
+                &mut registered,
+                |key| {
+                    if key == conflict {
+                        Err("occupied".into())
+                    } else {
+                        Ok(())
+                    }
+                },
+                |_| panic!("冲突不能释放其他功能"),
+                |_| Ok(()),
+            )
+            .unwrap();
+            assert!(warning.is_some());
+            assert_eq!(registered.len(), 2);
+            assert!(!registered.contains(&conflict));
+            assert!(apply_settings(
+                &value,
+                &value,
+                &mut registered,
+                |key| {
+                    assert_eq!(key, conflict);
+                    Ok(())
+                },
+                |_| panic!("重试不能释放成功键"),
+                |_| Ok(()),
+            )
+            .unwrap()
+            .is_none());
+            assert_eq!(registered.len(), 3);
+        }
+    }
+
+    #[test]
+    fn disabling_after_conflict_releases_only_registered_keys() {
+        let old = Settings::default();
+        let next = Settings {
+            shortcuts_enabled: false,
+            ..old.clone()
+        };
+        let capture = old.validate().unwrap();
+        let mut registered = vec![capture];
         assert!(apply_settings(
-            &value,
-            &value,
-            false,
-            |key| if key == recording_shortcut() {
-                Err("F3 被占用".into())
-            } else {
-                Ok(())
-            },
+            &old,
+            &next,
+            &mut registered,
+            |_| panic!("关闭不能注册"),
             |key| {
-                removed.borrow_mut().push(key);
+                assert_eq!(key, capture);
                 Ok(())
             },
-            |_| panic!("部分注册失败不应落盘"),
+            |_| Ok(()),
         )
-        .is_err());
-        assert_eq!(
-            *removed.borrow(),
-            vec![pin_shortcut(), value.validate().unwrap()]
-        );
+        .unwrap()
+        .is_none());
+        assert!(registered.is_empty());
     }
 
     #[test]
@@ -739,7 +807,7 @@ mod tests {
         assert!(apply_settings(
             &old,
             &next,
-            true,
+            &mut shortcut_keys(&Settings::default()).unwrap(),
             |key| {
                 restored.borrow_mut().push(key);
                 Ok(())

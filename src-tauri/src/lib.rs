@@ -71,9 +71,6 @@ fn trigger(app: &AppHandle) {
     if capture::scroll::stop(app) {
         return;
     }
-    if capture::recording::request_stop(app, false) {
-        return;
-    }
     if app.state::<CaptureState>().active.load(Ordering::SeqCst) {
         return;
     }
@@ -119,6 +116,7 @@ pub fn run() {
         }))
         .manage(CaptureState::default())
         .manage(capture::recording::RecordingState::default())
+        .manage(capture::recording::ExitState::default())
         .manage(pins::PinState::default())
         .plugin(
             tauri_plugin_log::Builder::new()
@@ -148,7 +146,7 @@ pub fn run() {
                         .try_state::<settings::SettingsState>()
                         .is_some_and(|state| {
                             state.0.try_lock().ok().is_some_and(|current| {
-                                current.registered
+                                current.registered.contains(shortcut)
                                     && current.value.shortcuts_enabled
                                     && (bit != 1
                                         || current.value.validate().ok().as_ref() == Some(shortcut))
@@ -198,7 +196,7 @@ pub fn run() {
                 .menu(&menu)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "capture" => {
-                        // 菜单只启动截图，不复用快捷键的停止录屏语义。
+                        // 菜单只启动截图；录屏期间由共享占用状态拒绝新截图。
                         let app = app.clone();
                         tauri::async_runtime::spawn(async move {
                             if let Err(error) = capture::begin(app.clone()).await {
@@ -219,9 +217,7 @@ pub fn run() {
                     "open" => show_main(app),
                     // 先完成正在录制的视频，避免退出截断输出。
                     "quit" => {
-                        if !capture::recording::request_stop(app, false) {
-                            app.exit(0);
-                        }
+                        capture::recording::request_exit(app);
                     }
                     _ => {}
                 })

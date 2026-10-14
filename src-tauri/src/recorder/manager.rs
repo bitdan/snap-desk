@@ -130,6 +130,65 @@ impl Session {
 #[derive(Default)]
 pub struct RecordingState(Mutex<Option<Session>>, Mutex<()>, AtomicBool);
 
+/// 退出意图独立于录屏阶段：Completed 可能早于窗口和资源清理。
+#[derive(Default)]
+pub struct ExitState {
+    requested: AtomicBool,
+    workers: std::sync::atomic::AtomicUsize,
+}
+impl ExitState {
+    /// 最后一个任务释放时才允许正常退出，不能依赖可能提前更新的视频状态。
+    fn release_worker(&self) -> bool {
+        self.workers.fetch_sub(1, Ordering::SeqCst) == 1 && self.requested.load(Ordering::SeqCst)
+    }
+}
+
+/// 准备任务与采集任务均持有守卫；异常返回或 panic 也会释放计数。
+struct WorkerGuard(AppHandle);
+impl WorkerGuard {
+    fn acquire(app: &AppHandle) -> Result<Self, String> {
+        let state = app.state::<ExitState>();
+        state.workers.fetch_add(1, Ordering::SeqCst);
+        let guard = Self(app.clone());
+        if state.requested.load(Ordering::SeqCst) {
+            return Err("程序正在退出，不能启动录屏。".into());
+        }
+        Ok(guard)
+    }
+}
+impl Drop for WorkerGuard {
+    fn drop(&mut self) {
+        let state = self.0.state::<ExitState>();
+        if state.release_worker() {
+            self.0.exit(0);
+        }
+    }
+}
+
+/// 退出先封装视频；30 秒仍未完成则异常退出，避免驱动或编码器永久挂起。
+/// 超时可能留下 pending 视频，日志保留诊断信息，不报告保存成功。
+pub fn request_exit(app: &AppHandle) {
+    let state = app.state::<ExitState>();
+    if state.requested.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    if state.workers.load(Ordering::SeqCst) == 0 {
+        app.exit(0);
+        return;
+    }
+    let watchdog = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_secs(30));
+        log::error!("退出等待录屏清理超过 30 秒，强制退出；临时视频可能未完成封装。");
+        watchdog.exit(1);
+    });
+    // 不在托盘主线程等待状态锁，超时监视也不依赖这把锁。
+    let app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        request_stop(&app, false);
+    });
+}
+
 fn active(phase: Phase) -> bool {
     matches!(
         phase,
@@ -137,7 +196,7 @@ fn active(phase: Phase) -> bool {
     )
 }
 
-/// 托盘、截图快捷键和退出入口只发停止信号，清理始终由录屏工作线程完成。
+/// 托盘、录屏快捷键和退出入口只发停止信号，清理由录屏工作线程完成。
 pub fn request_stop(app: &AppHandle, cancel: bool) -> bool {
     let state = app.state::<RecordingState>();
     let Ok(mut guard) = state.0.lock() else {
@@ -327,6 +386,7 @@ pub async fn start_recording(
 ) -> Result<(), String> {
     require_window(&window, "capture")?;
     tauri::async_runtime::spawn_blocking(move || {
+        let _preparing = WorkerGuard::acquire(&app)?;
         let state = app.state::<CaptureState>();
         let _operation = Operation::acquire(&state.operation)?;
         if state.scroll.lock().map_err(err)?.is_some() {
@@ -395,17 +455,21 @@ pub async fn start_recording(
         // WGC 必须在所属线程初始化/释放。先握手确认，再显示可操作的控制条。
         let (ready_tx, ready_rx) = mpsc::sync_channel(1);
         let (go_tx, go_rx) = mpsc::sync_channel(1);
+        let worker_guard = WorkerGuard::acquire(&app)?;
         let worker_app = app.clone();
         let worker = std::thread::Builder::new()
             .name("screen-recording".into())
-            .spawn(move || match capture::prepare(&config, size) {
-                Ok(backend) => {
-                    if ready_tx.send(Ok(())).is_ok() && go_rx.recv().unwrap_or(false) {
-                        collect(worker_app, id, config, screen, root, backend);
+            .spawn(move || {
+                let _worker = worker_guard;
+                match capture::prepare(&config, size) {
+                    Ok(backend) => {
+                        if ready_tx.send(Ok(())).is_ok() && go_rx.recv().unwrap_or(false) {
+                            collect(worker_app, id, config, screen, root, backend);
+                        }
                     }
-                }
-                Err(e) => {
-                    let _ = ready_tx.send(Err(e));
+                    Err(e) => {
+                        let _ = ready_tx.send(Err(e));
+                    }
                 }
             });
         let ready = match worker {
@@ -435,6 +499,9 @@ pub async fn start_recording(
         // 将选区会话所有权交给录屏；active 保持 true，阻止截图/长截图抢占屏幕。
         *state.session.lock().map_err(err)? = None;
         // 工作线程从这里起拥有全局占用与统一收尾责任。
+        if app.state::<ExitState>().requested.load(Ordering::SeqCst) {
+            request_stop(&app, false);
+        }
         go_tx.send(true).map_err(err)?;
         Ok(())
     })
