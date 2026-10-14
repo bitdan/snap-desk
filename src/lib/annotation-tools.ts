@@ -1,4 +1,4 @@
-import { MousePointer2, Square, Circle, Minus, ArrowUpRight, Spline, Pencil, Highlighter, Type, Grid2X2, Droplets, Eraser, ListOrdered, Focus, ZoomIn } from 'lucide-vue-next'
+import { MousePointer2, Square, Circle, Minus, ArrowUpRight, Spline, Pencil, Highlighter, Type, Grid2X2, Droplets, Eraser, SquareX, ListOrdered, Focus, ZoomIn } from 'lucide-vue-next'
 import type { AnnotationTool } from './use-annotations'
 
 // 常用工具直接展示，不再通过下拉菜单切换；名称同时用于悬停提示和读屏。
@@ -18,5 +18,5 @@ export const annotationTools = [
   { tool: 'mosaic', name: '马赛克', icon: Grid2X2 },
   { tool: 'blur', name: '模糊', icon: Droplets },
   { tool: 'erase', name: '局部像素橡皮擦', icon: Eraser },
-  { tool: 'eraser', name: '删除整项标注', icon: Eraser },
+  { tool: 'eraser', name: '删除整项标注', icon: SquareX },
 ] satisfies { tool: AnnotationTool; name: string; icon: typeof Pencil }[]

@@ -1,13 +1,10 @@
 //! 截图会话内的长截图工作流。采集时隐藏蒙层，让鼠标滚轮直接作用于原应用。
-//! 截图快捷键/托盘可停止采集；自动模式仅在鼠标留在选区时发送滚轮。
+//! 用户手动滚动原应用，截图快捷键或控制条结束采集；不注入鼠标滚轮。
 use super::*;
 #[path = "scroll_archive.rs"]
 mod archive;
-#[path = "scroll_driver.rs"]
-mod driver;
 use crate::stitch::{Match, Stitch};
 use archive::Archive;
-use driver::Driver;
 #[path = "scroll_chrome.rs"]
 pub(crate) mod chrome;
 
@@ -44,7 +41,6 @@ pub(super) struct ScrollSession {
     source_size: (u32, u32),
     stitch: Stitch,
     message: String,
-    automatic: bool,
     obscuring_windows: Vec<String>,
     archive: Option<Archive>,
 }
@@ -55,7 +51,6 @@ pub struct ScrollView {
     id: u64,
     revision: u64,
     collecting: bool,
-    automatic: bool,
     archive_path: Option<String>,
     width: u32,
     height: u32,
@@ -71,7 +66,6 @@ fn view(session: &ScrollSession, collecting: bool) -> Result<ScrollView, String>
         id: session.id,
         revision: session.revision,
         collecting,
-        automatic: session.automatic,
         archive_path: session
             .archive
             .as_ref()
@@ -291,65 +285,11 @@ fn sample_pair(
     Ok(Some(result))
 }
 
-/// 选区以截图物理像素保存，转换到输入系统坐标后再检查指针。
-fn check_driver(
-    app: &AppHandle,
-    state: &CaptureState,
-    id: u64,
-    driver: &mut Driver,
-) -> Result<(), String> {
-    let guard = state.scroll.lock().map_err(err)?;
-    let s = guard
-        .as_ref()
-        .filter(|s| s.id == id)
-        .ok_or("长截图已结束。")?;
-    if screen(app)? != s.screen {
-        return Err("显示器信息变化，已结束采集，仅输出已确认部分。".into());
-    }
-    let scale = if cfg!(target_os = "macos") {
-        f64::from_bits(s.screen.scale)
-    } else {
-        1.0
-    };
-    let x = (f64::from(s.screen.x) + f64::from(s.rect.x)) / scale;
-    // enigo 0.6.1 的 macOS location 用物理屏高减 NSEvent 逻辑 y，需补偿两种单位的差。
-    let mac_origin = if cfg!(target_os = "macos") {
-        f64::from(s.screen.height) * (1.0 - 1.0 / scale)
-    } else {
-        0.0
-    };
-    let y = (f64::from(s.screen.y) + f64::from(s.rect.y)) / scale + mac_origin;
-    driver.check((
-        x,
-        y,
-        x + f64::from(s.rect.width) / scale,
-        y + f64::from(s.rect.height) / scale,
-    ))
-}
-
 fn collect(app: AppHandle, id: u64, first_delay: u64) {
     let state = app.state::<CaptureState>();
     let deadline = Instant::now() + Duration::from_secs(300);
     let mut message = "长截图采集结束。".to_string();
     let mut finish_latest = true;
-    let automatic = state
-        .scroll
-        .lock()
-        .ok()
-        .and_then(|s| s.as_ref().map(|s| s.automatic))
-        .unwrap_or(false);
-    let mut driver = if automatic {
-        match Driver::new() {
-            Ok(driver) => Some(driver),
-            Err(error) => {
-                message = format!("自动滚动初始化失败：{error}。已结束采集。");
-                finish_latest = false;
-                None
-            }
-        }
-    } else {
-        None
-    };
     let mut delay = first_delay;
     let mut manual_retries = 0;
     while finish_latest && wait(&state, delay) {
@@ -363,81 +303,12 @@ fn collect(app: AppHandle, id: u64, first_delay: u64) {
             continue;
         };
         let decision = (|| -> Result<(), String> {
-            if let Some(driver) = &mut driver {
-                check_driver(&app, &state, id, driver)?;
-            }
             let result = sample_pair(&app, &state, id, false)?;
             if state.scroll_stop.load(Ordering::SeqCst) {
                 return Ok(());
             }
-            if let Some(driver) = &mut driver {
-                match result {
-                    None => {
-                        driver.moving += 1;
-                        driver.unchanged = 0;
-                        if driver.moving >= 12 {
-                            return Err("画面持续变化，已自动结束，仅输出已确认部分。".into());
-                        }
-                        return Ok(());
-                    }
-                    Some(Match::Uncertain) => {
-                        driver.retries += 1;
-                        driver.unchanged = 0;
-                        driver.step = 1;
-                        delay = 400;
-                        if driver.retries <= 2 {
-                            return Ok(());
-                        }
-                        return Err(
-                            "同一位置重试 2 次后仍无法匹配，已自动结束，仅输出已确认部分。".into(),
-                        );
-                    }
-                    Some(Match::Unchanged) => {
-                        if driver.scrolled {
-                            driver.unchanged += 1;
-                        }
-                        if driver.unchanged >= 4 {
-                            return Err("连续 4 次滚动后画面未移动：可能已到底或窗口不接受滚轮，已自动停止。".into());
-                        }
-                        delay = 400;
-                    }
-                    Some(Match::Overlap(overlap)) => {
-                        let guard = state.scroll.lock().map_err(err)?;
-                        let session = guard.as_ref().ok_or("长截图已结束。")?;
-                        driver.adapt(
-                            session.stitch.frame_height - overlap,
-                            session.stitch.frame_height,
-                        );
-                    }
-                }
-                driver.retries = 0;
-                driver.moving = 0;
-                // 取样期间也可能移动鼠标，注入前再次检查；停止后不发送新滚轮。
-                check_driver(&app, &state, id, driver)?;
-                if !state.scroll_stop.load(Ordering::SeqCst) {
-                    // 满屏降级预览可能位于鼠标下方；发滚轮时也隐藏，保证目标应用接收事件。
-                    let overlaps = state
-                        .scroll
-                        .lock()
-                        .map_err(err)?
-                        .as_ref()
-                        .map(|s| s.obscuring_windows.clone())
-                        .unwrap_or_default();
-                    let _preview_guard = chrome::hide_for_sample(&app, &overlaps)?;
-                    // 将反馈得到的 1～6 格拆开匀速发送；每格前都检查鼠标和停止状态。
-                    // 整组结束后才采集，既减轻页面跳动，也避免把动画中间帧拼进去。
-                    for tick in 0..driver.step {
-                        if tick > 0 && !wait(&state, 70) {
-                            break;
-                        }
-                        check_driver(&app, &state, id, driver)?;
-                        if state.scroll_stop.load(Ordering::SeqCst) {
-                            break;
-                        }
-                        driver.scroll_tick()?;
-                    }
-                }
-            } else if result == Some(Match::Uncertain) {
+            // 手动滚动后等待稳定画面，匹配不确定时延迟重试，避免追加错误接缝。
+            if result == Some(Match::Uncertain) {
                 manual_retries += 1;
                 delay = 1200;
                 if manual_retries > 2 {
@@ -528,7 +399,6 @@ pub async fn start_scroll(
     window: WebviewWindow,
     id: u64,
     rect: Rect,
-    automatic: bool,
     save_frames: bool,
 ) -> Result<ScrollView, String> {
     require_window(&window, "capture")?;
@@ -556,7 +426,7 @@ pub async fn start_scroll(
         };
         if let Some(archive) = &mut archive {
             archive.record(serde_json::json!({"event":"session", "version":1,
-                "width":rect.width, "height":rect.height, "automatic":automatic}))?;
+                "width":rect.width, "height":rect.height, "automatic":false}))?;
             archive.frame(stitch.last())?;
         }
         let screen = screen(&app)?;
@@ -570,7 +440,6 @@ pub async fn start_scroll(
             source_size,
             stitch,
             message: String::new(),
-            automatic,
             archive,
         };
         let result = view(&session, true)?;

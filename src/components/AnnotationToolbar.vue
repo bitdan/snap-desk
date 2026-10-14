@@ -25,7 +25,7 @@ function value(event: Event) { return (event.target as HTMLInputElement).value }
       <button :disabled="locked || !editor.history.past.length" title="撤销 Ctrl/⌘+Z" aria-label="撤销" @click="editor.travel('undo')"><Undo2 :size="16" /></button>
       <button :disabled="locked || !editor.history.future.length" title="重做 Ctrl/⌘+Shift+Z" aria-label="重做" @click="editor.travel('redo')"><Redo2 :size="16" /></button>
       <button :disabled="locked || editor.selected < 0" title="删除选中标注 Delete" aria-label="删除选中标注" @click="editor.remove"><Trash2 :size="16" /></button>
-      <button :disabled="locked || !editor.history.present.length" title="清空标注，可撤销恢复" aria-label="清空标注" @click="editor.clear"><Eraser :size="16" /><span class="clear-label">全</span></button>
+      <button :disabled="locked || !editor.history.present.length" title="清空标注，可撤销恢复" aria-label="清空标注" @click="editor.clear"><Eraser :size="16" /><span>清空</span></button>
       <span class="tool-divider" />
       <slot name="actions" />
     </div>
@@ -58,7 +58,6 @@ function value(event: Event) { return (event.target as HTMLInputElement).value }
 .annotation-tools :focus-visible { outline: 2px solid #a78bfa; outline-offset: -2px; }
 .tool-grip { color: #d4d4d8; }
 .tool-divider { width: 1px; height: 17px; background: #e4e4e7; margin: 0 4px; }
-.clear-label { font-size: 8px; position: absolute; right: 1px; bottom: 0; }
 .annotation-options { gap: 10px; border-top: 1px solid #f4f4f5; }
 .annotation-tools label { display: inline-flex; align-items: center; gap: 3px; }
 .annotation-tools input { color: #374151; background: white; border: 1px solid #d4d4d8; border-radius: 3px; height: 24px; }

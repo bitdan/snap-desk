@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { newerScroll } from '../src/lib/scroll-capture'
 import type { ScrollView } from '../src/lib/api'
-const view: ScrollView = { id: 3, revision: 2, collecting: false, automatic: true,
+const view: ScrollView = { id: 3, revision: 2, collecting: false,
   archivePath: null, width: 800, height: 1800, frames: 4, message: 'finished', preview: '', frameHeight: 600 }
 describe('scroll completion state', () => {
   it('does not overwrite completion with a delayed start response', () => {

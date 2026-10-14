@@ -22,7 +22,7 @@ async function mount() {
       : kind === 'scroll-preview' || kind === 'scroll-controls' ? (await import('./components/ScrollPreview.vue')).default
       : (await import('./App.vue')).default
   }
-  if (kind === 'selection-edge' || kind === 'recording-controls') {
+  if (kind === 'selection-edge' || kind === 'recording-controls' || kind === 'scroll-controls') {
     // 窄原生窗口无法容纳窗口外浮层，控制条使用系统 title 提示。
     createApp(component).mount('#app')
   } else {

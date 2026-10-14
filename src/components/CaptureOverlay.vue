@@ -1,6 +1,7 @@
 <script setup lang="ts">
+import ScrollCaptureIcon from './ScrollCaptureIcon.vue'
 import { computed, nextTick, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue'
-import { Copy, Save, X, Maximize, Scan, Move, Pin, Pipette, ArrowDownToLine, Video } from 'lucide-vue-next'
+import { Copy, Save, X, Monitor, RotateCcw, Scan, Move, Pin, Pipette, Video } from 'lucide-vue-next'
 import { api, onFrame, onScroll, type CaptureFrame, type ColorFormat, type ScrollView } from '@/lib/api'
 import { clamp, move, normalize, resize, toPixels, nudgeSelection, type Handle, type Point, type Rect } from '@/lib/selection'
 import { useAnnotations, type AnnotationTool } from '@/lib/use-annotations'
@@ -12,6 +13,7 @@ import { nudgeColorPoint } from '@/lib/color-picker'
 import { newerScroll } from '@/lib/scroll-capture'
 import { defaultInputEffects, recordingBitrate, recordingConfig, type EncodingPreference, type RecordingQuality, type RecorderCapabilities } from '@/lib/recording'
 import RecordingSetupMenu from './RecordingSetupMenu.vue'
+import ScrollSetupMenu from './ScrollSetupMenu.vue'
 import { readRecentSelection, restoreRecentSelection, writeRecentSelection } from '@/lib/recent-selection'
 
 const frame = ref<CaptureFrame | null>(null)
@@ -22,6 +24,13 @@ const busy = ref(false)
 const error = ref('')
 const scroll = ref<ScrollView | null>(null)
 const scrollSetup = ref(false)
+const scrollTrigger = ref<HTMLButtonElement | null>(null)
+const scrollAnchor = ref<DOMRect | null>(null)
+function openScrollMenu() {
+  scrollAnchor.value = scrollTrigger.value?.getBoundingClientRect() ?? null
+  error.value = ''; scrollSetup.value = true
+}
+watch(scrollSetup, open => { if (!open && frame.value) void nextTick(() => scrollTrigger.value?.focus()) })
 const recordingSetup = ref(false)
 const recordingTrigger = ref<HTMLButtonElement | null>(null)
 const recordingAnchor = ref<{ left: number; right: number; top: number; bottom: number } | null>(null)
@@ -42,7 +51,6 @@ const recordingMbps = ref<string | number>('')
 const recordingCountdown = ref<0 | 3 | 5>(0)
 const captureCursor = ref(true)
 const recordingEffects = ref(defaultInputEffects())
-const automaticScroll = ref(true)
 const saveScrollFrames = ref(true)
 const viewport = ref({ width: innerWidth, height: innerHeight })
 const annotating = ref(false)
@@ -86,6 +94,13 @@ const recordingMenuStyle = computed(() => {
   const top = clamp(below + 340 <= viewport.value.height ? below : r.top - 340, 8, Math.max(8, viewport.value.height - 348))
   return { left: `${clamp(r.right - 390, 8, Math.max(8, viewport.value.width - 398))}px`, top: `${top}px`, maxHeight: `${viewport.value.height - top - 8}px` }
 })
+// 长截图面板比录屏面板更小；靠近触发按钮，底部空间不足时向上展开。
+const scrollMenuStyle = computed(() => {
+  const r = scrollAnchor.value
+  if (!r) return {}
+  const top = clamp(r.bottom + 8 + 170 <= viewport.value.height ? r.bottom + 8 : r.top - 178, 8, Math.max(8, viewport.value.height - 178))
+  return { left: `${clamp(r.right - 300, 8, Math.max(8, viewport.value.width - 308))}px`, top: `${top}px`, maxHeight: `${viewport.value.height - top - 8}px` }
+})
 // 所有图形保存在原图坐标系内；选区只负责裁剪和限制绘制区域。
 function chooseTool(tool: AnnotationTool) { if (busy.value || editor.pending || editor.interacting) return; editor.setTool(tool); annotating.value = true }
 function selectionDown(e: PointerEvent) { if (!annotating.value) down(e, 'move') }
@@ -108,7 +123,7 @@ function scrollClosed() { scroll.value = null; frame.value = null; scrollSetup.v
 async function startScroll() {
   if (!frame.value || !pixels.value || !valid.value || busy.value || marked.value || editor.pending || editor.interacting || gesture) return
   busy.value = true; error.value = ''
-  try { receiveScroll(await api.startScroll(frame.value.id, pixels.value, automaticScroll.value, saveScrollFrames.value)); scrollSetup.value = false }
+  try { receiveScroll(await api.startScroll(frame.value.id, pixels.value, saveScrollFrames.value)); scrollSetup.value = false }
   catch (e) { error.value = String(e) }
   finally { busy.value = false }
 }
@@ -288,13 +303,13 @@ onUnmounted(() => { disposed = true; off?.(); offScroll?.(); window.removeEventL
       <AnnotationToolbar :editor="editor" :disabled="busy" :active="annotating" @tool="chooseTool">
         <template #leading><button :disabled="busy || editor.pending || editor.interacting || marked" :aria-pressed="!annotating" title="调整选区" aria-label="调整选区" @click="annotating = false"><Move :size="16" /></button></template>
         <template #actions>
-          <button :disabled="busy || editor.pending || editor.interacting" title="清空标注并重新框选" aria-label="重新框选" @click="reselect"><Scan :size="16" /></button>
-          <button :disabled="busy || editor.pending || editor.interacting || marked" title="全屏选区" aria-label="全屏选区" @click="selectAll"><Maximize :size="16" /></button>
-          <button :disabled="busy || editor.pending || editor.interacting || marked" title="长截图" @click="scrollSetup = true"><ArrowDownToLine :size="16" />长截图</button>
-          <button ref="recordingTrigger" :disabled="busy || editor.pending || editor.interacting || marked || !recordingCapabilities?.available" :title="recordingCapabilities?.reason ?? (recordingCapabilityError || (recordingCapabilities ? '录屏选项' : '正在检查录屏能力…'))" aria-haspopup="dialog" :aria-expanded="recordingSetup" @click="openRecordingMenu"><Video :size="16" />录屏</button>
-        <button :disabled="busy || editor.pending || editor.interacting" title="贴图 Ctrl/⌘+P" @click="finish('pin')"><Pin :size="16" />贴图</button>
-        <button :disabled="busy || editor.pending || editor.interacting" title="保存图片 Ctrl/⌘+S" aria-label="保存图片" @click="finish('save')"><Save :size="16" />保存</button>
-        <button class="copy-button" :disabled="busy || editor.pending || editor.interacting" title="复制图片 Enter" aria-label="复制图片" @click="finish('copy')"><Copy :size="16" />{{ busy ? '处理中' : '复制' }}</button>
+          <button :disabled="busy || editor.pending || editor.interacting" title="清空标注并重新框选" aria-label="清空标注并重新框选" @click="reselect"><RotateCcw :size="16" /></button>
+          <button :disabled="busy || editor.pending || editor.interacting || marked" title="选择整个屏幕 Ctrl/⌘+A" aria-label="选择整个屏幕" @click="selectAll"><Monitor :size="16" /></button>
+          <button :disabled="busy || editor.pending || editor.interacting || marked" ref="scrollTrigger" title="长截图选项" aria-label="长截图选项" aria-haspopup="dialog" :aria-expanded="scrollSetup" @click="openScrollMenu"><ScrollCaptureIcon :size="16" /></button>
+          <button ref="recordingTrigger" :disabled="busy || editor.pending || editor.interacting || marked || !recordingCapabilities?.available" :title="recordingCapabilities?.reason ?? (recordingCapabilityError || (recordingCapabilities ? '录屏选项' : '正在检查录屏能力…'))" aria-label="录屏选项" aria-haspopup="dialog" :aria-expanded="recordingSetup" @click="openRecordingMenu"><Video :size="16" /></button>
+        <button :disabled="busy || editor.pending || editor.interacting" title="贴图 Ctrl/⌘+P" aria-label="贴图" @click="finish('pin')"><Pin :size="16" /></button>
+        <button :disabled="busy || editor.pending || editor.interacting" title="保存图片 Ctrl/⌘+S" aria-label="保存图片" @click="finish('save')"><Save :size="16" /></button>
+        <button class="copy-button" :disabled="busy || editor.pending || editor.interacting" :title="busy ? '处理中…' : '复制图片 Enter'" :aria-label="busy ? '处理中' : '复制图片'" :aria-busy="busy" @click="finish('copy')"><Copy :size="16" /></button>
         <button :disabled="busy || editor.pending" title="取消截图" aria-label="取消截图" @click="cancel"><X :size="16" /></button>
         </template>
       </AnnotationToolbar>
@@ -303,14 +318,8 @@ onUnmounted(() => { disposed = true; off?.(); offScroll?.(); window.removeEventL
     <div v-if="recordingSetup" class="recording-menu-shade" @pointerdown.self.stop="!busy && (recordingSetup = false)" @pointermove.stop @contextmenu.stop.prevent>
       <RecordingSetupMenu v-model:fps="recordingFps" v-model:encoding="recordingEncoding" v-model:quality="recordingQuality" v-model:mbps="recordingMbps" v-model:countdown="recordingCountdown" v-model:cursor="captureCursor" v-model:effects="recordingEffects" :busy="busy" :error="error" :style="recordingMenuStyle" @confirm="startRecording" @close="recordingSetup = false" />
     </div>
-    <div v-if="scrollSetup" class="scroll-setup-shade" @pointerdown.stop @pointermove.stop @contextmenu.stop.prevent>
-      <section class="scroll-setup" role="dialog" aria-modal="true" aria-label="开始长截图">
-        <h2>滚动长截图</h2>
-        <p v-if="error" class="scroll-setup-error" role="alert">{{ error }}</p>
-        <label><input v-model="automaticScroll" type="checkbox" :disabled="busy" /> 自动滚动</label>
-        <label><input v-model="saveScrollFrames" type="checkbox" :disabled="busy" /> 保留原始帧</label>
-        <div><button :disabled="busy" @click="scrollSetup = false">返回调整选区</button><button :disabled="busy" @click="startScroll">{{ busy ? '准备中…' : '开始滚动采集' }}</button></div>
-      </section>
+    <div v-if="scrollSetup" class="recording-menu-shade" @pointerdown.self.stop="!busy && (scrollSetup = false)" @pointermove.stop @contextmenu.stop.prevent>
+      <ScrollSetupMenu v-model:save-frames="saveScrollFrames" :busy="busy" :error="error" :style="scrollMenuStyle" @confirm="startScroll" @close="scrollSetup = false" />
     </div>
     <div v-if="error && !scrollSetup && !recordingSetup" class="overlay-error" role="alert" @pointerdown.stop>{{ error }}</div>
   </div>
@@ -327,9 +336,4 @@ onUnmounted(() => { disposed = true; off?.(); offScroll?.(); window.removeEventL
 .capture-modebar button:disabled { opacity: .5; }
 .capture-modebar select { background: #3f3f46; color: white; border-radius: 3px; padding: 3px; }
 .capture-modebar span { color: #d4d4d8; }
-.scroll-setup-shade { position: absolute; inset: 0; z-index: 5; display: grid; place-items: center; background: #0005; cursor: default; }
-.scroll-setup { width: min(480px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow-y: auto; padding: 20px; border-radius: 8px; background: white; color: #27272a; font-size: 13px; box-shadow: 0 8px 30px #0005; }
-.scroll-setup h2 { font-size: 16px; font-weight: 600; margin-bottom: 12px; }.scroll-setup p { margin-bottom: 12px; line-height: 1.6; }
-.scroll-setup-error { color: #991b1b; background: #fee2e2; padding: 8px; border-radius: 4px; }
-.scroll-setup div { display: flex; justify-content: flex-end; gap: 10px; }.scroll-setup button { padding: 8px 12px; border: 1px solid #d4d4d8; border-radius: 5px; }.scroll-setup button:last-child { background: #2563eb; color: white; }
 </style>

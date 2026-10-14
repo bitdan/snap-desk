@@ -15,7 +15,7 @@ export interface ColorPinRequest { color: string; width: number; height: number 
 export interface TextPinRequest { background: string; annotation: Annotation }
 export type ColorFormat = 'hex' | 'rgb'
 export interface ScrollView {
-  id: number; revision: number; collecting: boolean; automatic: boolean; archivePath: string | null;
+  id: number; revision: number; collecting: boolean; archivePath: string | null;
   width: number; height: number; frames: number; message: string; preview: string; frameHeight: number
 }
 export type PinTransform = 'rotateRight' | 'rotateLeft' | 'flipHorizontal' | 'flipVertical' | 'grayscale' | 'invert' | 'reset'
@@ -46,7 +46,7 @@ export const api = {
   copyColor: (id: number, point: Point, format: ColorFormat) => invoke<void>('copy_capture_color', { id, point, format }),
   save: (id: number, rect: Rect, annotations: Annotation[]) => invoke<boolean>('save_capture', { id, rect, annotations }),
   pin: (id: number, rect: Rect, annotations: Annotation[]) => invoke<void>('pin_capture', { id, rect, annotations }),
-  startScroll: (id: number, rect: Rect, automatic: boolean, saveFrames: boolean) => invoke<ScrollView>('start_scroll', { id, rect, automatic, saveFrames }),
+  startScroll: (id: number, rect: Rect, saveFrames: boolean) => invoke<ScrollView>('start_scroll', { id, rect, saveFrames }),
   controlScroll: (id: number, cancel = false) => invoke<void>('control_scroll', { id, cancel }),
   currentScroll: () => invoke<ScrollView | null>('current_scroll'),
   startRecording: (id: number, rect: Rect, config?: RecorderConfig) => invoke<void>('start_recording', { id, rect, config }),
