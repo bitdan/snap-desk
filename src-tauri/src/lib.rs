@@ -13,7 +13,7 @@ use std::sync::atomic::Ordering;
 use tauri::{
     menu::{CheckMenuItem, Menu, MenuItem},
     tray::TrayIconBuilder,
-    AppHandle, Manager, WebviewWindow,
+    AppHandle, Manager, WebviewWindow, WebviewWindowBuilder,
 };
 use tauri_plugin_global_shortcut::ShortcutState;
 
@@ -193,6 +193,17 @@ pub fn run() {
                     _ => {}
                 })
                 .build(app)?;
+            // 配置中的主窗口禁用自动创建：Tauri 自动创建窗口早于本 setup，
+            // 页面可能提前调用 app_status，读取尚未 manage 的 SettingsState 而 panic。
+            // 等设置、快捷键和托盘全部就绪后，再沿用原窗口配置加载主界面。
+            let main_config = app
+                .config()
+                .app
+                .windows
+                .iter()
+                .find(|config| config.label == "main")
+                .ok_or("缺少主窗口配置。")?;
+            WebviewWindowBuilder::from_config(app.handle(), main_config)?.build()?;
             Ok(())
         })
         .on_window_event(|window, event| {

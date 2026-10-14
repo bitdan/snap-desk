@@ -13,6 +13,7 @@
     "windows": [
       {
         "label": "main",
+        "create": false,
         "title": "Snap Desk",
         "width": 1060,
         "height": 760,
