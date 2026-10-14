@@ -31,6 +31,7 @@ struct PinLayout {
     border: f64,
     expanded_height: f64,
     collapsed_height: f64,
+    min_visible_side: f64,
     min_image_width: f64,
     min_image_height: f64,
 }
@@ -39,6 +40,10 @@ impl PinLayout {
         // 编译时嵌入仓库内常量，不读取用户文件；前端直接导入相同 JSON。
         serde_json::from_str(include_str!("../../src/lib/pin-layout.json"))
             .expect("内置贴图布局配置无效")
+    }
+    /// 与前端使用相同短边下限，原生命令也不能把小图缩成不可见的小点。
+    fn minimum_zoom(&self, width: u32, height: u32) -> f64 {
+        (self.min_visible_side / f64::from(width.min(height).max(1))).clamp(0.1, 1.0)
     }
     fn chrome_height(&self, expanded: bool) -> f64 {
         self.padding * 2.0
@@ -556,7 +561,7 @@ pub async fn set_pin_group(
 pub async fn set_pin_view(
     app: AppHandle,
     window: WebviewWindow,
-    view: PinView,
+    mut view: PinView,
 ) -> Result<PinView, String> {
     view.validate()?;
     tauri::async_runtime::spawn_blocking(move || {
@@ -572,7 +577,11 @@ pub async fn set_pin_view(
             .ok_or("无法获取显示器信息。")?;
         let scale = monitor.scale_factor();
         let work_area = monitor.work_area();
-        let (width, height) = PinLayout::load().window_size(
+        let layout = PinLayout::load();
+        view.zoom = view
+            .zoom
+            .max(layout.minimum_zoom(pin.image.width(), pin.image.height()));
+        let (width, height) = layout.window_size(
             pin.image.width(),
             pin.image.height(),
             view.zoom,

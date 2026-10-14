@@ -338,8 +338,6 @@ pub fn run() {
             capture::recording::control_recording,
             pins::pin_clipboard,
             pins::pin_file,
-            pin_content::pin_color,
-            pin_content::pin_text,
             pins::set_pin_group,
             pins::current_pin,
             pins::set_pin_annotations,

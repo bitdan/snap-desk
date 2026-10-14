@@ -1,106 +1,10 @@
-//! 文本与颜色贴图的输入校验，以及受限 PNG / JPEG / WebP 文件解码。
-//! 文本继续使用现有可编辑标注，原生层只接受校验后的 PNG 字形，不接收任意路径。
-use crate::annotations::{Annotation, Kind};
-use image::{ImageDecoder, ImageFormat, Rgba, RgbaImage};
-use serde::Deserialize;
+//! 受限 PNG / JPEG / WebP 文件解码，用于导入图片贴图。
+use image::{ImageDecoder, ImageFormat, RgbaImage};
 use std::{
     fs::File,
     io::{Cursor, Read},
     path::Path,
 };
-use tauri::{AppHandle, WebviewWindow};
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ColorPinRequest {
-    color: String,
-    width: u32,
-    height: u32,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct TextPinRequest {
-    background: String,
-    annotation: Annotation,
-}
-
-fn color(value: &str) -> Result<Rgba<u8>, String> {
-    if value.len() != 7
-        || !value.starts_with('#')
-        || !value[1..].bytes().all(|b| b.is_ascii_hexdigit())
-    {
-        return Err("颜色必须为 #RRGGBB。".into());
-    }
-    let value = u32::from_str_radix(&value[1..], 16).map_err(|e| e.to_string())?;
-    Ok(Rgba([
-        (value >> 16) as u8,
-        (value >> 8) as u8,
-        value as u8,
-        255,
-    ]))
-}
-
-fn color_image(request: ColorPinRequest) -> Result<RgbaImage, String> {
-    if !(16..=2048).contains(&request.width) || !(16..=2048).contains(&request.height) {
-        return Err("颜色贴图宽高须为 16～2048 像素。".into());
-    }
-    Ok(RgbaImage::from_pixel(
-        request.width,
-        request.height,
-        color(&request.color)?,
-    ))
-}
-
-fn text_image(request: TextPinRequest) -> Result<(RgbaImage, Vec<Annotation>), String> {
-    let a = &request.annotation;
-    // 与前端一致：16 px 留白、最大 608 × 480 的字形范围；先校验浮点坐标再转整数。
-    if !matches!(a.kind, Kind::Text)
-        || a.start.x != 16.0
-        || a.start.y != 16.0
-        || a.end.x > 624.0
-        || a.end.y > 496.0
-        || a.text.as_ref().is_none_or(|s| s.trim().is_empty())
-    {
-        return Err("文本贴图内容或排版范围无效。".into());
-    }
-    crate::annotations::validate(std::slice::from_ref(a), 640, 512)?;
-    let image = RgbaImage::from_pixel(
-        (a.end.x.ceil() as u32) + 16,
-        (a.end.y.ceil() as u32) + 16,
-        color(&request.background)?,
-    );
-    Ok((image, vec![request.annotation]))
-}
-
-#[tauri::command]
-pub async fn pin_color(
-    app: AppHandle,
-    window: WebviewWindow,
-    request: ColorPinRequest,
-) -> Result<(), String> {
-    crate::capture::require_window(&window, "main")?;
-    tauri::async_runtime::spawn_blocking(move || {
-        crate::pins::create_visible(&app, color_image(request)?, vec![])
-    })
-    .await
-    .map_err(|e| e.to_string())?
-}
-
-#[tauri::command]
-pub async fn pin_text(
-    app: AppHandle,
-    window: WebviewWindow,
-    request: TextPinRequest,
-) -> Result<(), String> {
-    crate::capture::require_window(&window, "main")?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let (image, annotations) = text_image(request)?;
-        crate::pins::create_visible(&app, image, annotations)
-    })
-    .await
-    .map_err(|e| e.to_string())?
-}
 
 const MAX_FILE_BYTES: u64 = 64 * 1024 * 1024;
 
@@ -164,29 +68,7 @@ fn decode_image(bytes: &[u8]) -> Result<RgbaImage, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn color_pins_validate_dimensions_and_keep_exact_rgb() {
-        let image = color_image(ColorPinRequest {
-            color: "#12aBcF".into(),
-            width: 16,
-            height: 20,
-        })
-        .unwrap();
-        assert_eq!(image.dimensions(), (16, 20));
-        assert!(image.pixels().all(|p| p.0 == [18, 171, 207, 255]));
-        for (w, h) in [(0, 20), (20, 15), (2049, 16), (16, u32::MAX)] {
-            assert!(color_image(ColorPinRequest {
-                color: "#123456".into(),
-                width: w,
-                height: h
-            })
-            .is_err());
-        }
-        for value in ["red", "#fff", "#12345g", "#你好"] {
-            assert!(color(value).is_err());
-        }
-    }
+    use image::Rgba;
 
     #[test]
     fn png_import_preserves_alpha_and_rejects_invalid_data() {
@@ -249,49 +131,5 @@ mod tests {
             .unwrap();
         assert!(read_image(&path).unwrap_err().contains("64 MiB"));
         assert!(read_image(&directory.path().join("missing.png")).is_err());
-    }
-
-    #[test]
-    fn text_pin_retains_editable_annotation_and_padding() {
-        use base64::{engine::general_purpose::STANDARD, Engine};
-        let mut png = Cursor::new(Vec::new());
-        RgbaImage::from_pixel(20, 30, Rgba([1, 2, 3, 255]))
-            .write_to(&mut png, ImageFormat::Png)
-            .unwrap();
-        let annotation: Annotation = serde_json::from_value(serde_json::json!({
-            "kind": "text", "start": {"x":16,"y":16}, "end":{"x":36,"y":46},
-            "color":"#000000","width":2,"text":"中文","fontSize":24,"fontFamily":"sans",
-            "raster":STANDARD.encode(png.into_inner())
-        }))
-        .unwrap();
-        let (image, shapes) = text_image(TextPinRequest {
-            background: "#ffffff".into(),
-            annotation: annotation.clone(),
-        })
-        .unwrap();
-        assert_eq!(image.dimensions(), (52, 62));
-        assert_eq!(shapes[0].text.as_deref(), Some("中文"));
-        assert_eq!(image.get_pixel(0, 0).0, [255, 255, 255, 255]);
-        let mut invalid = annotation.clone();
-        invalid.end.x = f64::NAN;
-        assert!(text_image(TextPinRequest {
-            background: "#ffffff".into(),
-            annotation: invalid
-        })
-        .is_err());
-        let mut invalid = annotation.clone();
-        invalid.kind = Kind::Mosaic;
-        assert!(text_image(TextPinRequest {
-            background: "#ffffff".into(),
-            annotation: invalid
-        })
-        .is_err());
-        let mut invalid = annotation;
-        invalid.text = Some(" \n ".into());
-        assert!(text_image(TextPinRequest {
-            background: "#ffffff".into(),
-            annotation: invalid
-        })
-        .is_err());
     }
 }

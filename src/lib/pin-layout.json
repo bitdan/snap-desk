@@ -1,4 +1,5 @@
 {
+  "minVisibleSide": 48,
   "padding": 12,
   "gap": 8,
   "border": 1,

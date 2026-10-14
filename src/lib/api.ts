@@ -11,8 +11,6 @@ export interface CaptureFrame { id: number; width: number; height: number; dataU
 export interface PinView { zoom: number; opacity: number; locked: boolean; topmost: boolean; toolbarExpanded: boolean }
 export interface PinFrame { label: string; width: number; height: number; dataUrl: string; view: PinView; transparencySupported: boolean; annotations: Annotation[] }
 export interface PinSummary { label: string; width: number; height: number; visible: boolean; group: string }
-export interface ColorPinRequest { color: string; width: number; height: number }
-export interface TextPinRequest { background: string; annotation: Annotation }
 export type ColorFormat = 'hex' | 'rgb'
 export interface ScrollView {
   id: number; revision: number; collecting: boolean; archivePath: string | null;
@@ -70,8 +68,6 @@ export const api = {
   controlRecording: (id: number, action: RecordingAction) => invoke<void>('control_recording', { id, action }),
   pinClipboard: () => invoke<void>('pin_clipboard'),
   pinFile: () => invoke<boolean>('pin_file'),
-  pinColor: (request: ColorPinRequest) => invoke<void>('pin_color', { request }),
-  pinText: (request: TextPinRequest) => invoke<void>('pin_text', { request }),
   currentPin: () => invoke<PinFrame>('current_pin'),
   setPinAnnotations: (annotations: Annotation[]) => invoke<void>('set_pin_annotations', { annotations }),
   listPins: () => invoke<PinSummary[]>('list_pins'),

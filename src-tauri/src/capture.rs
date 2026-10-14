@@ -228,10 +228,7 @@ pub fn cancel_pending_capture(app: AppHandle, window: WebviewWindow) -> Result<(
 fn prepare(app: &AppHandle, recording: bool) -> Result<(), String> {
     let window = overlay(app)?;
     window.hide().map_err(err)?;
-    if let Some(main) = app.get_webview_window("main") {
-        main.hide().map_err(err)?;
-    }
-    // 留给桌面合成器时间移除主窗口，避免把工具自己的界面截入图片。
+    // 保留主窗口以支持截取 Snap Desk 自身；只等待旧截图蒙层从桌面移除。
     std::thread::sleep(Duration::from_millis(180));
     let monitor = window
         .primary_monitor()

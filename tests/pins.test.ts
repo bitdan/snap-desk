@@ -1,7 +1,16 @@
 import { describe, expect, it } from 'vitest'
-import { canEditPin, stepZoom } from '../src/lib/pins'
+import { canEditPin, minimumZoom, stepZoom } from '../src/lib/pins'
 
 describe('pin display controls', () => {
+  it('keeps small and narrow images visible after repeated shrinking', () => {
+    for (const [width, height, minimum] of [[200, 100, 0.48], [100, 200, 0.48], [20, 300, 1], [800, 600, 0.1]]) {
+      expect(minimumZoom(width, height)).toBe(minimum)
+      let zoom = 1
+      for (let i = 0; i < 100; i++) zoom = stepZoom(zoom, -1, minimum)
+      expect(zoom).toBe(minimum)
+      expect(stepZoom(zoom, 1, minimum)).toBeGreaterThan(minimum)
+    }
+  })
   it('clamps repeated wheel zoom and avoids accumulated decimal drift', () => {
     let zoom = 1
     for (let i = 0; i < 50; i++) zoom = stepZoom(zoom, 1)

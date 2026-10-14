@@ -2,7 +2,6 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import Button from '@/components/ui/button/Button.vue'
 import { api, desktop, onPinsChanged, type PinSummary, type PinManageAction } from '@/lib/api'
-import PinCreator from './PinCreator.vue'
 import { pinGroups, filterPins, normalizePinGroup } from '@/lib/pin-content'
 
 const pins = ref<PinSummary[]>([])
@@ -60,7 +59,6 @@ onUnmounted(() => { disposed = true; off?.() })
     <Button :disabled="!desktop || busy" title="直接贴出剪贴板中的图片，快捷键可在设置中修改" @click="run(api.pinClipboard)">剪贴板图片贴图</Button>
     <Button variant="outline" :disabled="!desktop || busy" @click="run(api.pinFile)">打开图片贴图</Button>
   </div>
-  <PinCreator :disabled="!desktop || busy" @create="run" />
   <div class="pin-manager-actions group-actions">
     <label>分组 <select v-model="groupFilter" :disabled="busy" aria-label="筛选贴图分组"><option :value="null">全部贴图</option><option value="">未分组</option><option v-for="group in groups" :key="group" :value="group">{{ group }}</option></select></label>
     <Button variant="outline" :disabled="!desktop || busy || !visiblePins.length" @click="manage('show')">{{ groupFilter === null ? '全部' : '本组' }}显示</Button>

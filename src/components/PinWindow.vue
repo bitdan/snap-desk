@@ -6,7 +6,7 @@ import AnnotationToolbar from './AnnotationToolbar.vue'
 import { useAnnotations, type AnnotationTool } from '@/lib/use-annotations'
 import { annotationTools } from '@/lib/annotation-tools'
 import { api, type PinFrame, type PinView, type PinAction, type PinTransform } from '@/lib/api'
-import { canEditPin, stepZoom } from '@/lib/pins'
+import { canEditPin, minimumZoom, stepZoom } from '@/lib/pins'
 import layout from '@/lib/pin-layout.json'
 
 const frame = ref<PinFrame | null>(null)
@@ -108,8 +108,12 @@ async function transform(value: PinTransform) {
     frame.value.view = await api.setPinView(frame.value.view)
   })
 }
+const minZoom = computed(() => frame.value ? minimumZoom(frame.value.width, frame.value.height) : 1)
 function zoom(direction: number) {
-  if (editable.value) void setView({ zoom: stepZoom(frame.value!.view.zoom, direction) })
+  if (!editable.value || !frame.value) return
+  const next = stepZoom(frame.value.view.zoom, direction, minZoom.value)
+  // 到达边界后不再调用原生窗口缩放，连续滚动也保持当前窗口可见。
+  if (next !== frame.value.view.zoom) void setView({ zoom: next })
 }
 function wheel(event: WheelEvent) { if (event.deltaY !== 0) zoom(event.deltaY < 0 ? 1 : -1) }
 function drag(event: PointerEvent) {
@@ -176,7 +180,7 @@ function closeOnResize() { closeMenu() }
           <button :disabled="busy" :aria-pressed="frame.view.topmost" title="置顶开关" aria-label="置顶开关" @click="setView({ topmost: !frame.view.topmost })"><component :is="frame.view.topmost ? Pin : PinOff" :size="16" /></button>
           <button :disabled="busy" :aria-pressed="frame.view.locked" :title="frame.view.locked ? '解锁' : '锁定'" :aria-label="frame.view.locked ? '解锁' : '锁定'" @click="setView({ locked: !frame.view.locked })"><component :is="frame.view.locked ? Lock : Unlock" :size="16" /></button>
           <span class="pin-divider" />
-          <button :disabled="!editable" title="缩小" aria-label="缩小" @click="zoom(-1)"><Minus :size="16" /></button>
+          <button :disabled="!editable || frame.view.zoom <= minZoom" title="缩小" aria-label="缩小" @click="zoom(-1)"><Minus :size="16" /></button>
           <button :disabled="!editable" title="恢复 100% 查看比例" @click="setView({ zoom: 1 })">{{ Math.round(frame.view.zoom * 100) }}%</button>
           <button :disabled="!editable" title="放大" aria-label="放大" @click="zoom(1)"><Plus :size="16" /></button>
           <span class="pin-divider" />
