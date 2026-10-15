@@ -42,8 +42,8 @@ impl PinLayout {
             .expect("内置贴图布局配置无效")
     }
     /// 与前端使用相同短边下限，原生命令也不能把小图缩成不可见的小点。
-    fn minimum_zoom(&self, width: u32, height: u32) -> f64 {
-        (self.min_visible_side / f64::from(width.min(height).max(1))).max(0.1)
+    fn minimum_zoom(&self, width: u32, height: u32, scale: f64) -> f64 {
+        (self.min_visible_side * scale / f64::from(width.min(height).max(1))).max(0.1)
     }
     fn chrome_height(&self, expanded: bool) -> f64 {
         self.padding * 2.0
@@ -116,8 +116,8 @@ impl Default for PinView {
 impl PinView {
     fn validate(&self) -> Result<(), String> {
         if !self.zoom.is_finite()
-            // 1px 短边需放大至 20 倍；实际图片的上限由 set_pin_view 再约束。
-            || !(0.1..=20.0).contains(&self.zoom)
+            // 上限依赖图片短边和 DPI，由 set_pin_view 在取得图片后钳制。
+            || self.zoom < 0.1
             || !self.opacity.is_finite()
             || !(0.2..=1.0).contains(&self.opacity)
         {
@@ -234,16 +234,20 @@ pub fn create(
         .map_err(err)?
         .ok_or("无法获取显示器信息。")?;
     let layout = PinLayout::load();
-    let max_width = f64::from(monitor.work_area().size.width) / monitor.scale_factor() * 0.8;
-    let max_height = f64::from(monitor.work_area().size.height) / monitor.scale_factor() * 0.8;
+    // 不再额外裁掉 20% 工作区：能完整显示的选区不应被迫出现滚动条。
+    let max_width = f64::from(monitor.work_area().size.width) / monitor.scale_factor();
+    let max_height = f64::from(monitor.work_area().size.height) / monitor.scale_factor();
     // 默认原尺寸；极小图片等比放大到短边 20px，超出屏幕的部分滚动查看。
-    let zoom = PinView::default()
-        .zoom
-        .max(layout.minimum_zoom(image.width(), image.height()));
+    let zoom = PinView::default().zoom.max(layout.minimum_zoom(
+        image.width(),
+        image.height(),
+        monitor.scale_factor(),
+    ));
     let (width, height) = layout.window_size(
         image.width(),
         image.height(),
-        zoom,
+        // window_size 使用逻辑尺寸，zoom 本身始终表示物理像素的查看比例。
+        zoom / monitor.scale_factor(),
         max_width,
         max_height,
         true,
@@ -580,15 +584,15 @@ pub async fn set_pin_view(
         let scale = monitor.scale_factor();
         let work_area = monitor.work_area();
         let layout = PinLayout::load();
-        let minimum = layout.minimum_zoom(pin.image.width(), pin.image.height());
+        let minimum = layout.minimum_zoom(pin.image.width(), pin.image.height(), scale);
         // 通常最多 400%；仅极细图片允许超过此值，以满足 20px 的可见下限。
         view.zoom = view.zoom.clamp(minimum, 4.0_f64.max(minimum));
         let (width, height) = layout.window_size(
             pin.image.width(),
             pin.image.height(),
-            view.zoom,
-            f64::from(work_area.size.width) / scale * 0.95,
-            f64::from(work_area.size.height) / scale * 0.95,
+            view.zoom / scale,
+            f64::from(work_area.size.width) / scale,
+            f64::from(work_area.size.height) / scale,
             view.toolbar_expanded,
         );
         let old_size = window.inner_size().map_err(err)?;

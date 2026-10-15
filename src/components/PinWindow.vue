@@ -6,7 +6,7 @@ import AnnotationToolbar from './AnnotationToolbar.vue'
 import { useAnnotations, type AnnotationTool } from '@/lib/use-annotations'
 import { annotationTools } from '@/lib/annotation-tools'
 import { api, type PinFrame, type PinView, type PinAction, type PinTransform } from '@/lib/api'
-import { canEditPin, minimumZoom, stepZoom } from '@/lib/pins'
+import { canEditPin, minimumZoom, pinDisplaySize, stepZoom } from '@/lib/pins'
 import layout from '@/lib/pin-layout.json'
 
 const frame = ref<PinFrame | null>(null)
@@ -14,6 +14,9 @@ const busy = ref(false)
 const error = ref('')
 const message = ref('')
 const controls = computed(() => frame.value?.view.toolbarExpanded ?? true)
+const viewport = ref({ width: window.innerWidth, height: window.innerHeight, pixelRatio: window.devicePixelRatio })
+const display = computed(() => pinDisplaySize(frame.value?.width ?? 20, frame.value?.height ?? 20,
+  frame.value?.view.zoom ?? 1, viewport.value.width, viewport.value.height, controls.value, viewport.value.pixelRatio))
 const focused = ref(document.hasFocus())
 const annotating = ref(false)
 const contextMenu = ref<{ x: number; y: number } | null>(null)
@@ -27,12 +30,14 @@ const editor = useAnnotations(() => bounds.value, () => frame.value?.dataUrl ?? 
 // 图片和底栏是两个网格区域；阴影占用外边距，底栏不再浮在图片上。
 const shellStyle = computed(() => ({
   padding: `${layout.padding}px`, gap: `${layout.gap}px`,
-  gridTemplateRows: `minmax(0, 1fr) ${controls.value ? layout.expandedHeight : layout.collapsedHeight}px`,
+  // 显式限定列宽；长工具栏不能撑大隐式网格列，把居中的图片推到窗口外。
+  gridTemplateColumns: 'minmax(0, 1fr)',
+  gridTemplateRows: `minmax(${layout.minVisibleSide + layout.border * 2}px, 1fr) ${controls.value ? layout.expandedHeight : layout.collapsedHeight}px`,
 }))
 const stageStyle = computed(() => ({
   cursor: editable.value ? 'move' : 'default', borderWidth: `${layout.border}px`,
-  width: frame.value ? `min(100%, ${frame.value.width * frame.value.view.zoom + layout.border * 2}px)` : '100%',
-  height: frame.value ? `min(100%, ${frame.value.height * frame.value.view.zoom + layout.border * 2}px)` : '100%',
+  // 使用确定的像素尺寸，边框与内容一起缩放；大图在边框内滚动查看。
+  width: `${display.value.stageWidth}px`, height: `${display.value.stageHeight}px`,
 }))
 const editable = computed(() => canEditPin(frame.value?.view, busy.value || editor.pending || editor.interacting))
 const transforms: { action: PinTransform; label: string }[] = [
@@ -108,7 +113,7 @@ async function transform(value: PinTransform) {
     frame.value.view = await api.setPinView(frame.value.view)
   })
 }
-const minZoom = computed(() => frame.value ? minimumZoom(frame.value.width, frame.value.height) : 1)
+const minZoom = computed(() => frame.value ? minimumZoom(frame.value.width, frame.value.height, viewport.value.pixelRatio) : 1)
 function zoom(direction: number) {
   if (!editable.value || !frame.value) return
   const next = stepZoom(frame.value.view.zoom, direction, minZoom.value)
@@ -160,14 +165,17 @@ onUnmounted(() => {
   window.removeEventListener('keydown', key)
   window.removeEventListener('focus', updateFocus); window.removeEventListener('blur', updateFocus)
 })
-function closeOnResize() { closeMenu() }
+function closeOnResize() {
+  viewport.value = { width: window.innerWidth, height: window.innerHeight, pixelRatio: window.devicePixelRatio }
+  closeMenu()
+}
 </script>
 
 <template>
   <div class="pin-shell" :class="{ 'is-focused': focused }" :style="shellStyle" @contextmenu.prevent>
     <div class="pin-stage" tabindex="0" aria-label="贴图，右键编辑标注" :style="stageStyle" @pointerdown="drag" @wheel.prevent="wheel" @contextmenu.capture="openMenu">
       <div v-if="frame" class="pin-canvas">
-        <div class="pin-image-content" :style="{ width: `${frame.width * frame.view.zoom}px`, height: `${frame.height * frame.view.zoom}px`, opacity: frame.view.opacity }">
+        <div class="pin-image-content" :style="{ width: `${display.imageWidth}px`, height: `${display.imageHeight}px`, opacity: frame.view.opacity }">
           <img :src="frame.dataUrl" alt="桌面贴图" draggable="false" @error="error = '贴图预览加载失败，可关闭后重新贴图。'" />
           <AnnotationSurface :editor="editor" :width="frame.width" :height="frame.height" :bounds="bounds" :enabled="annotating && !busy && !frame.view.locked" />
         </div>
