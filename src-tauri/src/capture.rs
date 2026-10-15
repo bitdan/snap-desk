@@ -539,6 +539,24 @@ pub async fn save_capture(
     .map_err(err)?
 }
 
+/// 托盘/全局贴图键优先交给截图窗口，由它提交当前选区和尚未导出的标注。
+/// 返回 true 表示截图流程已占用入口；准备中或尚未框选时也不能误贴剪贴板。
+pub fn request_pin(app: &AppHandle) -> Result<bool, String> {
+    let state = app.state::<CaptureState>();
+    if !state.active.load(Ordering::SeqCst) {
+        return Ok(false);
+    }
+    let session = state.session.lock().map_err(err)?;
+    if let Some(session) = session.as_ref() {
+        if session.shown && !session.frame.recording {
+            // 携带会话 ID，防止延迟事件提交下一次截图的选区。
+            app.emit_to("capture", "capture-pin-requested", session.frame.id)
+                .map_err(err)?;
+        }
+    }
+    Ok(true)
+}
+
 /// 创建独立贴图后结束截图会话；创建失败时保留原选区供用户重试。
 #[tauri::command]
 pub async fn pin_capture(

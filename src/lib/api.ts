@@ -80,6 +80,8 @@ export const api = {
   hide: () => invoke<void>('hide_main'),
 }
 export const onFrame = (fn: (frame: CaptureFrame) => void) => listen<CaptureFrame>('capture-ready', e => fn(e.payload))
+// 原生入口只发会话 ID，选区与标注由截图窗口提交，避免读取旧剪贴板。
+export const onCapturePin = (fn: (id: number) => void) => listen<number>('capture-pin-requested', e => fn(e.payload))
 export const onError = (fn: (error: string) => void) => listen<string>('capture-error', e => fn(e.payload))
 export const onResult = (fn: (result: string) => void) => listen<string>('capture-result', e => fn(e.payload))
 export const onDelay = (fn: (remaining: number) => void) => listen<number>('capture-delay', e => fn(e.payload))

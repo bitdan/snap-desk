@@ -92,11 +92,18 @@ fn trigger(app: &AppHandle) {
     });
 }
 
-/// F2 直接读取剪贴板内存中的图片，复用托盘贴图入口，不需要先另存文件。
+/// 托盘和全局贴图键优先使用当前截图选区；没有截图会话时读取剪贴板。
 fn trigger_pin(app: &AppHandle) {
     let app = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        if let Err(error) = pins::clipboard_pin(&app) {
+        let result = capture::request_pin(&app).and_then(|handled| {
+            if handled {
+                Ok(())
+            } else {
+                pins::clipboard_pin(&app)
+            }
+        });
+        if let Err(error) = result {
             capture::report_error(&app, error);
         }
     });
@@ -177,7 +184,7 @@ pub fn run() {
         .setup(|app| {
             settings::initialize(app.handle())?;
             let capture = MenuItem::with_id(app, "capture", "开始截图", true, None::<&str>)?;
-            let pin = MenuItem::with_id(app, "pin", "剪贴板贴图", true, None::<&str>)?;
+            let pin = MenuItem::with_id(app, "pin", "贴图（选区 / 剪贴板）", true, None::<&str>)?;
             let recording = MenuItem::with_id(app, "recording", "录屏", true, None::<&str>)?;
             let open = MenuItem::with_id(app, "open", "打开 Snap Desk", true, None::<&str>)?;
             let enabled = app

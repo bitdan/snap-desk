@@ -2,7 +2,7 @@
 import ScrollCaptureIcon from './ScrollCaptureIcon.vue'
 import { computed, nextTick, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue'
 import { Copy, Save, X, Monitor, RotateCcw, Scan, Move, Pin, Video } from 'lucide-vue-next'
-import { api, onFrame, onScroll, type CaptureFrame, type ColorFormat, type ScrollView } from '@/lib/api'
+import { api, onFrame, onCapturePin, onScroll, type CaptureFrame, type ColorFormat, type ScrollView } from '@/lib/api'
 import { clamp, move, normalize, resize, toPixels, nudgeSelection, type Handle, type Point, type Rect } from '@/lib/selection'
 import { useAnnotations, type AnnotationTool } from '@/lib/use-annotations'
 import AnnotationSurface from './AnnotationSurface.vue'
@@ -75,6 +75,7 @@ const handles: Handle[] = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w']
 let gesture: { start: Point; initial: Rect; mode: 'draw' | 'move' | Handle } | null = null
 let off: (() => void) | undefined
 let offScroll: (() => void) | undefined
+let offPin: (() => void) | undefined
 let disposed = false
 const pixels = computed(() => selection.value && frame.value ? toPixels(selection.value, viewport.value, frame.value) : null)
 const valid = computed(() => pixels.value && pixels.value.width > 0 && pixels.value.height > 0)
@@ -267,13 +268,18 @@ onMounted(async () => {
     if (disposed) { off(); return }
     offScroll = await onScroll(receiveScroll)
     if (disposed) { offScroll(); return }
+    offPin = await onCapturePin(id => {
+      // 复用工具栏的导出校验，编辑/拖动/长截图期间不提交，也不回退剪贴板。
+      if (frame.value?.id === id && !scroll.value && !scrollSetup.value && !recordingSetup.value) void finish('pin')
+    })
+    if (disposed) { offPin(); return }
     const current = await api.current()
     if (current && (!frame.value || current.id > frame.value.id)) receive(current)
     const currentScroll = await api.currentScroll()
     if (currentScroll && !disposed) receiveScroll(currentScroll)
   } catch (e) { error.value = String(e) }
 })
-onUnmounted(() => { disposed = true; off?.(); offScroll?.(); window.removeEventListener('keydown', key); window.removeEventListener('resize', resized) })
+onUnmounted(() => { disposed = true; off?.(); offScroll?.(); offPin?.(); window.removeEventListener('keydown', key); window.removeEventListener('resize', resized) })
 </script>
 
 <template>
