@@ -2,7 +2,7 @@
 import { onMounted, onUnmounted, ref } from 'vue'
 import Button from './ui/button/Button.vue'
 import { api, desktop } from '@/lib/api'
-import type { RecoverableRecording } from '@/lib/recording'
+import type { RecoverableRecording, RecordingResult, RecordingResultAction } from '@/lib/recording'
 import { encoderLabels, recordingStats, recordingStageTimes, recordingCopyStats, newerRecording, recordingActive, recordingStatus, recordingTime, type RecorderCapabilities, type RecordingAction, type RecordingDirectory, type RecordingView } from '@/lib/recording'
 
 const view = ref<RecordingView | null>(null)
@@ -13,6 +13,28 @@ const directory = ref<RecordingDirectory | null>(null)
 const changingDirectory = ref(false)
 const recoveries = ref<RecoverableRecording[]>([])
 const recoveredPath = ref('')
+const result = ref<RecordingResult | null>(null)
+const resultBusy = ref(false)
+const resultMessage = ref('')
+async function loadResult() {
+  const next = await api.latestRecordingResult()
+  if (!disposed) {
+    // 轮询与恢复导出可能同时查询，旧快照不能覆盖更新的成功结果。
+    if (result.value && (!next || next.id < result.value.id)) return
+    if (result.value?.id !== next?.id) resultMessage.value = ''
+    result.value = next
+  }
+}
+async function resultAction(action: RecordingResultAction) {
+  if (!result.value || resultBusy.value) return
+  const id = result.value.id
+  resultBusy.value = true; error.value = ''; resultMessage.value = ''
+  try {
+    await api.recordingResultAction(id, action)
+    if (result.value?.id === id) resultMessage.value = action === 'copyPath' ? '路径已复制。' : action === 'preview' ? '已请求系统播放器打开录屏。' : '已打开保存目录。'
+  } catch (e) { error.value = String(e) }
+  finally { resultBusy.value = false }
+}
 async function loadRecoveries() {
   try { const items = await api.recoverableRecordings(); if (!disposed) recoveries.value = items }
   catch (e) { if (!disposed) error.value = String(e) }
@@ -20,7 +42,7 @@ async function loadRecoveries() {
 async function retryExport(id: string) {
   if (busy.value || changingDirectory.value || recordingActive(view.value)) return
   busy.value = true; error.value = ''; recoveredPath.value = ''
-  try { recoveredPath.value = await api.retryRecordingExport(id); await loadRecoveries() }
+  try { recoveredPath.value = await api.retryRecordingExport(id); await loadRecoveries(); await loadResult() }
   catch (e) { error.value = String(e) }
   finally { busy.value = false }
 }
@@ -32,6 +54,7 @@ async function refresh() {
     if (!disposed) {
       const ended = recordingActive(view.value) && !recordingActive(next)
       view.value = newerRecording(view.value, next)
+      await loadResult()
       if (ended) await loadRecoveries()
     }
   }
@@ -81,6 +104,17 @@ onUnmounted(() => { disposed = true; clearTimeout(timer) })
     <p class="subtitle">选择录制范围后设置录屏选项。录屏快捷键可在设置中修改，录制中再次按下停止并保存。</p>
     <div v-if="error" class="notice error" role="alert">{{ error }}</div>
     <p v-if="recoveredPath" class="notice break-all" role="status">已重新导出：{{ recoveredPath }}</p>
+    <div v-if="result" class="settings-card mb-3">
+      <div class="setting-row"><strong>最近完成的录屏</strong><span class="text-sm text-zinc-500">本次运行</span></div>
+      <p class="py-2 break-all font-medium">{{ result.filename }}</p>
+      <p class="break-all text-xs text-zinc-500">{{ result.path }}</p>
+      <div class="flex flex-wrap gap-2 py-4">
+        <Button :disabled="resultBusy || recordingActive(view)" title="使用系统默认播放器打开 MP4 / GIF" @click="resultAction('preview')">预览（系统播放器）</Button>
+        <Button variant="outline" :disabled="resultBusy" @click="resultAction('openDirectory')">打开目录</Button>
+        <Button variant="ghost" :disabled="resultBusy" @click="resultAction('copyPath')">复制路径</Button>
+      </div>
+      <p v-if="resultMessage" class="text-sm pb-3" role="status">{{ resultMessage }}</p>
+    </div>
     <div v-if="recoveries.length" class="settings-card mb-3">
       <div class="setting-row"><strong>待恢复视频</strong><Button variant="outline" :disabled="busy" @click="loadRecoveries">刷新</Button></div>
       <p class="py-2 text-sm">已封装视频可重新导出到当前保存位置；也可先选择其他文件夹。</p>

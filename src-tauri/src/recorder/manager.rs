@@ -17,6 +17,7 @@ mod gif;
 mod input;
 pub mod output;
 pub mod recovery;
+pub mod result;
 mod stats;
 mod timeline;
 use super::scroll::chrome;
@@ -1049,8 +1050,9 @@ fn write_video(
     // 最后确认取消；发布和取消共用状态锁，失败时 Pending 保留完整视频。
     let output = recovery.output(&root);
     progress(app, "publishing", Some(&pending));
-    fs::rename(&pending, &output).map_err(err)?;
+    output::publish(&pending, &output)?;
     recovery.published();
+    result::remember(app, &output);
     progress(app, "completed", Some(&output));
     s.view.phase = Phase::Completed;
     Ok(output.to_string_lossy().into_owned())

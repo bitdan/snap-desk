@@ -32,6 +32,7 @@ tempfile = "3"
 gif = "=0.14.2"
 rqrr = { version = "=0.10.1", default-features = false }
 open = "5"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
 [dev-dependencies]
 qrcode = { version = "0.14", default-features = false }

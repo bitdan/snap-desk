@@ -145,6 +145,7 @@ pub fn run() {
         .manage(settings::ShortcutPressState::default())
         .manage(qr::QrState::default())
         .manage(capture::recording::RecordingState::default())
+        .manage(capture::recording::result::ResultState::default())
         .manage(capture::recording::ExitState::default())
         .manage(pins::PinState::default())
         .plugin(
@@ -357,6 +358,8 @@ pub fn run() {
             capture::scroll::session::control_scroll,
             capture::recording::start_recording,
             capture::recording::current_recording,
+            capture::recording::result::latest_recording_result,
+            capture::recording::result::recording_result_action,
             capture::recording::recovery::recoverable_recordings,
             capture::recording::recovery::retry_recording_export,
             capture::recording::recording_capabilities,

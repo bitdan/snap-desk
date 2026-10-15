@@ -13,6 +13,23 @@ use tauri_plugin_dialog::DialogExt;
 // 防止多个目录对话框或“恢复默认”同时修改目录记录；不与采集/编码锁相互等待。
 static CHANGING: Mutex<()> = Mutex::new(());
 
+/// 本地日期时间便于排序和查找；末尾保留后台随机标识，区分同毫秒导出。
+pub(super) fn filename(token: &str, extension: &str, recovered: bool) -> String {
+    let now = chrono::Local::now();
+    let stamp = now.format("%Y%m%d-%H%M%S-%3f");
+    let kind = if recovered { "Recovered" } else { "Recording" };
+    format!("SnapDesk-{kind}-{stamp}-{token}.{extension}")
+}
+
+/// 无覆盖发布现有视频，失败时关闭 TempPath 自动删除，由 Pending 保留恢复源。
+pub(super) fn publish(source: &Path, destination: &Path) -> Result<(), String> {
+    let mut temporary = tempfile::TempPath::try_from_path(source).map_err(|e| e.to_string())?;
+    temporary.disable_cleanup(true);
+    temporary
+        .persist_noclobber(destination)
+        .map_err(|e| format!("发布录屏失败，源文件已保留：{e}"))
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RecordingDirectory {
@@ -151,6 +168,21 @@ pub async fn choose_recording_directory(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn publication_does_not_overwrite_or_delete_source_on_failure() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("pending.mp4");
+        let destination = root.path().join("existing.mp4");
+        fs::write(&source, b"new video").unwrap();
+        fs::write(&destination, b"old video").unwrap();
+        assert!(publish(&source, &destination).is_err());
+        assert_eq!(fs::read(&source).unwrap(), b"new video");
+        assert_eq!(fs::read(&destination).unwrap(), b"old video");
+        let target = root.path().join("finished.mp4");
+        publish(&source, &target).unwrap();
+        assert_eq!(fs::read(target).unwrap(), b"new video");
+    }
 
     #[test]
     fn directory_survives_reload_and_reset_does_not_delete_videos() {

@@ -49,6 +49,9 @@ export function recordingConfig(region: Rect, fps: RecordingFps = 30, captureCur
 /** 与 Rust RecordingView / RecordingAction 保持一致，不使用前端计时推测视频长度。 */
 export type RecordingPhase = 'ready' | 'countdown' | 'recording' | 'paused' | 'encoding' | 'completed' | 'cancelled' | 'failed'
 export type RecordingAction = 'start' | 'pause' | 'resume' | 'stop' | 'cancel'
+/** 本次运行最近一次成功导出，包含恢复导出；路径只供展示，操作只传 ID。 */
+export interface RecordingResult { id: number; path: string; filename: string }
+export type RecordingResultAction = 'preview' | 'openDirectory' | 'copyPath'
 /** 与 Rust RecordingStats 一致，耗时为累计毫秒；空取样不是丢帧。 */
 export interface RecordingDiagnostics {
   capturePolls: number; capturedFrames: number; captureMillis: number;

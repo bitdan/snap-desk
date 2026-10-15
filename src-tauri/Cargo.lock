@@ -4139,6 +4139,7 @@ name = "snap-desk"
 version = "0.1.4-beta.4"
 dependencies = [
  "base64 0.22.1",
+ "chrono",
  "clipboard-win",
  "gif",
  "image",

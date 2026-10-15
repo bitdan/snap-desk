@@ -5,6 +5,7 @@ import type { Point, Rect } from './selection'
 import type { Annotation } from './annotations'
 import type { Settings } from './settings'
 import type { RecorderCapabilities, RecorderConfig, RecordingAction, RecordingDirectory, RecordingView, RecoverableRecording } from './recording'
+import type { RecordingResult, RecordingResultAction } from './recording'
 export type { Settings } from './settings'
 
 export interface QrResult { id: number; items: { text: string; url: string | null }[] }
@@ -35,6 +36,8 @@ async function listen<T>(event: string, callback: EventCallback<T>) {
   catch (error) { throw new Error(`订阅 ${event}：${errorMessage(error)}`) }
 }
 export const api = {
+  latestRecordingResult: () => invoke<RecordingResult | null>('latest_recording_result'),
+  recordingResultAction: (id: number, action: RecordingResultAction) => invoke<void>('recording_result_action', { id, action }),
   autostartEnabled: () => invoke<boolean>('autostart_enabled'),
   setAutostartEnabled: (enabled: boolean) => invoke<boolean>('set_autostart_enabled', { enabled }),
   recognizeQr: (id: number, rect: Rect, annotations: Annotation[]) => invoke<QrResult>('recognize_capture_qr', { id, rect, annotations }),

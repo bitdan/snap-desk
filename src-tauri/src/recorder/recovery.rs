@@ -94,8 +94,14 @@ impl Pending {
         self.published = true;
     }
     pub fn output(&self, root: &Path) -> PathBuf {
-        root.join(&self.value.id)
-            .with_extension(self.path().extension().unwrap())
+        root.join(output::filename(
+            self.value.id.trim_start_matches("recording-pending-"),
+            self.path()
+                .extension()
+                .and_then(|s| s.to_str())
+                .unwrap_or("mp4"),
+            false,
+        ))
     }
 }
 impl Drop for Pending {
@@ -173,7 +179,11 @@ fn export(
         Some("gif") => "gif",
         _ => return Err("不支持的录制文件格式。".into()),
     };
-    let output = destination.join(format!("recovered-{name}.{extension}"));
+    let output = destination.join(output::filename(
+        name.trim_start_matches('.'),
+        extension,
+        true,
+    ));
     target.persist_noclobber(&output).map_err(err)?;
     Ok(output)
 }
@@ -236,6 +246,7 @@ pub async fn retry_recording_export(
             let mut value: Recoverable =
                 serde_json::from_slice(&fs::read(&record).map_err(err)?).map_err(err)?;
             if let Some(path) = value.exported {
+                result::remember(&app, Path::new(&path));
                 return Ok(path);
             }
             if value.id != id || !value.finalized {
@@ -265,6 +276,7 @@ pub async fn retry_recording_export(
             if let Some(parent) = source.parent() {
                 let _ = fs::remove_dir(parent);
             }
+            result::remember(&app, &output);
             Ok(output.to_string_lossy().into_owned())
         })();
         if let Ok(mut active) = ACTIVE.lock() {
