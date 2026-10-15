@@ -7,6 +7,7 @@ import type { Settings } from './settings'
 import type { RecorderCapabilities, RecorderConfig, RecordingAction, RecordingDirectory, RecordingView, RecoverableRecording } from './recording'
 export type { Settings } from './settings'
 
+export interface QrResult { id: number; items: { text: string; url: string | null }[] }
 export interface CaptureFrame { id: number; width: number; height: number; dataUrl: string; recording: boolean }
 export interface PinView { zoom: number; opacity: number; locked: boolean; topmost: boolean; toolbarExpanded: boolean }
 export interface PinFrame { label: string; width: number; height: number; dataUrl: string; view: PinView; transparencySupported: boolean; annotations: Annotation[] }
@@ -34,6 +35,8 @@ async function listen<T>(event: string, callback: EventCallback<T>) {
   catch (error) { throw new Error(`订阅 ${event}：${errorMessage(error)}`) }
 }
 export const api = {
+  recognizeQr: (id: number, rect: Rect, annotations: Annotation[]) => invoke<QrResult>('recognize_capture_qr', { id, rect, annotations }),
+  qrAction: (id: number, index: number, action: 'open' | 'copy') => invoke<void>('qr_action', { id, index, action }),
   completeOnboarding: () => invoke<Settings>('complete_onboarding'),
   appDirectories: () => invoke<DirectoryView[]>('app_directories'),
   openAppDirectory: (kind: AppDirectory) => invoke<void>('open_app_directory', { kind }),

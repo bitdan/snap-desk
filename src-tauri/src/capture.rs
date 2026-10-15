@@ -420,6 +420,26 @@ fn crop(
 }
 
 #[tauri::command]
+pub async fn recognize_capture_qr(
+    app: AppHandle,
+    window: WebviewWindow,
+    id: u64,
+    rect: Rect,
+    annotations: Vec<crate::annotations::Annotation>,
+) -> Result<crate::qr::QrResult, String> {
+    require_window(&window, "capture")?;
+    // 复用导出的裁剪与标注合成，但保留会话，允许识别后继续编辑。
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<CaptureState>();
+        let _operation = Operation::acquire(&state.operation)?;
+        let cropped = crop(&app, id, rect, &annotations)?;
+        crate::qr::recognize(&app, id, &cropped)
+    })
+    .await
+    .map_err(err)?
+}
+
+#[tauri::command]
 pub async fn copy_capture(
     app: AppHandle,
     window: WebviewWindow,

@@ -29,6 +29,11 @@ base64 = "0.22"
 log = "0.4"
 tempfile = "3"
 gif = "=0.14.2"
+rqrr = { version = "=0.10.1", default-features = false }
+open = "5"
+
+[dev-dependencies]
+qrcode = { version = "0.14", default-features = false }
 
 [target.'cfg(windows)'.dependencies]
 clipboard-win = "=5.4.1"

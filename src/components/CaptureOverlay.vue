@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import ScrollCaptureIcon from './ScrollCaptureIcon.vue'
+import QrResultCard from './QrResultCard.vue'
 import { computed, nextTick, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue'
-import { Copy, Save, X, Monitor, RotateCcw, Scan, Move, Pin, Video } from 'lucide-vue-next'
-import { api, onFrame, onCapturePin, onScroll, type CaptureFrame, type ColorFormat, type ScrollView } from '@/lib/api'
+import { Copy, Save, X, Monitor, RotateCcw, Scan, Move, Pin, Video, QrCode } from 'lucide-vue-next'
+import { api, onFrame, onCapturePin, onScroll, type CaptureFrame, type ColorFormat, type ScrollView, type QrResult } from '@/lib/api'
 import { clamp, move, normalize, resize, toPixels, nudgeSelection, type Handle, type Point, type Rect } from '@/lib/selection'
 import { useAnnotations, type AnnotationTool } from '@/lib/use-annotations'
 import AnnotationSurface from './AnnotationSurface.vue'
@@ -20,6 +21,16 @@ const selection = ref<Rect | null>(null)
 const recentSelection = ref(readRecentSelection())
 const recentRect = computed(() => frame.value ? restoreRecentSelection(recentSelection.value, frame.value, viewport.value) : null)
 const busy = ref(false)
+const qrResult = ref<QrResult | null>(null)
+watch(() => frame.value?.id, () => { qrResult.value = null })
+/** 主动识别保留截图现场；结果面板隔离选区拖动与截图快捷键。 */
+async function recognizeQr() {
+  if (!frame.value || !pixels.value || busy.value || editor.pending || editor.interacting || gesture) return
+  busy.value = true; error.value = ''
+  try { qrResult.value = await api.recognizeQr(frame.value.id, pixels.value, editor.history.present) }
+  catch (e) { error.value = String(e) }
+  finally { busy.value = false }
+}
 const error = ref('')
 const scroll = ref<ScrollView | null>(null)
 const scrollSetup = ref(false)
@@ -196,7 +207,7 @@ async function cancel() {
   finally { busy.value = false }
 }
 async function finish(action: 'copy' | 'save' | 'pin') {
-  if (!frame.value || !valid.value || !pixels.value || busy.value || editor.pending || editor.interacting || gesture) return
+  if (!frame.value || !valid.value || !pixels.value || busy.value || qrResult.value || editor.pending || editor.interacting || gesture) return
   busy.value = true; error.value = ''
   try {
     // 保存调用前的快照；取消对话框或导出失败均不覆盖上次成功的范围。
@@ -211,6 +222,7 @@ async function finish(action: 'copy' | 'save' | 'pin') {
   finally { busy.value = false }
 }
 function key(e: KeyboardEvent) {
+  if (qrResult.value) return
   if (scroll.value) return
   if (recordingSetup.value) {
     if (e.key === 'Escape' && !busy.value) { e.preventDefault(); recordingSetup.value = false }
@@ -305,6 +317,7 @@ onUnmounted(() => { disposed = true; off?.(); offScroll?.(); offPin?.(); window.
           <button :disabled="busy || editor.pending || editor.interacting || marked" ref="scrollTrigger" title="长截图选项" aria-label="长截图选项" aria-haspopup="dialog" :aria-expanded="scrollSetup" @click="openScrollMenu"><ScrollCaptureIcon :size="16" /></button>
           <button ref="recordingTrigger" :disabled="busy || editor.pending || editor.interacting || marked || !recordingCapabilities?.available" :title="recordingCapabilities?.reason ?? (recordingCapabilityError || (recordingCapabilities ? '录屏选项' : '正在检查录屏能力…'))" aria-label="录屏选项" aria-haspopup="dialog" :aria-expanded="recordingSetup" @click="openRecordingMenu"><Video :size="16" /></button>
         <button :disabled="busy || editor.pending || editor.interacting" title="贴图 Ctrl/⌘+P" aria-label="贴图" @click="finish('pin')"><Pin :size="16" /></button>
+        <button :disabled="busy || editor.pending || editor.interacting" title="识别二维码" aria-label="识别二维码" aria-haspopup="dialog" :aria-expanded="!!qrResult" @click="recognizeQr"><QrCode :size="16" /></button>
         <button :disabled="busy || editor.pending || editor.interacting" title="保存图片 Ctrl/⌘+S" aria-label="保存图片" @click="finish('save')"><Save :size="16" /></button>
         <button class="copy-button" :disabled="busy || editor.pending || editor.interacting" :title="busy ? '处理中…' : '复制图片 Enter'" :aria-label="busy ? '处理中' : '复制图片'" :aria-busy="busy" @click="finish('copy')"><Copy :size="16" /></button>
         <button :disabled="busy || editor.pending" title="取消截图" aria-label="取消截图" @click="cancel"><X :size="16" /></button>
@@ -312,6 +325,11 @@ onUnmounted(() => { disposed = true; off?.(); offScroll?.(); offPin?.(); window.
       </AnnotationToolbar>
     </div>
     <CaptureMagnifier v-if="showMagnifier && screenImage && pointer && frame" :image="screenImage" :point="pointer" :viewport="viewport" :image-size="frame" :format="colorFormat" :relative="relativeCoordinates" :origin="pixels" :copied="colorCopied" />
+    <div v-if="qrResult" class="qr-shade" @pointerdown.stop @pointermove.stop @pointerup.stop @contextmenu.stop.prevent>
+      <div class="qr-dialog" role="dialog" aria-modal="true" aria-label="二维码识别结果">
+        <QrResultCard :capture-result="qrResult" @close="qrResult = null" @opened="cancel" />
+      </div>
+    </div>
     <div v-if="recordingSetup" class="recording-menu-shade" @pointerdown.self.stop="!busy && (recordingSetup = false)" @pointermove.stop @contextmenu.stop.prevent>
       <RecordingSetupMenu v-model:format="recordingFormat" :formats="recordingCapabilities?.formats ?? []" v-model:fps="recordingFps" v-model:encoding="recordingEncoding" v-model:quality="recordingQuality" v-model:mbps="recordingMbps" v-model:countdown="recordingCountdown" v-model:cursor="captureCursor" v-model:effects="recordingEffects" :busy="busy" :error="error" :style="recordingMenuStyle" @confirm="startRecording" @close="recordingSetup = false" />
     </div>
@@ -323,6 +341,8 @@ onUnmounted(() => { disposed = true; off?.(); offScroll?.(); offPin?.(); window.
 </template>
 
 <style scoped>
+.qr-shade { position: absolute; inset: 0; z-index: 10; display: grid; place-items: center; cursor: default; background: #0003; }
+.qr-dialog { width: min(440px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow-y: auto; color: #20232b; }
 .recording-menu-shade { position: absolute; inset: 0; z-index: 6; cursor: default; }
 .capture-toolbar.annotation-toolbar { max-width: none; }
 .capture-toolbar :deep(.annotation-tools) { width: max-content; max-width: none; }

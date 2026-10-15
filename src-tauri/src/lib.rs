@@ -4,6 +4,7 @@ mod image_io;
 mod pin_content;
 mod pins;
 mod platform;
+mod qr;
 mod settings;
 mod storage;
 
@@ -133,6 +134,7 @@ pub fn run() {
         }))
         .manage(CaptureState::default())
         .manage(settings::ShortcutPressState::default())
+        .manage(qr::QrState::default())
         .manage(capture::recording::RecordingState::default())
         .manage(capture::recording::ExitState::default())
         .manage(pins::PinState::default())
@@ -328,6 +330,8 @@ pub fn run() {
             capture::current_capture,
             capture::show_capture,
             capture::cancel_capture,
+            capture::recognize_capture_qr,
+            qr::qr_action,
             capture::copy_capture,
             capture::copy_capture_color,
             capture::save_capture,
