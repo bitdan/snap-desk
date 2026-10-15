@@ -35,6 +35,8 @@ async function listen<T>(event: string, callback: EventCallback<T>) {
   catch (error) { throw new Error(`订阅 ${event}：${errorMessage(error)}`) }
 }
 export const api = {
+  autostartEnabled: () => invoke<boolean>('autostart_enabled'),
+  setAutostartEnabled: (enabled: boolean) => invoke<boolean>('set_autostart_enabled', { enabled }),
   recognizeQr: (id: number, rect: Rect, annotations: Annotation[]) => invoke<QrResult>('recognize_capture_qr', { id, rect, annotations }),
   qrAction: (id: number, index: number, action: 'open' | 'copy') => invoke<void>('qr_action', { id, index, action }),
   completeOnboarding: () => invoke<Settings>('complete_onboarding'),

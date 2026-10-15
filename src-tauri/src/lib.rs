@@ -1,4 +1,5 @@
 mod annotations;
+mod autostart;
 mod capture;
 mod image_io;
 mod pin_content;
@@ -127,11 +128,19 @@ fn trigger_recording(app: &AppHandle) {
 
 pub fn run() {
     tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, _, _| {
-            if !app.state::<CaptureState>().active.load(Ordering::SeqCst) {
+        .plugin(tauri_plugin_single_instance::init(|app, args, _| {
+            // 登录自启与已有实例相遇时保持安静；手动再次启动仍唤起主窗口。
+            if !autostart::is_autostart(args)
+                && !app.state::<CaptureState>().active.load(Ordering::SeqCst)
+            {
                 show_main(app);
             }
         }))
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec![autostart::STARTUP_ARG]),
+        ))
+        .manage(autostart::AutostartState::default())
         .manage(CaptureState::default())
         .manage(settings::ShortcutPressState::default())
         .manage(qr::QrState::default())
@@ -252,7 +261,12 @@ pub fn run() {
                 .iter()
                 .find(|config| config.label == "main")
                 .ok_or("缺少主窗口配置。")?;
-            WebviewWindowBuilder::from_config(app.handle(), main_config)?.build()?;
+            // 创建时即隐藏，避免先显示再 hide 导致登录时主窗口闪烁。
+            let automatic = autostart::is_autostart(std::env::args_os().skip(1));
+            WebviewWindowBuilder::from_config(app.handle(), main_config)?
+                .visible(!automatic)
+                .focused(!automatic)
+                .build()?;
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -313,6 +327,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             app_status,
+            autostart::autostart_enabled,
+            autostart::set_autostart_enabled,
             select_recording_area,
             storage::app_directories,
             storage::open_app_directory,
