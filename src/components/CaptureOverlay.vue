@@ -10,7 +10,7 @@ import AnnotationToolbar from './AnnotationToolbar.vue'
 import CaptureMagnifier from './CaptureMagnifier.vue'
 import { magnifierSample } from '@/lib/magnifier'
 import { newerScroll } from '@/lib/scroll-capture'
-import { defaultInputEffects, recordingBitrate, recordingConfig, type EncodingPreference, type RecordingQuality, type RecorderCapabilities } from '@/lib/recording'
+import { defaultInputEffects, recordingBitrate, recordingConfig, type RecordingFormat, type RecordingFps, type EncodingPreference, type RecordingQuality, type RecorderCapabilities } from '@/lib/recording'
 import RecordingSetupMenu from './RecordingSetupMenu.vue'
 import ScrollSetupMenu from './ScrollSetupMenu.vue'
 import { readRecentSelection, restoreRecentSelection, writeRecentSelection } from '@/lib/recent-selection'
@@ -48,7 +48,8 @@ async function selectedRecordingRegion() {
 watch(recordingSetup, open => { if (!open && frame.value) void nextTick(() => recordingTrigger.value?.focus()) })
 const recordingCapabilities = ref<RecorderCapabilities | null>(null)
 const recordingCapabilityError = ref('')
-const recordingFps = ref<30 | 60>(30)
+const recordingFormat = ref<RecordingFormat>('mp4')
+const recordingFps = ref<RecordingFps>(30)
 const recordingEncoding = ref<EncodingPreference>('auto')
 const recordingQuality = ref<RecordingQuality>('balanced')
 // 空白使用自动码率；提交时才换算 bit/s，避免表单编辑影响已启动会话。
@@ -140,7 +141,7 @@ async function startScroll() {
 async function startRecording() {
   if (!frame.value || !pixels.value || !valid.value || busy.value || marked.value || editor.pending || editor.interacting || gesture) return
   busy.value = true; error.value = ''
-  try { await api.startRecording(frame.value.id, pixels.value, recordingConfig(pixels.value, recordingFps.value, captureCursor.value, recordingCountdown.value, recordingEncoding.value, recordingQuality.value, recordingEffects.value, recordingBitrate(recordingMbps.value))); recordingSetup.value = false; frame.value = null }
+  try { await api.startRecording(frame.value.id, pixels.value, recordingConfig(pixels.value, recordingFps.value, captureCursor.value, recordingCountdown.value, recordingEncoding.value, recordingQuality.value, recordingEffects.value, recordingFormat.value === 'gif' ? null : recordingBitrate(recordingMbps.value), recordingFormat.value)); recordingSetup.value = false; frame.value = null }
   catch (e) { error.value = String(e) }
   finally { busy.value = false }
 }
@@ -306,7 +307,7 @@ onUnmounted(() => { disposed = true; off?.(); offScroll?.(); window.removeEventL
     </div>
     <CaptureMagnifier v-if="showMagnifier && screenImage && pointer && frame" :image="screenImage" :point="pointer" :viewport="viewport" :image-size="frame" :format="colorFormat" :relative="relativeCoordinates" :origin="pixels" :copied="colorCopied" />
     <div v-if="recordingSetup" class="recording-menu-shade" @pointerdown.self.stop="!busy && (recordingSetup = false)" @pointermove.stop @contextmenu.stop.prevent>
-      <RecordingSetupMenu v-model:fps="recordingFps" v-model:encoding="recordingEncoding" v-model:quality="recordingQuality" v-model:mbps="recordingMbps" v-model:countdown="recordingCountdown" v-model:cursor="captureCursor" v-model:effects="recordingEffects" :busy="busy" :error="error" :style="recordingMenuStyle" @confirm="startRecording" @close="recordingSetup = false" />
+      <RecordingSetupMenu v-model:format="recordingFormat" :formats="recordingCapabilities?.formats ?? []" v-model:fps="recordingFps" v-model:encoding="recordingEncoding" v-model:quality="recordingQuality" v-model:mbps="recordingMbps" v-model:countdown="recordingCountdown" v-model:cursor="captureCursor" v-model:effects="recordingEffects" :busy="busy" :error="error" :style="recordingMenuStyle" @confirm="startRecording" @close="recordingSetup = false" />
     </div>
     <div v-if="scrollSetup" class="recording-menu-shade" @pointerdown.self.stop="!busy && (scrollSetup = false)" @pointermove.stop @contextmenu.stop.prevent>
       <ScrollSetupMenu v-model:save-frames="saveScrollFrames" :busy="busy" :error="error" :style="scrollMenuStyle" @confirm="startScroll" @close="scrollSetup = false" />

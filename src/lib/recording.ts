@@ -4,6 +4,8 @@ export interface RecordingDirectory { path: string; isDefault: boolean }
 export interface RecoverableRecording { id: string; path: string; finalized: boolean; stage: string; exported: string | null }
 
 /** 与 Rust RecorderConfig / RecorderCapabilities 保持一致；声音不发送隐式默认开启值。 */
+export type RecordingFormat = 'mp4' | 'gif'
+export type RecordingFps = 10 | 20 | 30 | 60
 export type RecordingQuality = 'economy' | 'balanced' | 'high'
 export type EncodingPreference = 'auto' | 'software'
 export const encoderLabels = { hardware: '硬件编码', software: '软件编码', system: '系统自动（类型未确认）' } as const
@@ -19,15 +21,15 @@ export function defaultInputEffects(): InputEffects {
     leftColor: [64, 160, 255], rightColor: [255, 112, 80], doubleColor: [190, 100, 255] }
 }
 export interface RecorderConfig {
-  source: 'primaryMonitor'; region: Rect; fps: 30 | 60; captureCursor: boolean;
-  format: 'mp4'; systemAudio: boolean; microphone: boolean; countdownSeconds: 0 | 3 | 5; encoding: EncodingPreference; quality: RecordingQuality
+  source: 'primaryMonitor'; region: Rect; fps: RecordingFps; captureCursor: boolean;
+  format: RecordingFormat; systemAudio: boolean; microphone: boolean; countdownSeconds: 0 | 3 | 5; encoding: EncodingPreference; quality: RecordingQuality
   inputEffects: InputEffects
   /** bit/s；null 使用画质预设计算目标码率。 */
   bitrate: number | null
 }
 export interface RecorderCapabilities {
   available: boolean; reason: string | null; sources: 'primaryMonitor'[];
-  frameRates: number[]; captureCursor: boolean; systemAudio: boolean; microphone: boolean; formats: 'mp4'[]
+  frameRates: number[]; captureCursor: boolean; systemAudio: boolean; microphone: boolean; formats: RecordingFormat[]
 }
 /** 表单以 Mbps 输入，空白恢复自动；拒绝无效值，避免 NaN 经 IPC 变成 null。 */
 export function recordingBitrate(value: string | number): number | null {
@@ -36,11 +38,13 @@ export function recordingBitrate(value: string | number): number | null {
   if (!Number.isFinite(mbps) || mbps < 1 || mbps > 80) throw new Error('自定义录屏码率需为 1–80 Mbps。')
   return Math.round(mbps * 1_000_000)
 }
-export function recordingConfig(region: Rect, fps: 30 | 60 = 30, captureCursor = true, countdownSeconds: 0 | 3 | 5 = 0, encoding: EncodingPreference = 'auto', quality: RecordingQuality = 'balanced', effects: InputEffects = defaultInputEffects(), bitrate: number | null = null): RecorderConfig {
+export function recordingConfig(region: Rect, fps: RecordingFps = 30, captureCursor = true, countdownSeconds: 0 | 3 | 5 = 0, encoding: EncodingPreference = 'auto', quality: RecordingQuality = 'balanced', effects: InputEffects = defaultInputEffects(), bitrate: number | null = null, format: RecordingFormat = 'mp4'): RecorderConfig {
+  if (!(format === 'gif' ? [10, 20] : [30, 60]).includes(fps)) throw new Error('帧率与录制格式不匹配。')
+  if (format === 'gif') { bitrate = null; encoding = 'software' }
   if (bitrate !== null && (!Number.isInteger(bitrate) || bitrate < 1_000_000 || bitrate > 80_000_000)) throw new Error('自定义录屏码率需为 1–80 Mbps。')
   // 拷贝颜色数组，确认选区后改动表单不能改变已提交的配置快照。
   const inputEffects: InputEffects = { ...effects, leftColor: [...effects.leftColor], rightColor: [...effects.rightColor], doubleColor: [...effects.doubleColor] }
-  return { source: 'primaryMonitor', region: { ...region }, fps, captureCursor, format: 'mp4', systemAudio: false, microphone: false, countdownSeconds, encoding, quality, inputEffects, bitrate }
+  return { source: 'primaryMonitor', region: { ...region }, fps, captureCursor, format, systemAudio: false, microphone: false, countdownSeconds, encoding, quality, inputEffects, bitrate }
 }
 /** 与 Rust RecordingView / RecordingAction 保持一致，不使用前端计时推测视频长度。 */
 export type RecordingPhase = 'ready' | 'countdown' | 'recording' | 'paused' | 'encoding' | 'completed' | 'cancelled' | 'failed'

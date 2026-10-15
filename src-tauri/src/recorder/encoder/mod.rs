@@ -1,5 +1,8 @@
 //! 平台编码器独占写入线程。Drop 即取消，临时文件由管理器清理；finish 才完成封装。
-use super::{config::EncodingPreference, frame::BgraImage};
+use super::{
+    config::{EncodingPreference, OutputFormat},
+    frame::BgraImage,
+};
 use serde::Serialize;
 use std::path::Path;
 #[cfg(target_os = "windows")]
@@ -30,7 +33,11 @@ pub fn create(
     fps: u32,
     bitrate: u32,
     preference: EncodingPreference,
+    format: OutputFormat,
 ) -> Result<Box<dyn Encoder>, String> {
+    if matches!(format, OutputFormat::Gif) {
+        return Ok(Box::new(super::gif::GifEncoder::new(path, width, height)?));
+    }
     #[cfg(target_os = "windows")]
     return Ok(Box::new(
         media_foundation::MediaFoundation::new(path, width, height, fps, bitrate, preference)
@@ -74,16 +81,18 @@ pub fn probe(
     fps: u32,
     bitrate: u32,
     preference: EncodingPreference,
+    format: OutputFormat,
 ) -> Result<(EncoderKind, EncodingPreference, Option<String>), String> {
     with_fallback(preference, |mode| {
         let temp = tempfile::tempdir_in(root).map_err(|e| e.to_string())?;
         let mut encoder = create(
-            &temp.path().join("probe.mp4"),
+            &temp.path().join(format!("probe.{}", format.extension())),
             width,
             height,
             fps,
             bitrate,
             mode,
+            format,
         )?;
         encoder.push(&BgraImage::new(width, height), 0)?;
         encoder.finish(10_000_000 / i64::from(fps))?;

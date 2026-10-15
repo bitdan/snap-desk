@@ -28,6 +28,7 @@ xcap = "=0.9.8"
 base64 = "0.22"
 log = "0.4"
 tempfile = "3"
+gif = "=0.14.2"
 
 [target.'cfg(windows)'.dependencies]
 clipboard-win = "=5.4.1"

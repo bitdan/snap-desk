@@ -43,7 +43,7 @@ impl PinLayout {
     }
     /// 与前端使用相同短边下限，原生命令也不能把小图缩成不可见的小点。
     fn minimum_zoom(&self, width: u32, height: u32) -> f64 {
-        (self.min_visible_side / f64::from(width.min(height).max(1))).clamp(0.1, 1.0)
+        (self.min_visible_side / f64::from(width.min(height).max(1))).max(0.1)
     }
     fn chrome_height(&self, expanded: bool) -> f64 {
         self.padding * 2.0
@@ -116,11 +116,12 @@ impl Default for PinView {
 impl PinView {
     fn validate(&self) -> Result<(), String> {
         if !self.zoom.is_finite()
-            || !(0.1..=4.0).contains(&self.zoom)
+            // 1px 短边需放大至 20 倍；实际图片的上限由 set_pin_view 再约束。
+            || !(0.1..=20.0).contains(&self.zoom)
             || !self.opacity.is_finite()
             || !(0.2..=1.0).contains(&self.opacity)
         {
-            return Err("缩放应为 10%～400%，透明度应为 20%～100%。".into());
+            return Err("缩放比例无效，透明度应为 20%～100%。".into());
         }
         if cfg!(target_os = "macos") && self.opacity != 1.0 {
             return Err("macOS 当前未启用透明贴图窗口。".into());
@@ -235,9 +236,10 @@ pub fn create(
     let layout = PinLayout::load();
     let max_width = f64::from(monitor.work_area().size.width) / monitor.scale_factor() * 0.8;
     let max_height = f64::from(monitor.work_area().size.height) / monitor.scale_factor() * 0.8;
-    // 新贴图始终按 100% 显示；只限制窗口大小，超出部分由前端滚动查看。
-    // 不再按屏幕空间缩小图片，避免文字在刚贴出时变小。
-    let zoom = PinView::default().zoom;
+    // 默认原尺寸；极小图片等比放大到短边 20px，超出屏幕的部分滚动查看。
+    let zoom = PinView::default()
+        .zoom
+        .max(layout.minimum_zoom(image.width(), image.height()));
     let (width, height) = layout.window_size(
         image.width(),
         image.height(),
@@ -578,9 +580,9 @@ pub async fn set_pin_view(
         let scale = monitor.scale_factor();
         let work_area = monitor.work_area();
         let layout = PinLayout::load();
-        view.zoom = view
-            .zoom
-            .max(layout.minimum_zoom(pin.image.width(), pin.image.height()));
+        let minimum = layout.minimum_zoom(pin.image.width(), pin.image.height());
+        // 通常最多 400%；仅极细图片允许超过此值，以满足 20px 的可见下限。
+        view.zoom = view.zoom.clamp(minimum, 4.0_f64.max(minimum));
         let (width, height) = layout.window_size(
             pin.image.width(),
             pin.image.height(),

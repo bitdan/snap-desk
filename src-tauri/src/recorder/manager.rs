@@ -13,6 +13,7 @@ mod config;
 mod countdown_tests;
 mod encoder;
 mod frame;
+mod gif;
 mod input;
 pub mod output;
 pub mod recovery;
@@ -415,47 +416,57 @@ fn require_control_window(window: &WebviewWindow) -> Result<(), String> {
     }
 }
 
-/// 能力查询会实际试写小尺寸 MP4；具体选区仍在准备时再次探测。
+/// 分别试写 MP4/GIF；H.264 不可用时仍可录 GIF，具体选区准备时再次探测。
 #[tauri::command]
 pub async fn recording_capabilities(window: WebviewWindow) -> Result<RecorderCapabilities, String> {
     if !matches!(window.label(), "main" | "capture") {
         return Err("当前窗口无权查询录屏能力。".into());
     }
     tauri::async_runtime::spawn_blocking(|| {
-        let result = capture::supported().and_then(|_| {
+        let result = capture::supported();
+        let mut formats = Vec::new();
+        if result.is_ok() {
             let root = tempfile::tempdir().map_err(err)?;
-            encoder::probe(
-                root.path(),
-                64,
-                64,
-                30,
-                1_000_000,
-                config::EncodingPreference::Auto,
-            )
-            .map(|_| ())
-        });
-        let available = result.is_ok();
-        RecorderCapabilities {
+            for format in [OutputFormat::Mp4, OutputFormat::Gif] {
+                if encoder::probe(
+                    root.path(),
+                    64,
+                    64,
+                    30,
+                    1_000_000,
+                    config::EncodingPreference::Auto,
+                    format,
+                )
+                .is_ok()
+                {
+                    formats.push(format);
+                }
+            }
+        }
+        let available = result.is_ok() && !formats.is_empty();
+        Ok(RecorderCapabilities {
             available,
-            reason: result.err(),
+            reason: result
+                .err()
+                .or_else(|| (!available).then(|| "没有可用的录制编码器。".into())),
             sources: if available {
                 vec![CaptureSource::PrimaryMonitor]
             } else {
                 vec![]
             },
-            frame_rates: if available { vec![30, 60] } else { vec![] },
-            capture_cursor: available,
-            system_audio: false,
-            microphone: false,
-            formats: if available {
-                vec![OutputFormat::Mp4]
+            frame_rates: if available {
+                vec![10, 20, 30, 60]
             } else {
                 vec![]
             },
-        }
+            capture_cursor: available,
+            system_audio: false,
+            microphone: false,
+            formats,
+        })
     })
     .await
-    .map_err(err)
+    .map_err(err)?
 }
 
 #[tauri::command]
@@ -495,7 +506,7 @@ pub async fn start_recording(
         }
         config.validate(size)?;
         capture::supported()?;
-        // 准备时固定本次目录；临时 MP4 和最终文件同盘，停止时无需跨盘移动。
+        // 准备时固定本次目录；临时录制文件和最终文件同盘，停止时无需跨盘移动。
         let root = output::prepare(&app)?;
         let (encoder_kind, selected_encoding, encoder_fallback) = encoder::probe(
             &root,
@@ -504,6 +515,7 @@ pub async fn start_recording(
             config.fps,
             config.target_bitrate(),
             config.encoding,
+            config.format,
         )?;
         config.encoding = selected_encoding;
         let screen = super::scroll::screen(&app)?;
@@ -944,7 +956,7 @@ fn write_video(
     receiver: mpsc::Receiver<QueuedFrame>,
     abort: &AtomicBool,
 ) -> Result<String, String> {
-    let mut recovery = recovery::Pending::new(app, id, &root)?;
+    let mut recovery = recovery::Pending::new(app, id, &root, config.format)?;
     let pending = recovery.path();
     progress(app, "recording", Some(&pending));
     let mut encoder = encoder::create(
@@ -954,6 +966,7 @@ fn write_video(
         config.fps,
         config.target_bitrate(),
         config.encoding,
+        config.format,
     )?;
     let state = app.state::<RecordingState>();
     let encoder_kind = encoder.kind();

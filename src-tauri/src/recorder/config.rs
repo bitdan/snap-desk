@@ -12,6 +12,17 @@ pub enum CaptureSource {
 #[serde(rename_all = "camelCase")]
 pub enum OutputFormat {
     Mp4,
+    Gif,
+}
+
+impl OutputFormat {
+    /// 扩展名来自格式白名单。
+    pub fn extension(self) -> &'static str {
+        match self {
+            Self::Mp4 => "mp4",
+            Self::Gif => "gif",
+        }
+    }
 }
 
 /// 自动模式允许系统选择硬件编码器；软件模式用于驱动兼容性排查。
@@ -133,6 +144,9 @@ impl RecorderConfig {
     /// 自定义值优先；自动模式按 0.08/0.13/0.20 bit/pixel/frame 计算，限制在 1–80 Mbps。
     /// 调用前由 validate 拒绝越界配置，不静默修改用户指定的码率。
     pub fn target_bitrate(&self) -> u32 {
+        if matches!(self.format, OutputFormat::Gif) {
+            return 0;
+        }
         if let Some(bitrate) = self.bitrate {
             return bitrate;
         }
@@ -161,11 +175,17 @@ impl RecorderConfig {
         if !matches!(self.countdown_seconds, 0 | 3 | 5) {
             return Err("录屏倒计时仅支持立即、3 秒或 5 秒。".into());
         }
-        if !matches!(self.fps, 30 | 60) {
-            return Err("录屏帧率仅支持 30 / 60 FPS。".into());
+        if !match self.format {
+            OutputFormat::Mp4 => matches!(self.fps, 30 | 60),
+            OutputFormat::Gif => matches!(self.fps, 10 | 20),
+        } {
+            return Err("MP4 支持 30 / 60 FPS，GIF 支持 10 / 20 FPS。".into());
         }
         if self.system_audio || self.microphone {
             return Err("当前版本尚未支持系统声音或麦克风录制。".into());
+        }
+        if matches!(self.format, OutputFormat::Gif) && (r.width > 65535 || r.height > 65535) {
+            return Err("GIF 单边不能超过 65535 像素。".into());
         }
         if r.width < 2
             || r.height < 2

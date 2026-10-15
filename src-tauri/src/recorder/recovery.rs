@@ -42,7 +42,12 @@ pub(super) struct Pending {
     published: bool,
 }
 impl Pending {
-    pub fn new(app: &AppHandle, session: u64, root: &Path) -> Result<Self, String> {
+    pub fn new(
+        app: &AppHandle,
+        session: u64,
+        root: &Path,
+        format: OutputFormat,
+    ) -> Result<Self, String> {
         let directory = tempfile::Builder::new()
             .prefix("recording-pending-")
             .tempdir_in(root)
@@ -57,7 +62,7 @@ impl Pending {
             id: id.clone(),
             path: directory
                 .path()
-                .join("video.mp4")
+                .join(format!("video.{}", format.extension()))
                 .to_string_lossy()
                 .into_owned(),
             finalized: false,
@@ -89,7 +94,8 @@ impl Pending {
         self.published = true;
     }
     pub fn output(&self, root: &Path) -> PathBuf {
-        root.join(format!("{}.mp4", self.value.id))
+        root.join(&self.value.id)
+            .with_extension(self.path().extension().unwrap())
     }
 }
 impl Drop for Pending {
@@ -162,7 +168,12 @@ fn export(
         .file_name()
         .ok_or("导出路径无效")?
         .to_string_lossy();
-    let output = destination.join(format!("recovered-{name}.mp4"));
+    let extension = match source.extension().and_then(|s| s.to_str()) {
+        Some("mp4") => "mp4",
+        Some("gif") => "gif",
+        _ => return Err("不支持的录制文件格式。".into()),
+    };
+    let output = destination.join(format!("recovered-{name}.{extension}"));
     target.persist_noclobber(&output).map_err(err)?;
     Ok(output)
 }
@@ -231,7 +242,9 @@ pub async fn retry_recording_export(
                 return Err("该视频未确认完成封装，已保留源文件供检查，不能直接导出。".into());
             }
             let source = PathBuf::from(&value.path);
-            if source.file_name().is_none_or(|n| n != "video.mp4")
+            if source
+                .file_name()
+                .is_none_or(|n| n != "video.mp4" && n != "video.gif")
                 || source
                     .parent()
                     .and_then(Path::file_name)
@@ -316,5 +329,15 @@ mod tests {
         assert_eq!(fs::read(&source).unwrap(), b"finalized-video");
         let path = export(&source, root.path(), |_| {}).unwrap();
         assert_eq!(fs::read(path).unwrap(), fs::read(source).unwrap());
+    }
+
+    #[test]
+    fn gif_retry_keeps_extension_and_bytes() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("video.gif");
+        fs::write(&source, b"GIF89a").unwrap();
+        let output = export(&source, root.path(), |_| {}).unwrap();
+        assert_eq!(output.extension().unwrap(), "gif");
+        assert_eq!(fs::read(output).unwrap(), fs::read(source).unwrap());
     }
 }

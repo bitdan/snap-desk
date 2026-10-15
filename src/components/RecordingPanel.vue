@@ -90,7 +90,7 @@ onUnmounted(() => { disposed = true; clearTimeout(timer) })
       </div>
     </div>
     <div class="settings-card">
-      <div class="setting-row"><span>输出</span><strong>MP4 · 无声 · 30 / 60 FPS · 可录制光标</strong></div>
+      <div class="setting-row"><span>输出</span><strong>MP4 / GIF · 无声 · 可录制光标</strong></div>
       <div class="setting-row gap-3">
         <span class="min-w-0 flex-1">保存位置<small class="break-all">{{ directory?.path ?? (desktop ? '目录尚未读取' : '请在桌面应用中选择') }}</small></span>
         <div class="flex shrink-0 gap-2">
@@ -114,7 +114,7 @@ onUnmounted(() => { disposed = true; clearTimeout(timer) })
         <p class="text-zinc-500">采集耗时按 {{ view.stats.capturePolls }} 次取样平均，包含空取样、GPU 回读和像素复制，不含等待帧事件。合成仅统计键鼠特效重绘；编码提交包含色彩转换与同步写入，不代表 GPU 内部延迟。</p>
         <p class="pt-2 text-zinc-500">采集统计后端实际取出的帧，不含系统帧池内部丢弃；动画可复用底图生成多帧。节流次数包含延后重绘，不能与各阶段帧数相加。暂停、停止期间的帧会单独记为失效。</p>
       </details>
-      <div v-if="view" class="setting-row"><span>目标码率</span><span>{{ (view.targetBitrate / 1_000_000).toFixed(1) }} Mbps</span></div>
+      <div v-if="view && view.targetBitrate > 0" class="setting-row"><span>目标码率</span><span>{{ (view.targetBitrate / 1_000_000).toFixed(1) }} Mbps</span></div>
       <div v-if="view" class="setting-row"><span>编码方式</span><span>{{ encoderLabels[view.encoderKind] }}</span></div>
       <p v-if="view?.encoderFallback" class="notice break-all" role="status">{{ view.encoderFallback }}</p>
       <p v-if="view && view.phase !== 'completed'" class="py-3 text-sm break-all" role="status">{{ view.message }}</p>

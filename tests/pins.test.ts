@@ -3,12 +3,14 @@ import { canEditPin, minimumZoom, stepZoom } from '../src/lib/pins'
 
 describe('pin display controls', () => {
   it('keeps small and narrow images visible after repeated shrinking', () => {
-    for (const [width, height, minimum] of [[200, 100, 0.48], [100, 200, 0.48], [20, 300, 1], [800, 600, 0.1]]) {
+    for (const [width, height, minimum] of [[200, 100, 0.2], [100, 200, 0.2], [20, 300, 1], [800, 600, 0.1], [2, 300, 10], [300, 1, 20], [19, 19, 20 / 19]]) {
       expect(minimumZoom(width, height)).toBe(minimum)
       let zoom = 1
       for (let i = 0; i < 100; i++) zoom = stepZoom(zoom, -1, minimum)
       expect(zoom).toBe(minimum)
-      expect(stepZoom(zoom, 1, minimum)).toBeGreaterThan(minimum)
+      expect(width * zoom).toBeGreaterThanOrEqual(20)
+      expect(height * zoom).toBeGreaterThanOrEqual(20)
+      expect(stepZoom(zoom, 1, minimum)).toBeGreaterThanOrEqual(minimum)
     }
   })
   it('clamps repeated wheel zoom and avoids accumulated decimal drift', () => {

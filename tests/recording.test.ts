@@ -4,6 +4,14 @@ import { defaultInputEffects, newerRecording, recordingBitrate, recordingStats, 
 const emptyStats = { capturePolls: 0, capturedFrames: 0, captureMillis: 0, captureCopyBytes: 0, compositionCopyBytes: 0, nv12OutputBytes: 0, throttledSamples: 0, composedFrames: 0, compositionMillis: 0, queuedFrames: 0, queueDroppedFrames: 0, staleQueuedFrames: 0, rejectedCaptureFrames: 0, rejectedComposedFrames: 0, recentFps: 0 }
 const view: RecordingView = { id: 7, revision: 3, phase: 'paused', seconds: 23, frames: 180, droppedFrames: 2, targetFps: 30, encodingMillis: 360, targetBitrate: 8_087_040, encoderKind: 'system', encoderFallback: null, countdownRemaining: 0, message: '', path: null, stats: emptyStats }
 describe('录屏会话状态', () => {
+  it('GIF 与 MP4 共用配置入口，格式约束帧率且 GIF 不携带视频码率', () => {
+    const region = { x: 0, y: 0, width: 101, height: 99 }
+    const config = recordingConfig(region, 10, true, 3, 'auto', 'balanced', defaultInputEffects(), 8_000_000, 'gif')
+    expect(config).toMatchObject({ format: 'gif', fps: 10, encoding: 'software', bitrate: null, countdownSeconds: 3, region })
+    expect(recordingConfig(region).format).toBe('mp4')
+    expect(() => recordingConfig(region, 30, true, 0, 'auto', 'balanced', defaultInputEffects(), null, 'gif')).toThrow('帧率')
+    expect(() => recordingConfig(region, 10)).toThrow('帧率')
+  })
   it('像素传输量分阶段展示，使用 MiB 单位且不将 NV12 转换输出算作额外复制', () => {
     expect(recordingCopyStats(view)).toBe('采集复制 0.0 MiB · 合成复制 0.0 MiB · NV12 输出 0.0 MiB')
     const stats = { ...emptyStats, captureCopyBytes: 1_048_576, compositionCopyBytes: 1_572_864, nv12OutputBytes: 536_870_912 }
