@@ -10,6 +10,8 @@ import type { RecordingResult, RecordingResultAction } from './recording'
 export type { Settings } from './settings'
 
 export interface QrResult { id: number; items: { text: string; url: string | null }[] }
+export interface ResourceStatus { directory: string; ocrReady: boolean; fontReady: boolean }
+export interface ResourceProgress { name: string; received: number; total: number }
 export interface CaptureFrame { id: number; width: number; height: number; dataUrl: string; recording: boolean }
 export interface PinView { zoom: number; opacity: number; locked: boolean; topmost: boolean; toolbarExpanded: boolean }
 export interface PinFrame { label: string; width: number; height: number; dataUrl: string; view: PinView; transparencySupported: boolean; annotations: Annotation[] }
@@ -37,6 +39,11 @@ async function listen<T>(event: string, callback: EventCallback<T>) {
   catch (error) { throw new Error(`订阅 ${event}：${errorMessage(error)}`) }
 }
 export const api = {
+  resourceStatus: () => invoke<ResourceStatus>('resource_status'),
+  downloadResources: (kind: 'ocr' | 'font') => invoke<ResourceStatus>('download_resources', { kind }),
+  chooseExportFont: () => invoke<ResourceStatus>('choose_export_font'),
+  recognizeText: (id: number, rect: Rect, annotations: Annotation[]) => invoke<string>('recognize_capture_text', { id, rect, annotations }),
+  copyOcrText: (text: string) => invoke<void>('copy_ocr_text', { text }),
   clipboardStatus: () => invoke<ClipboardStatus>('clipboard_status'),
   clipboardList: (query: ClipboardQuery) => invoke<ClipboardPage>('clipboard_list', { query }),
   clipboardText: (id: number) => invoke<string>('clipboard_get_text', { id }),
@@ -100,6 +107,7 @@ export const api = {
   hide: () => invoke<void>('hide_main'),
 }
 export const onFrame = (fn: (frame: CaptureFrame) => void) => listen<CaptureFrame>('capture-ready', e => fn(e.payload))
+export const onResourceProgress = (fn: (progress: ResourceProgress) => void) => listen<ResourceProgress>('resource-download-progress', e => fn(e.payload))
 // 原生入口只发会话 ID，选区与标注由截图窗口提交，避免读取旧剪贴板。
 export const onCapturePin = (fn: (id: number) => void) => listen<number>('capture-pin-requested', e => fn(e.payload))
 export const onError = (fn: (error: string) => void) => listen<string>('capture-error', e => fn(e.payload))

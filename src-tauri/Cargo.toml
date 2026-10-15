@@ -33,6 +33,11 @@ rusqlite = { version = "=0.37.0", features = ["bundled"] }
 blake3 = "=1.8.2"
 printpdf = { version = "=0.7.0", default-features = false }
 ab_glyph = "=0.2.32"
+# OAR 复用 ort 的 CPU 推理及 PaddleOCR 前后处理；锁定兼容 Rust 1.90 的组合。
+oar-ocr = "=0.6.3"
+ort = { version = "=2.0.0-rc.12", default-features = false }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
+sha2 = "0.10"
 gif = "=0.14.2"
 rqrr = { version = "=0.10.1", default-features = false }
 open = "5"

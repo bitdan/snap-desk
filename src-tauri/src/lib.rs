@@ -3,10 +3,12 @@ mod autostart;
 mod capture;
 mod clipboard;
 mod image_io;
+mod ocr;
 mod pin_content;
 mod pins;
 mod platform;
 mod qr;
+mod resources;
 mod settings;
 mod storage;
 
@@ -145,6 +147,7 @@ pub fn run() {
         .manage(CaptureState::default())
         .manage(settings::ShortcutPressState::default())
         .manage(qr::QrState::default())
+        .manage(ocr::OcrState::default())
         .manage(capture::recording::RecordingState::default())
         .manage(capture::recording::result::ResultState::default())
         .manage(capture::recording::ExitState::default())
@@ -336,6 +339,11 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            resources::resource_status,
+            resources::download_resources,
+            resources::choose_export_font,
+            capture::recognize_capture_text,
+            ocr::copy_ocr_text,
             app_status,
             clipboard::clipboard_status,
             clipboard::clipboard_list,

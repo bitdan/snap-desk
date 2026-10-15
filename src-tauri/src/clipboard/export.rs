@@ -14,7 +14,6 @@ use std::{
 use tauri::{AppHandle, Manager, WebviewWindow};
 use tauri_plugin_dialog::DialogExt;
 
-const FONT: &[u8] = include_bytes!("../../assets/fonts/NotoSansSC.ttf");
 const MAX_PIXELS: u64 = 32_000_000;
 struct ExportGuard<'a>(&'a std::sync::atomic::AtomicBool);
 impl Drop for ExportGuard<'_> {
@@ -77,13 +76,18 @@ enum Snapshot {
 fn io_error(_: impl std::fmt::Display) -> String {
     "导出读写失败，请检查目标目录权限和剩余空间。".into()
 }
-fn font() -> Result<FontRef<'static>, String> {
-    FontRef::try_from_slice(FONT).map_err(|_| "内置中文字体不可用。".into())
+fn font(bytes: &[u8]) -> Result<FontRef<'_>, String> {
+    FontRef::try_from_slice(bytes).map_err(|_| "导出字体不可用，请在通用设置重新选择。".into())
 }
 
 /// CJK 按字换行，保留空行；不支持的字形明确报错，不能静默导出方框。
-fn lines(text: &str, width: f32, size: f32) -> Result<Vec<String>, String> {
-    let font = font()?;
+fn lines_with_font(
+    text: &str,
+    width: f32,
+    size: f32,
+    font_bytes: &[u8],
+) -> Result<Vec<String>, String> {
+    let font = font(font_bytes)?;
     let units = font.units_per_em().ok_or("字体度量不可用。")?;
     let mut lines = Vec::new();
     let mut line = String::new();
@@ -102,7 +106,7 @@ fn lines(text: &str, width: f32, size: f32) -> Result<Vec<String>, String> {
         let glyph = font.glyph_id(c);
         if glyph.0 == 0 {
             return Err(format!(
-                "内置字体缺少 U+{:04X} 字形，请改用分别导出 TXT。",
+                "所选字体缺少 U+{:04X} 字形，请更换字体或分别导出 TXT。",
                 c as u32
             ));
         }
@@ -147,13 +151,13 @@ fn snapshot(service: &Service, ids: &[i64], dir: &Path) -> Result<Vec<Snapshot>,
     }
     Ok(snapshots)
 }
-fn text_image(text: &str) -> Result<RgbaImage, String> {
-    let font = font()?;
+fn text_image_with_font(text: &str, font_bytes: &[u8]) -> Result<RgbaImage, String> {
+    let font = font(font_bytes)?;
     let size = 24.0;
     let scaled = font.as_scaled(size);
     // ab_glyph 的 scale 表示字形高度，换行宽度换算为同一 em 比例。
     let em = size * font.units_per_em().ok_or("字体度量无效。")? / font.height_unscaled();
-    let lines = lines(text, 1152.0, em)?;
+    let lines = lines_with_font(text, 1152.0, em, font_bytes)?;
     let height = 48u64 + lines.len() as u64 * 34;
     if height * 1200 > MAX_PIXELS {
         return Err("文本长图超过 3200 万像素，请改用 PDF 或 TXT。".into());
@@ -187,27 +191,30 @@ fn text_image(text: &str) -> Result<RgbaImage, String> {
     }
     Ok(image)
 }
-fn dimensions(item: &Snapshot) -> Result<(u32, u32), String> {
+fn dimensions(item: &Snapshot, font_bytes: &[u8]) -> Result<(u32, u32), String> {
     match item {
         Snapshot::Image(_, w, h) => Ok((*w, *h)),
         Snapshot::Text(t) => {
-            let f = font()?;
+            let f = font(font_bytes)?;
             let em = 24.0 * f.units_per_em().ok_or("字体度量无效。")? / f.height_unscaled();
             Ok((
                 1200,
-                48 + u32::try_from(lines(t, 1152.0, em)?.len()).map_err(io_error)? * 34,
+                48 + u32::try_from(lines_with_font(t, 1152.0, em, font_bytes)?.len())
+                    .map_err(io_error)?
+                    * 34,
             ))
         }
     }
 }
-fn long_png<W: Write + Seek>(
+fn long_png_with_font<W: Write + Seek>(
     items: &[Snapshot],
     options: &Options,
     file: &mut W,
+    font_bytes: &[u8],
 ) -> Result<(), String> {
     let dims = items
         .iter()
-        .map(dimensions)
+        .map(|item| dimensions(item, font_bytes))
         .collect::<Result<Vec<_>, _>>()?;
     let width = dims.iter().map(|(w, _)| *w).max().unwrap_or(1).min(2400);
     let heights = dims
@@ -228,7 +235,7 @@ fn long_png<W: Write + Seek>(
     let mut y = 0;
     for (item, h) in items.iter().zip(heights) {
         let image = match item {
-            Snapshot::Text(t) => text_image(t)?,
+            Snapshot::Text(t) => text_image_with_font(t, font_bytes)?,
             Snapshot::Image(p, _, _) => crate::pin_content::read_image(p)?,
         };
         let scaled = image::imageops::resize(
@@ -242,7 +249,12 @@ fn long_png<W: Write + Seek>(
     }
     output.write_to(file, ImageFormat::Png).map_err(io_error)
 }
-fn pdf<W: Write>(items: &[Snapshot], options: &Options, file: &mut W) -> Result<(), String> {
+fn pdf_with_font<W: Write>(
+    items: &[Snapshot],
+    options: &Options,
+    file: &mut W,
+    font_bytes: &[u8],
+) -> Result<(), String> {
     // 先检查整批预算，避免处理到第八张 4K 图片才发现超限。
     let pixels = items.iter().try_fold(0u64, |total, item| {
         let count = match item {
@@ -256,16 +268,27 @@ fn pdf<W: Write>(items: &[Snapshot], options: &Options, file: &mut W) -> Result<
     }
     use printpdf::*;
     let doc = PdfDocument::empty("Snap Desk 剪贴板素材");
-    let pdf_font = doc
-        .add_external_font(Cursor::new(FONT))
-        .map_err(|_| "PDF 字体嵌入失败。")?;
+    // 纯图片 PDF 无需字体；文本排版与嵌入始终使用同一份资源快照。
+    let pdf_font = if items.iter().any(|item| matches!(item, Snapshot::Text(_))) {
+        Some(
+            doc.add_external_font(Cursor::new(font_bytes))
+                .map_err(|_| "PDF 字体嵌入失败。")?,
+        )
+    } else {
+        None
+    };
     let mut pages = 0;
     for item in items {
         match item {
             Snapshot::Text(text) => {
                 let margin = options.margin_mm;
                 let font_size = 11.0;
-                let wrapped = lines(text, (210.0 - 2.0 * margin) * 72.0 / 25.4, font_size)?;
+                let wrapped = lines_with_font(
+                    text,
+                    (210.0 - 2.0 * margin) * 72.0 / 25.4,
+                    font_size,
+                    font_bytes,
+                )?;
                 let per_page = ((297.0 - 2.0 * margin - 6.0) / 5.5).floor() as usize;
                 for chunk in wrapped.chunks(per_page.max(1)) {
                     pages += 1;
@@ -280,7 +303,7 @@ fn pdf<W: Write>(items: &[Snapshot], options: &Options, file: &mut W) -> Result<
                             font_size,
                             Mm(margin),
                             Mm(297.0 - margin - 5.0 - i as f32 * 5.5),
-                            &pdf_font,
+                            pdf_font.as_ref().ok_or("导出字体未准备。")?,
                         );
                     }
                 }
@@ -353,6 +376,14 @@ pub async fn clipboard_export(
         let _export = ExportGuard(&service.exporting);
         let temp = tempfile::tempdir().map_err(io_error)?;
         let items = snapshot(&app.state::<Service>(), &options.ids, temp.path())?;
+        // TXT 与纯图片不依赖字体；缺字体时在打开保存对话框之前提示用户。
+        let font_bytes = if options.mode != Mode::Separate
+            && items.iter().any(|item| matches!(item, Snapshot::Text(_)))
+        {
+            crate::resources::font_bytes(&app)?
+        } else {
+            Vec::new()
+        };
         let cancelled = || ExportResult {
             status: "cancelled",
             output_paths: vec![],
@@ -432,9 +463,9 @@ pub async fn clipboard_export(
             directory = path.parent().ok_or("导出路径无效。")?.to_path_buf();
             let mut file = tempfile::NamedTempFile::new_in(&directory).map_err(io_error)?;
             if options.mode == Mode::Pdf {
-                pdf(&items, &options, file.as_file_mut())?;
+                pdf_with_font(&items, &options, file.as_file_mut(), &font_bytes)?;
             } else {
-                long_png(&items, &options, file.as_file_mut())?;
+                long_png_with_font(&items, &options, file.as_file_mut(), &font_bytes)?;
             }
             file.flush().map_err(io_error)?;
             file.as_file().sync_all().map_err(io_error)?;
@@ -456,6 +487,43 @@ pub async fn clipboard_export(
 #[cfg(test)]
 mod tests {
     use super::*;
+    // Noto Sans SC 静态字体的测试子集：ASCII 与下方用例的八个汉字，保留原始度量。
+    // 来源 https://github.com/notofonts/noto-cjk；许可证在 tests/fixtures/OFL.txt。
+    // 由 fontTools.subset 生成，仅编译进测试程序，生产导出使用用户下载/选择的字体。
+    const FONT: &[u8] = include_bytes!("../../tests/fixtures/export-test.ttf");
+    fn pdf<W: Write>(items: &[Snapshot], options: &Options, file: &mut W) -> Result<(), String> {
+        pdf_with_font(items, options, file, FONT)
+    }
+    fn long_png<W: Write + Seek>(
+        items: &[Snapshot],
+        options: &Options,
+        file: &mut W,
+    ) -> Result<(), String> {
+        long_png_with_font(items, options, file, FONT)
+    }
+    fn lines(text: &str, width: f32, size: f32) -> Result<Vec<String>, String> {
+        lines_with_font(text, width, size, FONT)
+    }
+    fn text_image(text: &str) -> Result<RgbaImage, String> {
+        text_image_with_font(text, FONT)
+    }
+
+    #[test]
+    fn image_only_exports_do_not_need_a_font() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("image.png");
+        RgbaImage::new(2, 2).save(&path).unwrap();
+        let items = vec![Snapshot::Image(path, 2, 2)];
+        pdf_with_font(&items, &options(), &mut Vec::new(), &[]).unwrap();
+        long_png_with_font(&items, &options(), &mut Cursor::new(Vec::new()), &[]).unwrap();
+        assert!(pdf_with_font(
+            &[Snapshot::Text("text".into())],
+            &options(),
+            &mut Vec::new(),
+            &[]
+        )
+        .is_err());
+    }
     fn options() -> Options {
         Options {
             ids: vec![1],

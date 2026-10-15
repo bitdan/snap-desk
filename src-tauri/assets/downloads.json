@@ -1,0 +1,22 @@
+[
+  {
+    "kind": "ocr", "name": "pp-ocrv5_mobile_det.onnx",
+    "url": "https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/pp-ocrv5_mobile_det.onnx",
+    "size": 4826518, "sha256": "1eb7b4f7ab657ebd1c66d5f79bca7497f29768a2e3c15e52daecbba1a8e4a039"
+  },
+  {
+    "kind": "ocr", "name": "pp-ocrv5_mobile_rec.onnx",
+    "url": "https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/pp-ocrv5_mobile_rec.onnx",
+    "size": 16562373, "sha256": "243a0f06d826761323e9045e9b113ab2c191c3aa50565585e628300b8eda0224"
+  },
+  {
+    "kind": "ocr", "name": "ppocrv5_dict.txt",
+    "url": "https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/ppocrv5_dict.txt",
+    "size": 74012, "sha256": "d1979e9f794c464c0d2e0b70a7fe14dd978e9dc644c0e71f14158cdf8342af1b"
+  },
+  {
+    "kind": "font", "name": "export-font.ttf",
+    "url": "https://github.com/lxgw/LxgwWenKai/releases/download/v1.522/LXGWWenKai-Regular.ttf",
+    "size": 25575676, "sha256": "39ad71264b588165b469e35e6afb162a378dacd1f95348160240ba9038ac3009"
+  }
+]
