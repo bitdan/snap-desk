@@ -8,7 +8,7 @@ use image::{ImageFormat, Rgba, RgbaImage};
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
-    io::{Cursor, Write},
+    io::{Cursor, Seek, Write},
     path::{Path, PathBuf},
 };
 use tauri::{AppHandle, Manager, WebviewWindow};
@@ -200,7 +200,11 @@ fn dimensions(item: &Snapshot) -> Result<(u32, u32), String> {
         }
     }
 }
-fn long_png(items: &[Snapshot], options: &Options, file: &mut fs::File) -> Result<(), String> {
+fn long_png<W: Write + Seek>(
+    items: &[Snapshot],
+    options: &Options,
+    file: &mut W,
+) -> Result<(), String> {
     let dims = items
         .iter()
         .map(dimensions)
@@ -238,13 +242,23 @@ fn long_png(items: &[Snapshot], options: &Options, file: &mut fs::File) -> Resul
     }
     output.write_to(file, ImageFormat::Png).map_err(io_error)
 }
-fn pdf(items: &[Snapshot], options: &Options, file: &mut fs::File) -> Result<(), String> {
+fn pdf<W: Write>(items: &[Snapshot], options: &Options, file: &mut W) -> Result<(), String> {
+    // 先检查整批预算，避免处理到第八张 4K 图片才发现超限。
+    let pixels = items.iter().try_fold(0u64, |total, item| {
+        let count = match item {
+            Snapshot::Image(_, w, h) => u64::from(*w) * u64::from(*h),
+            Snapshot::Text(_) => 0,
+        };
+        total.checked_add(count).filter(|sum| *sum <= 64_000_000)
+    });
+    if pixels.is_none() {
+        return Err("PDF 图片总量超过 6400 万像素，请分批导出。".into());
+    }
     use printpdf::*;
     let doc = PdfDocument::empty("Snap Desk 剪贴板素材");
     let pdf_font = doc
         .add_external_font(Cursor::new(FONT))
         .map_err(|_| "PDF 字体嵌入失败。")?;
-    let mut pixels = 0u64;
     let mut pages = 0;
     for item in items {
         match item {
@@ -272,10 +286,6 @@ fn pdf(items: &[Snapshot], options: &Options, file: &mut fs::File) -> Result<(),
                 }
             }
             Snapshot::Image(path, w, h) => {
-                pixels += u64::from(*w) * u64::from(*h);
-                if pixels > 64_000_000 {
-                    return Err("PDF 图片总量超过 6400 万像素，请分批导出。".into());
-                }
                 let image = crate::pin_content::read_image(path)?;
                 // PDF 采用白色纸面，先正确合成透明像素，避免透明处变黑。
                 let rgb = crate::image_io::white_background(&image);
@@ -446,6 +456,134 @@ pub async fn clipboard_export(
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn options() -> Options {
+        Options {
+            ids: vec![1],
+            mode: Mode::Pdf,
+            page_size: PageSize::A4,
+            gap_px: 16,
+            margin_mm: 12.0,
+            background: Background::White,
+        }
+    }
+
+    #[test]
+    fn rejects_4k_batches_before_reading_any_image() {
+        // 路径故意不存在；必须先返回预算错误，不能先解码前几张图。
+        let items: Vec<_> = (0..8)
+            .map(|_| Snapshot::Image("missing.png".into(), 3840, 2160))
+            .collect();
+        assert!(pdf(&items, &options(), &mut Vec::new())
+            .unwrap_err()
+            .contains("6400"));
+        let items: Vec<_> = (0..10)
+            .map(|_| Snapshot::Image("missing.png".into(), 3840, 2160))
+            .collect();
+        assert!(long_png(&items, &options(), &mut Cursor::new(Vec::new()))
+            .unwrap_err()
+            .contains("3200"));
+    }
+
+    #[test]
+    fn transparent_png_and_mixed_text_export() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("alpha.png");
+        RgbaImage::from_pixel(8, 8, Rgba([255, 0, 0, 0]))
+            .save(&path)
+            .unwrap();
+        let items = vec![Snapshot::Image(path, 8, 8)];
+        let mut settings = options();
+        for (background, expected) in [
+            (Background::Transparent, [0, 0, 0, 0]),
+            (Background::White, [255, 255, 255, 255]),
+        ] {
+            settings.background = background;
+            let mut output = Cursor::new(Vec::new());
+            long_png(&items, &settings, &mut output).unwrap();
+            let image = image::load_from_memory(output.get_ref())
+                .unwrap()
+                .to_rgba8();
+            assert_eq!(image.get_pixel(0, 0).0, expected);
+        }
+        let mut items = items;
+        items.push(Snapshot::Text("中文 English 123\n\n透明图片".into()));
+        let mut output = Vec::new();
+        pdf(&items, &settings, &mut output).unwrap();
+        assert!(output.starts_with(b"%PDF-"));
+    }
+
+    /// 用可定位的故障写入器模拟磁盘写满，不实际填满开发者磁盘。
+    struct FullDisk(Cursor<Vec<u8>>);
+    impl Write for FullDisk {
+        fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::other("disk full"))
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    impl Seek for FullDisk {
+        fn seek(&mut self, position: std::io::SeekFrom) -> std::io::Result<u64> {
+            self.0.seek(position)
+        }
+    }
+    #[test]
+    fn disk_full_is_reported_for_both_encoders() {
+        let items = vec![Snapshot::Text("中文 English".into())];
+        assert!(
+            pdf(&items, &options(), &mut FullDisk(Cursor::new(Vec::new())))
+                .unwrap_err()
+                .contains("剩余空间")
+        );
+        assert!(
+            long_png(&items, &options(), &mut FullDisk(Cursor::new(Vec::new())))
+                .unwrap_err()
+                .contains("剩余空间")
+        );
+    }
+
+    #[test]
+    fn very_long_text_is_rejected_before_canvas_allocation() {
+        let items = vec![Snapshot::Text("中文 English\n".repeat(20_000))];
+        assert!(long_png(&items, &options(), &mut Cursor::new(Vec::new()))
+            .unwrap_err()
+            .contains("3200"));
+    }
+
+    /// 显式运行的压力用例：避免日常测试自动分配数百 MiB。
+    #[test]
+    #[ignore = "4K 批量导出压力测试，需显式运行并观测进程峰值内存"]
+    fn stress_4k_batch_exports() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("4k.png");
+        // 不同位置使用不同颜色和透明度，覆盖白底合成与透明长图路径。
+        RgbaImage::from_fn(3840, 2160, |x, y| {
+            Rgba([x as u8, y as u8, (x ^ y) as u8, (x.wrapping_mul(y)) as u8])
+        })
+        .save(&path)
+        .unwrap();
+        let items: Vec<_> = (0..7)
+            .map(|_| Snapshot::Image(path.clone(), 3840, 2160))
+            .collect();
+        let mut file = fs::File::create(dir.path().join("batch.pdf")).unwrap();
+        pdf(&items, &options(), &mut file).unwrap();
+        assert!(file.metadata().unwrap().len() > 0);
+        let mut settings = options();
+        settings.background = Background::Transparent;
+        let mut file = fs::File::create(dir.path().join("batch.png")).unwrap();
+        long_png(&items, &settings, &mut file).unwrap();
+        assert_eq!(
+            image::image_dimensions(dir.path().join("batch.png")).unwrap(),
+            (2400, 9546)
+        );
+        let mut file = fs::File::create(dir.path().join("long-text.pdf")).unwrap();
+        pdf(
+            &[Snapshot::Text("中文 English 123\n".repeat(20_000))],
+            &settings,
+            &mut file,
+        )
+        .unwrap();
+    }
     #[test]
     fn cjk_wrap_and_missing_glyphs_are_explicit() {
         let wrapped = lines("中文测试\n\nhello", 25.0, 11.0).unwrap();

@@ -12,6 +12,27 @@ pub struct BlobStore {
     root: PathBuf,
 }
 
+/// 数据库提交前持有本次写入；失败或提前返回时只回收新文件，不触碰既有素材。
+pub struct SavedBlob {
+    pub blob: String,
+    pub thumb: String,
+    pub bytes: u64,
+    created: Vec<PathBuf>,
+}
+impl SavedBlob {
+    pub fn commit(mut self) {
+        self.created.clear();
+    }
+}
+impl Drop for SavedBlob {
+    fn drop(&mut self) {
+        for path in &self.created {
+            // 清理失败留给下次维护，不覆盖数据库/写盘的原始错误。
+            let _ = fs::remove_file(path);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::{
@@ -20,13 +41,41 @@ mod tests {
     };
     use super::*;
     #[test]
+    fn rollback_only_removes_new_files_including_partial_save() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = BlobStore::new(dir.path().join("clipboard")).unwrap();
+        let hash = "c".repeat(64);
+        let image = RgbaImage::new(2, 2);
+        let saved = store.save(&hash, &image).unwrap();
+        let blob = saved.blob.clone();
+        let thumb = saved.thumb.clone();
+        drop(saved);
+        assert!(!store.reference_exists(&blob).unwrap());
+        assert!(!store.reference_exists(&thumb).unwrap());
+
+        store.save(&hash, &image).unwrap().commit();
+        fs::remove_file(store.path(&thumb).unwrap()).unwrap();
+        drop(store.save(&hash, &image).unwrap());
+        assert!(store.reference_exists(&blob).unwrap());
+        assert!(!store.reference_exists(&thumb).unwrap());
+
+        // 让缩略图分目录创建失败，验证原图刚写完也会自动回收。
+        let hash = "d".repeat(64);
+        fs::write(store.root.join("thumbs/dd"), b"blocked").unwrap();
+        assert!(store.save(&hash, &image).is_err());
+        assert!(!store
+            .reference_exists(&format!("images/dd/dd/{hash}.png"))
+            .unwrap());
+    }
+    #[test]
     fn repair_keeps_referenced_files_and_removes_orphans() {
         let dir = tempfile::tempdir().unwrap();
         let store = BlobStore::new(dir.path().join("clipboard")).unwrap();
         let repo = Repository::open(&dir.path().join("history.db")).unwrap();
         let image = RgbaImage::new(2, 2);
         let hash = "a".repeat(64);
-        let (blob, thumb, bytes) = store.save(&hash, &image).unwrap();
+        let saved = store.save(&hash, &image).unwrap();
+        let (blob, thumb, bytes) = (saved.blob.clone(), saved.thumb.clone(), saved.bytes);
         repo.insert(
             NewItem {
                 kind: Kind::Image,
@@ -42,11 +91,19 @@ mod tests {
             1,
         )
         .unwrap();
-        let (orphan, _, _) = store.save(&"b".repeat(64), &image).unwrap();
+        saved.commit();
+        let saved = store.save(&"b".repeat(64), &image).unwrap();
+        let orphan = saved.blob.clone();
+        saved.commit();
         assert!(store.path("../escape").is_err());
         store.repair(&repo).unwrap();
         assert!(store.path(&blob).is_ok());
         assert!(store.path(&orphan).is_err());
+        // 缩略图丢失时保留历史，并从原图恢复可解码的缩略图。
+        fs::remove_file(store.path(&thumb).unwrap()).unwrap();
+        store.repair(&repo).unwrap();
+        assert_eq!(repo.totals().unwrap().0, 1);
+        assert!(image::open(store.path(&thumb).unwrap()).is_ok());
         fs::remove_file(store.path(&blob).unwrap()).unwrap();
         store.repair(&repo).unwrap();
         assert_eq!(repo.totals().unwrap().0, 0);
@@ -111,11 +168,16 @@ impl BlobStore {
         }
         Ok(resolved)
     }
-    pub fn save(&self, hash: &str, image: &RgbaImage) -> Result<(String, String, u64), String> {
+    pub fn save(&self, hash: &str, image: &RgbaImage) -> Result<SavedBlob, String> {
         if hash.len() != 64 || !hash.bytes().all(|b| b.is_ascii_hexdigit()) {
             return Err("素材摘要无效。".into());
         }
-        let mut size = 0;
+        let mut saved = SavedBlob {
+            blob: String::new(),
+            thumb: String::new(),
+            bytes: 0,
+            created: Vec::new(),
+        };
         let thumb = image::DynamicImage::ImageRgba8(image.clone())
             .thumbnail(240, 160)
             .to_rgba8();
@@ -127,16 +189,27 @@ impl BlobStore {
             let dir = self.directory(&format!("{}/{}/{}", folder, &hash[..2], &hash[2..4]))?;
             let relative = format!("{}/{}/{}/{}.{}", folder, &hash[..2], &hash[2..4], hash, ext);
             let target = dir.join(format!("{hash}.{ext}"));
-            // 即使崩溃留下同名孤儿，也通过原子替换写入已验证内容。
+            // 内容寻址文件可以复用；回滚不能删除此前已有的同名文件。
+            let existed = self.reference_exists(&relative)?;
+            if existed {
+                saved.bytes += fs::metadata(self.path(&relative)?).map_err(err)?.len();
+                refs.push(relative);
+                continue;
+            }
             let mut temp = tempfile::NamedTempFile::new_in(self.directory("temp")?).map_err(err)?;
             pixels.write_to(temp.as_file_mut(), format).map_err(err)?;
             temp.flush().map_err(err)?;
             temp.as_file().sync_all().map_err(err)?;
-            size += temp.as_file().metadata().map_err(err)?.len();
-            temp.persist(target).map_err(err)?;
+            saved.bytes += temp.as_file().metadata().map_err(err)?.len();
+            temp.persist(&target).map_err(err)?;
+            if !existed {
+                saved.created.push(target);
+            }
             refs.push(relative);
         }
-        Ok((refs.remove(0), refs.remove(0), size))
+        saved.blob = refs.remove(0);
+        saved.thumb = refs.remove(0);
+        Ok(saved)
     }
     /// 调用方持服务操作锁，避免清理与新素材写盘/导出快照交错；数据库锁不跨文件 IO。
     pub fn repair(&self, repo: &Repository) -> Result<(), String> {
@@ -147,9 +220,23 @@ impl BlobStore {
             // 只有明确不存在才移除记录；权限/磁盘暂不可用不能被误认为丢失文件。
             let blob_exists = self.reference_exists(&blob)?;
             let thumb_exists = self.reference_exists(&thumb)?;
-            if !blob_exists || !thumb_exists {
+            if !blob_exists {
                 missing.push(id);
             } else {
+                if !thumb_exists {
+                    // 解码或写盘失败时返回错误并保留记录，不能将暂时故障当作数据丢失。
+                    let image = crate::pin_content::read_image(&self.path(&blob)?)?;
+                    let thumbnail = image::DynamicImage::ImageRgba8(image).thumbnail(240, 160);
+                    let parent = Path::new(&thumb).parent().ok_or("缩略图路径无效。")?;
+                    let dir = self.directory(parent.to_str().ok_or("缩略图路径无效。")?)?;
+                    let mut temp = tempfile::NamedTempFile::new_in(dir).map_err(err)?;
+                    thumbnail
+                        .write_to(temp.as_file_mut(), ImageFormat::WebP)
+                        .map_err(err)?;
+                    temp.flush().map_err(err)?;
+                    temp.as_file().sync_all().map_err(err)?;
+                    temp.persist(self.root.join(&thumb)).map_err(err)?;
+                }
                 live.insert(blob.replace('\\', "/"));
                 live.insert(thumb.replace('\\', "/"));
             }

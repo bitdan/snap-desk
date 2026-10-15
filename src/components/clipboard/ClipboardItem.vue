@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from 'vue'
+import { ContextMenuRoot, ContextMenuTrigger, ContextMenuPortal, ContextMenuContent, ContextMenuItem, ContextMenuSeparator } from 'reka-ui'
+import { Copy, Star, Pin, Trash2 } from 'lucide-vue-next'
 import { api } from '@/lib/api'
 import type { ClipboardItem } from '@/lib/clipboard'
 const props = defineProps<{ item: ClipboardItem; selected: boolean; busy: boolean }>()
-defineEmits<{ select: []; preview: []; restore: []; favorite: []; pin: [] }>()
+defineEmits<{ select: []; restore: []; favorite: []; pin: []; delete: [] }>()
 const root = ref<HTMLElement>(); const thumbnail = ref(''); const error = ref('')
 let observer: IntersectionObserver | undefined; let disposed = false
 onMounted(() => {
@@ -19,18 +21,34 @@ onMounted(() => {
 onUnmounted(() => { disposed = true; observer?.disconnect() })
 </script>
 <template>
-  <article ref="root" class="history-item">
-    <input type="checkbox" :checked="selected" :disabled="busy" :aria-label="`选择条目 ${item.id}`" @change="$emit('select')" />
-    <button class="history-content" :disabled="busy" @click="$emit('preview')">
-      <img v-if="thumbnail" :src="thumbnail" alt="历史图片缩略图" />
-      <span v-else-if="item.kind === 'image'">{{ error || `图片 ${item.width} × ${item.height}` }}</span>
-      <span v-else class="history-text">{{ item.preview }}</span>
-      <small>{{ new Date(item.lastSeenAt).toLocaleString() }} · {{ item.seenCount }} 次</small>
-    </button>
-    <div class="history-actions">
-      <button :disabled="busy" @click="$emit('restore')">复制</button>
-      <button :disabled="busy" :aria-pressed="item.favorite" @click="$emit('favorite')">{{ item.favorite ? '取消收藏' : '收藏' }}</button>
-      <button v-if="item.kind === 'image'" :disabled="busy" @click="$emit('pin')">贴图</button>
-    </div>
-  </article>
+  <ContextMenuRoot>
+    <ContextMenuTrigger as-child :disabled="busy">
+      <article ref="root" class="history-item" :class="{ 'is-selected': selected }" tabindex="0" aria-label="历史条目，右键打开操作菜单">
+        <input type="checkbox" :checked="selected" :disabled="busy" :aria-label="`选择条目 ${item.id}`" @change="$emit('select')" />
+        <button class="history-content" :disabled="busy" :aria-pressed="selected" :aria-label="`选择条目 ${item.id}`" @click="$emit('select')">
+          <img v-if="thumbnail" :src="thumbnail" alt="历史图片缩略图" />
+          <span v-else-if="item.kind === 'image'">{{ error || `图片 ${item.width} × ${item.height}` }}</span>
+          <span v-else class="history-text">{{ item.preview }}</span>
+          <span class="history-meta"><span>{{ new Date(item.lastSeenAt).toLocaleString() }} · {{ item.seenCount }} 次</span><span>{{ item.favorite ? '★ ' : '' }}{{ item.kind === 'image' ? `${item.width} × ${item.height}` : `${item.byteSize} B` }}</span></span>
+        </button>
+      </article>
+    </ContextMenuTrigger>
+    <!-- 复用菜单组件处理定位、边缘避让、点击外部关闭及键盘导航。 -->
+    <ContextMenuPortal>
+      <ContextMenuContent class="history-context-menu" :collision-padding="8" aria-label="历史条目操作">
+        <ContextMenuItem :disabled="busy" @select="$emit('restore')"><Copy :size="15" />复制</ContextMenuItem>
+        <ContextMenuItem v-if="item.kind === 'image'" :disabled="busy" @select="$emit('pin')"><Pin :size="15" />悬浮贴图</ContextMenuItem>
+        <ContextMenuSeparator class="history-menu-separator" />
+        <ContextMenuItem :disabled="busy" @select="$emit('favorite')"><Star :size="15" />{{ item.favorite ? '取消收藏' : '收藏' }}</ContextMenuItem>
+        <ContextMenuItem :disabled="busy" @select="$emit('delete')"><Trash2 :size="15" />删除</ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenuPortal>
+  </ContextMenuRoot>
 </template>
+<style>
+.history-context-menu { z-index:100; min-width:150px; padding:5px; background:white; border:1px solid #e4e4e7; border-radius:6px; box-shadow:0 4px 16px #0002; }
+.history-context-menu [role=menuitem] { display:flex; align-items:center; gap:12px; padding:9px 12px; font-size:13px; border-radius:3px; outline:none; cursor:default; }
+.history-context-menu [data-highlighted] { background:#eff6ff; color:#2563eb; }
+.history-context-menu [data-disabled] { opacity:.45; pointer-events:none; }
+.history-menu-separator { height:1px; background:#e4e4e7; margin:4px; }
+</style>

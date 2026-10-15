@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import Button from './ui/button/Button.vue'
+import ClipboardSettings from './clipboard/ClipboardSettings.vue'
 import { api, desktop, type AppDirectory, type DirectoryView } from '@/lib/api'
 
 const directories = ref<DirectoryView[]>([])
@@ -54,6 +55,7 @@ onMounted(() => { void run(refresh); void refreshAutostart() })
 <template>
   <section>
     <h1>通用设置</h1><p class="subtitle">启动、文件与存储</p>
+    <ClipboardSettings />
     <div class="settings-card mb-4">
       <div class="setting-row flex-wrap gap-3">
         <div class="min-w-0 flex-1"><strong>开机自启</strong><small class="block text-zinc-500">登录系统后自动启动到托盘，可直接使用截图快捷键。</small></div>

@@ -143,19 +143,25 @@ impl Service {
             .name("clipboard-storage".into())
             .spawn(move || {
                 let mut last = baseline;
+                let interval = std::time::Duration::from_secs(3600);
+                let mut maintenance = std::time::Instant::now();
                 loop {
-                    let notification = rx.recv_timeout(std::time::Duration::from_secs(3600));
+                    let notification =
+                        rx.recv_timeout(interval.saturating_sub(maintenance.elapsed()));
                     if worker_stop.load(Ordering::Acquire) {
                         break;
                     }
                     let service = handle.state::<Service>();
+                    // 持续复制也按时维护，不能每次通知都重新开始一小时倒计时。
+                    if maintenance.elapsed() >= interval {
+                        if let Err(e) = service.maintain(&handle) {
+                            service.report(&handle, e);
+                        }
+                        maintenance = std::time::Instant::now();
+                    }
                     match notification {
                         Err(mpsc::RecvTimeoutError::Disconnected) => break,
                         Err(mpsc::RecvTimeoutError::Timeout) => {
-                            // 仅定时做保留期维护，不轮询或读取系统剪贴板。
-                            if let Err(e) = service.maintain(&handle) {
-                                service.report(&handle, e);
-                            }
                             continue;
                         }
                         Ok(()) => {}
@@ -272,28 +278,25 @@ impl Service {
                         now(),
                     )?,
                     Content::Image(image) => {
-                        let (blob, thumb, bytes) = data.blobs.save(&hash, &image)?;
-                        let result = data.repo.insert(
+                        let saved = data.blobs.save(&hash, &image)?;
+                        data.repo.insert(
                             NewItem {
                                 kind,
                                 hash: &hash,
                                 text: None,
-                                blob: Some(&blob),
-                                thumb: Some(&thumb),
+                                blob: Some(&saved.blob),
+                                thumb: Some(&saved.thumb),
                                 width: Some(image.width()),
                                 height: Some(image.height()),
-                                bytes,
+                                bytes: saved.bytes,
                             },
                             &settings,
                             now(),
-                        );
-                        // 即使 INSERT 回滚，也回收本次无引用文件；不掩盖原始错误。
-                        let cleanup = data.blobs.repair(&data.repo);
-                        result?;
-                        cleanup?;
+                        )?;
+                        saved.commit();
                     }
                 }
-                data.blobs.repair(&data.repo)?;
+                // 配额淘汰后的孤儿文件统一由启动/每小时维护回收，写入不扫描素材目录。
             }
             self.changed(app);
             return Ok(());
