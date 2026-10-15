@@ -92,7 +92,7 @@ fn filename(
 }
 
 /// JPEG 没有 alpha：先与白底合成，不能直接丢掉 alpha，避免透明处变黑。
-fn white_background(image: &RgbaImage) -> RgbImage {
+pub(crate) fn white_background(image: &RgbaImage) -> RgbImage {
     RgbImage::from_fn(image.width(), image.height(), |x, y| {
         let pixel = image.get_pixel(x, y).0;
         let alpha = u32::from(pixel[3]);
@@ -145,6 +145,11 @@ fn remember_directory(record: &Path, directory: &Path) -> Result<(), String> {
     temporary.as_file().sync_all().map_err(|e| e.to_string())?;
     temporary.persist(record).map_err(|e| e.to_string())?;
     Ok(())
+}
+
+/// 历史组合导出复用既有目录记忆，只有成功保存后调用。
+pub(crate) fn remember_export_directory(app: &AppHandle, directory: &Path) -> Result<(), String> {
+    remember_directory(&directory_record(app)?, directory)
 }
 
 /// 必须在阻塞工作线程调用；调用方负责隐藏置顶窗口，避免挡住对话框。

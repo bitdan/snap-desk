@@ -1,6 +1,7 @@
 mod annotations;
 mod autostart;
 mod capture;
+mod clipboard;
 mod image_io;
 mod pin_content;
 mod pins;
@@ -188,6 +189,7 @@ pub fn run() {
                         Some(settings::ShortcutAction::Capture) => trigger(app),
                         Some(settings::ShortcutAction::Pin) => trigger_pin(app),
                         Some(settings::ShortcutAction::Record) => trigger_recording(app),
+                        Some(settings::ShortcutAction::History) => clipboard::open_history(app),
                         None => {}
                     }
                 })
@@ -195,9 +197,11 @@ pub fn run() {
         )
         .setup(|app| {
             settings::initialize(app.handle())?;
+            clipboard::initialize(app.handle());
             let capture = MenuItem::with_id(app, "capture", "开始截图", true, None::<&str>)?;
             let pin = MenuItem::with_id(app, "pin", "贴图（选区 / 剪贴板）", true, None::<&str>)?;
             let recording = MenuItem::with_id(app, "recording", "录屏", true, None::<&str>)?;
+            let history = MenuItem::with_id(app, "history", "剪贴板历史", true, None::<&str>)?;
             let open = MenuItem::with_id(app, "open", "打开 Snap Desk", true, None::<&str>)?;
             let enabled = app
                 .state::<settings::SettingsState>()
@@ -215,8 +219,12 @@ pub fn run() {
                 None::<&str>,
             )?;
             let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
-            let menu =
-                Menu::with_items(app, &[&capture, &pin, &recording, &open, &shortcuts, &quit])?;
+            let menu = Menu::with_items(
+                app,
+                &[
+                    &capture, &pin, &recording, &history, &open, &shortcuts, &quit,
+                ],
+            )?;
             app.manage(settings::ShortcutMenu(shortcuts));
             TrayIconBuilder::new()
                 .icon(tauri::image::Image::from_bytes(include_bytes!(
@@ -245,6 +253,7 @@ pub fn run() {
                         });
                     }
                     "open" => show_main(app),
+                    "history" => clipboard::open_history(app),
                     // 先完成正在录制的视频，避免退出截断输出。
                     "quit" => {
                         capture::recording::request_exit(app);
@@ -328,6 +337,17 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             app_status,
+            clipboard::clipboard_status,
+            clipboard::clipboard_list,
+            clipboard::clipboard_get_text,
+            clipboard::clipboard_get_thumbnail,
+            clipboard::clipboard_restore,
+            clipboard::clipboard_pin_item,
+            clipboard::clipboard_set_favorite,
+            clipboard::clipboard_delete,
+            clipboard::clipboard_clear,
+            clipboard::clipboard_configure,
+            clipboard::export::clipboard_export,
             autostart::autostart_enabled,
             autostart::set_autostart_enabled,
             select_recording_area,
@@ -378,6 +398,12 @@ pub fn run() {
             pins::transform_pin,
             pins::pin_action,
         ])
-        .run(tauri::generate_context!())
-        .expect("无法启动 Snap Desk");
+        .build(tauri::generate_context!())
+        .expect("无法启动 Snap Desk")
+        .run(|app, event| {
+            // 录屏的退出流程完成后才收到 Exit；等待历史在途写入释放。
+            if matches!(event, tauri::RunEvent::Exit) {
+                app.state::<clipboard::Service>().shutdown();
+            }
+        });
 }

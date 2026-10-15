@@ -26,7 +26,7 @@ describe('桌面 IPC 错误解码', () => {
   it('命令失败附带命令名，成功响应不做转换', async () => {
     mocks.invoke.mockRejectedValueOnce(encode('原生拒绝请求').buffer)
     await expect(api.status()).rejects.toThrow('app_status：原生拒绝请求')
-    const result = { settings: { shortcuts: { capture: 'Alt+Shift+S', pin: 'F2', record: 'F3' } } }
+    const result = { settings: { shortcuts: { capture: 'Alt+Shift+S', pin: 'F2', record: 'F3', history: '' } } }
     mocks.invoke.mockResolvedValueOnce(result)
     expect(await api.status()).toBe(result)
   })

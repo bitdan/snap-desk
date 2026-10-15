@@ -71,14 +71,51 @@ pub enum ShortcutAction {
     Capture,
     Pin,
     Record,
+    History,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields, default)]
+#[serde(from = "ShortcutsWire")]
 pub struct Shortcuts {
     pub capture: String,
     pub pin: String,
     pub record: String,
+    pub history: String,
+}
+/// 用 Option 区分旧配置缺少 history 与用户明确指定的映射；只迁移缺失字段。
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, default)]
+struct ShortcutsWire {
+    capture: String,
+    pin: String,
+    record: String,
+    history: Option<String>,
+}
+impl Default for ShortcutsWire {
+    fn default() -> Self {
+        let keys = Shortcuts::default();
+        Self {
+            capture: keys.capture,
+            pin: keys.pin,
+            record: keys.record,
+            history: None,
+        }
+    }
+}
+impl From<ShortcutsWire> for Shortcuts {
+    fn from(wire: ShortcutsWire) -> Self {
+        let missing = wire.history.is_none();
+        let mut keys = Self {
+            capture: wire.capture,
+            pin: wire.pin,
+            record: wire.record,
+            history: wire.history.unwrap_or_else(|| Self::default().history),
+        };
+        if missing {
+            keys.preserve_legacy_mapping();
+        }
+        keys
+    }
 }
 impl Default for Shortcuts {
     fn default() -> Self {
@@ -86,15 +123,27 @@ impl Default for Shortcuts {
             capture: "F1".into(),
             pin: "F2".into(),
             record: "F3".into(),
+            history: "Ctrl+Shift+V".into(),
         }
     }
 }
 impl Shortcuts {
-    pub fn entries(&self) -> [(ShortcutAction, &str, &str); 3] {
+    fn preserve_legacy_mapping(&mut self) {
+        let history = parse_shortcut(&self.history).ok().flatten();
+        if history.is_some()
+            && [&self.capture, &self.pin, &self.record]
+                .iter()
+                .any(|key| parse_shortcut(key).ok().flatten() == history)
+        {
+            self.history.clear();
+        }
+    }
+    pub fn entries(&self) -> [(ShortcutAction, &str, &str); 4] {
         [
             (ShortcutAction::Capture, "区域截图", &self.capture),
             (ShortcutAction::Pin, "剪贴板图片贴图", &self.pin),
             (ShortcutAction::Record, "开始 / 停止录屏", &self.record),
+            (ShortcutAction::History, "剪贴板历史", &self.history),
         ]
     }
 }
@@ -106,6 +155,7 @@ pub struct Settings {
     pub shortcuts_enabled: bool,
     pub delay_seconds: u8,
     pub export: ExportSettings,
+    pub clipboard: crate::clipboard::model::ClipboardSettings,
     /// 只在首次或引导大版本变化时展示，与应用版本号无关。
     pub onboarding_version: u32,
 }
@@ -123,6 +173,8 @@ struct SettingsWire {
     #[serde(default)]
     export: ExportSettings,
     #[serde(default)]
+    clipboard: crate::clipboard::model::ClipboardSettings,
+    #[serde(default)]
     onboarding_version: u32,
 }
 impl TryFrom<SettingsWire> for Settings {
@@ -134,12 +186,14 @@ impl TryFrom<SettingsWire> for Settings {
         let mut shortcuts = wire.shortcuts.unwrap_or_default();
         if let Some(capture) = wire.shortcut {
             shortcuts.capture = capture;
+            shortcuts.preserve_legacy_mapping();
         }
         Ok(Self {
             shortcuts,
             shortcuts_enabled: wire.shortcuts_enabled,
             delay_seconds: wire.delay_seconds,
             export: wire.export,
+            clipboard: wire.clipboard,
             onboarding_version: wire.onboarding_version,
         })
     }
@@ -154,6 +208,7 @@ impl Default for Settings {
             shortcuts_enabled: true,
             delay_seconds: 0,
             export: ExportSettings::default(),
+            clipboard: crate::clipboard::model::ClipboardSettings::default(),
             onboarding_version: 0,
         }
     }
@@ -194,6 +249,7 @@ fn parse_shortcut(value: &str) -> Result<Option<Shortcut>, String> {
 impl Settings {
     pub fn validate(&self) -> Result<(), String> {
         self.export.validate()?;
+        self.clipboard.validate()?;
         if ![0, 3, 5].contains(&self.delay_seconds) {
             return Err("截图延时只能为 0、3 或 5 秒。".into());
         }
@@ -443,6 +499,8 @@ pub async fn save_settings(
         }
         // 并发完成引导后，旧表单不能把版本号退回去。
         let mut settings = settings;
+        // 历史开关仅通过 clipboard_configure 合并，旧页面草稿不得覆盖。
+        settings.clipboard = current.value.clipboard.clone();
         settings.onboarding_version = settings
             .onboarding_version
             .max(current.value.onboarding_version);
@@ -642,7 +700,7 @@ mod tests {
         value.shortcuts.pin = "F1".into();
         value.shortcuts.record = "Ctrl+Shift+S".into();
         assert!(value.validate().is_ok());
-        assert_eq!(shortcut_keys(&value).unwrap().len(), 2);
+        assert_eq!(shortcut_keys(&value).unwrap().len(), 3);
         assert_eq!(
             value.action_for(&"F1".parse().unwrap()),
             Some(ShortcutAction::Pin)
@@ -660,6 +718,17 @@ mod tests {
             serde_json::from_str(r#"{"shortcut":"Ctrl+S","delaySeconds":3}"#).unwrap();
         assert_eq!(old.shortcuts.pin, "F2");
         assert_eq!(old.shortcuts.record, "F3");
+        assert_eq!(old.shortcuts.history, "Ctrl+Shift+V");
+        assert!(!old.clipboard.enabled);
+        for json in [
+            r#"{"shortcut":"Ctrl+Shift+V"}"#,
+            r#"{"shortcuts":{"capture":"Shift+Ctrl+V","pin":"F2","record":"F3"}}"#,
+        ] {
+            let migrated: Settings = serde_json::from_str(json).unwrap();
+            assert!(migrated.shortcuts.history.is_empty());
+            assert!(migrated.validate().is_ok());
+            assert!(migrated.shortcuts.capture.contains('V'));
+        }
         assert!(!serde_json::to_value(old)
             .unwrap()
             .as_object()
@@ -670,12 +739,13 @@ mod tests {
     #[test]
     fn pin_and_record_conflicts_roll_back_all_additions() {
         let old = Settings::default();
-        for conflict in ["F5", "F6"] {
+        for conflict in ["F5", "F6", "F7"] {
             let next = Settings {
                 shortcuts: Shortcuts {
                     capture: "F4".into(),
                     pin: "F5".into(),
                     record: "F6".into(),
+                    history: "F7".into(),
                 },
                 ..old.clone()
             };

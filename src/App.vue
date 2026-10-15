@@ -5,14 +5,15 @@ import GeneralSettings from '@/components/GeneralSettings.vue'
 import OnboardingGuide from '@/components/OnboardingGuide.vue'
 import ShortcutInput from '@/components/ShortcutInput.vue'
 import RecordingPanel from '@/components/RecordingPanel.vue'
+import ClipboardHistory from '@/components/clipboard/ClipboardHistory.vue'
 import PinManager from '@/components/PinManager.vue'
 import Button from '@/components/ui/button/Button.vue'
-import { api, desktop, onDelay, onError, onSettingsChanged, type AppStatus, type Settings } from '@/lib/api'
+import { api, desktop, onDelay, onError, onSettingsChanged, onClipboardOpen, type AppStatus, type Settings } from '@/lib/api'
 import { defaultSettings, exportFilenamePreview, validateExportSettings, validateShortcuts, shortcutActions, needsOnboarding } from '@/lib/settings'
 import { errorMessage } from '@/lib/errors'
 
 const page = ref('截图')
-const items = [{ name: '截图', icon: Camera }, { name: '录屏', icon: Video }, { name: '贴图', icon: Pin }, { name: '快捷键', icon: Keyboard }, { name: '通用', icon: Folder }, { name: '帮助', icon: CircleHelp }, { name: '关于', icon: Info }]
+const items = [{ name: '截图', icon: Camera }, { name: '录屏', icon: Video }, { name: '贴图', icon: Pin }, { name: '剪贴板', icon: Folder }, { name: '快捷键', icon: Keyboard }, { name: '通用', icon: Folder }, { name: '帮助', icon: CircleHelp }, { name: '关于', icon: Info }]
 const status = ref<AppStatus | null>(null)
 const pending = ref(false)
 const saving = ref(false)
@@ -111,7 +112,7 @@ async function initialize() {
   if (!desktop || initializing.value || disposed) return
   initializing.value = true; initializationFailed.value = false; error.value = ''
   try {
-    for (const subscribe of [() => onSettingsChanged(() => { void syncSettings() }), () => onError(e => { error.value = e }), () => onDelay(value => { delayRevision++; remaining.value = value })]) {
+    for (const subscribe of [() => onClipboardOpen(() => { page.value = '剪贴板' }), () => onSettingsChanged(() => { void syncSettings() }), () => onError(e => { error.value = e }), () => onDelay(value => { delayRevision++; remaining.value = value })]) {
       const off = await subscribe()
       if (disposed) { off(); return }
       disposers.push(off)
@@ -184,6 +185,7 @@ onUnmounted(() => { disposed = true; disposers.splice(0).forEach(off => off()) }
           </form>
         </template>
 
+        <ClipboardHistory v-else-if="page === '剪贴板'" />
         <GeneralSettings v-else-if="page === '通用'" />
         <template v-else-if="page === '帮助'">
           <h1>帮助</h1><p class="subtitle">快速了解截图、贴图、长截图与录屏。</p>

@@ -24,11 +24,15 @@ tauri-plugin-log = "2"
 tauri-plugin-autostart = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "bmp"] }
 xcap = "=0.9.8"
 base64 = "0.22"
 log = "0.4"
 tempfile = "3"
+rusqlite = { version = "=0.37.0", features = ["bundled"] }
+blake3 = "=1.8.2"
+printpdf = { version = "=0.7.0", default-features = false }
+ab_glyph = "=0.2.32"
 gif = "=0.14.2"
 rqrr = { version = "=0.10.1", default-features = false }
 open = "5"
@@ -39,4 +43,4 @@ qrcode = { version = "0.14", default-features = false }
 
 [target.'cfg(windows)'.dependencies]
 clipboard-win = "=5.4.1"
-windows = { version = "=0.62.2", features = ["Win32_Media_MediaFoundation", "Win32_System_Com", "Win32_Graphics_Gdi", "Foundation_Metadata", "Graphics_Capture", "Graphics_DirectX_Direct3D11", "Win32_Graphics_Direct3D", "Win32_Graphics_Direct3D11", "Win32_Graphics_Dxgi_Common", "Win32_System_WinRT_Direct3D11", "Win32_System_WinRT_Graphics_Capture", "Win32_System_Performance", "Win32_UI_WindowsAndMessaging", "Win32_UI_Input", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_HiDpi", "Win32_System_LibraryLoader"] }
+windows = { version = "=0.62.2", features = ["Win32_Media_MediaFoundation", "Win32_System_Com", "Win32_System_DataExchange", "Win32_System_Memory", "Win32_Graphics_Gdi", "Foundation_Metadata", "Graphics_Capture", "Graphics_DirectX_Direct3D11", "Win32_Graphics_Direct3D", "Win32_Graphics_Direct3D11", "Win32_Graphics_Dxgi_Common", "Win32_System_WinRT_Direct3D11", "Win32_System_WinRT_Graphics_Capture", "Win32_System_Performance", "Win32_UI_WindowsAndMessaging", "Win32_UI_Input", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_HiDpi", "Win32_System_LibraryLoader"] }

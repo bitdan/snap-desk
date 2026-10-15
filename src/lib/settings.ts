@@ -1,3 +1,4 @@
+import { defaultClipboardSettings, type ClipboardSettings } from './clipboard'
 /** 与 Rust Settings / ExportSettings 的 camelCase 序列化契约一致。 */
 export interface ExportSettings {
   format: 'png' | 'jpeg' | 'webp'
@@ -6,21 +7,22 @@ export interface ExportSettings {
   includeDimensions: boolean
   rememberDirectory: boolean
 }
-export type ShortcutAction = 'capture' | 'pin' | 'record'
+export type ShortcutAction = 'capture' | 'pin' | 'record' | 'history'
 /** 空字符串表示单独禁用动作；总开关保留映射。 */
 export type Shortcuts = Record<ShortcutAction, string>
 export const shortcutActions: { key: ShortcutAction; label: string; description: string }[] = [
   { key: 'capture', label: '区域截图', description: '快速框选与标注' },
   { key: 'pin', label: '剪贴板图片贴图', description: '把剪贴板图片贴在桌面' },
+  { key: 'history', label: '剪贴板历史', description: '打开历史管理页面' },
   { key: 'record', label: '开始 / 停止录屏', description: '选择录制范围，录制中再次按下停止' },
 ]
 export const ONBOARDING_VERSION = 1
 export function needsOnboarding(version: number): boolean { return version < ONBOARDING_VERSION }
-export interface Settings { onboardingVersion: number; shortcuts: Shortcuts; shortcutsEnabled: boolean; delaySeconds: 0 | 3 | 5; export: ExportSettings }
+export interface Settings { onboardingVersion: number; shortcuts: Shortcuts; shortcutsEnabled: boolean; delaySeconds: 0 | 3 | 5; export: ExportSettings; clipboard: ClipboardSettings }
 
 /** 每次返回独立对象，避免编辑草稿时改动“恢复默认”的值。 */
 export function defaultSettings(): Settings {
-  return { onboardingVersion: 0, shortcuts: { capture: 'F1', pin: 'F2', record: 'F3' }, shortcutsEnabled: true, delaySeconds: 0, export: {
+  return { clipboard: defaultClipboardSettings(), onboardingVersion: 0, shortcuts: { capture: 'F1', pin: 'F2', record: 'F3', history: 'Ctrl+Shift+V' }, shortcutsEnabled: true, delaySeconds: 0, export: {
     format: 'png', jpegQuality: 90, filenamePrefix: 'SnapDesk', includeDimensions: false, rememberDirectory: true,
   } }
 }

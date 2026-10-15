@@ -1,3 +1,4 @@
+import type { ClipboardSettings, ClipboardQuery, ClipboardPage, ClipboardStatus, ClipboardExportOptions, ClipboardExportResult } from './clipboard'
 import { invoke as nativeInvoke, isTauri, type InvokeArgs } from '@tauri-apps/api/core'
 import { listen as nativeListen, type EventCallback } from '@tauri-apps/api/event'
 import { errorMessage } from './errors'
@@ -22,7 +23,7 @@ export type PinTransform = 'rotateRight' | 'rotateLeft' | 'flipHorizontal' | 'fl
 export type PinAction = 'copy' | 'save' | 'hide' | 'close'
 export type PinManageAction = 'show' | 'hide' | 'close'
 // 字段与 Rust Settings / AppStatus 的 camelCase 序列化契约保持一致。
-export type AppDirectory = 'config' | 'captures' | 'recordings' | 'scrollResults'
+export type AppDirectory = 'config' | 'captures' | 'recordings' | 'scrollResults' | 'clipboard'
 export interface DirectoryView { kind: AppDirectory; path: string | null; error: string | null }
 export interface AppStatus { version: string; settings: Settings; shortcutError: string | null; configWarning: string | null; delayRemaining: number; platform: string }
 export const desktop = isTauri()
@@ -36,6 +37,17 @@ async function listen<T>(event: string, callback: EventCallback<T>) {
   catch (error) { throw new Error(`订阅 ${event}：${errorMessage(error)}`) }
 }
 export const api = {
+  clipboardStatus: () => invoke<ClipboardStatus>('clipboard_status'),
+  clipboardList: (query: ClipboardQuery) => invoke<ClipboardPage>('clipboard_list', { query }),
+  clipboardText: (id: number) => invoke<string>('clipboard_get_text', { id }),
+  clipboardThumbnail: (id: number) => invoke<string>('clipboard_get_thumbnail', { id }),
+  clipboardRestore: (id: number) => invoke<void>('clipboard_restore', { id }),
+  clipboardPin: (id: number) => invoke<void>('clipboard_pin_item', { id }),
+  clipboardFavorite: (id: number, favorite: boolean) => invoke<void>('clipboard_set_favorite', { id, favorite }),
+  clipboardDelete: (ids: number[]) => invoke<void>('clipboard_delete', { ids }),
+  clipboardClear: (includeFavorites: boolean) => invoke<void>('clipboard_clear', { includeFavorites }),
+  clipboardConfigure: (settings: ClipboardSettings) => invoke<ClipboardStatus>('clipboard_configure', { settings }),
+  clipboardExport: (options: ClipboardExportOptions) => invoke<ClipboardExportResult>('clipboard_export', { options }),
   latestRecordingResult: () => invoke<RecordingResult | null>('latest_recording_result'),
   recordingResultAction: (id: number, action: RecordingResultAction) => invoke<void>('recording_result_action', { id, action }),
   autostartEnabled: () => invoke<boolean>('autostart_enabled'),
@@ -96,3 +108,8 @@ export const onDelay = (fn: (remaining: number) => void) => listen<number>('capt
 export const onPinsChanged = (fn: () => void) => listen('pins-changed', fn)
 export const onSettingsChanged = (fn: () => void) => listen('settings-changed', fn)
 export const onScroll = (fn: (view: ScrollView) => void) => listen<ScrollView>('scroll-updated', e => fn(e.payload))
+
+export const onClipboardChanged = (fn: () => void) => listen('clipboard-changed', fn)
+export const onClipboardError = (fn: (error: string) => void) => listen<string>('clipboard-error', e => fn(e.payload))
+export const onClipboardState = (fn: (state: ClipboardStatus) => void) => listen<ClipboardStatus>('clipboard-state', e => fn(e.payload))
+export const onClipboardOpen = (fn: () => void) => listen('clipboard-open', fn)

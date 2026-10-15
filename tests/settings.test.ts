@@ -43,14 +43,14 @@ describe('全局快捷键动作映射与录入', () => {
   const event = (key: string, code = key, modifiers = {}) => ({ key, code, ctrlKey: false, altKey: false, shiftKey: false, metaKey: false, ...modifiers })
   it('三个默认值独立复制，可分别清空并允许重新分配 F2/F3', () => {
     const shortcuts = defaultSettings().shortcuts
-    expect(shortcuts).toEqual({ capture: 'F1', pin: 'F2', record: 'F3' })
+    expect(shortcuts).toEqual({ capture: 'F1', pin: 'F2', record: 'F3', history: 'Ctrl+Shift+V' })
     shortcuts.capture = 'F2'; shortcuts.pin = ''; shortcuts.record = ''
     expect(validateShortcuts(shortcuts)).toBeNull()
     expect(defaultSettings().shortcuts.capture).toBe('F1')
-    expect(validateShortcuts({ capture: '', pin: '', record: '' })).toBeNull()
+    expect(validateShortcuts({ capture: '', pin: '', record: '', history: '' })).toBeNull()
   })
   it('报告冲突动作，修饰键顺序不影响冲突判断', () => {
-    const error = validateShortcuts({ capture: 'Ctrl+Shift+S', pin: 'Shift+Ctrl+S', record: '' })
+    const error = validateShortcuts({ capture: 'Ctrl+Shift+S', pin: 'Shift+Ctrl+S', record: '', history: '' })
     expect(error).toContain('区域截图'); expect(error).toContain('剪贴板图片贴图')
   })
   it('修饰键只预览，完整组合与功能键完成录入', () => {
@@ -65,8 +65,8 @@ describe('全局快捷键动作映射与录入', () => {
     for (const key of ['a', 'F', '1', 'F13', 'Enter']) expect(captureShortcut(event(key))).toHaveProperty('error')
     expect(captureShortcut(event('a', 'KeyA')).error).toContain('修饰键')
     expect(captureShortcut(event('f', 'KeyF')).error).toContain('修饰键')
-    expect(validateShortcuts({ capture: 'F', pin: '', record: '' })).toContain('修饰键')
-    expect(validateShortcuts({ capture: 'Ctrl+Ctrl+S', pin: '', record: '' })).toContain('重复')
+    expect(validateShortcuts({ capture: 'F', pin: '', record: '', history: '' })).toContain('修饰键')
+    expect(validateShortcuts({ capture: 'Ctrl+Ctrl+S', pin: '', record: '', history: '' })).toContain('重复')
   })
 })
 
