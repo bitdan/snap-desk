@@ -5,6 +5,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import struct
 import subprocess
 import zipfile
@@ -94,6 +95,31 @@ def git_sha(path):
     return subprocess.check_output(["git", "-C", str(path), "rev-parse", "HEAD"], text=True).strip()
 
 
+def license_files(source):
+    """遍历真实源码目录，不跟随链接；实际目录/许可的读取错误仍然使 CI 失败。"""
+    notices = []
+    pending = [source]
+    while pending:
+        with os.scandir(pending.pop()) as entries:
+            for entry in entries:
+                if entry.name == ".git":
+                    continue
+                # Windows 上游目录可能含无法访问目标的链接（如 thrust/cub）。
+                # 先识别链接，再用 no-follow stat；不能先 is_file() 访问链接目标。
+                if entry.is_symlink():
+                    continue
+                metadata = entry.stat(follow_symlinks=False)
+                if getattr(metadata, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT:
+                    continue
+                path = Path(entry.path)
+                if stat.S_ISDIR(metadata.st_mode):
+                    pending.append(path)
+                elif stat.S_ISREG(metadata.st_mode) and entry.name.upper().startswith(
+                        ("LICENSE", "COPYING", "NOTICE", "AUTHORS", "COPYRIGHT")):
+                    notices.append(path)
+    return sorted(notices)
+
+
 def prepare(args):
     directory = args.directory
     manifest = directory / "runtime-build.json"
@@ -107,9 +133,7 @@ def prepare(args):
     for name, source in sources.items():
         commits[name] = git_sha(source)
         # 保留上游相对路径，包含 Ruy/嵌套第三方的 LICENSE/COPYING/NOTICE/AUTHORS。
-        notices = [p for p in source.rglob("*") if p.is_file()
-                   and ".git" not in p.parts
-                   and p.name.upper().startswith(("LICENSE", "COPYING", "NOTICE", "AUTHORS", "COPYRIGHT"))]
+        notices = license_files(source)
         if not notices:
             raise ValueError(f"缺少上游许可: {name}")
         for path in notices:

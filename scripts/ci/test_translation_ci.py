@@ -3,6 +3,7 @@ import copy
 import hashlib
 import importlib.util
 import json
+import stat
 import struct
 import tempfile
 import unittest
@@ -10,6 +11,7 @@ import urllib.request
 import zipfile
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 from model_release import read_pack, validate, ReleaseRedirect
 
 spec = importlib.util.spec_from_file_location("runtime", Path(__file__).with_name("translator-runtime.py"))
@@ -62,6 +64,45 @@ class ModelTests(unittest.TestCase):
 
 
 class RuntimeTests(unittest.TestCase):
+    def test_license_collection_preserves_nested_notices_and_skips_git(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            names = ["LICENSE", "third_party/ruy/LICENSE", "third_party/ruy/AUTHORS",
+                     "third_party/ruy/NOTICE.txt"]
+            for name in [*names, ".git/LICENSE", "src/main.cpp"]:
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("fixture", encoding="utf-8")
+            self.assertEqual(runtime.license_files(root), sorted(root / name for name in names))
+
+    def test_license_collection_does_not_follow_windows_links(self):
+        # 模拟 runner 的不可访问链接，以及不是 symlink 的 Windows junction。
+        link = MagicMock(name="inaccessible_cub")
+        link.name = "cub"
+        link.is_symlink.return_value = True
+        link.stat.side_effect = PermissionError("link target denied")
+        junction = MagicMock(name="junction")
+        junction.name = "junction"
+        junction.is_symlink.return_value = False
+        junction.stat.return_value = SimpleNamespace(
+            st_mode=stat.S_IFDIR, st_file_attributes=stat.FILE_ATTRIBUTE_REPARSE_POINT)
+        with patch.object(runtime.os, "scandir") as scan:
+            scan.return_value.__enter__.return_value = [link, junction]
+            self.assertEqual(runtime.license_files(Path("source")), [])
+            scan.assert_called_once()
+        link.stat.assert_not_called()
+        junction.stat.assert_called_once_with(follow_symlinks=False)
+
+    def test_license_collection_does_not_hide_real_permission_errors(self):
+        entry = MagicMock(name="unreadable_license")
+        entry.name = "LICENSE"
+        entry.is_symlink.return_value = False
+        entry.stat.side_effect = PermissionError("real file denied")
+        with patch.object(runtime.os, "scandir") as scan:
+            scan.return_value.__enter__.return_value = [entry]
+            with self.assertRaises(PermissionError):
+                runtime.license_files(Path("source"))
+
     def test_zip_traversal_and_duplicate_rejected(self):
         for names in [("../worker.exe",), ("/worker.exe",), ("C:/worker.exe",), ("A.dll", "a.dll")]:
             with self.subTest(names=names), tempfile.TemporaryDirectory() as temp:
