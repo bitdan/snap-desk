@@ -23,11 +23,13 @@
 
 ### OCR 与导出字体
 
-在通用设置中下载 PP-OCRv5 中英文模型（约 21 MiB），随后可在截图工具栏点击“识别文字”，编辑并复制结果。使用 OAR-OCR + ort 在本机识别，不上传图片；当前针对正向文字，选区上限 1600 万像素。
+在通用设置中点击“下载识别资源”，下载 PP-OCRv5 中英文模型（约 21 MiB）和 Windows CPU 引擎，随后可在截图工具栏点击“识别文字”，编辑并复制结果。使用 OAR-OCR + ort 在本机识别，不上传图片；当前针对正向文字，选区上限 1600 万像素。
 
 PDF 和文本长图需要下载霞鹜文楷（约 24 MiB），或选择有嵌入授权的静态 TTF 字体（最大 64 MiB，不支持 TTC、OTF、可变字体）。选择的字体会复制到应用资源目录；点击“使用下载字体”会替换当前字体。缺字会报错，纯图片导出和 TXT 不依赖字体。
 
-资源下载由用户主动触发，保存到 `app_data_dir()/resources`，设置页展示实际路径。[下载清单](src-tauri/assets/downloads.json) 固定版本、大小和 SHA-256；失败重试会跳过已经校验通过的模型。离线安装可按清单文件名放入三个模型文件。字体许可证见 [LXGW-OFL.txt](src-tauri/licenses/LXGW-OFL.txt)。ONNX Runtime CPU 库在构建时下载并静态链接，模型和生产字体不进入安装包。
+资源下载由用户主动触发，保存到 `app_data_dir()/resources`，设置页展示实际路径。[下载清单](src-tauri/assets/downloads.json) 固定版本、大小和 SHA-256；失败重试会跳过已经校验通过的模型和引擎。离线安装可按清单文件名放入三个模型文件；Windows 引擎还需按 [运行库清单](src-tauri/assets/onnxruntime.json) 的版本目录及文件相对路径放置 DLL、许可证和声明，并满足各文件的大小及摘要。字体许可证见 [LXGW-OFL.txt](src-tauri/licenses/LXGW-OFL.txt)。模型和生产字体不进入安装包。
+
+Windows x64 / ARM64 的 ONNX Runtime 1.24.2 使用 `ort/load-dynamic`，首次识别时才从已校验的绝对路径加载 DLL，主程序和安装包不携带引擎。官方 ZIP 约 71 / 72 MiB（包含 PDB 调试符号），安装只保留 DLL、许可证和声明，x64 约 14 MiB；下载临时包会自动删除。未下载不影响启动、截图及非 OCR 功能；加载失败可重试，系统需具备对应架构的 Microsoft Visual C++ 2015–2022 运行库。已加载的 DLL 若需修复，应退出应用后重试。其他平台暂时保留构建时下载和链接 CPU 引擎的方式。
 
 离线导出测试使用 `src-tauri/tests/fixtures/export-test.ttf` 的小型字体子集，保留原始字体度量及许可证。允许编译时可定向运行 `cargo test --locked resources::tests` 和 `cargo test --locked clipboard::export::tests`；发布前仍需实机检查下载失败重试、离线识别及中文 PDF/长图导出。
 
@@ -116,6 +118,10 @@ npm run desktop:dev
 | `0.1.4` | `snap-desk-v版本-windows-x64-standalone.exe` | `*-setup.exe` | `*.msi` | Latest |
 
 `standalone.exe` 是主程序，下载后可直接启动，需要系统已安装 WebView2；`setup.exe` 和 `.msi` 是安装程序。主程序仍使用系统应用数据目录保存配置，不代表数据全部保存在 EXE 同目录的便携模式。
+
+发布构建启用 Thin LTO、单代码生成单元及符号裁剪，保留 `opt-level = 3` 与原有异常展开策略。
+这些设置会增加构建时间，缩小幅度需以重新构建后的 EXE 为准。OCR 模型和生产字体按需下载，
+Windows ONNX Runtime CPU 引擎也按需下载为独立 DLL；安装包经过压缩，因此下载体积通常明显小于裸 EXE。
 
 版本只维护 `package.json` 的 `version`，Git 标签在前面加 `v`。例如测试版 `0.1.4-beta.2` 对应 `v0.1.4-beta.2`，正式版 `0.1.4` 对应 `v0.1.4`。MSI 的版本字段有数字限制，无法直接使用 `beta.1` / `rc.1` 这样的文本后缀，所以测试版跳过 MSI。正式版采用三段数字，主版本和次版本最多 255，修订版本最多 65535；参见 [MSI ProductVersion](https://learn.microsoft.com/en-us/windows/win32/msi/productversion)。
 

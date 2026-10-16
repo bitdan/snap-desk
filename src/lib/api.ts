@@ -10,7 +10,7 @@ import type { RecordingResult, RecordingResultAction } from './recording'
 export type { Settings } from './settings'
 
 export interface QrResult { id: number; items: { text: string; url: string | null }[] }
-export interface ResourceStatus { directory: string; ocrReady: boolean; fontReady: boolean }
+export interface ResourceStatus { directory: string; ocrReady: boolean; modelsReady: boolean; runtimeReady: boolean; runtimeDownloadMib: number; fontReady: boolean }
 export interface ResourceProgress { name: string; received: number; total: number }
 export interface CaptureFrame { id: number; width: number; height: number; dataUrl: string; recording: boolean }
 export interface PinView { zoom: number; opacity: number; locked: boolean; topmost: boolean; toolbarExpanded: boolean }

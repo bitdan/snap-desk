@@ -1,4 +1,4 @@
-//! 用户主动下载模型/字体；资源存入可写的数据目录，绝不写安装目录。
+//! 用户主动下载 OCR 引擎、模型和字体；资源存入可写的数据目录，绝不写安装目录。
 //! 临时文件经过大小、摘要校验后原子替换，失败不破坏已有文件。
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -25,12 +25,12 @@ pub enum ResourceKind {
 
 /// 发布资源的固定身份；size 为字节数，sha256 用于发现截断或内容被替换。
 #[derive(Deserialize)]
-struct Asset {
-    kind: ResourceKind,
-    name: String,
-    url: String,
-    size: u64,
-    sha256: String,
+pub(crate) struct Asset {
+    pub(crate) kind: ResourceKind,
+    pub(crate) name: String,
+    pub(crate) url: String,
+    pub(crate) size: u64,
+    pub(crate) sha256: String,
 }
 
 /// 设置页展示的实际可用状态，不把“文件存在”直接当作“资源已就绪”。
@@ -39,6 +39,9 @@ struct Asset {
 pub struct ResourceStatus {
     directory: String,
     ocr_ready: bool,
+    models_ready: bool,
+    runtime_ready: bool,
+    runtime_download_mib: u64,
     font_ready: bool,
 }
 
@@ -61,13 +64,18 @@ pub fn directory(app: &AppHandle) -> Result<PathBuf, String> {
         .map_err(|e| e.to_string())
 }
 
-fn verified(path: &Path, asset: &Asset) -> bool {
+pub(crate) fn verified(path: &Path, asset: &Asset) -> bool {
     if fs::metadata(path).map(|m| m.len()).ok() != Some(asset.size) {
         return false;
     }
-    fs::read(path)
-        .map(|b| format!("{:x}", Sha256::digest(b)) == asset.sha256)
-        .unwrap_or(false)
+    // 模型和 DLL 用流式摘要，避免检查设置状态时额外分配整份资源的内存。
+    (|| -> std::io::Result<bool> {
+        let mut file = fs::File::open(path)?;
+        let mut hash = Sha256::new();
+        std::io::copy(&mut file, &mut hash)?;
+        Ok(format!("{:x}", hash.finalize()) == asset.sha256)
+    })()
+    .unwrap_or(false)
 }
 
 /// 仅接受单个静态 TrueType 字体；可变字体和 TTC 集合不能可靠嵌入当前 PDF 引擎。
@@ -113,7 +121,7 @@ pub fn ocr_paths(app: &AppHandle) -> Result<PathBuf, String> {
     let dir = directory(app)?;
     for asset in manifest()?.iter().filter(|a| a.kind == ResourceKind::Ocr) {
         if !verified(&dir.join(&asset.name), asset) {
-            return Err("OCR 模型未下载或校验失败，请在通用设置下载 OCR 模型。".into());
+            return Err("OCR 模型未下载或校验失败，请在通用设置下载识别资源。".into());
         }
     }
     Ok(dir)
@@ -121,13 +129,23 @@ pub fn ocr_paths(app: &AppHandle) -> Result<PathBuf, String> {
 
 fn status(app: &AppHandle) -> Result<ResourceStatus, String> {
     let dir = directory(app)?;
-    let ocr_ready = manifest()?
+    let models_ready = manifest()?
         .iter()
         .filter(|a| a.kind == ResourceKind::Ocr)
         .all(|a| verified(&dir.join(&a.name), a));
+    #[cfg(windows)]
+    let (runtime_ready, runtime_download_mib) = (
+        crate::ocr_runtime::ready(&dir),
+        crate::ocr_runtime::download_mib(),
+    );
+    #[cfg(not(windows))]
+    let (runtime_ready, runtime_download_mib) = (true, 0);
     Ok(ResourceStatus {
+        models_ready,
+        runtime_ready,
+        runtime_download_mib,
         font_ready: read_font(&dir.join("export-font.ttf")).is_ok(),
-        ocr_ready,
+        ocr_ready: models_ready && runtime_ready,
         directory: dir.to_string_lossy().into_owned(),
     })
 }
@@ -161,52 +179,16 @@ pub async fn download_resources(
             .timeout(Duration::from_secs(300))
             .build()
             .map_err(|e| e.to_string())?;
+        #[cfg(windows)]
+        if kind == ResourceKind::Ocr {
+            crate::ocr_runtime::download(&app, &client, &dir)?;
+        }
         for asset in manifest()?.iter().filter(|a| a.kind == kind) {
             let path = dir.join(&asset.name);
             if verified(&path, asset) {
                 continue;
             }
-            let mut response = client
-                .get(&asset.url)
-                .send()
-                .and_then(|r| r.error_for_status())
-                .map_err(|e| format!("{} 下载失败，可重试：{e}", asset.name))?;
-            let mut file = tempfile::NamedTempFile::new_in(&dir).map_err(|e| e.to_string())?;
-            let mut hash = Sha256::new();
-            let mut received = 0u64;
-            let mut last_progress = Instant::now();
-            let mut buffer = [0u8; 64 * 1024];
-            loop {
-                let count = response
-                    .read(&mut buffer)
-                    .map_err(|e| format!("下载中断，可重试：{e}"))?;
-                if count == 0 {
-                    break;
-                }
-                received += count as u64;
-                if received > asset.size {
-                    return Err("下载文件大小与清单不符。".into());
-                }
-                hash.update(&buffer[..count]);
-                file.write_all(&buffer[..count])
-                    .map_err(|e| e.to_string())?;
-                // 网络分块可能很小，限频避免下载期间大量 IPC 刷新拖慢设置页。
-                if last_progress.elapsed() >= Duration::from_millis(100) || received == asset.size {
-                    let _ = app.emit_to(
-                        "main",
-                        "resource-download-progress",
-                        Progress {
-                            name: asset.name.clone(),
-                            received,
-                            total: asset.size,
-                        },
-                    );
-                    last_progress = Instant::now();
-                }
-            }
-            if received != asset.size || format!("{:x}", hash.finalize()) != asset.sha256 {
-                return Err(format!("{} 校验失败，请重试。", asset.name));
-            }
+            let file = download_file(&app, &client, &dir, asset)?;
             if kind == ResourceKind::Font {
                 read_font(file.path())?;
             }
@@ -217,6 +199,57 @@ pub async fn download_resources(
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// 下载到临时文件，大小和摘要通过后才返回；出错自动删除，调用者负责安装。
+pub(crate) fn download_file(
+    app: &AppHandle,
+    client: &reqwest::blocking::Client,
+    dir: &Path,
+    asset: &Asset,
+) -> Result<tempfile::NamedTempFile, String> {
+    let mut response = client
+        .get(&asset.url)
+        .send()
+        .and_then(|r| r.error_for_status())
+        .map_err(|e| format!("{} 下载失败，可重试：{e}", asset.name))?;
+    let mut file = tempfile::NamedTempFile::new_in(dir).map_err(|e| e.to_string())?;
+    let mut hash = Sha256::new();
+    let mut received = 0u64;
+    let mut last_progress = Instant::now();
+    let mut buffer = [0u8; 64 * 1024];
+    loop {
+        let count = response
+            .read(&mut buffer)
+            .map_err(|e| format!("下载中断，可重试：{e}"))?;
+        if count == 0 {
+            break;
+        }
+        received += count as u64;
+        if received > asset.size {
+            return Err("下载文件大小与清单不符。".into());
+        }
+        hash.update(&buffer[..count]);
+        file.write_all(&buffer[..count])
+            .map_err(|e| e.to_string())?;
+        // 网络分块可能很小，限频避免下载期间大量 IPC 刷新拖慢设置页。
+        if last_progress.elapsed() >= Duration::from_millis(100) || received == asset.size {
+            let _ = app.emit_to(
+                "main",
+                "resource-download-progress",
+                Progress {
+                    name: asset.name.clone(),
+                    received,
+                    total: asset.size,
+                },
+            );
+            last_progress = Instant::now();
+        }
+    }
+    if received != asset.size || format!("{:x}", hash.finalize()) != asset.sha256 {
+        return Err(format!("{} 校验失败，请重试。", asset.name));
+    }
+    Ok(file)
 }
 
 /// 由系统对话框授权读取文件，并复制到应用目录；原文件移走后仍可导出。

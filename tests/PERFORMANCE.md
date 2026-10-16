@@ -16,6 +16,10 @@ cargo test --manifest-path src-tauri/Cargo.toml --locked --lib
 ## 性能基准
 
 1. 按 `src-tauri/assets/downloads.json` 将四个资源下载到 `src-tauri/target/perf-assets/`，
+   Windows 还需按 `src-tauri/assets/onnxruntime.json` 将对应架构的官方 ZIP 下载到
+   `src-tauri/target/`；测试 EXE 编译完成后先运行
+   `ocr_runtime::tests::install_official_runtime_for_ocr_test --ignored --exact --nocapture`，
+   它只安装到性能资源目录并验证 DLL 加载。
    使用清单的本地文件名并核对大小、SHA-256。也可以设置 `SNAP_DESK_PERF_ASSETS` 指向独立目录。
 2. `cargo test --manifest-path src-tauri/Cargo.toml --locked --release --lib --no-run`。
    复制输出的测试 EXE 路径，不能使用普通应用 EXE 或旧的测试 EXE。
@@ -82,3 +86,13 @@ OCR 仍复用缓存会话；对内存敏感的场景需注意首次识别后会�
   生产默认值保持前后端现行的 20 像素、400ms、左上角。
 
 完整 Rust 套件仍不能宣称全绿；补齐真实帧集后必须重跑对应 5 项测试。
+
+此前记录的 OCR 性能数据使用静态链接引擎；切换动态 DLL 后需重新测量，不能作为新版性能保证。
+
+## Windows 动态引擎验证（2026-10-16）
+
+- `npm run check` 通过；Windows 依赖图启用 `load-dynamic` / `disable-linking`，未启用 `download-binaries`。
+- 定向覆盖资源摘要、字体校验、引擎缺失可重试、归档/条目损坏不覆盖旧文件、仅提取白名单文件。
+- 使用官方 x64 ZIP 在 `target/perf-assets` 安装 DLL，并通过真实中英文 OCR（1200×500、1920×1080 完整行数）及 4K 空白图断言。
+- 本轮运行调试测试，数据不用于性能对比；未重新执行发布构建/打包，尚无新版主 EXE 大小。
+- ARM64 仅校验官方包和清单，未实机加载；未启动浏览器验证设置页下载交互。

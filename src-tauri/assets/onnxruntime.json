@@ -1,0 +1,98 @@
+[
+  {
+    "arch": "x86_64",
+    "directory": "onnxruntime-win-x64-1.24.2",
+    "archive": {
+      "kind": "ocr",
+      "name": "onnxruntime-win-x64-1.24.2.zip",
+      "url": "https://github.com/microsoft/onnxruntime/releases/download/v1.24.2/onnxruntime-win-x64-1.24.2.zip",
+      "size": 74075355,
+      "sha256": "8e3e9c826375352e29cb2614fe44f3d7a4b0ff7b8028ad7a456af9d949a7e8b0"
+    },
+    "files": [
+      {
+        "kind": "ocr",
+        "name": "lib/onnxruntime.dll",
+        "url": "",
+        "size": 14148680,
+        "sha256": "114947d633e6844ce3c4b51ef6678f776628571d08a5763859c61642c8dcca9c"
+      },
+      {
+        "kind": "ocr",
+        "name": "lib/onnxruntime_providers_shared.dll",
+        "url": "",
+        "size": 22048,
+        "sha256": "c10763a3764f5c292072533560c341565be64f38fd2807ed5035cd177d3bbb26"
+      },
+      {
+        "kind": "ocr",
+        "name": "LICENSE",
+        "url": "",
+        "size": 1094,
+        "sha256": "c250d6278f0b47a6439fb7592b08b58a55eb9f535aa49a1db63211c3f982b674"
+      },
+      {
+        "kind": "ocr",
+        "name": "ThirdPartyNotices.txt",
+        "url": "",
+        "size": 331175,
+        "sha256": "fb0af774b4d7cffc5b9d046f2aaeade2f37df2f80abf8033c95dfffcc77a8866"
+      },
+      {
+        "kind": "ocr",
+        "name": "Privacy.md",
+        "url": "",
+        "size": 2490,
+        "sha256": "bfb7712b075f3f07e3ebee5dc2a296d1de32dbf71ad28663f73d1538cb6c3b08"
+      }
+    ]
+  },
+  {
+    "arch": "aarch64",
+    "directory": "onnxruntime-win-arm64-1.24.2",
+    "archive": {
+      "kind": "ocr",
+      "name": "onnxruntime-win-arm64-1.24.2.zip",
+      "url": "https://github.com/microsoft/onnxruntime/releases/download/v1.24.2/onnxruntime-win-arm64-1.24.2.zip",
+      "size": 74960464,
+      "sha256": "dd8180d98e5a0ead7ead99029acc80b86a8b905b9aba4cc978e388039bb5823b"
+    },
+    "files": [
+      {
+        "kind": "ocr",
+        "name": "lib/onnxruntime.dll",
+        "url": "",
+        "size": 14161952,
+        "sha256": "d4c4d939c8bd1e93a86bc5a45b37a1fdd08dce34d8231db014a7e4a023923f5a"
+      },
+      {
+        "kind": "ocr",
+        "name": "lib/onnxruntime_providers_shared.dll",
+        "url": "",
+        "size": 21536,
+        "sha256": "8c294e79359285dd2c2ad07e14f317d77f8c8c735b9f0a70a485f12c6901f51a"
+      },
+      {
+        "kind": "ocr",
+        "name": "LICENSE",
+        "url": "",
+        "size": 1094,
+        "sha256": "c250d6278f0b47a6439fb7592b08b58a55eb9f535aa49a1db63211c3f982b674"
+      },
+      {
+        "kind": "ocr",
+        "name": "ThirdPartyNotices.txt",
+        "url": "",
+        "size": 331175,
+        "sha256": "fb0af774b4d7cffc5b9d046f2aaeade2f37df2f80abf8033c95dfffcc77a8866"
+      },
+      {
+        "kind": "ocr",
+        "name": "Privacy.md",
+        "url": "",
+        "size": 2490,
+        "sha256": "bfb7712b075f3f07e3ebee5dc2a296d1de32dbf71ad28663f73d1538cb6c3b08"
+      }
+    ]
+  }
+]

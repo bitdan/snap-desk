@@ -24,6 +24,9 @@ pub fn recognize(app: &AppHandle, image: &image::RgbaImage) -> Result<String, St
 
 /// 与性能测试共用模型加载和推理路径，避免基准只测到与产品不同的代码。
 fn build_engine(dir: &Path) -> Result<OAROCR, String> {
+    // 必须先显式加载可信路径，防止 ort 回退到 PATH/环境变量搜索并在缺少 DLL 时 panic。
+    #[cfg(windows)]
+    crate::ocr_runtime::initialize(dir)?;
     // 检测与识别各有会话；默认线程数会争抢 CPU，默认整页批次还会放大张量内存。
     // 桌面交互优先：每次最多识别 8 行，每个会话最多使用两个推理线程。
     let threads = std::thread::available_parallelism()

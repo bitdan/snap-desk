@@ -11,6 +11,8 @@ mod pins;
 mod platform;
 mod qr;
 mod resources;
+#[cfg(windows)]
+mod ocr_runtime;
 mod settings;
 mod storage;
 
