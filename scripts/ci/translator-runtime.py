@@ -95,6 +95,26 @@ def git_sha(path):
     return subprocess.check_output(["git", "-C", str(path), "rev-parse", "HEAD"], text=True).strip()
 
 
+def parse_cmake_cache(text):
+    """逐行读取 KEY:TYPE=VALUE，避免正则跨空行吞掉注释和下一项键名。"""
+    cache = {}
+    for line in text.splitlines():
+        if not line or line.startswith(("//", "#")):
+            continue
+        match = re.fullmatch(r"([^:=]+):[^=]+=(.*)", line)
+        if match:
+            cache[match[1]] = match[2]
+    return cache
+
+
+def validate_ct2_options(cache):
+    """严格校验固定构建契约；失败时列出字段、期望值及实际值供 CI 排查。"""
+    differences = [f"{key}: expected={value!r}, actual={cache.get(key, '<missing>')!r}"
+                   for key, value in OPTIONS.items() if cache.get(key) != value]
+    if differences:
+        raise ValueError("CT2 build options mismatch:\n" + "\n".join(differences))
+
+
 def license_files(source):
     """遍历真实源码目录，不跟随链接；实际目录/许可的读取错误仍然使 CI 失败。"""
     notices = []
@@ -145,9 +165,8 @@ def prepare(args):
     caches = {}
     for name, build in [("ct2", args.ct2_install.parent / "ct2-build"), ("worker", args.worker_build)]:
         cache = (build / "CMakeCache.txt").read_text(encoding="utf-8")
-        caches[name] = {m[0]: m[1] for m in re.findall(r"^([^/#][^:=]*):[^=]+=(.*)$", cache, re.M)}
-    if any(caches["ct2"].get(key) != value for key, value in OPTIONS.items()):
-        raise ValueError("CT2 实际构建选项与 CPU/RUY 契约不一致")
+        caches[name] = parse_cmake_cache(cache)
+    validate_ct2_options(caches["ct2"])
     info = dict(tag=args.tag, runtime="4.6.0", protocol=1, target="windows-x64",
                 repositorySha=git_sha(Path.cwd()), sources=commits, options=OPTIONS,
                 ct2Submodules=subprocess.check_output(["git", "-C", str(args.ct2_source), "submodule", "status", "--recursive"], text=True).splitlines(),

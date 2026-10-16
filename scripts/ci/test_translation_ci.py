@@ -64,6 +64,29 @@ class ModelTests(unittest.TestCase):
 
 
 class RuntimeTests(unittest.TestCase):
+    def test_cmake_cache_blank_lines_and_comments_do_not_corrupt_keys(self):
+        for newline in ("\n", "\r\n"):
+            with self.subTest(newline=newline):
+                text = newline.join(["# CMake cache", "", *(
+                    f"//Build option{newline}{key}:STRING={value}{newline}"
+                    for key, value in runtime.OPTIONS.items()),
+                    "CMAKE_CXX_COMPILER:FILEPATH=C:/Program Files/MSVC/cl.exe",
+                    "EXTRA:STRING=a=b", "EMPTY:STRING="])
+                cache = runtime.parse_cmake_cache(text)
+                runtime.validate_ct2_options(cache)
+                self.assertEqual(cache["CMAKE_CXX_COMPILER"], "C:/Program Files/MSVC/cl.exe")
+                self.assertEqual(cache["EXTRA"], "a=b")
+                self.assertEqual(cache["EMPTY"], "")
+                self.assertTrue(all("\n" not in key for key in cache))
+
+    def test_cmake_option_mismatch_reports_actual_and_missing_values(self):
+        cache = dict(runtime.OPTIONS, WITH_CUDA="ON")
+        del cache["WITH_RUY"]
+        with self.assertRaises(ValueError) as error:
+            runtime.validate_ct2_options(cache)
+        self.assertIn("WITH_CUDA: expected='OFF', actual='ON'", str(error.exception))
+        self.assertIn("WITH_RUY: expected='ON', actual='<missing>'", str(error.exception))
+
     def test_license_collection_preserves_nested_notices_and_skips_git(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
