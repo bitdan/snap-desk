@@ -487,6 +487,52 @@ pub async fn clipboard_export(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[ignore = "使用完整字体测量 PDF/PNG 实际耗时及大小，不放入日常单元测试"]
+    fn perf_export_full_font() {
+        let font = fs::read(crate::perf::assets().join("export-font.ttf")).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("screen.png");
+        crate::perf::screenshot(1920, 1080).save(&path).unwrap();
+        for (label, items) in [
+            (
+                "text",
+                vec![Snapshot::Text("中文测试 English 123\n".repeat(30))],
+            ),
+            (
+                "mixed",
+                vec![
+                    Snapshot::Text("中文测试 English 123\n".repeat(30)),
+                    Snapshot::Image(path, 1920, 1080),
+                ],
+            ),
+        ] {
+            for _ in 0..3 {
+                let mut output = Vec::new();
+                let start = std::time::Instant::now();
+                pdf_with_font(&items, &options(), &mut output, &font).unwrap();
+                println!(
+                    "PERF pdf_{label}_ms={} bytes={}",
+                    start.elapsed().as_millis(),
+                    output.len()
+                );
+                // 完整字体测试同时防止子集化静默回退；保留样本供独立 PDF 阅读器核对中文。
+                assert!(output.len() < 1_000_000, "短文本不应嵌入整份中文字体");
+                let samples = Path::new(env!("CARGO_MANIFEST_DIR")).join("target/perf-results");
+                fs::create_dir_all(&samples).unwrap();
+                fs::write(samples.join(format!("sample-{label}.pdf")), &output).unwrap();
+                let mut output = Cursor::new(Vec::new());
+                let start = std::time::Instant::now();
+                long_png_with_font(&items, &options(), &mut output, &font).unwrap();
+                println!(
+                    "PERF png_{label}_ms={} bytes={}",
+                    start.elapsed().as_millis(),
+                    output.get_ref().len()
+                );
+            }
+        }
+    }
     // Noto Sans SC 静态字体的测试子集：ASCII 与下方用例的八个汉字，保留原始度量。
     // 来源 https://github.com/notofonts/noto-cjk；许可证在 tests/fixtures/OFL.txt。
     // 由 fontTools.subset 生成，仅编译进测试程序，生产导出使用用户下载/选择的字体。

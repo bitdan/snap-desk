@@ -4,6 +4,8 @@
 
 [项目源码](https://github.com/bitdan/snap-desk) · [功能与验收 TODO](跨平台截图工具_TODO.md) · [协作规则](AGENTS.md) · [GPL-3.0-only](LICENSE)
 
+测试命令、性能基准及已知缺失素材见 [测试与性能记录](tests/PERFORMANCE.md)。
+
 项目仍在开发中，已接入功能不代表全部通过原生或实机验收。当前以主显示器为主，录屏仅支持 Windows 10 2004+；macOS / Linux 兼容性见 TODO。
 
 ## 功能

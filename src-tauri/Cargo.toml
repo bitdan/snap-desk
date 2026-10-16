@@ -1,6 +1,6 @@
 [package]
 name = "snap-desk"
-version = "0.1.4-beta.4"
+version = "0.1.4-beta.5"
 license = "GPL-3.0-only"
 repository = "https://github.com/bitdan/snap-desk"
 description = "A focused cross-platform screenshot tool"
@@ -31,7 +31,8 @@ log = "0.4"
 tempfile = "3"
 rusqlite = { version = "=0.37.0", features = ["bundled"] }
 blake3 = "=1.8.2"
-printpdf = { version = "=0.7.0", default-features = false }
+# 仅嵌入实际使用的字形，避免短文本 PDF 携带整份约 24 MiB 中文字体。
+printpdf = { version = "=0.7.0", default-features = false, features = ["font_subsetting"] }
 ab_glyph = "=0.2.32"
 # OAR 复用 ort 的 CPU 推理及 PaddleOCR 前后处理；锁定兼容 Rust 1.90 的组合。
 oar-ocr = "=0.6.3"

@@ -4,6 +4,8 @@ mod capture;
 mod clipboard;
 mod image_io;
 mod ocr;
+#[cfg(test)]
+mod perf;
 mod pin_content;
 mod pins;
 mod platform;

@@ -6,5 +6,5 @@
     "isolatedModules": true, "noEmit": true,
     "baseUrl": ".", "paths": { "@/*": ["src/*"] }, "types": ["vite/client"]
   },
-  "include": ["src/**/*.ts", "src/**/*.vue", "vite.config.ts", "tests/**/*.ts"]
+  "include": ["src/**/*.ts", "src/**/*.vue", "vite.config.ts", "vitest.config.ts", "tests/**/*.ts"]
 }

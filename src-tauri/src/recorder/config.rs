@@ -229,7 +229,10 @@ mod tests {
         assert!(!restored.input_effects.enabled());
         let effects: InputEffects = serde_json::from_str(r#"{"keyboard":true}"#).unwrap();
         assert!(effects.keyboard && !effects.clicks);
-        assert_eq!(effects.size, 28);
+        // 与前端 defaultInputEffects 保持一致；旧配置缺字段时使用当前默认样式。
+        assert_eq!(effects.size, 20);
+        assert_eq!(effects.duration_ms, 400);
+        assert!(matches!(effects.position, KeyPosition::TopLeft));
         assert!(effects.validate().is_ok());
         for (size, duration_ms) in [(0, 700), (65, 700), (28, 199), (28, 2001)] {
             assert!(InputEffects {
