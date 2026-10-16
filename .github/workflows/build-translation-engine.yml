@@ -16,6 +16,10 @@ on:
 
 permissions:
   contents: read
+# Windows runner 的重定向输出可能使用 cp1252；中文日志和路径统一使用 UTF-8。
+env:
+  PYTHONUTF8: '1'
+  PYTHONIOENCODING: utf-8
 concurrency:
   group: translation-engine-${{ inputs.engine_revision }}
   cancel-in-progress: false

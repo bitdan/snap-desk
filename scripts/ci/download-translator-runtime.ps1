@@ -1,6 +1,8 @@
 # 应用/模型流水线共用同一份受审锁；旁边下载的 .sha256 不能替代仓库信任根。
 param([string]$RuntimeDir = 'src-tauri/translator-runtime')
 $ErrorActionPreference = 'Stop'
+$env:PYTHONUTF8 = '1'
+$env:PYTHONIOENCODING = 'utf-8'
 $lock = Get-Content -LiteralPath "$PSScriptRoot/translation-engine.json" -Raw | ConvertFrom-Json
 if ($lock.tag -notmatch '^translation-engine-v4\.6\.0-r[1-9][0-9]*$' -or $lock.sha256 -cnotmatch '^[0-9a-f]{64}$') {
     throw '请先构建、审核引擎，并将真实 ZIP SHA-256 写入 scripts/ci/translation-engine.json。'

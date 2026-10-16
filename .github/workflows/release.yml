@@ -14,6 +14,10 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  PYTHONUTF8: '1'
+  PYTHONIOENCODING: utf-8
+
 jobs:
   release:
     name: Windows x64 executable and installers

@@ -3,8 +3,11 @@ import copy
 import hashlib
 import importlib.util
 import json
+import os
 import stat
 import struct
+import subprocess
+import sys
 import tempfile
 import unittest
 import urllib.request
@@ -174,6 +177,61 @@ class RedirectTests(unittest.TestCase):
                     "https://user:secret@release-assets.githubusercontent.com/file"):
             with self.subTest(url=url), self.assertRaises(ValueError):
                 handler.redirect_request(request, None, 302, "Found", {}, url)
+
+
+class ConsoleEncodingTests(unittest.TestCase):
+    def test_runtime_verify_success_output_under_redirected_windows_encoding(self):
+        # 执行真实 verify() 到最后一行；仅替代原生 PE 扫描与 Worker 进程，避免编译。
+        # 子进程使用管道输出，复现 runner 而不是本地交互控制台的编码行为。
+        code = r'''
+import importlib.util, json, sys, tempfile
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
+spec = importlib.util.spec_from_file_location("runtime", sys.argv[1])
+runtime = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(runtime)
+with tempfile.TemporaryDirectory() as temp:
+    directory = Path(temp)
+    files = []
+    for name in ["snap-translator-worker.exe", "licenses/ctranslate2/LICENSE",
+                 "licenses/sentencepiece/LICENSE", "licenses/json/LICENSE"]:
+        path = directory / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"test fixture")
+        files.append(dict(name=name, size=path.stat().st_size, sha256=runtime.digest(path)))
+    info = dict(tag="translation-engine-v4.6.0-r1", runtime="4.6.0", protocol=1,
+                target="windows-x64", options=runtime.OPTIONS, dependencies={}, files=files)
+    (directory / "runtime-build.json").write_text(json.dumps(info), encoding="utf-8")
+    health = SimpleNamespace(stdout=json.dumps(dict(protocol=1, id="health", ok=True, runtime="4.6.0")))
+    with patch.object(runtime, "dependency_graph", return_value={}), \
+         patch.object(runtime.subprocess, "run", return_value=health), \
+         patch.dict(runtime.os.environ, {"SystemRoot": "C:/Windows"}):
+        runtime.verify(SimpleNamespace(directory=directory, tag=info["tag"]))
+'''
+        script = str(Path(__file__).with_name("translator-runtime.py").resolve())
+        env = dict(os.environ, PYTHONUTF8="0", PYTHONIOENCODING="cp1252")
+        broken = subprocess.run([sys.executable, "-c", code, script], env=env, capture_output=True)
+        self.assertNotEqual(broken.returncode, 0)
+        self.assertIn(b"UnicodeEncodeError", broken.stderr)
+        # 与三个工作流及两个 PowerShell 入口一致，同时固定 UTF-8 模式和标准流编码。
+        env.update(PYTHONUTF8="1", PYTHONIOENCODING="utf-8")
+        fixed = subprocess.run([sys.executable, "-c", code, script], env=env, capture_output=True)
+        self.assertEqual(fixed.returncode, 0, fixed.stderr.decode("utf-8"))
+        self.assertIn("已验证 translation-engine-v4.6.0-r1", fixed.stdout.decode("utf-8"))
+        self.assertIn("SHA-256 / health", fixed.stdout.decode("utf-8"))
+
+    def test_catalog_cli_can_print_chinese_in_ci(self):
+        root = Path(__file__).resolve().parents[2]
+        env = dict(os.environ, PYTHONUTF8="1", PYTHONIOENCODING="utf-8")
+        with tempfile.TemporaryDirectory() as temp:
+            catalog = Path(temp) / "catalog.json"
+            catalog.write_text("[]", encoding="utf-8")
+            result = subprocess.run([sys.executable, "scripts/ci/generate-model-catalog.py",
+                                     "--check", "--output", str(catalog)],
+                                    cwd=root, env=env, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr.decode("utf-8"))
+        self.assertIn("已验证 0 个模型清单", result.stdout.decode("utf-8"))
 
 
 if __name__ == "__main__":
