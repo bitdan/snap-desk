@@ -3,7 +3,7 @@
   "private": true,
   "license": "GPL-3.0-only",
   "repository": { "type": "git", "url": "https://github.com/bitdan/snap-desk.git" },
-  "version": "0.1.4-beta.5",
+  "version": "0.1.5-beta.1",
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
