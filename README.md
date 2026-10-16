@@ -33,6 +33,16 @@ Windows x64 / ARM64 的 ONNX Runtime 1.24.2 使用 `ort/load-dynamic`，首次�
 
 离线导出测试使用 `src-tauri/tests/fixtures/export-test.ttf` 的小型字体子集，保留原始字体度量及许可证。允许编译时可定向运行 `cargo test --locked resources::tests` 和 `cargo test --locked clipboard::export::tests`；发布前仍需实机检查下载失败重试、离线识别及中文 PDF/长图导出。
 
+### 截图翻译（本地优先，Windows x64）
+
+先安装上述 OCR 资源，再进入“识别与翻译”页。默认使用 CTranslate2 / OPUS-MT，本地支持英译中和中译英；选择目标语言并安装对应语言包后保存。引擎与语言包独立于 OCR，缺少翻译资源不影响截图或识别。原生 Worker、固定 revision 模型转换、离线包导入及发布步骤见 [本地翻译开发说明](src-tauri/native/translator/README.md)。当前仓库尚未包含编译后的 Worker 或已发布模型下载清单，需先完成这些准备，不能直接宣称离线版本已验收。
+
+截图框选后点击“截图翻译”，本地识别无标注原图。在双语面板中检查或修正原文，然后翻译、取消或复制译文。本地模式不发送网络请求，超时或取消会终止原生推理进程；失败不自动切换在线服务。关闭面板会取消请求并丢弃迟到结果。
+
+可显式选择在线文本服务，填写兼容 Chat Completions 的完整接口地址、模型和 API Key。密钥保存在 Windows 凭证库，不进入设置导出；每次翻译前需确认文本上传，固定样本连接测试也可能计费。图片不上传，已发送的请求即使取消也可能计费。尚未实现视觉 OCR、文字框段落重建、原位覆盖与翻译贴图；其他平台未完成原生引擎与凭证存储验收。
+
+定向静态检查：`npm run check`；配置测试：`npx vitest run tests/ai.test.ts tests/settings.test.ts`。允许编译后，可在 `src-tauri` 运行 `cargo test --locked translation::tests` 和 `cargo test --locked settings::tests`，并在 Windows 实机验证凭证读写、本地 OCR、服务连接、取消及断网行为。
+
 ### 快捷键、首次引导与存储
 
 “快捷键”页统一配置区域截图、剪贴板贴图和录屏，默认分别为 F1、F2、F3。点击快捷键框直接按组合键：Esc 取消，Backspace / Delete 清空并禁用该动作；也可单独恢复默认。录入时临时释放本应用全局键，全部松键后恢复原绑定，点击“保存快捷键”才提交草稿。重复绑定会指出冲突功能，系统占用或保存失败会回滚原配置。

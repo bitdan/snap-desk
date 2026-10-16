@@ -1,15 +1,32 @@
 //! 截图文字识别：复用 OAR-OCR 的检测、透视裁剪及 CTC 解码，通过 ort 在 CPU 上推理。
+use crate::recognition::{OcrLine, OcrResult, PolygonPoint};
 use oar_ocr::core::config::OrtSessionConfig;
 use oar_ocr::prelude::*;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Instant;
 use std::{path::Path, sync::Mutex};
 use tauri::{AppHandle, Manager, WebviewWindow};
 use tauri_plugin_clipboard_manager::ClipboardExt;
+
+static REQUEST_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
 /// 模型首次使用时加载，后续复用；互斥锁限制同时只有一个识别任务，控制内存峰值。
 #[derive(Default)]
 pub struct OcrState(Mutex<Option<OAROCR>>);
 
 pub fn recognize(app: &AppHandle, image: &image::RgbaImage) -> Result<String, String> {
+    Ok(recognize_structured(app, image)?.full_text)
+}
+
+/// 新旧入口共享模型锁与过滤规则，结构化识别不会额外加载模型。
+pub fn recognize_structured(
+    app: &AppHandle,
+    image: &image::RgbaImage,
+) -> Result<OcrResult, String> {
+    let started = Instant::now();
+    if image.width() == 0 || image.height() == 0 {
+        return Err("OCR 选区不能为空。".into());
+    }
     if u64::from(image.width()) * u64::from(image.height()) > 16_000_000 {
         return Err("OCR 选区超过 1600 万像素，请缩小范围。".into());
     }
@@ -19,7 +36,9 @@ pub fn recognize(app: &AppHandle, image: &image::RgbaImage) -> Result<String, St
         let dir = crate::resources::ocr_paths(app)?;
         *engine = Some(build_engine(&dir)?);
     }
-    recognize_image(engine.as_ref().ok_or("OCR 未初始化。")?, image)
+    let mut result = recognize_regions(engine.as_ref().ok_or("OCR 未初始化。")?, image)?;
+    result.elapsed_ms = started.elapsed().as_millis() as u64;
+    Ok(result)
 }
 
 /// 与性能测试共用模型加载和推理路径，避免基准只测到与产品不同的代码。
@@ -47,19 +66,64 @@ fn build_engine(dir: &Path) -> Result<OAROCR, String> {
     .map_err(|e| format!("OCR 模型加载失败：{e}"))
 }
 
+#[cfg(test)]
 fn recognize_image(engine: &OAROCR, image: &image::RgbaImage) -> Result<String, String> {
+    Ok(recognize_regions(engine, image)?.full_text)
+}
+
+fn recognize_regions(engine: &OAROCR, image: &image::RgbaImage) -> Result<OcrResult, String> {
     let rgb = crate::image_io::white_background(image);
     let results = engine
         .predict(vec![rgb])
         .map_err(|e| format!("文字识别失败：{e}"))?;
-    Ok(results
+    let lines: Vec<OcrLine> = results
         .iter()
         .flat_map(|r| r.text_regions.iter())
-        .filter_map(|r| r.text_with_confidence())
-        .filter(|(text, confidence)| !text.trim().is_empty() && *confidence >= 0.5)
-        .map(|(text, _)| text.to_string())
-        .collect::<Vec<_>>()
-        .join("\n"))
+        .filter_map(|region| {
+            let (text, confidence) = region.text_with_confidence()?;
+            if text.trim().is_empty() || !confidence.is_finite() || confidence < 0.5 {
+                return None;
+            }
+            // OAR 已将检测坐标还原至输入图像；不再乘检测网络的缩放比例。
+            let points = &region.bounding_box.points;
+            let polygon = (points.len() == 4
+                && points.iter().all(|p| p.x.is_finite() && p.y.is_finite()))
+            .then(|| {
+                points
+                    .iter()
+                    .map(|p| PolygonPoint {
+                        x: p.x.clamp(0.0, image.width() as f32),
+                        y: p.y.clamp(0.0, image.height() as f32),
+                    })
+                    .collect()
+            });
+            Some((text.to_string(), confidence, polygon))
+        })
+        .enumerate()
+        .map(|(order, (text, confidence, polygon))| OcrLine {
+            id: format!("line-{:04}", order + 1),
+            text,
+            confidence: Some(confidence),
+            polygon,
+            language: None,
+            order,
+            paragraph_id: None,
+        })
+        .collect();
+    Ok(OcrResult {
+        request_id: format!("ocr-{}", REQUEST_SEQUENCE.fetch_add(1, Ordering::Relaxed)),
+        provider: "local-ppocr".into(),
+        image_width: image.width(),
+        image_height: image.height(),
+        full_text: lines
+            .iter()
+            .map(|line| line.text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n"),
+        lines,
+        elapsed_ms: 0,
+        warnings: Vec::new(),
+    })
 }
 
 #[cfg(test)]

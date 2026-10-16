@@ -1,0 +1,7 @@
+{
+  "bundle": {
+    "resources": {
+      "translator-runtime/": "translator-runtime/"
+    }
+  }
+}

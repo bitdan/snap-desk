@@ -47,6 +47,7 @@ ab_glyph = "=0.2.32"
 oar-ocr = { version = "=0.6.3", default-features = false }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
 sha2 = "0.10"
+tokio = { version = "1", features = ["macros", "sync", "process", "io-util", "time"] }
 gif = "=0.14.2"
 rqrr = { version = "=0.10.1", default-features = false }
 open = "5"
@@ -60,7 +61,7 @@ qrcode = { version = "0.14", default-features = false }
 ort = { version = "=2.0.0-rc.12", default-features = false, features = ["load-dynamic", "api-24"] }
 zip = { version = "=6.0.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 clipboard-win = "=5.4.1"
-windows = { version = "=0.62.2", features = ["Win32_Media_MediaFoundation", "Win32_System_Com", "Win32_System_DataExchange", "Win32_System_Memory", "Win32_Graphics_Gdi", "Foundation_Metadata", "Graphics_Capture", "Graphics_DirectX_Direct3D11", "Win32_Graphics_Direct3D", "Win32_Graphics_Direct3D11", "Win32_Graphics_Dxgi_Common", "Win32_System_WinRT_Direct3D11", "Win32_System_WinRT_Graphics_Capture", "Win32_System_Performance", "Win32_UI_WindowsAndMessaging", "Win32_UI_Input", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_HiDpi", "Win32_System_LibraryLoader"] }
+windows = { version = "=0.62.2", features = ["Win32_Security_Credentials", "Win32_Media_MediaFoundation", "Win32_System_Com", "Win32_System_DataExchange", "Win32_System_Memory", "Win32_Graphics_Gdi", "Foundation_Metadata", "Graphics_Capture", "Graphics_DirectX_Direct3D11", "Win32_Graphics_Direct3D", "Win32_Graphics_Direct3D11", "Win32_Graphics_Dxgi_Common", "Win32_System_WinRT_Direct3D11", "Win32_System_WinRT_Graphics_Capture", "Win32_System_Performance", "Win32_UI_WindowsAndMessaging", "Win32_UI_Input", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_HiDpi", "Win32_System_LibraryLoader"] }
 
 # 本次仅切换 Windows DLL；其他平台保留原有 CPU 引擎构建方式。
 [target.'cfg(not(windows))'.dependencies]

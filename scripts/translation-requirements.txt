@@ -1,0 +1,8 @@
+# 仅开发/CI 模型转换环境；最终客户端不需要 Python。
+ctranslate2==4.6.0
+transformers==4.49.0
+torch==2.6.0
+sentencepiece==0.2.0
+huggingface-hub==0.29.3
+sacremoses==0.1.1
+numpy==2.2.3

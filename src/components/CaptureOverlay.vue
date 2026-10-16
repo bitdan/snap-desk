@@ -2,8 +2,10 @@
 import ScrollCaptureIcon from './ScrollCaptureIcon.vue'
 import QrResultCard from './QrResultCard.vue'
 import OcrResultCard from './OcrResultCard.vue'
+import TranslationPanel from './TranslationPanel.vue'
+import type { OcrResult } from '@/lib/ai'
 import { computed, nextTick, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue'
-import { Copy, Save, X, Monitor, RotateCcw, Scan, Move, Pin, Video, QrCode, ScanText } from 'lucide-vue-next'
+import { Copy, Save, X, Monitor, RotateCcw, Scan, Move, Pin, Video, QrCode, ScanText, Languages } from 'lucide-vue-next'
 import { api, onFrame, onCapturePin, onScroll, type CaptureFrame, type ColorFormat, type ScrollView, type QrResult } from '@/lib/api'
 import { clamp, move, normalize, resize, toPixels, nudgeSelection, type Handle, type Point, type Rect } from '@/lib/selection'
 import { useAnnotations, type AnnotationTool } from '@/lib/use-annotations'
@@ -23,18 +25,21 @@ const recentSelection = ref(readRecentSelection())
 const recentRect = computed(() => frame.value ? restoreRecentSelection(recentSelection.value, frame.value, viewport.value) : null)
 const busy = ref(false)
 const qrResult = ref<QrResult | null>(null)
-const ocrResult = ref<string | null>(null)
+const ocrResult = ref<OcrResult | null>(null)
+const translationMode = ref(false)
+const translationTrigger = ref<HTMLButtonElement | null>(null)
 const ocrTrigger = ref<HTMLButtonElement | null>(null)
 function closeOcr() {
   ocrResult.value = null
-  void nextTick(() => ocrTrigger.value?.focus())
+  void nextTick(() => (translationMode.value ? translationTrigger.value : ocrTrigger.value)?.focus())
 }
-async function recognizeText() {
+async function recognizeText(translate = false) {
   if (!frame.value || !pixels.value || busy.value || editor.pending || editor.interacting || gesture) return
   const id = frame.value.id
+  translationMode.value = translate
   busy.value = true; error.value = ''
   try {
-    const text = await api.recognizeText(id, pixels.value, editor.history.present)
+    const text = await api.recognizeCapture(id, pixels.value)
     if (frame.value?.id === id) ocrResult.value = text
   } catch (e) { error.value = String(e) }
   finally { busy.value = false }
@@ -334,7 +339,8 @@ onUnmounted(() => { disposed = true; off?.(); offScroll?.(); offPin?.(); window.
           <button :disabled="busy || editor.pending || editor.interacting || marked" ref="scrollTrigger" title="长截图选项" aria-label="长截图选项" aria-haspopup="dialog" :aria-expanded="scrollSetup" @click="openScrollMenu"><ScrollCaptureIcon :size="16" /></button>
           <button ref="recordingTrigger" :disabled="busy || editor.pending || editor.interacting || marked || !recordingCapabilities?.available" :title="recordingCapabilities?.reason ?? (recordingCapabilityError || (recordingCapabilities ? '录屏选项' : '正在检查录屏能力…'))" aria-label="录屏选项" aria-haspopup="dialog" :aria-expanded="recordingSetup" @click="openRecordingMenu"><Video :size="16" /></button>
         <button :disabled="busy || editor.pending || editor.interacting" title="贴图 Ctrl/⌘+P" aria-label="贴图" @click="finish('pin')"><Pin :size="16" /></button>
-        <button ref="ocrTrigger" :disabled="busy || editor.pending || editor.interacting" title="识别文字" aria-label="识别文字" aria-haspopup="dialog" :aria-expanded="ocrResult !== null" @click="recognizeText"><ScanText :size="16" /></button>
+        <button ref="ocrTrigger" :disabled="busy || editor.pending || editor.interacting" title="识别文字" aria-label="识别文字" aria-haspopup="dialog" :aria-expanded="ocrResult !== null && !translationMode" @click="recognizeText(false)"><ScanText :size="16" /></button>
+        <button ref="translationTrigger" :disabled="busy || editor.pending || editor.interacting" title="截图翻译" aria-label="截图翻译" aria-haspopup="dialog" :aria-expanded="ocrResult !== null && translationMode" @click="recognizeText(true)"><Languages :size="16" /></button>
         <button :disabled="busy || editor.pending || editor.interacting" title="识别二维码" aria-label="识别二维码" aria-haspopup="dialog" :aria-expanded="!!qrResult" @click="recognizeQr"><QrCode :size="16" /></button>
         <button :disabled="busy || editor.pending || editor.interacting" title="保存图片 Ctrl/⌘+S" aria-label="保存图片" @click="finish('save')"><Save :size="16" /></button>
         <button class="copy-button" :disabled="busy || editor.pending || editor.interacting" :title="busy ? '处理中…' : '复制图片 Enter'" :aria-label="busy ? '处理中' : '复制图片'" :aria-busy="busy" @click="finish('copy')"><Copy :size="16" /></button>
@@ -344,8 +350,9 @@ onUnmounted(() => { disposed = true; off?.(); offScroll?.(); offPin?.(); window.
     </div>
     <CaptureMagnifier v-if="showMagnifier && screenImage && pointer && frame" :image="screenImage" :point="pointer" :viewport="viewport" :image-size="frame" :format="colorFormat" :relative="relativeCoordinates" :origin="pixels" :copied="colorCopied" />
     <div v-if="ocrResult !== null" class="qr-shade" @pointerdown.stop @pointermove.stop @pointerup.stop @contextmenu.stop.prevent>
-      <div class="qr-dialog" role="dialog" aria-modal="true" aria-label="文字识别结果">
-        <OcrResultCard :text="ocrResult" @close="closeOcr" />
+      <div :class="['qr-dialog', { 'translation-dialog': translationMode }]" role="dialog" aria-modal="true" :aria-label="translationMode ? '截图翻译' : '文字识别结果'">
+        <TranslationPanel v-if="translationMode" :result="ocrResult" @close="closeOcr" />
+        <OcrResultCard v-else :text="ocrResult.fullText" @close="closeOcr" />
       </div>
     </div>
     <div v-if="qrResult" class="qr-shade" @pointerdown.stop @pointermove.stop @pointerup.stop @contextmenu.stop.prevent>
@@ -366,6 +373,7 @@ onUnmounted(() => { disposed = true; off?.(); offScroll?.(); offPin?.(); window.
 <style scoped>
 .qr-shade { position: absolute; inset: 0; z-index: 10; display: grid; place-items: center; cursor: default; background: #0003; }
 .qr-dialog { width: min(440px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow-y: auto; color: #20232b; }
+.translation-dialog { width: min(820px, calc(100vw - 32px)); }
 .recording-menu-shade { position: absolute; inset: 0; z-index: 6; cursor: default; }
 .capture-toolbar.annotation-toolbar { max-width: none; }
 .capture-toolbar :deep(.annotation-tools) { width: max-content; max-width: none; }

@@ -321,6 +321,7 @@ pub fn show_capture(app: AppHandle, window: WebviewWindow, id: u64) -> Result<()
 
 /// 完成、取消或失败后仅清理采集窗口和会话，不自动返回主界面。
 fn cleanup(app: &AppHandle) -> Result<(), String> {
+    crate::translation::cancel_all(app);
     // Keep the session recoverable if hiding fails; don't expose a dead overlay.
     overlay(app)?.hide().map_err(err)?;
     scroll::chrome::hide(app);
@@ -417,6 +418,30 @@ fn crop(
         },
     )?;
     Ok(image)
+}
+
+/// 空标注沿用原有会话、选区和长截图校验，不让标注污染 OCR 输入。
+pub(crate) fn crop_source(app: &AppHandle, id: u64, rect: Rect) -> Result<RgbaImage, String> {
+    crop(app, id, rect, &[])
+}
+
+/// 结构化识别只对截图窗口开放；推理在阻塞线程执行，不阻塞界面。
+#[tauri::command]
+pub async fn recognize_capture_v2(
+    app: AppHandle,
+    window: WebviewWindow,
+    id: u64,
+    rect: Rect,
+) -> Result<crate::recognition::OcrResult, String> {
+    require_window(&window, "capture")?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<CaptureState>();
+        let _operation = Operation::acquire(&state.operation)?;
+        let cropped = crop_source(&app, id, rect)?;
+        crate::recognition::provider("local-ppocr")?.recognize(&app, &cropped)
+    })
+    .await
+    .map_err(err)?
 }
 
 #[tauri::command]

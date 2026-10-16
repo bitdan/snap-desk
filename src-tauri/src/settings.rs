@@ -151,6 +151,7 @@ impl Shortcuts {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", try_from = "SettingsWire")]
 pub struct Settings {
+    pub ai: crate::translation::AiSettings,
     pub shortcuts: Shortcuts,
     pub shortcuts_enabled: bool,
     pub delay_seconds: u8,
@@ -164,6 +165,8 @@ pub struct Settings {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct SettingsWire {
+    #[serde(default)]
+    ai: crate::translation::AiSettings,
     shortcut: Option<String>,
     shortcuts: Option<Shortcuts>,
     #[serde(default = "enabled_by_default")]
@@ -195,6 +198,7 @@ impl TryFrom<SettingsWire> for Settings {
             export: wire.export,
             clipboard: wire.clipboard,
             onboarding_version: wire.onboarding_version,
+            ai: wire.ai,
         })
     }
 }
@@ -210,6 +214,7 @@ impl Default for Settings {
             export: ExportSettings::default(),
             clipboard: crate::clipboard::model::ClipboardSettings::default(),
             onboarding_version: 0,
+            ai: crate::translation::AiSettings::default(),
         }
     }
 }
@@ -248,6 +253,7 @@ fn parse_shortcut(value: &str) -> Result<Option<Shortcut>, String> {
 }
 impl Settings {
     pub fn validate(&self) -> Result<(), String> {
+        self.ai.validate()?;
         self.export.validate()?;
         self.clipboard.validate()?;
         if ![0, 3, 5].contains(&self.delay_seconds) {
@@ -775,6 +781,7 @@ mod tests {
         assert_eq!(value.delay_seconds, 5);
         assert!(value.shortcuts_enabled);
         assert_eq!(value.export, ExportSettings::default());
+        assert_eq!(value.ai, crate::translation::AiSettings::default());
         assert!(value.validate().is_ok());
     }
 

@@ -1,9 +1,14 @@
 mod annotations;
+mod ai_credentials;
+mod translation;
+mod local_translation;
+mod translation_models;
 mod autostart;
 mod capture;
 mod clipboard;
 mod image_io;
 mod ocr;
+mod recognition;
 #[cfg(test)]
 mod perf;
 mod pin_content;
@@ -152,6 +157,8 @@ pub fn run() {
         .manage(settings::ShortcutPressState::default())
         .manage(qr::QrState::default())
         .manage(ocr::OcrState::default())
+        .manage(translation::TranslationState::default())
+        .manage(local_translation::LocalTranslationState::default())
         .manage(capture::recording::RecordingState::default())
         .manage(capture::recording::result::ResultState::default())
         .manage(capture::recording::ExitState::default())
@@ -287,6 +294,9 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
+            if window.label() == "capture" && matches!(event, tauri::WindowEvent::Destroyed | tauri::WindowEvent::CloseRequested { .. }) {
+                translation::cancel_all(window.app_handle());
+            }
             // 按已提交映射响应事件；try_lock 避免阻塞系统事件线程。??
             if window.label() == "main"
                 && matches!(
@@ -347,6 +357,15 @@ pub fn run() {
             resources::download_resources,
             resources::choose_export_font,
             capture::recognize_capture_text,
+            capture::recognize_capture_v2,
+            translation_models::translation_model_status,
+            translation_models::translation_model_action,
+            translation::translate_text,
+            translation::cancel_ai_job,
+            translation::ai_credential_set,
+            translation::ai_provider_status,
+            translation::ai_translation_config,
+            translation::ai_provider_test,
             ocr::copy_ocr_text,
             app_status,
             clipboard::clipboard_status,
@@ -415,6 +434,8 @@ pub fn run() {
         .run(|app, event| {
             // 录屏的退出流程完成后才收到 Exit；等待历史在途写入释放。
             if matches!(event, tauri::RunEvent::Exit) {
+                translation::cancel_all(app);
+                local_translation::shutdown(app);
                 app.state::<clipboard::Service>().shutdown();
             }
         });

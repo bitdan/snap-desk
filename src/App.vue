@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { Camera, Keyboard, Info, Scan, PanelLeftClose, Pin, Video, Folder, CircleHelp } from 'lucide-vue-next'
 import GeneralSettings from '@/components/GeneralSettings.vue'
+import AiProviderSettings from '@/components/AiProviderSettings.vue'
 import OnboardingGuide from '@/components/OnboardingGuide.vue'
 import ShortcutInput from '@/components/ShortcutInput.vue'
 import RecordingPanel from '@/components/RecordingPanel.vue'
@@ -13,7 +14,7 @@ import { defaultSettings, exportFilenamePreview, validateExportSettings, validat
 import { errorMessage } from '@/lib/errors'
 
 const page = ref('截图')
-const items = [{ name: '截图', icon: Camera }, { name: '录屏', icon: Video }, { name: '贴图', icon: Pin }, { name: '剪贴板', icon: Folder }, { name: '快捷键', icon: Keyboard }, { name: '通用', icon: Folder }, { name: '帮助', icon: CircleHelp }, { name: '关于', icon: Info }]
+const items = [{ name: '截图', icon: Camera }, { name: '录屏', icon: Video }, { name: '贴图', icon: Pin }, { name: '剪贴板', icon: Folder }, { name: '快捷键', icon: Keyboard }, { name: '通用', icon: Folder }, { name: '识别与翻译', icon: Scan }, { name: '帮助', icon: CircleHelp }, { name: '关于', icon: Info }]
 const status = ref<AppStatus | null>(null)
 const pending = ref(false)
 const saving = ref(false)
@@ -187,6 +188,7 @@ onUnmounted(() => { disposed = true; disposers.splice(0).forEach(off => off()) }
 
         <ClipboardHistory v-else-if="page === '剪贴板'" />
         <GeneralSettings v-else-if="page === '通用'" />
+        <AiProviderSettings v-else-if="page === '识别与翻译'" />
         <template v-else-if="page === '帮助'">
           <h1>帮助</h1><p class="subtitle">快速了解截图、贴图、长截图与录屏。</p>
           <Button :disabled="!status || completingOnboarding" @click="onboarding = true">重新打开新手引导</Button>

@@ -1,3 +1,4 @@
+import { defaultAiSettings, type AiSettings } from './ai'
 import { defaultClipboardSettings, type ClipboardSettings } from './clipboard'
 /** 与 Rust Settings / ExportSettings 的 camelCase 序列化契约一致。 */
 export interface ExportSettings {
@@ -18,11 +19,11 @@ export const shortcutActions: { key: ShortcutAction; label: string; description:
 ]
 export const ONBOARDING_VERSION = 1
 export function needsOnboarding(version: number): boolean { return version < ONBOARDING_VERSION }
-export interface Settings { onboardingVersion: number; shortcuts: Shortcuts; shortcutsEnabled: boolean; delaySeconds: 0 | 3 | 5; export: ExportSettings; clipboard: ClipboardSettings }
+export interface Settings { ai: AiSettings; onboardingVersion: number; shortcuts: Shortcuts; shortcutsEnabled: boolean; delaySeconds: 0 | 3 | 5; export: ExportSettings; clipboard: ClipboardSettings }
 
 /** 每次返回独立对象，避免编辑草稿时改动“恢复默认”的值。 */
 export function defaultSettings(): Settings {
-  return { clipboard: defaultClipboardSettings(), onboardingVersion: 0, shortcuts: { capture: 'F1', pin: 'F2', record: 'F3', history: 'Ctrl+Shift+V' }, shortcutsEnabled: true, delaySeconds: 0, export: {
+  return { ai: defaultAiSettings(), clipboard: defaultClipboardSettings(), onboardingVersion: 0, shortcuts: { capture: 'F1', pin: 'F2', record: 'F3', history: 'Ctrl+Shift+V' }, shortcutsEnabled: true, delaySeconds: 0, export: {
     format: 'png', jpegQuality: 90, filenamePrefix: 'SnapDesk', includeDimensions: false, rememberDirectory: true,
   } }
 }

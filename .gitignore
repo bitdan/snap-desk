@@ -1,6 +1,8 @@
 node_modules/
 dist/
 src-tauri/target/
+src-tauri/translator-runtime/
+scripts/__pycache__/
 src-tauri/gen/schemas/
 *.log
 # Extra icon variants produced by `tauri icon`; this project targets desktop only.

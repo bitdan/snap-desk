@@ -4,6 +4,7 @@ import { listen as nativeListen, type EventCallback } from '@tauri-apps/api/even
 import { errorMessage } from './errors'
 import type { Point, Rect } from './selection'
 import type { Annotation } from './annotations'
+import type { AiSettings, OcrResult, TranslationResult, LocalTranslationStatus } from './ai'
 import type { Settings } from './settings'
 import type { RecorderCapabilities, RecorderConfig, RecordingAction, RecordingDirectory, RecordingView, RecoverableRecording } from './recording'
 import type { RecordingResult, RecordingResultAction } from './recording'
@@ -43,6 +44,15 @@ export const api = {
   downloadResources: (kind: 'ocr' | 'font') => invoke<ResourceStatus>('download_resources', { kind }),
   chooseExportFont: () => invoke<ResourceStatus>('choose_export_font'),
   recognizeText: (id: number, rect: Rect, annotations: Annotation[]) => invoke<string>('recognize_capture_text', { id, rect, annotations }),
+  recognizeCapture: (id: number, rect: Rect) => invoke<OcrResult>('recognize_capture_v2', { id, rect }),
+  translateText: (requestId: string, text: string, consent: boolean, expectedSettings: AiSettings) => invoke<TranslationResult>('translate_text', { requestId, text, consent, expectedSettings }),
+  translationModelStatus: () => invoke<LocalTranslationStatus>('translation_model_status'),
+  translationModelAction: (modelId: string, action: 'download' | 'import' | 'delete') => invoke<LocalTranslationStatus>('translation_model_action', { modelId, action }),
+  aiTranslationConfig: () => invoke<AiSettings>('ai_translation_config'),
+  cancelAiJob: (requestId: string) => invoke<void>('cancel_ai_job', { requestId }),
+  aiCredentialSet: (secret: string | null) => invoke<void>('ai_credential_set', { secret }),
+  aiProviderStatus: () => invoke<boolean>('ai_provider_status'),
+  aiProviderTest: () => invoke<void>('ai_provider_test'),
   copyOcrText: (text: string) => invoke<void>('copy_ocr_text', { text }),
   clipboardStatus: () => invoke<ClipboardStatus>('clipboard_status'),
   clipboardList: (query: ClipboardQuery) => invoke<ClipboardPage>('clipboard_list', { query }),
