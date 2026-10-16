@@ -11,7 +11,11 @@ if ($lock.runtime -ne '4.6.0' -or $lock.protocol -ne 1 -or $lock.target -ne 'win
     throw '引擎锁与当前应用的 runtime/协议/架构/附件契约不兼容。'
 }
 if (Test-Path -LiteralPath $RuntimeDir) { throw 'runtime 目录必须不存在，避免混入旧 DLL。' }
-$download = Join-Path ([System.IO.Path]::GetTempPath()) ([guid]::NewGuid().ToString())
+$destination = [System.IO.Path]::GetFullPath($RuntimeDir)
+$runtimeParent = [System.IO.Path]::GetDirectoryName($destination)
+[System.IO.Directory]::CreateDirectory($runtimeParent) | Out-Null
+# 与目标目录同卷，避免 TEMP 在 C:、工作区在 D:/F: 时目录原子移动失败。
+$download = Join-Path $runtimeParent ('.translator-download-' + [guid]::NewGuid().ToString())
 New-Item -ItemType Directory -Path $download | Out-Null
 try {
     gh release download $lock.tag --repo $env:GH_REPO --pattern $lock.asset --dir $download
@@ -21,13 +25,16 @@ try {
         throw '翻译引擎 ZIP 摘要不匹配。'
     }
     # 解压前拒绝目录穿越、重复成员和超大压缩包。
-    python "$PSScriptRoot/translator-runtime.py" extract $zip $RuntimeDir
+    # 先在临时目录完成全部检查；失败不留下最终 runtime 目录，允许直接重试。
+    $staging = Join-Path $download 'runtime'
+    python "$PSScriptRoot/translator-runtime.py" extract $zip $staging
     if ($LASTEXITCODE -ne 0) { throw '引擎解压失败。' }
-    & "$PSScriptRoot/verify-translator-runtime.ps1" -RuntimeDir $RuntimeDir -EngineTag $lock.tag
+    & "$PSScriptRoot/verify-translator-runtime.ps1" -RuntimeDir $staging -EngineTag $lock.tag
+    # Directory.Move 拒绝覆盖已有目录，不会把文件混入另一份 runtime。
+    [System.IO.Directory]::Move($staging, $destination)
 } finally {
     # download 是本脚本生成的临时 UUID 目录，仅清理这个已解析的路径。
-    $tempRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath())
     $resolved = [System.IO.Path]::GetFullPath($download)
-    if (-not $resolved.StartsWith($tempRoot, [System.StringComparison]::OrdinalIgnoreCase)) { throw '临时路径越界。' }
+    if ([System.IO.Path]::GetDirectoryName($resolved) -ne $runtimeParent -or [System.IO.Path]::GetFileName($resolved) -notmatch '^\.translator-download-[0-9a-f-]{36}$') { throw '临时路径越界。' }
     Remove-Item -LiteralPath $resolved -Recurse -Force
 }

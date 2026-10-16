@@ -2,6 +2,8 @@
 import hashlib
 import json
 import re
+import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -80,14 +82,24 @@ class ReleaseRedirect(urllib.request.HTTPRedirectHandler):
 def verify_remote(pack):
     opener = urllib.request.build_opener(ReleaseRedirect())
     for item in pack["files"]:
-        size, sha = 0, hashlib.sha256()
-        with opener.open(item["url"], timeout=60) as response:
-            if response.status != 200:
-                raise ValueError("附件 HTTP 状态异常")
-            while chunk := response.read(1024 * 1024):
-                size += len(chunk)
-                if size > item["size"]:
-                    raise ValueError("附件下载超出声明大小")
-                sha.update(chunk)
-        if size != item["size"] or sha.hexdigest() != item["sha256"]:
-            raise ValueError("已发布附件与审核清单不一致")
+        # 刚发布的附件可能短暂 404/5xx；从头重试网络失败，不重试摘要/大小/跳转违规。
+        for attempt in range(3):
+            try:
+                size, sha = 0, hashlib.sha256()
+                with opener.open(item["url"], timeout=60) as response:
+                    if response.status != 200:
+                        raise ValueError("附件 HTTP 状态异常")
+                    while chunk := response.read(1024 * 1024):
+                        size += len(chunk)
+                        if size > item["size"]:
+                            raise ValueError("附件下载超出声明大小")
+                        sha.update(chunk)
+                if size != item["size"] or sha.hexdigest() != item["sha256"]:
+                    raise ValueError("已发布附件与审核清单不一致")
+                break
+            except (urllib.error.URLError, TimeoutError, ConnectionError) as error:
+                if isinstance(error, urllib.error.HTTPError) and error.code not in {404, 429, 500, 502, 503, 504}:
+                    raise
+                if attempt == 2:
+                    raise
+                time.sleep(2 ** (attempt + 1))

@@ -2,6 +2,7 @@
 import copy
 import hashlib
 import importlib.util
+import io
 import json
 import os
 import stat
@@ -11,11 +12,13 @@ import sys
 import tempfile
 import unittest
 import urllib.request
+import urllib.error
 import zipfile
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 from model_release import read_pack, validate, ReleaseRedirect
+import model_release
 
 spec = importlib.util.spec_from_file_location("runtime", Path(__file__).with_name("translator-runtime.py"))
 runtime = importlib.util.module_from_spec(spec)
@@ -167,6 +170,34 @@ class RuntimeTests(unittest.TestCase):
 
 
 class RedirectTests(unittest.TestCase):
+    def test_remote_download_retries_temporary_404(self):
+        data = b"model fixture"
+        response = io.BytesIO(data)
+        response.status = 200
+        opener = MagicMock()
+        opener.open.side_effect = [urllib.error.HTTPError("https://example.test", 404, "not ready", {}, None), response]
+        pack = {"files": [dict(url="https://example.test", size=len(data), sha256=hashlib.sha256(data).hexdigest())]}
+        with patch.object(model_release.urllib.request, "build_opener", return_value=opener), \
+             patch.object(model_release.time, "sleep") as sleep:
+            model_release.verify_remote(pack)
+            sleep.assert_called_once_with(2)
+        self.assertEqual(opener.open.call_count, 2)
+
+    def test_remote_download_rejects_corruption_without_retry(self):
+        for expected_size, expected_hash in [(1, "0" * 64), (3, "0" * 64)]:
+            with self.subTest(size=expected_size):
+                response = io.BytesIO(b"bad")
+                response.status = 200
+                opener = MagicMock()
+                opener.open.return_value = response
+                pack = {"files": [dict(url="https://example.test", size=expected_size, sha256=expected_hash)]}
+                with patch.object(model_release.urllib.request, "build_opener", return_value=opener), \
+                     patch.object(model_release.time, "sleep") as sleep:
+                    with self.assertRaises(ValueError):
+                        model_release.verify_remote(pack)
+                    sleep.assert_not_called()
+                opener.open.assert_called_once()
+
     def test_only_observed_https_cdn_is_allowed(self):
         handler = ReleaseRedirect()
         request = urllib.request.Request("https://github.com/bitdan/snap-desk/releases/download/tag/model.bin")

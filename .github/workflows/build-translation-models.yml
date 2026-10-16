@@ -77,7 +77,7 @@ jobs:
             --worker src-tauri/translator-runtime/snap-translator-worker.exe `
             --license-file "legal/translation/$env:DIRECTION-LICENSE.txt" --output "out/$env:DIRECTION" --base-url $base
           if ($LASTEXITCODE -ne 0) { throw '模型转换或 Worker golden 验证失败' }
-          $tag | Set-Content out/release-tag.txt
+          [System.IO.File]::WriteAllText("$PWD/out/release-tag.txt", "$tag`n", [System.Text.Encoding]::ASCII)
           python scripts/ci/verify-model-release.py "out/$env:DIRECTION" --expected-tag $tag --repository $env:GH_REPO
           if ($LASTEXITCODE -ne 0) { throw '模型文件复核失败' }
       - uses: actions/upload-artifact@v4

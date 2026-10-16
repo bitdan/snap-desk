@@ -40,6 +40,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+      - name: Test CI helpers before native compilation
+        run: |
+          python -m unittest discover -s scripts/ci -p 'test_*.py'
+          if ($LASTEXITCODE -ne 0) { throw 'CI helper regression tests failed' }
       - name: Validate version
         run: |
           if ($env:ENGINE_REVISION -cnotmatch '^r[1-9][0-9]*$') { throw 'Invalid engine revision' }
@@ -81,7 +85,8 @@ jobs:
           New-Item -ItemType Directory dist | Out-Null
           Compress-Archive -Path src-tauri/translator-runtime/* -DestinationPath dist/translator-runtime-windows-x64.zip
           $hash = (Get-FileHash dist/translator-runtime-windows-x64.zip -Algorithm SHA256).Hash.ToLowerInvariant()
-          "$hash  translator-runtime-windows-x64.zip" | Set-Content dist/translator-runtime-windows-x64.zip.sha256
+          # Linux sha256sum 将 CR 当作文件名的一部分；固定 ASCII、无 BOM、LF 换行。
+          [System.IO.File]::WriteAllText("$PWD/dist/translator-runtime-windows-x64.zip.sha256", "$hash  translator-runtime-windows-x64.zip`n", [System.Text.Encoding]::ASCII)
           Copy-Item src-tauri/translator-runtime/runtime-build.json dist/runtime-build.json
           "Engine ZIP SHA-256: $hash" >> $env:GITHUB_STEP_SUMMARY
       - uses: actions/upload-artifact@v4
@@ -115,7 +120,8 @@ jobs:
             echo 'Refusing to overwrite a published engine'; exit 1
           fi
           cd dist
-          sha256sum --check translator-runtime-windows-x64.zip.sha256
+          # 同时兼容旧 Windows 构建产生的 CRLF 摘要；pipefail 保留校验失败的退出码。
+          tr -d '\r' < translator-runtime-windows-x64.zip.sha256 | sha256sum --check -
           gh release create "$tag" ./* --target "$GITHUB_SHA" \
             --title "Translation Engine 4.6.0 $ENGINE_REVISION (Windows x64 CPU)" \
             --notes 'CPU RUY / protocol 1. Provenance and licenses are included in the runtime ZIP.' \
