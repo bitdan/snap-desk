@@ -30,6 +30,22 @@ jobs:
         with:
           persist-credentials: false
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # 与模型流水线共用受审版本和 ZIP 摘要；锁未填写时尽早失败。
+      - name: Download and verify required translator runtime
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: ./scripts/ci/download-translator-runtime.ps1
+
+      - name: Verify embedded model catalog and published files
+        run: |
+          python scripts/ci/generate-model-catalog.py --check --remote
+          if ($LASTEXITCODE -ne 0) { throw '内置模型目录或发布附件验证失败' }
+
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
@@ -52,6 +68,8 @@ jobs:
 
       # 复用本地脚本的 --ci、--locked 和 src-tauri/target 输出目录。
       - name: Build executable and installers
+        env:
+          SNAP_DESK_REQUIRE_TRANSLATION: '1'
         run: npm run desktop:package
 
       - name: Publish GitHub Release
@@ -81,12 +99,21 @@ jobs:
           }
           $standalone = "src-tauri/target/release/snap-desk-$env:GITHUB_REF_NAME-windows-x64-standalone.exe"
           Copy-Item -LiteralPath $executable -Destination $standalone
+          # 过渡期仍保留裸 EXE；明确说明资源限制，不宣称它是完整便携版。
+          $engine = Get-Content scripts/ci/translation-engine.json -Raw | ConvertFrom-Json
+          $notes = @(
+            "Translation engine: $($engine.tag) (Windows x64 CPU, protocol 1).",
+            'NSIS/MSI include the translation runtime and third-party licenses; models are downloaded/imported separately.',
+            'The standalone EXE does NOT include the local translation runtime. Use an installer for local translation.',
+            'Model sources and licenses are recorded in each model pack.json and LICENSE.txt.'
+          )
+          $notes | Set-Content src-tauri/target/release/translation-release-notes.txt -Encoding utf8
           # 版本后缀决定发布渠道；校验步骤已确保标签符合版本格式。
           $channel = if ($isTestRelease) { '测试版' } else { '正式版' }
           $releaseArgs = @(
             'release', 'create', $env:GITHUB_REF_NAME,
             '--verify-tag', '--title', "Snap Desk $env:GITHUB_REF_NAME（$channel）",
-            '--generate-notes'
+            '--generate-notes', '--notes-file', 'src-tauri/target/release/translation-release-notes.txt'
           )
           # v0.2.0-beta.1 等标签发布为预发布版本，不设为 Latest。
           if ($isTestRelease) {

@@ -114,8 +114,69 @@ fn root(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(resources::directory(app)?.join("translation"))
 }
 fn catalog() -> Result<Vec<Pack>, String> {
-    serde_json::from_str(include_str!("../assets/translation-models.json"))
-        .map_err(|_| "内置语言包清单无效。".into())
+    let packs: Vec<Pack> = serde_json::from_str(include_str!("../assets/translation-models.json"))
+        .map_err(|_| "内置语言包清单无效。".to_string())?;
+    let mut ids = HashSet::new();
+    for pack in &packs {
+        pack.validate()?;
+        validate_download_urls(pack)?;
+        if !ids.insert(&pack.model_id) {
+            return Err("内置语言包清单方向重复。".into());
+        }
+    }
+    Ok(packs)
+}
+
+/// 下载入口只信任编译时固定的本仓库附件；导入包中的 URL 不用于网络请求。
+fn validate_download_urls(pack: &Pack) -> Result<(), String> {
+    let direction = if pack.model_id == IDS[0] {
+        "en-zh"
+    } else {
+        "zh-en"
+    };
+    let revision = pack
+        .source_revision
+        .get(..12)
+        .ok_or("模型 revision 无效。")?;
+    let prefix = format!("translation-model-{direction}-{revision}-r");
+    let mut tag: Option<String> = None;
+    for file in &pack.files {
+        let url = reqwest::Url::parse(&file.url).map_err(|_| "模型下载地址无效。")?;
+        let parts: Vec<_> = url.path().split('/').collect();
+        if !https_host(&url, "github.com")
+            || url.query().is_some()
+            || url.fragment().is_some()
+            || parts.len() != 7
+            || parts[1..5] != ["bitdan", "snap-desk", "releases", "download"]
+            || parts[6] != file.name
+        {
+            return Err("模型下载仅允许内置仓库的固定 Release 附件。".into());
+        }
+        let suffix = parts[5].strip_prefix(&prefix).unwrap_or("");
+        if suffix.is_empty()
+            || suffix.starts_with('0')
+            || !suffix.bytes().all(|b| b.is_ascii_digit())
+            || tag.as_deref().map(|t| t != parts[5]).unwrap_or(false)
+        {
+            return Err("模型附件版本不一致或无效。".into());
+        }
+        tag = Some(parts[5].to_string());
+    }
+    Ok(())
+}
+
+/// 明确限制 host、协议、端口和凭据，不能用后缀匹配放行伪装域名。
+fn https_host(url: &reqwest::Url, host: &str) -> bool {
+    url.scheme() == "https"
+        && url.host_str() == Some(host)
+        && url.port_or_known_default() == Some(443)
+        && url.username().is_empty()
+        && url.password().is_none()
+}
+
+fn allowed_release_redirect(url: &reqwest::Url, previous_count: usize) -> bool {
+    // 2026-10-16 用 cli/cli 的真实 Release 附件确认此 CDN；不放行任意 githubusercontent 子域。
+    previous_count <= 3 && https_host(url, "release-assets.githubusercontent.com")
 }
 fn read_pack(dir: &Path) -> Result<Pack, String> {
     let mut bytes = Vec::new();
@@ -213,12 +274,21 @@ pub async fn translation_model_status(
 /// 先完整复制/下载并校验到 staging，再替换目录；失败时恢复旧包。
 fn install(app: &AppHandle, pack: &Pack, source: Option<&Path>) -> Result<(), String> {
     pack.validate()?;
+    if source.is_none() {
+        validate_download_urls(pack)?;
+    }
     let root = root(app)?;
     fs::create_dir_all(&root).map_err(|e| e.to_string())?;
     let staging = tempfile::tempdir_in(&root).map_err(|e| e.to_string())?;
     let client = reqwest::blocking::Client::builder()
         .https_only(true)
-        .redirect(reqwest::redirect::Policy::none())
+        .redirect(reqwest::redirect::Policy::custom(|attempt| {
+            if allowed_release_redirect(attempt.url(), attempt.previous().len()) {
+                attempt.follow()
+            } else {
+                attempt.error("模型附件重定向目标或次数不受允许")
+            }
+        }))
         .connect_timeout(std::time::Duration::from_secs(20))
         .timeout(std::time::Duration::from_secs(900))
         .build()
@@ -333,6 +403,26 @@ pub async fn translation_model_action(
 mod tests {
     use super::*;
     #[test]
+    fn release_redirects_reject_untrusted_hosts_and_excess_hops() {
+        let valid =
+            reqwest::Url::parse("https://release-assets.githubusercontent.com/file").unwrap();
+        assert!(allowed_release_redirect(&valid, 3));
+        assert!(!allowed_release_redirect(&valid, 4));
+        for value in [
+            "http://release-assets.githubusercontent.com/file",
+            "https://release-assets.githubusercontent.com.evil.test/file",
+            "https://127.0.0.1/file",
+            "https://release-assets.githubusercontent.com:444/file",
+            "https://user:secret@release-assets.githubusercontent.com/file",
+            "https://github.com/file",
+        ] {
+            assert!(!allowed_release_redirect(
+                &reqwest::Url::parse(value).unwrap(),
+                1
+            ));
+        }
+    }
+    #[test]
     fn only_supported_directions_resolve() {
         assert_eq!(model_id("en").unwrap(), IDS[1]);
         assert!(model_id("ja").is_err());
@@ -365,6 +455,25 @@ mod tests {
             .collect(),
         };
         assert!(pack.validate().is_ok());
+        for file in &mut pack.files {
+            file.url = format!(
+                "https://github.com/bitdan/snap-desk/releases/download/translation-model-en-zh-aaaaaaaaaaaa-r1/{}",
+                file.name
+            );
+        }
+        assert!(validate_download_urls(&pack).is_ok());
+        let valid_url = pack.files[0].url.clone();
+        for value in [
+            valid_url.replace("-r1/", "-r2/"),
+            valid_url.replace("github.com/", "github.com.evil.test/"),
+            valid_url.replace("bitdan/", "other/"),
+            valid_url.replace("aaaaaaaaaaaa", "bbbbbbbbbbbb"),
+            format!("{valid_url}?redirect=https://evil.test"),
+        ] {
+            pack.files[0].url = value;
+            assert!(validate_download_urls(&pack).is_err());
+        }
+        pack.files[0].url = valid_url;
         pack.files[0].name = "../model.bin".into();
         assert!(pack.validate().is_err());
         pack.files[0].name = "model.bin".into();

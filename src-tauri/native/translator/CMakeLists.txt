@@ -17,8 +17,9 @@ target_link_libraries(snap-translator-worker PRIVATE CTranslate2::ctranslate2 se
 if(MSVC)
   target_compile_options(snap-translator-worker PRIVATE /utf-8 /W4)
 endif()
-install(TARGETS snap-translator-worker RUNTIME DESTINATION .)
+# CI 只安装这个组件，避免 FetchContent 子项目的工具、头文件和静态库进入 runtime。
+install(TARGETS snap-translator-worker RUNTIME DESTINATION . COMPONENT translator-runtime)
 # Windows DLL 必须随程序安装，不能依赖用户开发环境的 PATH。
 if(WIN32)
-  install(FILES $<TARGET_RUNTIME_DLLS:snap-translator-worker> DESTINATION .)
+  install(FILES $<TARGET_RUNTIME_DLLS:snap-translator-worker> DESTINATION . COMPONENT translator-runtime)
 endif()

@@ -19,6 +19,10 @@ const workerName = process.platform === 'win32' ? 'snap-translator-worker.exe' :
 if (existsSync(resolve(root, 'src-tauri', 'translator-runtime', workerName))) {
   buildArgs.unshift('--config', 'src-tauri/tauri.translation.conf.json')
 } else {
+  // 发布流水线必须显式声明此开关；本地开发仍允许不构建翻译引擎。
+  if (process.env.SNAP_DESK_REQUIRE_TRANSLATION === '1') {
+    throw new Error('发布构建缺少原生翻译 Worker，禁止生成无本地翻译引擎的安装包。')
+  }
   console.warn('未找到原生翻译引擎，本次产物不能进行本地翻译。参见 src-tauri/native/translator/README.md。')
 }
 // MSI 不接受 beta.1 / rc.1 等文本后缀；Windows 测试版仅生成 NSIS EXE。

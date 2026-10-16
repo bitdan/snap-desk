@@ -1,0 +1,118 @@
+name: Build Translation Engine
+run-name: Translation engine · ${{ inputs.engine_revision }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      engine_revision:
+        description: Immutable engine revision (r1, r2, ...)
+        type: string
+        default: r1
+        required: true
+      publish:
+        description: Publish after environment review and clean Windows VM acceptance
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+concurrency:
+  group: translation-engine-${{ inputs.engine_revision }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      ENGINE_REVISION: ${{ inputs.engine_revision }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Validate version
+        run: |
+          if ($env:ENGINE_REVISION -cnotmatch '^r[1-9][0-9]*$') { throw 'Invalid engine revision' }
+      - name: Checkout CTranslate2 v4.6.0 and recursive dependencies
+        run: |
+          git clone --depth 1 --branch v4.6.0 --recurse-submodules https://github.com/OpenNMT/CTranslate2.git .ci/ctranslate2
+          if ($LASTEXITCODE -ne 0) { throw 'CT2 checkout failed' }
+      - name: Build CPU RUY runtime
+        run: |
+          # 固定静态 MSVC CRT，避免借用 runner 上的 VC DLL；依赖扫描仍会阻止漏包。
+          cmake -S .ci/ctranslate2 -B .ci/ct2-build -A x64 `
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5 `
+            -DWITH_CUDA=OFF -DWITH_MKL=OFF -DWITH_DNNL=OFF -DWITH_OPENBLAS=OFF `
+            -DWITH_RUY=ON -DOPENMP_RUNTIME=NONE -DBUILD_SHARED_LIBS=ON `
+            -DBUILD_CLI=OFF -DBUILD_TESTS=OFF -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded `
+            "-DCMAKE_INSTALL_PREFIX=$PWD/.ci/ct2-install"
+          if ($LASTEXITCODE -ne 0) { throw 'CT2 configure failed' }
+          cmake --build .ci/ct2-build --config Release --parallel 4
+          if ($LASTEXITCODE -ne 0) { throw 'CT2 build failed' }
+          cmake --install .ci/ct2-build --config Release
+          if ($LASTEXITCODE -ne 0) { throw 'CT2 install failed' }
+      - name: Build worker
+        run: |
+          cmake -S src-tauri/native/translator -B .ci/worker-build -A x64 `
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded `
+            -DSPM_ENABLE_MSVC_MT_BUILD=ON "-DCMAKE_PREFIX_PATH=$PWD/.ci/ct2-install"
+          if ($LASTEXITCODE -ne 0) { throw 'Worker configure failed' }
+          cmake --build .ci/worker-build --config Release --parallel 4
+          if ($LASTEXITCODE -ne 0) { throw 'Worker build failed' }
+          cmake --install .ci/worker-build --config Release --component translator-runtime --prefix "$PWD/src-tauri/translator-runtime"
+          if ($LASTEXITCODE -ne 0) { throw 'Worker install failed' }
+      - name: Verify dependencies, licenses, provenance and health
+        run: |
+          ./scripts/ci/verify-translator-runtime.ps1 -RuntimeDir src-tauri/translator-runtime `
+            -EngineTag "translation-engine-v4.6.0-$env:ENGINE_REVISION" `
+            -Ct2Source .ci/ctranslate2 -Ct2Install .ci/ct2-install -WorkerBuild .ci/worker-build
+      - name: Package verified runtime
+        run: |
+          New-Item -ItemType Directory dist | Out-Null
+          Compress-Archive -Path src-tauri/translator-runtime/* -DestinationPath dist/translator-runtime-windows-x64.zip
+          $hash = (Get-FileHash dist/translator-runtime-windows-x64.zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  translator-runtime-windows-x64.zip" | Set-Content dist/translator-runtime-windows-x64.zip.sha256
+          Copy-Item src-tauri/translator-runtime/runtime-build.json dist/runtime-build.json
+          "Engine ZIP SHA-256: $hash" >> $env:GITHUB_STEP_SUMMARY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: translator-runtime-windows-x64
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    if: ${{ inputs.publish }}
+    needs: build
+    runs-on: ubuntu-22.04
+    environment: translation-engine-publish
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: translator-runtime-windows-x64
+          path: dist
+      - name: Publish immutable engine
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          ENGINE_REVISION: ${{ inputs.engine_revision }}
+        run: |
+          set -euo pipefail
+          tag="translation-engine-v4.6.0-$ENGINE_REVISION"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo 'Refusing to overwrite a published engine'; exit 1
+          fi
+          cd dist
+          sha256sum --check translator-runtime-windows-x64.zip.sha256
+          gh release create "$tag" ./* --target "$GITHUB_SHA" \
+            --title "Translation Engine 4.6.0 $ENGINE_REVISION (Windows x64 CPU)" \
+            --notes 'CPU RUY / protocol 1. Provenance and licenses are included in the runtime ZIP.' \
+            --prerelease --latest=false

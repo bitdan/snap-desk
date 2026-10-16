@@ -3,6 +3,9 @@ dist/
 src-tauri/target/
 src-tauri/translator-runtime/
 scripts/__pycache__/
+scripts/ci/__pycache__/
+.ci/
+out/
 src-tauri/gen/schemas/
 *.log
 # Extra icon variants produced by `tauri icon`; this project targets desktop only.

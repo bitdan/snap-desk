@@ -1,0 +1,119 @@
+name: Build Translation Models
+run-name: OPUS-MT · ${{ inputs.direction }} · ${{ inputs.package_revision }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      direction:
+        description: Translation direction
+        type: choice
+        options: [en-zh, zh-en]
+        required: true
+      hf_revision:
+        description: Reviewed 40-character Hugging Face commit SHA
+        type: string
+        required: true
+      package_revision:
+        description: Immutable package revision
+        type: string
+        default: r1
+        required: true
+      publish:
+        description: Publish after environment review
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+concurrency:
+  group: translation-model-${{ inputs.direction }}-${{ inputs.hf_revision }}-${{ inputs.package_revision }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 180
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      DIRECTION: ${{ inputs.direction }}
+      HF_REVISION: ${{ inputs.hf_revision }}
+      PACKAGE_REVISION: ${{ inputs.package_revision }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: scripts/translation-requirements.txt
+      - name: Validate reviewed model inputs
+        run: |
+          python scripts/ci/verify-model-license.py --direction $env:DIRECTION --revision $env:HF_REVISION --package-revision $env:PACKAGE_REVISION
+          if ($LASTEXITCODE -ne 0) { throw '模型 revision/许可未通过审核' }
+      - name: Download repository-locked Windows engine
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: ./scripts/ci/download-translator-runtime.ps1
+      - name: Install pinned conversion dependencies
+        run: |
+          python -m pip install -r scripts/translation-requirements.txt
+          if ($LASTEXITCODE -ne 0) { throw '转换依赖安装失败' }
+      - name: Convert and validate with native Windows Worker
+        env:
+          GH_REPO: ${{ github.repository }}
+        run: |
+          $short = $env:HF_REVISION.Substring(0, 12)
+          $tag = "translation-model-$env:DIRECTION-$short-$env:PACKAGE_REVISION"
+          $base = "https://github.com/$env:GH_REPO/releases/download/$tag"
+          python scripts/prepare-translation-model.py --direction $env:DIRECTION --revision $env:HF_REVISION `
+            --worker src-tauri/translator-runtime/snap-translator-worker.exe `
+            --license-file "legal/translation/$env:DIRECTION-LICENSE.txt" --output "out/$env:DIRECTION" --base-url $base
+          if ($LASTEXITCODE -ne 0) { throw '模型转换或 Worker golden 验证失败' }
+          $tag | Set-Content out/release-tag.txt
+          python scripts/ci/verify-model-release.py "out/$env:DIRECTION" --expected-tag $tag --repository $env:GH_REPO
+          if ($LASTEXITCODE -ne 0) { throw '模型文件复核失败' }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: verified-translation-model
+          path: out/
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    if: ${{ inputs.publish }}
+    needs: build
+    runs-on: ubuntu-22.04
+    environment: translation-model-publish
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/download-artifact@v4
+        with:
+          name: verified-translation-model
+          path: out
+      - name: Publish per-direction immutable files and verify anonymous download
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          DIRECTION: ${{ inputs.direction }}
+        run: |
+          set -euo pipefail
+          tag="$(tr -d '\r\n' < out/release-tag.txt)"
+          python scripts/ci/verify-model-release.py "out/$DIRECTION" --expected-tag "$tag" --repository "$GH_REPO"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo 'Refusing to overwrite a published model'; exit 1
+          fi
+          gh release create "$tag" out/"$DIRECTION"/* --target "$GITHUB_SHA" \
+            --title "OPUS-MT $DIRECTION INT8" --notes 'Validated by the pinned Windows Worker. See pack.json and LICENSE.txt.' \
+            --prerelease --latest=false
+          python scripts/ci/verify-model-release.py "out/$DIRECTION" --expected-tag "$tag" --repository "$GH_REPO" --remote

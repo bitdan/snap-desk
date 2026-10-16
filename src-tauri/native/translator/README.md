@@ -8,6 +8,9 @@ URL、Windows 路径、反引号代码、常见占位符和快捷键按片段原
 
 ## Windows x64 原生引擎
 
+GitHub Actions 已拆为引擎、模型和主程序三条流水线。首次启用、版本锁与许可审核步骤见
+[CI 操作说明](../../../scripts/ci/README.md)。引擎锁尚未填写真实摘要时，发布 CI 会阻止构建。
+
 仓库约定不自动编译。以下命令由开发者在 VS 2022 x64 Native Tools 环境中执行。
 先按 [CTranslate2 官方构建说明](https://opennmt.net/CTranslate2/installation.html)
 将 **v4.6.0** 的 CPU 版本安装到单独前缀，禁用 CUDA；启用可用的 CPU INT8 后端，
@@ -18,7 +21,7 @@ URL、Windows 路径、反引号代码、常见占位符和快捷键按片段原
 ```powershell
 cmake -S src-tauri/native/translator -B src-tauri/target/translator -A x64 -DCMAKE_PREFIX_PATH=C:/deps/ctranslate2
 cmake --build src-tauri/target/translator --config Release
-cmake --install src-tauri/target/translator --config Release --prefix "$PWD/src-tauri/translator-runtime"
+cmake --install src-tauri/target/translator --config Release --component translator-runtime --prefix "$PWD/src-tauri/translator-runtime"
 ```
 
 CMake 固定 SentencePiece v0.2.0 和 nlohmann/json v3.11.3。
