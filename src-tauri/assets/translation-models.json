@@ -1,1 +1,94 @@
-[]
+[
+  {
+    "modelId": "opus-mt-en-zh-int8",
+    "sourceRevision": "408d9bc410a388e1d9aef112a2daba955b945255",
+    "runtime": "4.6.0",
+    "tokenizerProfile": "transformers-marian-spm-v1",
+    "targetLanguageToken": ">>cmn_Hans<<",
+    "license": "Apache-2.0",
+    "files": [
+      {
+        "name": "config.json",
+        "size": 233,
+        "sha256": "72901fbd8abd89fb5cf4a388f26fc681f5c4c58a1e1a88b30b879f107270e7ee",
+        "url": "https://github.com/bitdan/snap-desk/releases/download/translation-model-en-zh-408d9bc410a3-r1/config.json"
+      },
+      {
+        "name": "LICENSE.txt",
+        "size": 15515,
+        "sha256": "7ddc50acd4eb9e92c83c90df434166c0a75f9cad847d22cbb8a1222c2e8be710",
+        "url": "https://github.com/bitdan/snap-desk/releases/download/translation-model-en-zh-408d9bc410a3-r1/LICENSE.txt"
+      },
+      {
+        "name": "model.bin",
+        "size": 79567635,
+        "sha256": "327584c20bb83c7e89d595bcfa30b6ef3771c10816f707e892c4bbb1f808a8fb",
+        "url": "https://github.com/bitdan/snap-desk/releases/download/translation-model-en-zh-408d9bc410a3-r1/model.bin"
+      },
+      {
+        "name": "shared_vocabulary.json",
+        "size": 1368888,
+        "sha256": "4821251fdc0a6c9e889837b42427a90cb3240f71aef89681a5a6de525182a634",
+        "url": "https://github.com/bitdan/snap-desk/releases/download/translation-model-en-zh-408d9bc410a3-r1/shared_vocabulary.json"
+      },
+      {
+        "name": "source.spm",
+        "size": 806435,
+        "sha256": "5775ddc9e3ff2fae91554da56468ad35ff56edaba870fea74447bc7234bfdaa8",
+        "url": "https://github.com/bitdan/snap-desk/releases/download/translation-model-en-zh-408d9bc410a3-r1/source.spm"
+      },
+      {
+        "name": "target.spm",
+        "size": 804600,
+        "sha256": "81dc94efa84e4025ef38d25d5d07429fe41e3eb29d44003f1db6fe98487b0052",
+        "url": "https://github.com/bitdan/snap-desk/releases/download/translation-model-en-zh-408d9bc410a3-r1/target.spm"
+      }
+    ]
+  },
+  {
+    "modelId": "opus-mt-zh-en-int8",
+    "sourceRevision": "cf109095479db38d6df799875e34039d4938aaa6",
+    "runtime": "4.6.0",
+    "tokenizerProfile": "transformers-marian-spm-v1",
+    "targetLanguageToken": "",
+    "license": "CC-BY-4.0",
+    "files": [
+      {
+        "name": "config.json",
+        "size": 233,
+        "sha256": "72901fbd8abd89fb5cf4a388f26fc681f5c4c58a1e1a88b30b879f107270e7ee",
+        "url": "https://github.com/bitdan/snap-desk/releases/download/translation-model-zh-en-cf109095479d-r1/config.json"
+      },
+      {
+        "name": "LICENSE.txt",
+        "size": 23327,
+        "sha256": "2b4114df853312459dd3b31eb737d5635619f143a989244fd079b5dd682583b5",
+        "url": "https://github.com/bitdan/snap-desk/releases/download/translation-model-zh-en-cf109095479d-r1/LICENSE.txt"
+      },
+      {
+        "name": "model.bin",
+        "size": 79567635,
+        "sha256": "e4955858cae9542bef37424a9b79720e3db2f32501fe62264c0cd3eac6319777",
+        "url": "https://github.com/bitdan/snap-desk/releases/download/translation-model-zh-en-cf109095479d-r1/model.bin"
+      },
+      {
+        "name": "shared_vocabulary.json",
+        "size": 1368999,
+        "sha256": "55d071d6c63a2dab993f00e77077eca76573ac6964990e2e80de7462344401fb",
+        "url": "https://github.com/bitdan/snap-desk/releases/download/translation-model-zh-en-cf109095479d-r1/shared_vocabulary.json"
+      },
+      {
+        "name": "source.spm",
+        "size": 804677,
+        "sha256": "e27a3a1b539f4959ec72ea60e453f49156289f95d4e6000b29332efc45616203",
+        "url": "https://github.com/bitdan/snap-desk/releases/download/translation-model-zh-en-cf109095479d-r1/source.spm"
+      },
+      {
+        "name": "target.spm",
+        "size": 806530,
+        "sha256": "6a881f4717cd7265f53fea54fd3dc689c767c05338fac7a4590f3088cb2d7855",
+        "url": "https://github.com/bitdan/snap-desk/releases/download/translation-model-zh-en-cf109095479d-r1/target.spm"
+      }
+    ]
+  }
+]
