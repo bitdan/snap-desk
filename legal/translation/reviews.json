@@ -1,1 +1,32 @@
-{}
+{
+  "en-zh": {
+    "sourceRevision": "408d9bc410a388e1d9aef112a2daba955b945255",
+    "sourceUrl": "https://huggingface.co/Helsinki-NLP/opus-mt-en-zh/tree/408d9bc410a388e1d9aef112a2daba955b945255",
+    "licenseSha256": "7ddc50acd4eb9e92c83c90df434166c0a75f9cad847d22cbb8a1222c2e8be710",
+    "reviewedBy": "Codex (automated source and license-declaration verification; see SOURCE-REVIEW.md)",
+    "reviewKind": "automated-source-verification",
+    "reviewedAt": "2026-10-17",
+    "humanReviewCompleted": false,
+    "license": "apache-2.0",
+    "modelCardUrl": "https://huggingface.co/Helsinki-NLP/opus-mt-en-zh/raw/408d9bc410a388e1d9aef112a2daba955b945255/README.md",
+    "modelCardSha256": "83eee2a6598751f746a057e10d5c9dfd71d6b0cf0146f9e6c1bb3ebd6e90959b",
+    "licenseTextUrl": "https://www.apache.org/licenses/LICENSE-2.0.txt",
+    "licenseTextSha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+    "additionalNoticeFiles": []
+  },
+  "zh-en": {
+    "sourceRevision": "cf109095479db38d6df799875e34039d4938aaa6",
+    "sourceUrl": "https://huggingface.co/Helsinki-NLP/opus-mt-zh-en/tree/cf109095479db38d6df799875e34039d4938aaa6",
+    "licenseSha256": "2b4114df853312459dd3b31eb737d5635619f143a989244fd079b5dd682583b5",
+    "reviewedBy": "Codex (automated source and license-declaration verification; see SOURCE-REVIEW.md)",
+    "reviewKind": "automated-source-verification",
+    "reviewedAt": "2026-10-17",
+    "humanReviewCompleted": false,
+    "license": "cc-by-4.0",
+    "modelCardUrl": "https://huggingface.co/Helsinki-NLP/opus-mt-zh-en/raw/cf109095479db38d6df799875e34039d4938aaa6/README.md",
+    "modelCardSha256": "7f4b7f90672cd55b85b213bbe21f4b2d0c92327e885734b7e86b019feb145a6b",
+    "licenseTextUrl": "https://creativecommons.org/licenses/by/4.0/legalcode.txt",
+    "licenseTextSha256": "9ba9550ad48438d0836ddab3da480b3b69ffa0aac7b7878b5a0039e7ab429411",
+    "additionalNoticeFiles": []
+  }
+}
