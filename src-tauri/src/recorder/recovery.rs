@@ -136,12 +136,12 @@ fn settle(directory: tempfile::TempDir, record: &Path, value: &mut Recoverable, 
         let _ = fs::remove_file(record);
         return;
     }
-    let path = directory.keep();
+    let _path = directory.keep();
     value.stage = format!("failed:{}", value.stage);
-    if let Err(error) = store(record, value) {
-        log::error!("恢复记录更新失败：{error}；视频仍保留于 {}", path.display());
+    if let Err(_error) = store(record, value) {
+        log::error!("event=recording.recovery_store_failed module=recording code=RECOVERY_STORE_FAILED");
     }
-    log::warn!("录屏未发布，保留源视频：{}", value.path);
+    log::warn!("event=recording.recovery_retained module=recording");
 }
 
 /// 发布到新目录时先复制、同步临时文件，再无覆盖发布；任何失败都保留源视频。

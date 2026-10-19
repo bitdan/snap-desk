@@ -198,9 +198,9 @@ pub fn save(app: &AppHandle, image: &RgbaImage) -> Result<bool, String> {
     temporary.persist(&path).map_err(|e| e.to_string())?;
     if settings.remember_directory {
         if let Some(record) = record {
-            if let Err(error) = remember_directory(&record, parent) {
+            if let Err(_error) = remember_directory(&record, parent) {
                 // 图片已经成功保存；记忆失败不能将导出报告为失败。
-                log::warn!("图片已保存，但保存目录记忆失败：{error}");
+                log::warn!("event=capture.directory_memory_failed module=capture code=DIRECTORY_MEMORY_FAILED");
             }
         }
     }

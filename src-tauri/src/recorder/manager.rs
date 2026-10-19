@@ -88,6 +88,7 @@ impl Session {
             self.timeline.resume(now);
             self.fps_window.reset(self.timeline.elapsed(now));
             self.view.phase = Phase::Recording;
+            log::info!("event=recording.started module=recording op=rec-{} fps={}", self.view.id, self.view.target_fps);
             self.view.message = "录制中".into();
         } else {
             self.countdown_until = Some(now + i64::from(delay) * 10_000_000);
@@ -187,9 +188,9 @@ fn progress(app: &AppHandle, stage: &'static str, path: Option<&std::path::Path>
     if let Ok(mut p) = app.state::<ExitState>().progress.lock() {
         if p.stage != stage {
             log::info!(
-                "录屏阶段 {} 完成，用时 {:.2}s，进入 {stage}",
+                "event=recording.stage_changed module=recording previous={} stage={stage} duration_ms={:.0}",
                 p.stage,
-                p.entered.elapsed().as_secs_f64()
+                p.entered.elapsed().as_secs_f64() * 1000.0
             );
             p.entered = Instant::now();
         }
@@ -933,6 +934,11 @@ fn collect(
                     None,
                 ),
             };
+            // 只在统一收尾处记录汇总，不把含完整输出路径的 text/path 写盘。
+            let level = if phase == Phase::Failed { log::Level::Error } else { log::Level::Info };
+            let outcome = match phase { Phase::Completed => "success", Phase::Cancelled => "cancelled", _ => "failed" };
+            log::log!(level, "event=recording.finished module=recording op=rec-{id} result={outcome} duration_ms={} captured={} encoded={} dropped={} encoding_ms={}",
+                (s.view.seconds * 1000.0) as u64, s.view.stats.captured_frames, s.view.frames, s.view.dropped_frames, s.view.encoding_millis);
             message = text.clone();
             s.view.phase = phase;
             s.view.message = text;

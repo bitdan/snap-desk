@@ -94,9 +94,9 @@ impl Archive {
                         Entry::Event(event) => writer.record(event),
                         Entry::Frame(image) => writer.frame(&image),
                     };
-                    if let Err(error) = result {
+                    if let Err(_error) = result {
                         failure.store(true, Ordering::Release);
-                        log::warn!("原始帧后台存档停止：{error}");
+                        log::warn!("event=scroll.archive_failed module=scroll code=ARCHIVE_WRITE_FAILED");
                         break;
                     }
                 }

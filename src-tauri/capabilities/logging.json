@@ -1,0 +1,16 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "logging",
+  "description": "Local application windows may submit diagnostic events only.",
+  "windows": [
+    "main",
+    "capture",
+    "pin-*",
+    "scroll-preview",
+    "scroll-controls",
+    "recording-controls"
+  ],
+  "permissions": [
+    "log:default"
+  ]
+}

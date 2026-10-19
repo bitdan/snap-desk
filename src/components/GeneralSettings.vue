@@ -29,6 +29,7 @@ async function toggleAutostart() {
   } finally { startupBusy.value = false }
 }
 const labels: Record<AppDirectory, { name: string; description: string }> = {
+  logs: { name: '应用日志目录', description: '本机诊断日志，默认 INFO；单文件 5 MB，最多保留 5 份归档。分享前请检查内容。' },
   config: { name: '应用配置目录', description: '保存快捷键、主配置与目录偏好，不是图片或视频输出目录' },
   captures: { name: '截图保存目录', description: '查看上一次记住的保存位置；可在截图设置中切换记住目录' },
   recordings: { name: '录屏保存目录', description: '视频输出位置，恢复默认不会移动已有视频' },

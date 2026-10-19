@@ -27,6 +27,7 @@ async fn work<T: Send + 'static>(
 }
 pub fn initialize(app: &AppHandle) {
     app.manage(Service::new(app));
+    log::info!("event=clipboard.initialized module=clipboard");
     let settings = app
         .state::<crate::settings::SettingsState>()
         .0
@@ -34,9 +35,11 @@ pub fn initialize(app: &AppHandle) {
         .map(|s| s.value.clipboard.clone())
         .unwrap_or_default();
     if let Err(e) = app.state::<Service>().configure(app, settings) {
+        log::warn!("event=clipboard.initialize_failed module=clipboard code=CLIPBOARD_INIT_FAILED");
         app.state::<Service>().report(app, e);
     }
     if let Err(e) = app.state::<Service>().maintain(app) {
+        log::warn!("event=clipboard.initialize_failed module=clipboard code=CLIPBOARD_INIT_FAILED");
         app.state::<Service>().report(app, e);
     }
 }
@@ -189,6 +192,11 @@ pub async fn clipboard_clear(
         d.repo.clear(include_favorites)?;
         let cleanup = d.blobs.repair(&d.repo);
         s.changed(app);
+        if cleanup.is_ok() {
+            log::info!("event=clipboard.cleared module=clipboard");
+        } else {
+            log::warn!("event=clipboard.cleanup_failed module=clipboard code=CLIPBOARD_CLEANUP_FAILED");
+        }
         cleanup
     })
     .await

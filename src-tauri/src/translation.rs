@@ -224,15 +224,27 @@ pub async fn translate_text(
         job.start(&request_id, notify.clone())?;
     }
     let _guard = JobGuard(app.clone(), request_id.clone());
+    static LOG_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    let op = LOG_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let started = std::time::Instant::now();
+    let provider = if settings.provider == "local-ctranslate2" { "local" } else { "cloud" };
+    log::info!("event=translation.started module=translation op=tr-{op} provider={provider}");
     let translated_text = tokio::select! {
         biased;
-        _ = notify.notified() => return Err("翻译已取消。".into()),
+        _ = notify.notified() => {
+            log::debug!("event=translation.cancelled module=translation op=tr-{op}");
+            return Err("翻译已取消。".into());
+        },
         value = async {
             if settings.provider == "local-ctranslate2" {
                 crate::local_translation::translate(&app, &request_id, &settings.target_language, &text, settings.timeout_seconds).await
             } else { translate(&settings, &text).await }
-        } => value?,
+        } => value.map_err(|error| {
+            log::error!("event=translation.failed module=translation op=tr-{op} provider={provider} code=TRANSLATION_REQUEST_FAILED duration_ms={}", started.elapsed().as_millis());
+            error
+        })?,
     };
+    log::info!("event=translation.finished module=translation op=tr-{op} provider={provider} duration_ms={}", started.elapsed().as_millis());
     Ok(TranslationResult {
         request_id,
         translated_text,

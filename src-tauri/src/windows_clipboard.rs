@@ -68,8 +68,8 @@ pub fn copy(app: &AppHandle, image: &RgbaImage) -> Result<(), String> {
             clipboard_win::raw::set_without_clear(format.get(), png.get_ref())
                 .map_err(|e| e.to_string())?;
             // PNG 已写入即有可用输出，补充 DIB 失败不能重试清空已经成功的 PNG。
-            if let Err(error) = clipboard_win::raw::set_without_clear(17, &bitmap) {
-                log::warn!("PNG 已复制，但补充 CF_DIBV5 失败：{error}");
+            if let Err(_error) = clipboard_win::raw::set_without_clear(17, &bitmap) {
+                log::warn!("event=clipboard.dib_fallback_failed module=clipboard code=DIB_FALLBACK_FAILED");
             }
             Ok(())
         })();

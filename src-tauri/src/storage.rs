@@ -14,6 +14,7 @@ pub enum AppDirectory {
     Recordings,
     ScrollResults,
     Clipboard,
+    Logs,
 }
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -25,6 +26,10 @@ pub struct DirectoryView {
 /// 第二项表示应用自己管理的目录，只有这些目录可以按需创建。
 fn resolve(app: &AppHandle, kind: AppDirectory) -> Result<(Option<PathBuf>, bool), String> {
     match kind {
+        AppDirectory::Logs => Ok((
+            Some(app.path().app_log_dir().map_err(|e| e.to_string())?),
+            true,
+        )),
         AppDirectory::Clipboard => Ok((
             Some(
                 app.path()
@@ -67,6 +72,7 @@ pub async fn app_directories(
             AppDirectory::Recordings,
             AppDirectory::ScrollResults,
             AppDirectory::Clipboard,
+            AppDirectory::Logs,
         ]
         .into_iter()
         .map(|kind| match resolve(&app, kind) {
@@ -168,7 +174,7 @@ mod tests {
     use super::*;
     #[test]
     fn directory_kinds_reject_arbitrary_paths() {
-        for value in ["config", "captures", "recordings", "scrollResults"] {
+        for value in ["config", "captures", "recordings", "scrollResults", "clipboard", "logs"] {
             assert!(serde_json::from_str::<AppDirectory>(&format!("\"{value}\"")).is_ok());
         }
         for value in [

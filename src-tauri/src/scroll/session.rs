@@ -172,6 +172,7 @@ fn complete(app: &AppHandle, id: u64, message: &str) -> Result<(), String> {
         ),
         Err(error) => format!("已复制到剪贴板，本地保存失败：{error}"),
     };
+    log::info!("event=scroll.finished module=scroll op=scroll-{id} frames={} width={} height={}", result.frames, result.width, result.height);
     close_session(app, id)?;
     let _ = app.emit_to("capture", "scroll-updated", &result);
     let _ = app.emit_to("main", "capture-result", format!("{message} {output}"));
@@ -213,8 +214,8 @@ fn sample_pair(
         let second = Arc::new(second);
         if !stability::stable(snapshot.stitch.last(), &second) {
             if let Some(archive) = &snapshot.archive {
-                if let Err(error) = archive.frame(second.clone()) {
-                    log::warn!("停止原始帧存档，长截图继续：{error}");
+                if let Err(_error) = archive.frame(second.clone()) {
+                    log::warn!("event=scroll.archive_failed module=scroll code=ARCHIVE_FRAME_FAILED");
                     snapshot.archive = None;
                 }
             }
@@ -226,11 +227,11 @@ fn sample_pair(
             started.elapsed().as_secs_f64() * 1000.0
         );
         if let Some(archive) = &snapshot.archive {
-            if let Err(error) = archive.record(
+            if let Err(_error) = archive.record(
                 serde_json::json!({"event":"match", "result":format!("{result:?}"),
                 "frames":snapshot.stitch.count(), "height":snapshot.stitch.height}),
             ) {
-                log::warn!("停止匹配日志存档，长截图继续：{error}");
+                log::warn!("event=scroll.archive_failed module=scroll code=ARCHIVE_MATCH_FAILED");
                 snapshot.archive = None;
             }
         }
@@ -420,8 +421,8 @@ pub async fn start_scroll(
         let mut archive = if save_frames {
             match Archive::new(&app) {
                 Ok(archive) => Some(archive),
-                Err(error) => {
-                    log::warn!("原始帧存档无法启动，长截图继续：{error}");
+                Err(_error) => {
+                    log::warn!("event=scroll.archive_failed module=scroll code=ARCHIVE_CREATE_FAILED");
                     None
                 }
             }
@@ -429,12 +430,12 @@ pub async fn start_scroll(
             None
         };
         if let Some(writer) = &archive {
-            if let Err(error) = writer
+            if let Err(_error) = writer
                 .record(serde_json::json!({"event":"session", "version":1,
                 "width":rect.width, "height":rect.height, "automatic":false}))
                 .and_then(|_| writer.frame(stitch.last_shared()))
             {
-                log::warn!("原始帧存档初始化失败，长截图继续：{error}");
+                log::warn!("event=scroll.archive_failed module=scroll code=ARCHIVE_INIT_FAILED");
                 archive = None;
             }
         }
@@ -470,6 +471,7 @@ pub async fn start_scroll(
             let _ = window.show();
             return Err(error);
         }
+        log::info!("event=scroll.started module=scroll op=scroll-{id} width={} height={}", result.width, result.height);
         Ok(result)
     })
     .await

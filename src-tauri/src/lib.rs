@@ -166,6 +166,23 @@ pub fn run() {
         .plugin(
             tauri_plugin_log::Builder::new()
                 .level(log::LevelFilter::Info)
+                // 默认追加写入；保留 stdout 与 LogDir 两个目标，约 30 MB 总预算。
+                .max_file_size(5_000_000)
+                .rotation_strategy(tauri_plugin_log::RotationStrategy::KeepSome(5))
+                .timezone_strategy(tauri_plugin_log::TimezoneStrategy::UseLocal)
+                // 依赖库可能输出模型路径或网络正文，仅持久化已审计的应用事件。
+                .filter(|metadata| metadata.target().starts_with("snap_desk_lib")
+                    || metadata.target() == tauri_plugin_log::WEBVIEW_TARGET
+                    || metadata.target().starts_with("webview::"))
+                .format(|out, message, record| {
+                    // JS 绑定自动将调用位置附在 target；不能把 URL/源码路径带进日志。
+                    let target = if record.target().starts_with("webview") {
+                        "frontend"
+                    } else { record.target() };
+                    out.finish(format_args!("{} [{}] [{}] {}",
+                        chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3f%:z"),
+                        record.level(), target, message));
+                })
                 .build(),
         )
         .plugin(tauri_plugin_dialog::init())
@@ -210,7 +227,11 @@ pub fn run() {
                 .build(),
         )
         .setup(|app| {
-            settings::initialize(app.handle())?;
+            log::info!("event=app.starting module=app version={} platform={}", app.package_info().version, std::env::consts::OS);
+            settings::initialize(app.handle()).map_err(|error| {
+                log::error!("event=app.initialize_failed module=app code=SETTINGS_INIT_FAILED");
+                error
+            })?;
             clipboard::initialize(app.handle());
             let capture = MenuItem::with_id(app, "capture", "开始截图", true, None::<&str>)?;
             let pin = MenuItem::with_id(app, "pin", "贴图（选区 / 剪贴板）", true, None::<&str>)?;
@@ -316,9 +337,9 @@ pub fn run() {
             if matches!(event, tauri::WindowEvent::Resized(_)) && window.label().contains("-edge-")
             {
                 if let Some(webview) = window.app_handle().get_webview_window(window.label()) {
-                    if let Err(error) = capture::scroll::chrome::restore_edge(&webview) {
+                    if let Err(_error) = capture::scroll::chrome::restore_edge(&webview) {
                         let _ = webview.hide();
-                        log::error!("选区边框裁剪恢复失败：{error}");
+                        log::error!("event=app.edge_restore_failed module=app code=EDGE_RESTORE_FAILED");
                     }
                 }
             }
@@ -434,6 +455,7 @@ pub fn run() {
         .run(|app, event| {
             // 录屏的退出流程完成后才收到 Exit；等待历史在途写入释放。
             if matches!(event, tauri::RunEvent::Exit) {
+                log::info!("event=app.exiting module=app");
                 translation::cancel_all(app);
                 local_translation::shutdown(app);
                 app.state::<clipboard::Service>().shutdown();

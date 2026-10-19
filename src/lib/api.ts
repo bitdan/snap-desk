@@ -2,6 +2,8 @@ import type { ClipboardSettings, ClipboardQuery, ClipboardPage, ClipboardStatus,
 import { invoke as nativeInvoke, isTauri, type InvokeArgs } from '@tauri-apps/api/core'
 import { listen as nativeListen, type EventCallback } from '@tauri-apps/api/event'
 import { errorMessage } from './errors'
+import { logIpcFailure } from './logger'
+import type { IpcCommand } from './ipc-commands'
 import type { Point, Rect } from './selection'
 import type { Annotation } from './annotations'
 import type { AiSettings, OcrResult, TranslationResult, LocalTranslationStatus } from './ai'
@@ -26,14 +28,18 @@ export type PinTransform = 'rotateRight' | 'rotateLeft' | 'flipHorizontal' | 'fl
 export type PinAction = 'copy' | 'save' | 'hide' | 'close'
 export type PinManageAction = 'show' | 'hide' | 'close'
 // 字段与 Rust Settings / AppStatus 的 camelCase 序列化契约保持一致。
-export type AppDirectory = 'config' | 'captures' | 'recordings' | 'scrollResults' | 'clipboard'
+export type AppDirectory = 'config' | 'captures' | 'recordings' | 'scrollResults' | 'clipboard' | 'logs'
 export interface DirectoryView { kind: AppDirectory; path: string | null; error: string | null }
 export interface AppStatus { version: string; settings: Settings; shortcutError: string | null; configWarning: string | null; delayRemaining: number; platform: string }
 export const desktop = isTauri()
 // 在唯一的 API 边界解码错误，截图、贴图与主页均能看到原生错误正文及失败操作。
-async function invoke<T>(command: string, args?: InvokeArgs): Promise<T> {
+async function invoke<T>(command: IpcCommand, args?: InvokeArgs): Promise<T> {
   try { return await nativeInvoke<T>(command, args) }
-  catch (error) { throw new Error(`${command}：${errorMessage(error)}`) }
+  catch (error) {
+    const message = errorMessage(error)
+    logIpcFailure(command, message)
+    throw new Error(`${command}：${message}`)
+  }
 }
 async function listen<T>(event: string, callback: EventCallback<T>) {
   try { return await nativeListen<T>(event, callback) }

@@ -306,8 +306,8 @@ pub struct ShortcutMenu(pub tauri::menu::CheckMenuItem<tauri::Wry>);
 /// 持锁调用，确保并发保存时托盘勾选状态与磁盘、内存提交顺序一致。
 fn notify_settings(app: &AppHandle, value: &Settings) {
     if let Some(menu) = app.try_state::<ShortcutMenu>() {
-        if let Err(error) = menu.0.set_checked(value.shortcuts_enabled) {
-            log::error!("快捷键托盘状态更新失败：{error}");
+        if let Err(_error) = menu.0.set_checked(value.shortcuts_enabled) {
+            log::error!("event=app.shortcut_menu_failed module=app code=SHORTCUT_MENU_FAILED");
         }
     }
     let _ = app.emit_to("main", "settings-changed", value);

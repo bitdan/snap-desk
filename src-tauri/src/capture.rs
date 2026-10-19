@@ -169,13 +169,13 @@ async fn begin_with_mode(app: AppHandle, recording: bool) -> Result<(), String> 
     .await
     .map_err(err)
     .and_then(|result| result);
-    if let Err(error) = &result {
+    if let Err(_error) = &result {
         state.delay_remaining.store(0, Ordering::SeqCst);
         let _ = app.emit_to("main", "capture-delay", 0u8);
         if cleanup(&app).is_err() {
             state.active.store(false, Ordering::SeqCst);
         }
-        log::error!("Capture preparation failed: {error}");
+        log::error!("event=capture.prepare_failed module=capture code=CAPTURE_PREPARE_FAILED");
     }
     result
 }
@@ -284,8 +284,9 @@ fn prepare(app: &AppHandle, recording: bool) -> Result<(), String> {
 }
 
 pub fn report_error(app: &AppHandle, message: String) {
-    // 错误保留在日志和主界面提示中，不因后台操作失败抢走当前应用焦点。
-    log::warn!("{message}");
+    // 错误详情保留在主界面提示中，不因后台操作失败抢走当前应用焦点。
+    // message 可能含路径、OCR 或网络错误正文，只送 UI，不持久化。
+    log::warn!("event=app.operation_failed module=app code=OPERATION_FAILED");
     let _ = app.emit_to("main", "capture-error", &message);
 }
 
@@ -498,6 +499,7 @@ pub async fn copy_capture(
         let _operation = Operation::acquire(&state.operation)?;
         let cropped = crop(&app, id, rect, &annotations)?;
         crate::image_io::copy(&app, &cropped)?;
+        log::info!("event=capture.copied module=capture op=cap-{id} width={} height={}", cropped.width(), cropped.height());
         close_session(&app, id)?;
         let _ = app.emit_to("main", "capture-result", "截图已复制到剪贴板。");
         Ok(())
@@ -589,6 +591,7 @@ pub async fn save_capture(
         let result = crate::pins::save_capture_image(&app, &cropped);
         match result {
             Ok(true) => {
+                log::info!("event=capture.saved module=capture op=cap-{id} width={} height={}", cropped.width(), cropped.height());
                 close_session(&app, id)?;
                 let _ = app.emit_to("main", "capture-result", "截图已保存。");
                 Ok(true)

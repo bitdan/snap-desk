@@ -248,10 +248,10 @@ impl Drop for InputWindow {
                         dwFlags: RIDEV_REMOVE,
                         hwndTarget: HWND::default(),
                     });
-                    if let Err(error) =
+                    if let Err(_error) =
                         RegisterRawInputDevices(&[restore], size_of::<RAWINPUTDEVICE>() as u32)
                     {
-                        log::warn!("Raw Input 注销/恢复失败：{error}");
+                        log::warn!("event=recording.input_restore_failed module=recording code=INPUT_RESTORE_FAILED");
                     }
                 }
             }

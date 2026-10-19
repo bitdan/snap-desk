@@ -24,21 +24,38 @@ pub fn recognize_structured(
     image: &image::RgbaImage,
 ) -> Result<OcrResult, String> {
     let started = Instant::now();
-    if image.width() == 0 || image.height() == 0 {
-        return Err("OCR 选区不能为空。".into());
+    let op = REQUEST_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let mut code = "OCR_INVALID_REGION";
+    let result = (|| {
+        if image.width() == 0 || image.height() == 0 {
+            return Err("OCR 选区不能为空。".into());
+        }
+        if u64::from(image.width()) * u64::from(image.height()) > 16_000_000 {
+            return Err("OCR 选区超过 1600 万像素，请缩小范围。".into());
+        }
+        code = "OCR_BUSY";
+        let state = app.state::<OcrState>();
+        let mut engine = state.0.try_lock().map_err(|_| "已有文字识别正在进行。")?;
+        if engine.is_none() {
+            code = "OCR_RESOURCES_UNAVAILABLE";
+            let dir = crate::resources::ocr_paths(app)?;
+            code = "OCR_ENGINE_INIT_FAILED";
+            let loading = Instant::now();
+            *engine = Some(build_engine(&dir)?);
+            log::info!("event=ocr.engine_ready module=ocr op=ocr-{op} duration_ms={}", loading.elapsed().as_millis());
+        }
+        code = "OCR_INFERENCE_FAILED";
+        let inference = Instant::now();
+        let mut result = recognize_regions(engine.as_ref().ok_or("OCR 未初始化。")?, image)?;
+        result.request_id = format!("ocr-{op}");
+        result.elapsed_ms = started.elapsed().as_millis() as u64;
+        log::info!("event=ocr.finished module=ocr op=ocr-{op} duration_ms={} inference_ms={} lines={}", result.elapsed_ms, inference.elapsed().as_millis(), result.lines.len());
+        Ok(result)
+    })();
+    if result.is_err() {
+        log::error!("event=ocr.failed module=ocr op=ocr-{op} code={code} duration_ms={}", started.elapsed().as_millis());
     }
-    if u64::from(image.width()) * u64::from(image.height()) > 16_000_000 {
-        return Err("OCR 选区超过 1600 万像素，请缩小范围。".into());
-    }
-    let state = app.state::<OcrState>();
-    let mut engine = state.0.try_lock().map_err(|_| "已有文字识别正在进行。")?;
-    if engine.is_none() {
-        let dir = crate::resources::ocr_paths(app)?;
-        *engine = Some(build_engine(&dir)?);
-    }
-    let mut result = recognize_regions(engine.as_ref().ok_or("OCR 未初始化。")?, image)?;
-    result.elapsed_ms = started.elapsed().as_millis() as u64;
-    Ok(result)
+    result
 }
 
 /// 与性能测试共用模型加载和推理路径，避免基准只测到与产品不同的代码。
