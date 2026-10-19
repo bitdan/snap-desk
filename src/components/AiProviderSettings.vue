@@ -4,6 +4,7 @@ import { api } from '@/lib/api'
 import { defaultAiSettings, targetLanguages, validateAiSettings } from '@/lib/ai'
 import type { LocalTranslationStatus } from '@/lib/ai'
 import Button from './ui/button/Button.vue'
+import ResourceSettings from './ResourceSettings.vue'
 
 const draft = ref(defaultAiSettings()), secret = ref(''), configured = ref(false)
 const localStatus = ref<LocalTranslationStatus | null>(null)
@@ -54,7 +55,7 @@ async function modelAction(modelId: string, action: 'download' | 'import' | 'del
 <template>
   <section class="ai-settings">
     <h3>文字识别</h3>
-    <p>使用本地 PP-OCRv5 识别中文和英文；截图与标注不会上传。</p>
+    <ResourceSettings kind="ocr" />
     <h3>文本翻译</h3>
     <fieldset :disabled="busy || !ready">
       <label>翻译引擎<select v-model="draft.provider"><option value="local-ctranslate2">本地离线 · CTranslate2 / OPUS-MT</option><option value="online-llm">在线文本服务</option></select></label>

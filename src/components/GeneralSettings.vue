@@ -59,7 +59,7 @@ onMounted(() => { void run(refresh); void refreshAutostart() })
   <section>
     <h1>通用设置</h1><p class="subtitle">启动、文件与存储</p>
     <ClipboardSettings />
-    <ResourceSettings />
+    <ResourceSettings kind="font" />
     <DiagnosticsSettings />
     <div class="settings-card mb-4">
       <div class="setting-row flex-wrap gap-3">

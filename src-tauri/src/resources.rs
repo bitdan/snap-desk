@@ -121,7 +121,7 @@ pub fn ocr_paths(app: &AppHandle) -> Result<PathBuf, String> {
     let dir = directory(app)?;
     for asset in manifest()?.iter().filter(|a| a.kind == ResourceKind::Ocr) {
         if !verified(&dir.join(&asset.name), asset) {
-            return Err("OCR 模型未下载或校验失败，请在通用设置下载识别资源。".into());
+            return Err("OCR 模型未下载或校验失败，请在“识别与翻译”页下载识别资源。".into());
         }
     }
     Ok(dir)
@@ -342,7 +342,7 @@ mod tests {
 /// 导出只投影实际校验结果，不序列化含绝对目录的 ResourceStatus。
 pub(crate) fn diagnostic_summary(app: &AppHandle) -> serde_json::Value {
     match status(app) {
-        Ok(value) => serde_json::json!({"provider":"local-ppocr", "model":"pp-ocrv5-mobile", "ready":value.ocr_ready, "runtimeReady":value.runtime_ready, "modelsReady":value.models_ready}),
+        Ok(value) => serde_json::json!({"provider":"local-ppocr", "model":"pp-ocrv6-small", "ready":value.ocr_ready, "runtimeReady":value.runtime_ready, "modelsReady":value.models_ready}),
         Err(_) => serde_json::json!({"provider":"local-ppocr", "state":"unavailable"}),
     }
 }

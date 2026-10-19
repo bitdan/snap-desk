@@ -69,9 +69,9 @@ fn build_engine(dir: &Path) -> Result<OAROCR, String> {
         .map(|n| n.get().min(2))
         .unwrap_or(1);
     OAROCRBuilder::new(
-        dir.join("pp-ocrv5_mobile_det.onnx"),
-        dir.join("pp-ocrv5_mobile_rec.onnx"),
-        dir.join("ppocrv5_dict.txt"),
+        dir.join("pp-ocrv6_small_det.onnx"),
+        dir.join("pp-ocrv6_small_rec.onnx"),
+        dir.join("ppocrv6_dict.txt"),
     )
     .region_batch_size(8)
     .ort_session(

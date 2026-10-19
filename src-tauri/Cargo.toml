@@ -5,7 +5,7 @@ license = "GPL-3.0-only"
 repository = "https://github.com/bitdan/snap-desk"
 description = "A focused cross-platform screenshot tool"
 edition = "2021"
-rust-version = "1.90"
+rust-version = "1.95"
 
 [lib]
 name = "snap_desk_lib"
@@ -43,8 +43,8 @@ blake3 = "=1.8.2"
 # 仅嵌入实际使用的字形，避免短文本 PDF 携带整份约 24 MiB 中文字体。
 printpdf = { version = "=0.7.0", default-features = false, features = ["font_subsetting"] }
 ab_glyph = "=0.2.32"
-# OAR 复用 ort 的 CPU 推理及 PaddleOCR 前后处理；锁定兼容 Rust 1.90 的组合。
-oar-ocr = { version = "=0.6.3", default-features = false }
+# OAR 复用 ort 的 CPU 推理及 PaddleOCR 前后处理；锁定兼容 Rust 1.95 的组合。
+oar-ocr = { version = "=0.10.0", default-features = false }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
 sha2 = "0.10"
 tokio = { version = "1", features = ["macros", "sync", "process", "io-util", "time"] }
@@ -58,11 +58,12 @@ qrcode = { version = "0.14", default-features = false }
 
 [target.'cfg(windows)'.dependencies]
 # 禁用 OAR 默认的构建时下载/静态链接，只在用户启用 OCR 后加载固定版本 DLL。
-ort = { version = "=2.0.0-rc.12", default-features = false, features = ["load-dynamic", "api-24"] }
+# rc.13 显式选择 API 24，继续兼容已发布的 ONNX Runtime 1.24.2 DLL。
+ort = { version = "=2.0.0-rc.13", default-features = false, features = ["load-dynamic", "api-24"] }
 zip = { version = "=6.0.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 clipboard-win = "=5.4.1"
 windows = { version = "=0.62.2", features = ["Win32_Security_Credentials", "Win32_Media_MediaFoundation", "Win32_System_Com", "Win32_System_DataExchange", "Win32_System_Memory", "Win32_Graphics_Gdi", "Foundation_Metadata", "Graphics_Capture", "Graphics_DirectX_Direct3D11", "Win32_Graphics_Direct3D", "Win32_Graphics_Direct3D11", "Win32_Graphics_Dxgi_Common", "Win32_System_WinRT_Direct3D11", "Win32_System_WinRT_Graphics_Capture", "Win32_System_Performance", "Win32_UI_WindowsAndMessaging", "Win32_UI_Input", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_HiDpi", "Win32_System_LibraryLoader"] }
 
-# 本次仅切换 Windows DLL；其他平台保留原有 CPU 引擎构建方式。
+# 其他平台保留构建时下载 CPU 引擎的方式，同样显式选择 API 24。
 [target.'cfg(not(windows))'.dependencies]
-ort = { version = "=2.0.0-rc.12", default-features = false, features = ["download-binaries", "tls-native"] }
+ort = { version = "=2.0.0-rc.13", default-features = false, features = ["download-binaries", "tls-native", "api-24"] }

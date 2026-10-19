@@ -23,7 +23,15 @@
 
 ### OCR 与导出字体
 
-在通用设置中点击“下载识别资源”，下载 PP-OCRv5 中英文模型（约 21 MiB）和 Windows CPU 引擎，随后可在截图工具栏点击“识别文字”，编辑并复制结果。使用 OAR-OCR + ort 在本机识别，不上传图片；当前针对正向文字，选区上限 1600 万像素。
+在“识别与翻译”页的“文字识别”区域点击“下载识别资源”，下载 PP-OCRv6 small 中英文模型（约 30 MiB）和 Windows CPU 引擎，随后可在截图工具栏点击“识别文字”，编辑并复制结果。使用 OAR-OCR 0.10.0 + ort rc.13 在本机识别，不上传图片；当前针对正向文字，选区上限 1600 万像素。
+
+模型使用上游固定链接按需下载，不打包进应用：
+
+- [检测模型 pp-ocrv6_small_det.onnx](https://github.com/GreatV/oar-ocr/releases/download/v0.7.0/pp-ocrv6_small_det.onnx)
+- [识别模型 pp-ocrv6_small_rec.onnx](https://github.com/GreatV/oar-ocr/releases/download/v0.7.0/pp-ocrv6_small_rec.onnx)
+- [配套字典 ppocrv6_dict.txt](https://github.com/GreatV/oar-ocr/releases/download/v0.7.0/ppocrv6_dict.txt)
+
+OAR-OCR 库版本为 0.10.0，模型附件仍位于上游 v0.7.0 Release。应用按内置清单验证大小和 SHA-256，下载中断可重试；也可通过以上链接下载，将三个文件按原名放入设置页显示的资源目录，再点击“检查识别资源”。旧版 v5 模型不会被当作 v6 就绪资源，也不会自动删除；升级后需下载新模型。
 
 PDF 和文本长图需要下载霞鹜文楷（约 24 MiB），或选择有嵌入授权的静态 TTF 字体（最大 64 MiB，不支持 TTC、OTF、可变字体）。选择的字体会复制到应用资源目录；点击“使用下载字体”会替换当前字体。缺字会报错，纯图片导出和 TXT 不依赖字体。
 
@@ -100,7 +108,7 @@ Windows x64 / ARM64 的 ONNX Runtime 1.24.2 使用 `ort/load-dynamic`，首次�
 
 ## 开发与构建
 
-环境：Node.js 18.20+、npm、Rust stable（至少 1.90）。Windows 需要 MSVC C++ 工具、Windows SDK 和 WebView2；其他平台依赖见 [Tauri 环境准备](https://v2.tauri.app/start/prerequisites/) 与 [xcap 平台依赖](https://github.com/nashaofu/xcap#system-dependencies)。
+环境：Node.js 18.20+、npm、Rust stable（至少 1.95）。Windows 需要 MSVC C++ 工具、Windows SDK 和 WebView2；其他平台依赖见 [Tauri 环境准备](https://v2.tauri.app/start/prerequisites/) 与 [xcap 平台依赖](https://github.com/nashaofu/xcap#system-dependencies)。
 
 在 `snap-desk/` 目录执行：
 
@@ -114,11 +122,19 @@ npm run desktop:dev
 | `npm run dev` | 仅前端预览，不提供原生截图能力 |
 | `npm run check` | Vue / TypeScript 类型检查 |
 | `npm test -- tests/recording.test.ts tests/recording-api.test.ts` | 录屏定向前端测试示例 |
-| `npm run desktop:build` | 构建可运行程序 |
-| `npm run desktop:package` | 构建程序及安装包 |
+| `npm run desktop:dev` | 日常开发、调试，支持前端热更新 |
+| `npm run desktop:build:fast` | Debug 构建可运行程序，不生成安装包，用于功能验证 |
+| `npm run desktop:build` | Release 构建可运行程序，用于性能验收 |
+| `npm run desktop:package` | Release 构建程序及安装包，用于正式发布 |
 | `npm run desktop:clean` | 清理 Rust 构建缓存和产物 |
 
 构建前从托盘退出程序。脚本固定复用 `src-tauri/target/`，已包含 `--ci` 和 `--locked`；Windows 程序位于 `src-tauri/target/release/snap-desk.exe`，安装包位于 `release/bundle/`。无需日常执行 clean，清理后会重新编译依赖。各平台安装包需在对应系统构建。
+
+快速构建执行 `npm run desktop:build:fast`，Windows 程序位于 `src-tauri/target/debug/snap-desk.exe`。它复用现有构建脚本和版本同步逻辑，通过 Tauri 的 `--debug` 选择 Debug 构建；首次仍需编译依赖，后续复用 Debug 缓存。Debug 与 Release 产物分别存放，录屏、OCR、图像拼接等性能测试应使用 Release 版；现有 Release 优化配置保持不变。
+
+排查编译耗时可运行 `npm run desktop:build -- --timings`，追加参数会传给 Cargo，报告位于 `src-tauri/target/cargo-timings/cargo-timing.html`。避免同时启动多个构建进程或频繁切换工具链、编译目标与优化参数。
+
+发布流水线在选择 Rust 工具链后使用 `Swatinem/rust-cache@v2` 缓存依赖，目录映射为 `./src-tauri -> target`。缓存命中受工具链、依赖及 GitHub 缓存作用域影响；仅标签触发的发布不能假定复用其他标签的缓存，首次冷构建仍需完整编译。
 
 `npm run desktop:package` 会同时保留可运行的 `src-tauri/target/release/snap-desk.exe` 和安装包。GitHub Release 的 Windows x64 附件按以下规则提供，另附 `LICENSE`：
 

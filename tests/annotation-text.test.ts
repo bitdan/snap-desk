@@ -14,6 +14,66 @@ beforeEach(() => {
 })
 
 describe('place a text input before typing', () => {
+  it('reopens existing text with the text tool and replaces it in one undoable edit', async () => {
+    const editor = editorFor()
+    editor.begin({ x: 80, y: 90 }, 2); editor.draft!.text = '原文'
+    await editor.finishText()
+    const original = editor.history.present[0]
+    editor.begin({ x: 90, y: 100 }, 2)
+    expect(editor.textEditing).toBe(true)
+    expect(editor.textAutoHeight).toBe(true)
+    editor.draft!.text = '修改后'
+    expect(original.text).toBe('原文')
+    await editor.finishText()
+    expect(editor.history.present).toHaveLength(1)
+    expect(editor.history.present[0].text).toBe('修改后')
+    await editor.travel('undo')
+    expect(editor.history.present).toEqual([original])
+    await editor.travel('redo')
+    expect(editor.history.present[0].text).toBe('修改后')
+  })
+  it('clicking text in edit mode reopens input, while dragging still moves it', async () => {
+    const editor = editorFor()
+    editor.begin({ x: 80, y: 90 }, 2); editor.draft!.text = '文字'
+    await editor.finishText()
+    editor.setTool('edit')
+    editor.begin({ x: 90, y: 100 }, 2); await editor.finish()
+    expect(editor.textEditing).toBe(true)
+    editor.draft!.text = '取消修改'; editor.abort()
+    expect(editor.history.present[0].text).toBe('文字')
+    editor.begin({ x: 90, y: 100 }, 2); editor.drag({ x: 110, y: 120 }); await editor.finish()
+    expect(editor.textEditing).toBe(false)
+    expect(editor.history.present[0].start).toEqual({ x: 100, y: 110 })
+  })
+  it('resizes input width and height independently within crop bounds before committing', async () => {
+    const editor = editorFor()
+    editor.begin({ x: 80, y: 90 }, 2); editor.draft!.text = '调整宽高'
+    editor.beginTextResize({ x: 260, y: 108 }, 'e', 36)
+    editor.drag({ x: 400, y: 200 }); await editor.finish()
+    expect(editor.textAutoHeight).toBe(false)
+    expect(editor.textBox()).toEqual({ x: 80, y: 90, width: 320, height: 36 })
+    editor.beginTextResize({ x: 240, y: 126 }, 's', 36)
+    editor.drag({ x: 300, y: 900 }); await editor.finish()
+    expect(editor.textBox()).toEqual({ x: 80, y: 90, width: 320, height: 340 })
+    expect(editor.history.present).toEqual([])
+    await editor.finishText()
+    expect(prepareRaster).toHaveBeenLastCalledWith(expect.anything(), 'image', { x: 80, y: 90, width: 320, height: 340 })
+    editor.begin({ x: 90, y: 100 }, 2)
+    expect(editor.textAutoHeight).toBe(true)
+  })
+  it('keeps the original layer and edited draft when saving a second edit fails', async () => {
+    const persist = vi.fn().mockResolvedValue(undefined), editor = editorFor(persist)
+    editor.begin({ x: 80, y: 90 }, 2); editor.draft!.text = '原文'; await editor.finishText()
+    editor.begin({ x: 90, y: 100 }, 2); editor.draft!.text = '新内容'
+    persist.mockRejectedValueOnce(new Error('save failed'))
+    await editor.finishText()
+    expect(editor.history.present[0].text).toBe('原文')
+    expect(editor.draft!.text).toBe('新内容')
+    expect(editor.textEditing).toBe(true)
+    await editor.finishText()
+    expect(editor.history.present).toHaveLength(1)
+    expect(editor.history.present[0].text).toBe('新内容')
+  })
   it('opens an empty draft at the clicked position without committing on pointerup', async () => {
     const editor = editorFor()
     editor.text = 'previous text'

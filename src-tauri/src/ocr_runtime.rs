@@ -107,7 +107,7 @@ pub fn initialize(dir: &Path) -> Result<(), String> {
     }
     let runtime = manifest()?;
     if !installed(dir, &runtime) {
-        return Err("OCR 引擎未下载或校验失败，请在通用设置下载识别资源。".into());
+        return Err("OCR 引擎未下载或校验失败，请在“识别与翻译”页下载识别资源。".into());
     }
     let path = dir
         .join(&runtime.directory)
