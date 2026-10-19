@@ -234,6 +234,7 @@ impl Service {
             let kind = match &content {
                 Content::Text(_) => Kind::Text,
                 Content::Image(_) => Kind::Image,
+                Content::Files(_) => Kind::File,
             };
             if seq != platform::sequence() {
                 continue;
@@ -263,6 +264,23 @@ impl Service {
             }
             if !data.repo.refresh(kind, &hash, now())? {
                 match content {
+                    Content::Files(paths) => {
+                        let text = paths.join("\n");
+                        data.repo.insert(
+                            NewItem {
+                                kind,
+                                hash: &hash,
+                                text: Some(&text),
+                                blob: None,
+                                thumb: None,
+                                width: None,
+                                height: None,
+                                bytes: text.len() as u64,
+                            },
+                            &settings,
+                            now(),
+                        )?;
+                    }
                     Content::Text(text) => data.repo.insert(
                         NewItem {
                             kind,
@@ -307,12 +325,16 @@ impl Service {
 pub enum Content {
     Text(String),
     Image(RgbaImage),
+    Files(Vec<String>),
 }
 impl Content {
     pub fn hash(&self) -> String {
         match self {
             Self::Text(t) => blake3::hash(t.as_bytes()).to_hex().to_string(),
             Self::Image(i) => image_hash(i),
+            Self::Files(paths) => blake3::hash(paths.join("\n").as_bytes())
+                .to_hex()
+                .to_string(),
         }
     }
 }
@@ -321,6 +343,9 @@ impl Data {
     pub fn content(&self, id: i64) -> Result<Content, String> {
         let item = self.repo.get(id)?;
         match item.item.kind {
+            Kind::File => Ok(Content::Files(super::files::from_stored(
+                &item.text.ok_or("文件引用损坏。")?,
+            )?)),
             Kind::Text => Ok(Content::Text(item.text.ok_or("历史文本损坏。")?)),
             Kind::Image => Ok(Content::Image(crate::pin_content::read_image(
                 &self.blobs.path(&item.blob.ok_or("图片引用损坏。")?)?,

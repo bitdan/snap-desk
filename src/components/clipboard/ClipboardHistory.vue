@@ -3,7 +3,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { DialogRoot, DialogPortal, DialogOverlay, DialogContent, DialogTitle, DialogDescription, DialogTrigger } from 'reka-ui'
 import { api, desktop, onClipboardChanged, onClipboardError, onClipboardState, onClipboardOpen } from '@/lib/api'
 import { defaultClipboardSettings, toggleSelection, type ClipboardItem as Item, type ClipboardStatus, type ClipboardKind, type ClipboardExportOptions } from '@/lib/clipboard'
-import { Search, ClipboardList, Type, Image, Star, X, Download, Pin, Trash2 } from 'lucide-vue-next'
+import { Search, ClipboardList, Type, Image, Star, X, Download, Pin, Trash2, Files } from 'lucide-vue-next'
 import ClipboardItem from './ClipboardItem.vue'
 import Button from '@/components/ui/button/Button.vue'
 const items = ref<Item[]>([]), selected = ref<number[]>([]), cursor = ref<string | null>(null)
@@ -12,7 +12,8 @@ const status = ref<ClipboardStatus | null>(null), settings = ref(defaultClipboar
 const keyword = ref(''), category = ref<'' | ClipboardKind | 'favorites'>('')
 const kind = computed(() => category.value === 'favorites' ? '' : category.value)
 const favorites = computed(() => category.value === 'favorites')
-const categories = [{ value: '' as const, label: '全部', icon: ClipboardList }, { value: 'text' as const, label: '文本', icon: Type }, { value: 'image' as const, label: '图像', icon: Image }, { value: 'favorites' as const, label: '收藏', icon: Star }]
+const categories = [{ value: '' as const, label: '全部', icon: ClipboardList }, { value: 'text' as const, label: '文本', icon: Type }, { value: 'image' as const, label: '图像', icon: Image }, { value: 'file' as const, label: '文件', icon: Files }, { value: 'favorites' as const, label: '收藏', icon: Star }]
+const canExport = computed(() => selected.value.length > 0 && selected.value.every(id => ['text', 'image'].includes(selectedItems.value[id]?.kind)))
 const busy = ref(false), loading = ref(false), error = ref(''), message = ref('')
 const confirm = ref<'delete' | 'clear' | null>(null), includeFavorites = ref(false), exportOpen = ref(false)
 /** 事件中的条件分支放在脚本内，避免被模板编译器当成 JavaScript 表达式解析。 */
@@ -102,6 +103,7 @@ async function remove() {
   }, '历史条目已删除。')
 }
 async function exportItems() {
+  if (!canExport.value) return
   await run(async () => {
     const result = await api.clipboardExport({ ...options.value, ids: selected.value })
     message.value = result.status === 'cancelled' ? '已取消导出。' : `已保存 ${result.outputPaths.length} 个文件。`
@@ -144,7 +146,7 @@ onUnmounted(() => { disposed = true; revision++; clearTimeout(refreshTimer); dis
     <p v-if="error || status?.error" class="notice error" role="alert">{{ error || status?.error }}</p>
     <p v-if="message" role="status">{{ message }}</p>
     <form class="history-search" role="search" @submit.prevent="applyFilter">
-      <Search :size="16" aria-hidden="true" /><input ref="searchInput" v-model="keyword" aria-label="搜索历史文本" placeholder="搜索历史文本（Ctrl+F）" maxlength="200" /><button v-if="keyword" type="button" aria-label="清除搜索" @click="keyword = ''; focusSearch()"><X :size="16" /></button>
+      <Search :size="16" aria-hidden="true" /><input ref="searchInput" v-model="keyword" aria-label="搜索文本或文件路径" placeholder="搜索文本或文件路径（Ctrl+F）" maxlength="200" /><button v-if="keyword" type="button" aria-label="清除搜索" @click="keyword = ''; focusSearch()"><X :size="16" /></button>
     </form>
     <nav class="history-categories" aria-label="历史分类">
       <button v-for="tab in categories" :key="tab.value" :class="{ active: category === tab.value }" :aria-pressed="category === tab.value" :disabled="busy || !desktop" @click="category = tab.value"><component :is="tab.icon" :size="16" aria-hidden="true" />{{ tab.label }}</button>
@@ -177,14 +179,14 @@ onUnmounted(() => { disposed = true; revision++; clearTimeout(refreshTimer); dis
     <aside class="history-action-rail" aria-label="所选条目操作">
       <template v-if="selected.length">
         <span class="history-selected-count" role="status" :title="`已选 ${selected.length} / 100 条`">已选<br />{{ selected.length }}</span>
-        <DialogTrigger as-child><Button class="history-action" :disabled="busy" title="组合导出" aria-label="组合导出所选条目" @click="error = ''; message = ''"><Download :size="18" /></Button></DialogTrigger>
+        <DialogTrigger as-child><Button class="history-action" :disabled="busy || !canExport" :title="canExport ? '组合导出' : '组合导出仅支持文本和图片，文件引用请复制后粘贴'" aria-label="组合导出所选条目" @click="error = ''; message = ''"><Download :size="18" /></Button></DialogTrigger>
         <Button class="history-action" variant="outline" :disabled="busy || !selected.some(id => selectedItems[id]?.kind === 'image')" title="图片贴图" aria-label="将所选图片贴图" @click="pinSelected"><Pin :size="18" /></Button>
         <Button class="history-action history-delete" variant="outline" :disabled="busy" title="删除所选" aria-label="删除所选条目" @click="confirm = 'delete'"><Trash2 :size="18" /></Button>
         <Button class="history-action" variant="ghost" :disabled="busy" title="取消选择" aria-label="取消选择" @click="selected = []; selectedItems = {}"><X :size="18" /></Button>
       </template>
     </aside>
     </div>
-    <footer class="history-footer"><span>单击选择 · ↑↓ 浏览 · Enter / 双击复制</span><p>历史仅存本机，未加密、不上传，可能包含密码等私人内容。暂停不影响已有记录。</p></footer>
+    <footer class="history-footer"><span>单击选择 · ↑↓ 浏览 · Enter / 双击复制</span><p v-if="category === 'file'">文件仅保存路径引用，不备份内容；原文件移动或删除后无法恢复。复制后可到资源管理器粘贴。</p><p>历史仅存本机，未加密、不上传，可能包含密码等私人内容。暂停不影响已有记录。</p></footer>
   </section>
   </DialogRoot>
 </template>

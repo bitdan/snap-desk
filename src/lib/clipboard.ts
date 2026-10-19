@@ -1,16 +1,17 @@
 /** 与 Rust clipboard/model.rs、export.rs 的受限 IPC 契约一致。 */
 export interface ClipboardSettings {
   enabled: boolean; maxItems: number; maxStorageMb: number; maxTextBytes: number;
-  maxImagePixels: number; saveCopiedImages: boolean; saveCopiedText: boolean; retainDays: number;
+  maxImagePixels: number; saveCopiedImages: boolean; saveCopiedText: boolean; saveCopiedFiles: boolean; retainDays: number;
 }
 export function defaultClipboardSettings(): ClipboardSettings {
-  return { enabled: false, maxItems: 500, maxStorageMb: 200, maxTextBytes: 1048576, maxImagePixels: 16000000, saveCopiedImages: true, saveCopiedText: true, retainDays: 0 }
+  return { enabled: false, maxItems: 500, maxStorageMb: 200, maxTextBytes: 1048576, maxImagePixels: 16000000, saveCopiedImages: true, saveCopiedText: true, saveCopiedFiles: true, retainDays: 0 }
 }
-export type ClipboardKind = 'text' | 'image'
+export type ClipboardKind = 'text' | 'image' | 'file'
 export interface ClipboardItem {
   id: number; kind: ClipboardKind; source: 'clipboard' | 'capture' | 'scroll'; preview: string;
   mimeType: string; width: number | null; height: number | null; byteSize: number;
   favorite: boolean; createdAt: number; lastSeenAt: number; seenCount: number;
+  filePaths?: string[];
 }
 export interface ClipboardQuery { keyword?: string; kind?: ClipboardKind; favoritesOnly?: boolean; limit?: number; cursor?: string }
 export interface ClipboardPage { items: ClipboardItem[]; nextCursor: string | null; revision: number }

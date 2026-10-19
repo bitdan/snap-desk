@@ -6,6 +6,7 @@ pub enum Snapshot {
     Text(Vec<u8>),
     Png(Vec<u8>),
     Dib(Vec<u8>),
+    Files(Vec<u8>),
 }
 
 pub fn read(settings: &ClipboardSettings) -> Result<Option<Content>, String> {
@@ -13,6 +14,9 @@ pub fn read(settings: &ClipboardSettings) -> Result<Option<Content>, String> {
         return Ok(None);
     };
     match raw {
+        Snapshot::Files(bytes) => {
+            super::files::decode(&bytes).map(|paths| Some(Content::Files(paths)))
+        }
         Snapshot::Text(bytes) => {
             let units = bytes
                 .chunks_exact(2)

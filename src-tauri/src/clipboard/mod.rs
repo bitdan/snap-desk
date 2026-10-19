@@ -1,6 +1,7 @@
 //! 剪贴板历史的受限 Tauri 入口；每个命令只允许 main 窗口访问。
 mod blob_store;
 pub mod export;
+mod files;
 pub mod model;
 mod platform;
 mod reader;
@@ -64,11 +65,11 @@ pub async fn clipboard_get_text(
     id: i64,
 ) -> Result<String, String> {
     work(app, window, move |_, s| {
-        s.data()?
-            .repo
-            .get(id)?
-            .text
-            .ok_or("此条目不是文本。".into())
+        let stored = s.data()?.repo.get(id)?;
+        if stored.item.kind != Kind::Text {
+            return Err("此条目不是文本。".into());
+        }
+        stored.text.ok_or("历史文本损坏。".into())
     })
     .await
 }
@@ -116,6 +117,7 @@ pub async fn clipboard_restore(
                 .write_text(t.clone())
                 .map_err(|_| "复制文本失败，请重试。".to_string())?,
             Content::Image(i) => crate::image_io::copy(app, i)?,
+            Content::Files(paths) => platform::write_files(paths)?,
         }
         *s.restored.lock().map_err(|_| "恢复状态不可用。")? =
             Some((platform::sequence(), content.hash()));
@@ -137,7 +139,7 @@ pub async fn clipboard_pin_item(
         };
         match content {
             Content::Image(i) => crate::pins::create_visible(app, i, vec![]),
-            Content::Text(_) => Err("请选择图片贴图。".into()),
+            Content::Text(_) | Content::Files(_) => Err("请选择图片贴图。".into()),
         }
     })
     .await

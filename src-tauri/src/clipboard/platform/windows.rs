@@ -153,20 +153,27 @@ pub fn snapshot(settings: &ClipboardSettings) -> Result<Option<Snapshot>, String
             }
         }
         let png = RegisterClipboardFormatW(w!("PNG"));
-        for format in [png, 17, 8, 13] {
+        // 资源管理器复制图片文件时也可能附带其他格式；CF_HDROP 优先保留文件语义。
+        for format in [15, png, 17, 8, 13] {
             if format == 0 || IsClipboardFormatAvailable(format).is_err() {
                 continue;
             }
-            let image = format != 13;
+            let files = format == 15;
+            let image = format != 13 && !files;
+            if files && !settings.save_copied_files {
+                return Ok(None);
+            }
             if image && !settings.save_copied_images {
                 return Ok(None);
             }
-            if !image && !settings.save_copied_text {
+            if format == 13 && !settings.save_copied_text {
                 return Ok(None);
             }
             let handle = GetClipboardData(format).map_err(|_| "剪贴板格式暂不可读。")?;
             let size = GlobalSize(windows::Win32::Foundation::HGLOBAL(handle.0));
-            let limit = if image {
+            let limit = if files {
+                super::super::files::MAX_BYTES
+            } else if image {
                 64 * 1024 * 1024
             } else {
                 (settings.max_text_bytes as usize) * 2 + 2
@@ -200,7 +207,9 @@ pub fn snapshot(settings: &ClipboardSettings) -> Result<Option<Snapshot>, String
             }
             let bytes = std::slice::from_raw_parts(ptr as *const u8, size).to_vec();
             let _ = GlobalUnlock(global);
-            return Ok(Some(if !image {
+            return Ok(Some(if files {
+                Snapshot::Files(bytes)
+            } else if !image {
                 Snapshot::Text(bytes)
             } else if format == png {
                 Snapshot::Png(bytes)
@@ -210,6 +219,21 @@ pub fn snapshot(settings: &ClipboardSettings) -> Result<Option<Snapshot>, String
         }
     }
     Ok(None)
+}
+
+/// 恢复为复制文件的 CF_HDROP 数据，不继承原剪切操作，避免粘贴时移动源文件。
+/// 检查存在性在打开剪贴板之前完成；删除历史只删引用，不触碰这些源路径。
+pub fn write_files(paths: &[String]) -> Result<(), String> {
+    super::super::files::validate(paths)?;
+    for path in paths {
+        if std::fs::metadata(path).is_err() {
+            return Err(format!("原文件已移动、删除或不可访问，无法复制：{path}"));
+        }
+    }
+    let _guard =
+        clipboard_win::Clipboard::new_attempts(10).map_err(|_| "剪贴板正在被占用，请稍后重试。")?;
+    clipboard_win::raw::set_file_list_with(paths, clipboard_win::options::DoClear)
+        .map_err(|_| "复制文件引用失败，请重试。".into())
 }
 
 /// 只读取已验证长度的头部；DIB 的负高度表示从上到下，不改变像素配额。

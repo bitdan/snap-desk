@@ -17,6 +17,10 @@ pub fn sequence() -> u32 {
     0
 }
 #[cfg(not(target_os = "windows"))]
+pub fn write_files(_: &[String]) -> Result<(), String> {
+    Err("当前平台尚未支持复制文件引用。".into())
+}
+#[cfg(not(target_os = "windows"))]
 pub fn snapshot(
     _: &super::model::ClipboardSettings,
 ) -> Result<Option<super::reader::Snapshot>, String> {

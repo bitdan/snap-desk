@@ -19,7 +19,7 @@ async function save() {
   try {
     // 启停仍由历史页控制；保存前读取最新状态，避免旧表单意外重启记录。
     const current = (await api.status()).settings.clipboard
-    await api.clipboardConfigure({ ...current, saveCopiedText: settings.value.saveCopiedText, saveCopiedImages: settings.value.saveCopiedImages, maxItems: settings.value.maxItems, maxStorageMb: settings.value.maxStorageMb, retainDays: settings.value.retainDays })
+    await api.clipboardConfigure({ ...current, saveCopiedText: settings.value.saveCopiedText, saveCopiedImages: settings.value.saveCopiedImages, saveCopiedFiles: settings.value.saveCopiedFiles, maxItems: settings.value.maxItems, maxStorageMb: settings.value.maxStorageMb, retainDays: settings.value.retainDays })
     settings.value = (await api.status()).settings.clipboard
     message.value = '剪贴板历史设置已保存。'
   } catch (e) { error.value = String(e) }
@@ -34,6 +34,7 @@ onMounted(load)
       <fieldset :disabled="busy || !ready || !desktop">
         <div class="setting-row"><label for="history-text">记录文本</label><input id="history-text" v-model="settings.saveCopiedText" type="checkbox" /></div>
         <div class="setting-row"><label for="history-images">记录图片</label><input id="history-images" v-model="settings.saveCopiedImages" type="checkbox" /></div>
+        <div class="setting-row"><label for="history-files">记录文件<small>只保存文件／文件夹路径，不备份内容；原文件移动或删除后引用失效。</small></label><input id="history-files" v-model="settings.saveCopiedFiles" type="checkbox" /></div>
         <div class="setting-row"><label for="history-count">最多条目</label><input id="history-count" v-model.number="settings.maxItems" type="number" min="100" max="5000" required /></div>
         <div class="setting-row"><label for="history-size">容量上限（MiB）</label><input id="history-size" v-model.number="settings.maxStorageMb" type="number" min="50" max="2048" required /></div>
         <div class="setting-row"><label for="history-days">保留天数（0 为不限）<small>收藏不会自动删除；启动、保存设置和记录期间自动清理。</small></label><input id="history-days" v-model.number="settings.retainDays" type="number" min="0" max="3650" required /></div>

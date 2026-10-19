@@ -19,14 +19,25 @@ fn err(_: impl std::fmt::Display) -> String {
 }
 fn row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Stored> {
     let text: Option<String> = row.get("text_content")?;
+    let kind = match row.get::<_, String>("kind")?.as_str() {
+        "text" => Kind::Text,
+        "image" => Kind::Image,
+        "file" => Kind::File,
+        _ => return Err(rusqlite::Error::InvalidQuery),
+    };
+    let file_paths = if kind == Kind::File {
+        Some(
+            super::files::from_stored(text.as_deref().unwrap_or(""))
+                .map_err(|_| rusqlite::Error::InvalidQuery)?,
+        )
+    } else {
+        None
+    };
     Ok(Stored {
         item: Item {
             id: row.get("id")?,
-            kind: if row.get::<_, String>("kind")? == "image" {
-                Kind::Image
-            } else {
-                Kind::Text
-            },
+            kind,
+            file_paths,
             source: row.get("source")?,
             preview: text.as_deref().unwrap_or("").chars().take(160).collect(),
             mime_type: row.get("mime_type")?,
@@ -52,7 +63,7 @@ impl Repository {
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .map_err(err)?;
-        if version > 1 {
+        if version > 2 {
             return Err("历史数据库来自较新版本，请升级应用。".into());
         }
         if version == 0 {
@@ -60,6 +71,13 @@ impl Repository {
             tx.execute_batch(include_str!("migrations/001.sql"))
                 .map_err(err)?;
             tx.pragma_update(None, "user_version", 1).map_err(err)?;
+            tx.commit().map_err(err)?;
+        }
+        if version < 2 {
+            let tx = conn.transaction().map_err(err)?;
+            tx.execute_batch(include_str!("migrations/002.sql"))
+                .map_err(err)?;
+            tx.pragma_update(None, "user_version", 2).map_err(err)?;
             tx.commit().map_err(err)?;
         }
         Ok(Self(Mutex::new(conn)))
@@ -117,7 +135,12 @@ impl Repository {
     ) -> Result<(), String> {
         let mut conn = self.0.lock().map_err(err)?;
         let tx = conn.transaction().map_err(err)?;
-        tx.execute("INSERT INTO clipboard_items(kind,content_hash,text_content,blob_rel_path,thumb_rel_path,mime_type,width,height,byte_size,created_at,last_seen_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?10)", params![item.kind.as_str(),item.hash,item.text,item.blob,item.thumb,if item.kind==Kind::Text {"text/plain"} else {"image/png"},item.width,item.height,item.bytes,now]).map_err(err)?;
+        let mime = match item.kind {
+            Kind::Text => "text/plain",
+            Kind::Image => "image/png",
+            Kind::File => "application/x-snap-desk-file-list",
+        };
+        tx.execute("INSERT INTO clipboard_items(kind,content_hash,text_content,blob_rel_path,thumb_rel_path,mime_type,width,height,byte_size,created_at,last_seen_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?10)", params![item.kind.as_str(),item.hash,item.text,item.blob,item.thumb,mime,item.width,item.height,item.bytes,now]).map_err(err)?;
         let inserted = tx.last_insert_rowid();
         if settings.retain_days > 0 {
             tx.execute(
@@ -283,6 +306,45 @@ mod tests {
             height: None,
             bytes: value.len() as u64,
         }
+    }
+    #[test]
+    fn version_one_migration_preserves_records_and_adds_file_search() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(include_str!("migrations/001.sql"))
+            .unwrap();
+        conn.pragma_update(None, "user_version", 1).unwrap();
+        conn.execute("INSERT INTO clipboard_items(id,kind,content_hash,text_content,mime_type,byte_size,created_at,last_seen_at,is_favorite,seen_count) VALUES(8,'text','old','keep','text/plain',4,1,2,1,3)", []).unwrap();
+        let repo = Repository::from_connection(conn).unwrap();
+        let old = repo.get(8).unwrap();
+        assert_eq!(old.text.as_deref(), Some("keep"));
+        assert!(old.item.favorite);
+        assert_eq!(old.item.seen_count, 3);
+        let paths = "C:\\资料\\report.pdf\nD:\\image.png";
+        repo.insert(
+            NewItem {
+                kind: Kind::File,
+                ..text(paths)
+            },
+            &ClipboardSettings::default(),
+            3,
+        )
+        .unwrap();
+        let page = repo
+            .list(
+                &Query {
+                    kind: Some(Kind::File),
+                    keyword: "report.pdf".into(),
+                    ..Query::default()
+                },
+                0,
+            )
+            .unwrap();
+        assert_eq!(page.items.len(), 1);
+        assert_eq!(page.items[0].file_paths.as_ref().unwrap().len(), 2);
+        assert_eq!(page.items[0].id, 9);
+        assert!(repo.refresh(Kind::File, paths, 4).unwrap());
+        repo.delete(&[9]).unwrap();
+        assert!(repo.get(8).is_ok());
     }
     #[test]
     fn duplicate_favorites_and_cursor_keep_exact_text() {

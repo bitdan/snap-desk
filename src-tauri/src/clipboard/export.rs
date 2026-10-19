@@ -133,6 +133,9 @@ fn snapshot(service: &Service, ids: &[i64], dir: &Path) -> Result<Vec<Snapshot>,
             return Err("所选素材超过 256 MiB，请分批导出。".into());
         }
         match row.item.kind {
+            Kind::File => {
+                return Err("文件条目仅保存引用，不支持组合导出。请复制后在资源管理器粘贴。".into())
+            }
             Kind::Text => snapshots.push(Snapshot::Text(row.text.ok_or("文本记录损坏。")?)),
             Kind::Image => {
                 let target = dir.join(format!("{index}.png"));

@@ -11,6 +11,7 @@ pub struct ClipboardSettings {
     pub max_image_pixels: u32,
     pub save_copied_images: bool,
     pub save_copied_text: bool,
+    pub save_copied_files: bool,
     pub retain_days: u32,
 }
 impl Default for ClipboardSettings {
@@ -23,6 +24,7 @@ impl Default for ClipboardSettings {
             max_image_pixels: 16_000_000,
             save_copied_images: true,
             save_copied_text: true,
+            save_copied_files: true,
             retain_days: 0,
         }
     }
@@ -46,12 +48,14 @@ impl ClipboardSettings {
 pub enum Kind {
     Text,
     Image,
+    File,
 }
 impl Kind {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Text => "text",
             Self::Image => "image",
+            Self::File => "file",
         }
     }
 }
@@ -103,6 +107,9 @@ pub struct Item {
     pub created_at: i64,
     pub last_seen_at: i64,
     pub seen_count: u64,
+    /// 文件条目提供路径供展示；图片与文本不包含此字段。恢复仍只能提交记录 ID。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file_paths: Option<Vec<String>>,
 }
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
