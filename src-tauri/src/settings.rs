@@ -123,7 +123,7 @@ impl Default for Shortcuts {
             capture: "F1".into(),
             pin: "F2".into(),
             record: "F3".into(),
-            history: "Ctrl+Shift+V".into(),
+            history: "F4".into(),
         }
     }
 }
@@ -724,16 +724,16 @@ mod tests {
             serde_json::from_str(r#"{"shortcut":"Ctrl+S","delaySeconds":3}"#).unwrap();
         assert_eq!(old.shortcuts.pin, "F2");
         assert_eq!(old.shortcuts.record, "F3");
-        assert_eq!(old.shortcuts.history, "Ctrl+Shift+V");
+        assert_eq!(old.shortcuts.history, "F4");
         assert!(!old.clipboard.enabled);
         for json in [
-            r#"{"shortcut":"Ctrl+Shift+V"}"#,
-            r#"{"shortcuts":{"capture":"Shift+Ctrl+V","pin":"F2","record":"F3"}}"#,
+            r#"{"shortcut":"F4"}"#,
+            r#"{"shortcuts":{"capture":"F4","pin":"F2","record":"F3"}}"#,
         ] {
             let migrated: Settings = serde_json::from_str(json).unwrap();
             assert!(migrated.shortcuts.history.is_empty());
             assert!(migrated.validate().is_ok());
-            assert!(migrated.shortcuts.capture.contains('V'));
+            assert_eq!(migrated.shortcuts.capture, "F4");
         }
         assert!(!serde_json::to_value(old)
             .unwrap()
@@ -748,7 +748,7 @@ mod tests {
         for conflict in ["F5", "F6", "F7"] {
             let next = Settings {
                 shortcuts: Shortcuts {
-                    capture: "F4".into(),
+                    capture: "F8".into(),
                     pin: "F5".into(),
                     record: "F6".into(),
                     history: "F7".into(),

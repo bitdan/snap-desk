@@ -12,8 +12,8 @@ describe('历史配置及选择顺序', () => {
     expect(settings.clipboard.enabled).toBe(false)
     settings.clipboard.enabled = true
     expect(defaultSettings().clipboard.enabled).toBe(false)
-    expect(settings.shortcuts.history).toBe('Ctrl+Shift+V')
-    expect(validateShortcuts({ ...settings.shortcuts, capture: 'Shift+Ctrl+V' })).toContain('冲突')
+    expect(settings.shortcuts.history).toBe('F4')
+    expect(validateShortcuts({ ...settings.shortcuts, capture: 'F4' })).toContain('冲突')
   })
   it('按点击顺序多选，重排不修改源数组且拒绝无效拖动', () => {
     const ids = toggleSelection(toggleSelection([], 9), 2)

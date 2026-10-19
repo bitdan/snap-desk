@@ -43,7 +43,7 @@ describe('全局快捷键动作映射与录入', () => {
   const event = (key: string, code = key, modifiers = {}) => ({ key, code, ctrlKey: false, altKey: false, shiftKey: false, metaKey: false, ...modifiers })
   it('三个默认值独立复制，可分别清空并允许重新分配 F2/F3', () => {
     const shortcuts = defaultSettings().shortcuts
-    expect(shortcuts).toEqual({ capture: 'F1', pin: 'F2', record: 'F3', history: 'Ctrl+Shift+V' })
+    expect(shortcuts).toEqual({ capture: 'F1', pin: 'F2', record: 'F3', history: 'F4' })
     shortcuts.capture = 'F2'; shortcuts.pin = ''; shortcuts.record = ''
     expect(validateShortcuts(shortcuts)).toBeNull()
     expect(defaultSettings().shortcuts.capture).toBe('F1')

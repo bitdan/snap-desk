@@ -23,7 +23,7 @@ export interface Settings { ai: AiSettings; onboardingVersion: number; shortcuts
 
 /** 每次返回独立对象，避免编辑草稿时改动“恢复默认”的值。 */
 export function defaultSettings(): Settings {
-  return { ai: defaultAiSettings(), clipboard: defaultClipboardSettings(), onboardingVersion: 0, shortcuts: { capture: 'F1', pin: 'F2', record: 'F3', history: 'Ctrl+Shift+V' }, shortcutsEnabled: true, delaySeconds: 0, export: {
+  return { ai: defaultAiSettings(), clipboard: defaultClipboardSettings(), onboardingVersion: 0, shortcuts: { capture: 'F1', pin: 'F2', record: 'F3', history: 'F4' }, shortcutsEnabled: true, delaySeconds: 0, export: {
     format: 'png', jpegQuality: 90, filenamePrefix: 'SnapDesk', includeDimensions: false, rememberDirectory: true,
   } }
 }
