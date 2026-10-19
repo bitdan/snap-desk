@@ -15,6 +15,7 @@
     "predesktop:dev": "npm run version:sync",
     "desktop:dev": "tauri dev",
     "desktop:build": "node scripts/build-desktop.mjs --no-bundle --ci -- --locked",
+    "desktop:build:fast": "node scripts/build-desktop.mjs --no-bundle --ci --debug -- --locked",
     "desktop:package": "node scripts/build-desktop.mjs --ci -- --locked",
     "desktop:clean": "node scripts/clean-desktop.mjs"
   },

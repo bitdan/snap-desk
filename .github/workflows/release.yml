@@ -67,6 +67,12 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           rustup default stable-x86_64-pc-windows-msvc
 
+      # target 相对 src-tauri 解析，与本地构建脚本固定的缓存目录一致。
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
       - name: Install frontend dependencies
         run: npm ci
 
