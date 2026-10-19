@@ -91,8 +91,6 @@ const recordingMbps = ref<string | number>('')
 const recordingCountdown = ref<0 | 3 | 5>(0)
 const captureCursor = ref(true)
 const recordingEffects = ref(defaultInputEffects())
-// 原始帧仅用于调试，默认避免 PNG 编码与同步磁盘写入。
-const saveScrollFrames = ref(false)
 const viewport = ref({ width: innerWidth, height: innerHeight })
 const annotating = ref(false)
 const screenImage = shallowRef<HTMLImageElement | null>(null)
@@ -168,7 +166,8 @@ function scrollClosed() { scroll.value = null; frame.value = null; scrollSetup.v
 async function startScroll() {
   if (!frame.value || !pixels.value || !valid.value || busy.value || marked.value || editor.pending || editor.interacting || gesture.value) return
   busy.value = true; error.value = ''
-  try { receiveScroll(await api.startScroll(frame.value.id, pixels.value, saveScrollFrames.value)); scrollSetup.value = false }
+  // 长截图仅输出拼接结果；排错使用应用日志，不再额外保存原始帧。
+  try { receiveScroll(await api.startScroll(frame.value.id, pixels.value, false)); scrollSetup.value = false }
   catch (e) { error.value = String(e) }
   finally { busy.value = false }
 }
@@ -365,7 +364,7 @@ onUnmounted(() => { disposed = true; off?.(); offScroll?.(); offPin?.(); window.
       <RecordingSetupMenu v-model:format="recordingFormat" :formats="recordingCapabilities?.formats ?? []" v-model:fps="recordingFps" v-model:encoding="recordingEncoding" v-model:quality="recordingQuality" v-model:mbps="recordingMbps" v-model:countdown="recordingCountdown" v-model:cursor="captureCursor" v-model:effects="recordingEffects" :busy="busy" :error="error" :style="recordingMenuStyle" @confirm="startRecording" @close="recordingSetup = false" />
     </div>
     <div v-if="scrollSetup" class="recording-menu-shade" @pointerdown.self.stop="!busy && (scrollSetup = false)" @pointermove.stop @contextmenu.stop.prevent>
-      <ScrollSetupMenu v-model:save-frames="saveScrollFrames" :busy="busy" :error="error" :style="scrollMenuStyle" @confirm="startScroll" @close="scrollSetup = false" />
+      <ScrollSetupMenu :busy="busy" :error="error" :style="scrollMenuStyle" @confirm="startScroll" @close="scrollSetup = false" />
     </div>
     <div v-if="error && !scrollSetup && !recordingSetup" class="overlay-error" role="alert" @pointerdown.stop>{{ error }}</div>
   </div>

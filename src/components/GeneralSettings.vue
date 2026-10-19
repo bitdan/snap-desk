@@ -3,7 +3,7 @@ import { onMounted, ref } from 'vue'
 import Button from './ui/button/Button.vue'
 import ClipboardSettings from './clipboard/ClipboardSettings.vue'
 import ResourceSettings from './ResourceSettings.vue'
-import DiagnosticsSettings from './DiagnosticsSettings.vue'
+import { Check } from 'lucide-vue-next'
 import { api, desktop, type AppDirectory, type DirectoryView } from '@/lib/api'
 
 const directories = ref<DirectoryView[]>([])
@@ -57,24 +57,23 @@ onMounted(() => { void run(refresh); void refreshAutostart() })
 
 <template>
   <section>
-    <h1>通用设置</h1><p class="subtitle">启动、文件与存储</p>
-    <ClipboardSettings />
-    <ResourceSettings kind="font" />
-    <DiagnosticsSettings />
     <div class="settings-card mb-4">
       <div class="setting-row flex-wrap gap-3">
-        <div class="min-w-0 flex-1"><strong>开机自启</strong><small class="block text-zinc-500">登录系统后自动启动到托盘，可直接使用截图快捷键。</small></div>
-        <span class="text-sm text-zinc-500" role="status">{{ startupBusy ? '处理中…' : autostart === null ? '状态未读取' : autostart ? '已开启' : '已关闭' }}</span>
+        <div class="min-w-0 flex-1"><strong>开机自启</strong></div>
+        <span :class="autostart && !startupBusy ? 'status-ok' : 'text-sm text-zinc-500'" role="status"><Check v-if="autostart && !startupBusy" :size="14" />{{ startupBusy ? '处理中…' : autostart === null ? '状态未读取' : autostart ? '已开启' : '已关闭' }}</span>
         <Button variant="outline" :disabled="!desktop || startupBusy || autostart === null" :aria-pressed="autostart === true" aria-label="开机自启" @click="toggleAutostart">{{ autostart ? '关闭' : '开启' }}</Button>
         <Button variant="ghost" :disabled="!desktop || startupBusy" @click="refreshAutostart">刷新状态</Button>
       </div>
       <p v-if="startupError" class="notice error" role="alert">{{ startupError }}</p>
     </div>
+    <ClipboardSettings />
+    <ResourceSettings kind="font" />
+    <h2 class="section-heading">文件与存储</h2>
     <p v-if="error" class="notice error" role="alert">{{ error }}</p>
     <p v-if="message" class="notice" role="status">{{ message }}</p>
     <div class="settings-card">
-      <div v-for="directory in directories" :key="directory.kind" class="setting-row flex-wrap gap-3">
-        <div class="min-w-0 flex-1"><strong>{{ labels[directory.kind].name }}</strong><small class="block text-zinc-500">{{ labels[directory.kind].description }}</small><p class="mt-2 break-all text-xs">{{ directory.error || directory.path || '尚未记录可用位置，请先保存一张截图。' }}</p></div>
+      <div v-for="directory in directories.filter(item => item.kind !== 'logs')" :key="directory.kind" class="setting-row flex-wrap gap-3">
+        <div class="min-w-0 flex-1"><strong>{{ labels[directory.kind].name }}</strong><small v-if="directory.kind === 'clipboard'" class="block text-zinc-500">请通过剪贴板页面清理历史，勿手动删除数据库。</small><p class="mt-2 break-all text-xs">{{ directory.error || directory.path || '尚未记录可用位置，请先保存一张截图。' }}</p></div>
         <div class="flex flex-wrap gap-2">
           <Button variant="outline" :disabled="busy || !directory.path" @click="run(() => api.openAppDirectory(directory.kind))">打开</Button>
           <Button variant="ghost" :disabled="busy || !directory.path" @click="run(() => api.copyAppDirectory(directory.kind), '目录路径已复制。')">复制路径</Button>
@@ -84,7 +83,7 @@ onMounted(() => { void run(refresh); void refreshAutostart() })
           </template>
         </div>
       </div>
-      <div class="flex gap-3 py-5"><Button :disabled="!desktop || busy" @click="run(exportConfig)">导出主配置</Button><Button variant="outline" :disabled="!desktop || busy" @click="run(refresh)">刷新目录</Button></div>
+      <div class="flex gap-2 py-3"><Button :disabled="!desktop || busy" @click="run(exportConfig)">导出主配置</Button><Button variant="outline" :disabled="!desktop || busy" @click="run(refresh)">刷新目录</Button></div>
     </div>
   </section>
 </template>

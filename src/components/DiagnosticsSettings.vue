@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { Check } from 'lucide-vue-next'
 import Button from './ui/button/Button.vue'
 import { api, desktop } from '@/lib/api'
 import { debugSeconds, searchLogs, type DiagnosticsStatus, type LogLevel, type LogModule, type RecentLogs } from '@/lib/diagnostics'
@@ -65,11 +66,11 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
 <template>
   <section class="diagnostics" aria-labelledby="diagnostics-heading">
     <div class="diagnostics-toolbar">
-      <h2 id="diagnostics-heading">诊断与日志</h2>
-      <span role="status" class="text-xs text-zinc-500">{{ status ? (remaining > 0 ? `DEBUG · 剩余 ${Math.ceil(remaining / 60)} 分钟` : 'INFO') : '状态未读取' }}</span>
+      <h2 id="diagnostics-heading">运行状态</h2>
+      <span role="status" :class="status && !status.error ? 'status-ok' : 'text-xs text-zinc-500'"><Check v-if="status && !status.error" :size="14" />{{ status?.error ? '日志不可用' : status ? (remaining > 0 ? `DEBUG · 剩余 ${Math.ceil(remaining / 60)} 分钟` : 'INFO') : '状态未读取' }}</span>
       <Button variant="ghost" :disabled="!desktop || busy" @click="run(refresh)">{{ busy ? '处理中…' : '刷新' }}</Button>
     </div>
-    <p class="text-xs text-zinc-500">日志仅保存在本机。查看和导出最多扫描近期 2 MB、保留 500 条白名单事件；旧版自由文本会被省略。不会自动上传，分享前仍请检查。</p>
+    <p class="text-xs text-zinc-500">日志仅保存在本机，导出分享前请检查内容。</p>
     <p v-if="status && !status.error" class="mt-2 text-xs text-zinc-500">日志共 {{ (status.totalBytes / 1024 / 1024).toFixed(2) }} MB · {{ status.archives }} 份归档 · 最近 500 条有效记录中 {{ status.recentErrors }} 条错误</p>
     <p v-if="status?.error || error" class="notice error" role="alert">{{ error || status?.error }}</p>
     <p v-if="message" class="notice" role="status">{{ message }}</p>
@@ -88,22 +89,24 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
     </div>
     <p v-if="recent" class="mt-2 text-xs text-zinc-500">显示 {{ visible.length }} / {{ recent.entries.length }} 条 · 扫描 {{ (recent.scannedBytes / 1024).toFixed(0) }} KB · 省略 {{ recent.omittedLines }} 条非白名单记录{{ recent.truncated ? ' · 已达读取或条数上限，非完整历史' : '' }}</p>
     <div class="diagnostics-toolbar mt-3">
+      <Button variant="outline" :disabled="!desktop || busy" @click="run(() => api.openAppDirectory('logs'))">打开日志目录</Button>
+      <Button variant="ghost" :disabled="!desktop || busy || !status?.directory" @click="run(async () => { await api.copyAppDirectory('logs'); message = '日志路径已复制。' })">复制路径</Button>
       <Button variant="outline" :disabled="!desktop || busy || !status?.exportSupported || !!status.error" @click="run(exportLogs)">导出诊断包</Button>
       <Button variant="outline" :disabled="!desktop || busy || !status || !!status.error || !status.archives" @click="run(clearArchives)">清理历史归档</Button>
       <Button variant="ghost" :disabled="!desktop || busy || !status" :aria-pressed="remaining > 0" @click="run(toggleDebug)">{{ remaining > 0 ? '关闭详细日志' : '临时开启 DEBUG（30 分钟）' }}</Button>
     </div>
-    <p v-if="status && !status.exportSupported" class="mt-2 text-xs text-zinc-500">当前平台暂不支持 ZIP 导出；可通过下方日志目录入口查看文件。</p>
+    <p v-if="status && !status.exportSupported" class="mt-2 text-xs text-zinc-500">当前平台暂不支持 ZIP 导出；可打开日志目录查看文件。</p>
   </section>
 </template>
 
 <style scoped>
-.diagnostics { margin-bottom: 16px; padding-block: 16px; border-block: 1px solid #e1e4e8; }
+.diagnostics { display: flex; flex-direction: column; gap: 8px; min-height: 0; flex: 1; }
 .diagnostics h2 { font-size: 14px; font-weight: 600; margin: 0; }
 .diagnostics-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .diagnostics-toolbar label { display: flex; align-items: center; gap: 4px; font-size: 12px; }
 .diagnostics select, .diagnostics input { height: 32px; border: 1px solid #e1e4e8; border-radius: 4px; padding: 4px 8px; background: white; font-size: 13px; }
 .diagnostics-search { flex: 1; min-width: 160px; }
-.diagnostics-list { margin-top: 8px; max-height: 300px; overflow: auto; border: 1px solid #e1e4e8; border-radius: 4px; }
+.diagnostics-list { flex: 1; min-height: 160px; overflow: auto; border: 1px solid #e1e4e8; border-radius: 4px; }
 .diagnostics-entry { display: flex; flex-wrap: wrap; gap: 4px 8px; padding: 8px; border-bottom: 1px solid #eee; font-size: 12px; }
 .diagnostics-entry code { flex-basis: 100%; overflow-wrap: anywhere; white-space: pre-wrap; }
 .diagnostics :is(select, input, .diagnostics-list):focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }

@@ -53,7 +53,6 @@ onUnmounted(() => { disposed = true; off?.() })
 </script>
 
 <template>
-  <h1>贴图</h1><p class="subtitle">将图片、文本或颜色贴在桌面。</p>
   <div v-if="error" class="notice error" role="alert">{{ error }}</div>
   <div class="pin-manager-actions">
     <Button :disabled="!desktop || busy" title="直接贴出剪贴板中的图片，快捷键可在设置中修改" @click="run(api.pinClipboard)">剪贴板图片贴图</Button>

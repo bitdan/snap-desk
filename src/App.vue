@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { Camera, Keyboard, Info, Scan, PanelLeftClose, Pin, Video, Folder, CircleHelp } from 'lucide-vue-next'
+import { Camera, Keyboard, Info, Scan, PanelLeftClose, Pin, Video, Folder, CircleHelp, Settings as SettingsIcon, FileText, Check } from 'lucide-vue-next'
+import DiagnosticsSettings from '@/components/DiagnosticsSettings.vue'
 import GeneralSettings from '@/components/GeneralSettings.vue'
 import AiProviderSettings from '@/components/AiProviderSettings.vue'
 import OnboardingGuide from '@/components/OnboardingGuide.vue'
@@ -14,7 +15,12 @@ import { defaultSettings, exportFilenamePreview, validateExportSettings, validat
 import { errorMessage } from '@/lib/errors'
 
 const page = ref('截图')
-const items = [{ name: '截图', icon: Camera }, { name: '录屏', icon: Video }, { name: '贴图', icon: Pin }, { name: '剪贴板', icon: Folder }, { name: '快捷键', icon: Keyboard }, { name: '通用', icon: Folder }, { name: '识别与翻译', icon: Scan }, { name: '帮助', icon: CircleHelp }, { name: '关于', icon: Info }]
+// 导航按操作、配置与支持分组，日志拥有独立页面。
+const groups = [
+  { name: '工具', items: [{ name: '截图', icon: Camera }, { name: '录屏', icon: Video }, { name: '贴图', icon: Pin }, { name: '剪贴板', icon: Folder }] },
+  { name: '设置', items: [{ name: '通用', icon: SettingsIcon }, { name: '快捷键', icon: Keyboard }, { name: '识别与翻译', icon: Scan }] },
+  { name: '支持', items: [{ name: '日志', icon: FileText }, { name: '帮助', icon: CircleHelp }, { name: '关于', icon: Info }] },
+]
 const status = ref<AppStatus | null>(null)
 const pending = ref(false)
 const saving = ref(false)
@@ -149,14 +155,13 @@ onUnmounted(() => { disposed = true; disposers.splice(0).forEach(off => off()) }
 <template>
   <div class="app-shell">
     <aside class="sidebar">
-      <div class="brand"><span class="brand-icon"><Scan :size="23" /></span><div>Snap Desk<small>截图与标注</small></div></div>
-      <div class="nav-caption">工具</div>
-      <nav><button v-for="item in items" :key="item.name" :class="['nav-item', { active: page === item.name }]" @click="page = item.name"><component :is="item.icon" :size="18" />{{ item.name }}</button></nav>
-      <div class="sidebar-bottom"><span class="version-dot" /> {{ status ? `v${status.version}` : '版本待读取' }}<span>主屏截图 · 本地处理</span></div>
+      <div class="brand"><span class="brand-icon"><Scan :size="23" /></span><div>Snap Desk</div></div>
+      <nav v-for="group in groups" :key="group.name" :aria-label="group.name"><div class="nav-caption">{{ group.name }}</div><button v-for="item in group.items" :key="item.name" :class="['nav-item', { active: page === item.name }]" @click="page = item.name"><component :is="item.icon" :size="18" />{{ item.name }}</button></nav>
+      <div class="sidebar-bottom"><span class="version-dot" /> {{ status ? `v${status.version}` : '版本待读取' }}</div>
     </aside>
     <main class="workspace">
-      <header class="topbar"><span>{{ page }}</span><div class="flex items-center gap-2"><Button variant="ghost" :disabled="locked" :aria-pressed="status?.settings.shortcutsEnabled" :title="status?.settings.shortcutsEnabled ? '禁用全部全局快捷键' : '启用全部全局快捷键'" @click="toggleShortcuts"><Keyboard :size="15" />快捷键{{ status?.settings.shortcutsEnabled ? '已启用' : '已禁用' }}</Button><Button variant="ghost" title="隐藏主窗口，保留托盘运行" :disabled="!desktop" @click="hide"><PanelLeftClose :size="15" />收起</Button></div></header>
-      <div class="page-content" :class="{ 'clipboard-page': page === '剪贴板' }">
+      <header class="topbar"><span>{{ page }}</span><div class="flex items-center gap-2"><Button variant="ghost" :disabled="locked" :aria-pressed="status?.settings.shortcutsEnabled" :title="status?.settings.shortcutsEnabled ? '禁用全部全局快捷键' : '启用全部全局快捷键'" @click="toggleShortcuts"><Check v-if="status?.settings.shortcutsEnabled && !status.shortcutError" :size="15" class="status-check" /><Keyboard v-else :size="15" />快捷键{{ !status ? '未读取' : status.shortcutError ? '注册异常' : status.settings.shortcutsEnabled ? '已启用' : '已禁用' }}</Button><Button variant="ghost" title="隐藏主窗口，保留托盘运行" :disabled="!desktop" @click="hide"><PanelLeftClose :size="15" />收起</Button></div></header>
+      <div class="page-content" :class="{ 'clipboard-page': page === '剪贴板', 'logs-page': page === '日志' }">
         <div v-if="!desktop" class="notice">当前为网页预览。请通过桌面应用启动以使用屏幕截图和全局快捷键。</div>
         <div v-if="error || status?.shortcutError" class="notice error" role="alert">{{ error || status?.shortcutError }}<Button v-if="initializationFailed" variant="outline" :disabled="initializing" @click="initialize">重新连接</Button></div>
         <div v-if="status?.configWarning" class="notice" role="alert">{{ status.configWarning }}</div>
@@ -164,10 +169,9 @@ onUnmounted(() => { disposed = true; disposers.splice(0).forEach(off => off()) }
 
         <OnboardingGuide v-if="onboarding && status" :settings="status.settings" :busy="completingOnboarding" @complete="completeOnboarding" @navigate="page = $event" />
         <template v-if="page === '截图'">
-          <h1>截图</h1><p class="subtitle">选区、标注、复制或保存。</p>
           <section class="capture-panel" aria-label="截图操作">
-            <div class="capture-panel-heading"><Scan :size="22" /><div><h2>区域截图</h2><p>启动后拖动鼠标选择范围</p></div><kbd>{{ status?.settings.shortcutsEnabled === false ? '快捷键已禁用' : shortcut }}</kbd></div>
             <div class="capture-controls">
+              <kbd>{{ status?.settings.shortcutsEnabled === false ? '快捷键已禁用' : shortcut }}</kbd>
               <label for="quick-delay">延时</label>
               <!-- 主页使用同一设置保存接口，确保按钮、托盘和快捷键的延时一致。 -->
               <select id="quick-delay" :value="status?.settings.delaySeconds ?? 0" :disabled="locked" @change="changeDelay"><option :value="0">无延时</option><option :value="3">3 秒</option><option :value="5">5 秒</option></select>
@@ -175,28 +179,27 @@ onUnmounted(() => { disposed = true; disposers.splice(0).forEach(off => off()) }
             </div>
           </section>
 
-          <h2 class="mt-6 mb-3 text-sm font-semibold">截图设置</h2>
+          <h2 class="mt-4 mb-2 text-sm font-semibold">截图设置</h2>
           <form class="settings-card mb-5" @submit.prevent="saveCapture()" @input="savedSection = ''">
             <div class="setting-row"><label for="export-format">保存格式</label><select id="export-format" v-model="draft.export.format" :disabled="locked" class="rounded-lg border border-zinc-200 bg-white px-3 py-2"><option value="png">PNG · 无损透明</option><option value="jpeg">JPEG · 白底</option><option value="webp">WebP · 无损透明</option></select></div>
             <div v-if="draft.export.format === 'jpeg'" class="setting-row"><label for="jpeg-quality">JPEG 质量</label><input id="jpeg-quality" v-model.number="draft.export.jpegQuality" type="number" min="1" max="100" step="1" required :disabled="locked" class="w-24 rounded-lg border border-zinc-200 px-3 py-2" /></div>
             <div class="setting-row"><label for="filename-prefix">文件名前缀</label><input id="filename-prefix" v-model="draft.export.filenamePrefix" required :disabled="locked" class="w-48 rounded-lg border border-zinc-200 px-3 py-2 text-sm" /></div>
             <div class="setting-row"><label for="filename-dimensions">文件名包含图片尺寸<small class="break-all">示例：{{ exportFilenamePreview(draft.export) }}</small></label><input id="filename-dimensions" v-model="draft.export.includeDimensions" type="checkbox" :disabled="locked" /></div>
             <div class="setting-row"><label for="remember-directory">记住上次保存目录</label><input id="remember-directory" v-model="draft.export.rememberDirectory" type="checkbox" :disabled="locked" /></div>
-            <div class="flex gap-3 py-5"><Button type="submit" :disabled="locked">{{ saving ? '正在保存…' : '保存设置' }}</Button><Button type="button" variant="outline" :disabled="locked" @click="saveCapture(true)">恢复默认</Button><span v-if="savedSection === '截图'" class="self-center text-sm text-zinc-500" role="status">已保存</span></div>
+            <div class="flex gap-2 py-3"><Button type="submit" :disabled="locked">{{ saving ? '正在保存…' : '保存设置' }}</Button><Button type="button" variant="outline" :disabled="locked" @click="saveCapture(true)">恢复默认</Button><span v-if="savedSection === '截图'" class="status-ok self-center" role="status"><Check :size="14" />已保存</span></div>
           </form>
         </template>
 
         <ClipboardHistory v-else-if="page === '剪贴板'" />
+        <DiagnosticsSettings v-else-if="page === '日志'" />
         <GeneralSettings v-else-if="page === '通用'" />
         <AiProviderSettings v-else-if="page === '识别与翻译'" />
         <template v-else-if="page === '帮助'">
-          <h1>帮助</h1><p class="subtitle">快速了解截图、贴图、长截图与录屏。</p>
           <Button :disabled="!status || completingOnboarding" @click="onboarding = true">重新打开新手引导</Button>
         </template>
         <RecordingPanel v-else-if="page === '录屏'" />
         <PinManager v-else-if="page === '贴图'" />
         <template v-else-if="page === '快捷键'">
-          <h1>快捷键</h1><p class="subtitle">截图、剪贴板贴图与录屏快捷键共用顶部总开关。</p>
           <form class="settings-card" @submit.prevent="saveShortcut()">
             <div v-for="action in shortcutActions" :key="action.key" class="setting-row flex-wrap gap-3">
               <label>{{ action.label }}<small>{{ action.description }}</small></label>
@@ -207,12 +210,11 @@ onUnmounted(() => { disposed = true; disposers.splice(0).forEach(off => off()) }
               </div>
             </div>
             <p class="py-3 text-xs text-zinc-500">点击快捷键框后直接按键。F1～F12 可单独使用，字母和数字须搭配修饰键；清空即禁用。修改后点击保存生效。</p>
-            <div class="flex items-center gap-3 py-5"><Button type="submit" :disabled="locked">{{ saving ? '正在保存…' : '保存快捷键' }}</Button><Button type="button" variant="outline" :disabled="locked" @click="saveShortcut(true)">恢复默认</Button><Button type="button" variant="ghost" :disabled="locked" @click="copyShortcutExample">{{ shortcutExampleCopied ? '示例已复制' : '复制示例配置' }}</Button><span v-if="savedSection === '快捷键'" class="text-sm text-zinc-500" role="status">已保存</span></div>
+            <div class="flex items-center gap-2 py-3"><Button type="submit" :disabled="locked">{{ saving ? '正在保存…' : '保存快捷键' }}</Button><Button type="button" variant="outline" :disabled="locked" @click="saveShortcut(true)">恢复默认</Button><Button type="button" variant="ghost" :disabled="locked" @click="copyShortcutExample">{{ shortcutExampleCopied ? '示例已复制' : '复制示例配置' }}</Button><span v-if="savedSection === '快捷键'" class="status-ok" role="status"><Check :size="14" />已保存</span></div>
           </form>
         </template>
 
         <template v-else>
-          <h1>关于 Snap Desk</h1><p class="subtitle">桌面截图与标注工具</p>
           <section class="settings-card about"><span class="brand-icon"><Scan :size="30" /></span><h2>Snap Desk <span class="pill">{{ status?.version ?? '桌面版本待读取' }}</span></h2><p>截图、标注、贴图、长截图与录屏，本地处理。</p><p>当前支持主显示器；录屏需 Windows 10 2004 或更新版本。</p><div class="flex items-center gap-3"><a href="https://github.com/bitdan/snap-desk" target="_blank" rel="noopener noreferrer" class="github-link" aria-label="在浏览器打开 GitHub 项目主页" title="GitHub" @click="desktop && ($event.preventDefault(), openProject())"><svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden="true"><path d="M12 .75a11.25 11.25 0 0 0-3.56 21.92c.56.1.77-.24.77-.54v-2.1c-3.13.68-3.79-1.33-3.79-1.33-.51-1.3-1.25-1.65-1.25-1.65-1.02-.7.08-.69.08-.69 1.13.08 1.73 1.16 1.73 1.16 1 1.72 2.63 1.22 3.27.93.1-.73.39-1.22.71-1.5-2.5-.28-5.13-1.25-5.13-5.56 0-1.23.44-2.23 1.16-3.01-.12-.28-.5-1.43.11-2.98 0 0 .95-.3 3.1 1.15a10.8 10.8 0 0 1 5.64 0c2.15-1.46 3.1-1.15 3.1-1.15.61 1.55.23 2.7.11 2.98.72.78 1.16 1.78 1.16 3.01 0 4.32-2.63 5.28-5.14 5.56.4.35.76 1.03.76 2.09v3.09c0 .3.21.65.77.54A11.25 11.25 0 0 0 12 .75Z" /></svg></a><span class="text-xs text-zinc-500">GPL-3.0-only</span></div></section>
         </template>
       </div>

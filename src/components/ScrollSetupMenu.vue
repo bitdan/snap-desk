@@ -4,7 +4,6 @@ import { onMounted, ref } from 'vue'
 import { X } from 'lucide-vue-next'
 
 defineProps<{ busy: boolean; error: string }>()
-const saveFrames = defineModel<boolean>('saveFrames', { required: true })
 const emit = defineEmits<{ confirm: []; close: [] }>()
 const root = ref<HTMLElement | null>(null)
 // 二级面板打开后约束键盘焦点，避免 Tab 回到背后的截图工具栏。
@@ -24,7 +23,6 @@ onMounted(() => root.value?.querySelector<HTMLButtonElement>('.start')?.focus())
     <header><strong>长截图</strong><button :disabled="busy" title="关闭长截图选项" aria-label="关闭长截图选项" @click="emit('close')"><X :size="16" /></button></header>
     <div class="options">
       <p class="hint">手动向下滚动，停顿后拼接</p>
-      <label title="调试时保存原始图片，会增加磁盘占用和采集耗时"><input v-model="saveFrames" type="checkbox" :disabled="busy" />保留原始帧（调试）</label>
     </div>
     <p v-if="error" class="error" role="alert">{{ error }}</p>
     <footer><button class="start" :disabled="busy" title="开始采集当前选区" @click="emit('confirm')"><ScrollCaptureIcon :size="15" />{{ busy ? '准备中…' : '开始长截图' }}</button></footer>
@@ -37,9 +35,6 @@ header, footer { display: flex; align-items: center; justify-content: space-betw
 header { border-bottom: 1px solid #eee; } header button { display: flex; padding: 4px; border-radius: 4px; }
 .options { padding: 12px; display: grid; gap: 12px; }.hint { color: #71717a; margin: 0; }
 label { color: #71717a; }
-.modes { display: flex; gap: 6px; }.modes button { flex: 1; padding: 8px; border: 1px solid #e4e4e7; border-radius: 5px; }
-.modes button[aria-pressed=true] { background: #f1edff; border-color: #c4b5fd; color: #7c3aed; }
-label { display: flex; align-items: center; gap: 8px; } input { accent-color: #7c3aed; }
 footer { border-top: 1px solid #eee; justify-content: flex-end; }.start { display: flex; align-items: center; gap: 6px; background: #7c3aed; color: white; border-radius: 5px; padding: 7px 12px; }
 .error { padding: 8px 12px; color: #be123c; background: #fff1f2; overflow-wrap: anywhere; }
 button:disabled { opacity: .5; } :focus-visible { outline: 2px solid #a78bfa; outline-offset: 2px; }

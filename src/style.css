@@ -73,3 +73,35 @@ kbd { display: inline-block; border: 1px solid #d8dee4; border-bottom-width: 2px
 .github-link { display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 40px; border-radius: 50%; color: #18181b; background: #f4f4f5; }
 .github-link:hover { background: #e4e4e7; }
 .github-link:focus-visible { outline: 2px solid #2563eb; outline-offset: 3px; }
+
+/* 紧凑布局只作用于主窗口，不改变截图工具栏和透明贴图窗口。 */
+.app-shell { font-size: 13px; }
+.app-shell .sidebar { padding: 16px 8px 12px; overflow-y: auto; }
+.app-shell .brand { padding: 0 8px; }
+.app-shell .nav-caption { margin: 16px 10px 6px; }
+.app-shell .nav-item { min-height: 32px; padding: 7px 10px; margin-bottom: 2px; }
+.app-shell .topbar { height: 44px; padding-inline: 20px; }
+.app-shell .page-content { padding: 16px 20px; }
+.app-shell .sidebar-bottom { padding-top: 16px; }
+.app-shell .version-dot { display: inline-block; margin-top: 0; }
+.app-shell .settings-card { padding: 0; border: 0; border-radius: 0; }
+.app-shell .setting-row { min-height: 48px; padding-block: 8px; flex-wrap: wrap; gap: 8px 16px; }
+.app-shell .setting-row small { margin-top: 4px; font-size: 12px; }
+.app-shell .setting-row strong { font-size: 13px; color: #24292f; }
+.app-shell .setting-row input:not([type=checkbox]), .app-shell .setting-row select { min-height: 32px; padding: 4px 8px; max-width: 100%; border-radius: 4px; }
+.app-shell button.inline-flex { min-height: 32px; padding: 5px 10px; font-size: 13px; }
+.app-shell .capture-panel { border: 0; border-bottom: 1px solid #e1e4e8; border-radius: 0; }
+.app-shell .capture-controls { padding: 0 0 12px; border: 0; background: white; flex-wrap: wrap; gap: 8px; }
+.app-shell .section-heading { font-size: 14px; font-weight: 600; margin: 16px 0 8px; }
+.app-shell .status-ok { display: inline-flex; align-items: center; gap: 4px; color: #24834b; font-size: 12px; }
+.app-shell .status-check { color: #24834b; flex-shrink: 0; }
+.app-shell .status-ok svg { flex-shrink: 0; }
+.app-shell .logs-page { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.app-shell .about { padding: 0; }
+.app-shell .about h2 { font-size: 18px; margin: 12px 0; }
+.app-shell :is(.nav-item, select, input):focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
+@media (max-width: 640px) {
+  .app-shell .sidebar { width: 138px; }
+  .app-shell .topbar, .app-shell .page-content { padding-inline: 12px; }
+  .app-shell .setting-row > .flex { flex-wrap: wrap; }
+}

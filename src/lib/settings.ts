@@ -14,8 +14,8 @@ export type Shortcuts = Record<ShortcutAction, string>
 export const shortcutActions: { key: ShortcutAction; label: string; description: string }[] = [
   { key: 'capture', label: '区域截图', description: '快速框选与标注' },
   { key: 'pin', label: '剪贴板图片贴图', description: '把剪贴板图片贴在桌面' },
-  { key: 'history', label: '剪贴板历史', description: '打开历史管理页面' },
   { key: 'record', label: '开始 / 停止录屏', description: '选择录制范围，录制中再次按下停止' },
+  { key: 'history', label: '剪贴板历史', description: '打开历史管理页面' },
 ]
 export const ONBOARDING_VERSION = 1
 export function needsOnboarding(version: number): boolean { return version < ONBOARDING_VERSION }
