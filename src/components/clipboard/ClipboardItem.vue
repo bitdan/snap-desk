@@ -16,6 +16,12 @@ function key(event: KeyboardEvent) {
   }
 }
 const root = ref<HTMLElement>(); const thumbnail = ref(''); const error = ref('')
+/** 双击的第二次 click 不再切换选择，避免刚选中的条目立刻被取消。 */
+function select(event: MouseEvent) {
+  if (props.busy) return
+  root.value?.focus({ preventScroll: true })
+  if (event.detail < 2) emit('select')
+}
 let observer: IntersectionObserver | undefined; let disposed = false
 onMounted(() => {
   if (props.item.kind !== 'image' || !root.value) return
@@ -32,9 +38,9 @@ onUnmounted(() => { disposed = true; observer?.disconnect() })
 <template>
   <ContextMenuRoot>
     <ContextMenuTrigger as-child :disabled="busy">
-      <article ref="root" class="history-item" :class="{ 'is-selected': selected }" tabindex="0" :aria-label="`${item.kind === 'image' ? '图片' : item.preview.slice(0, 80)}，回车复制，空格选择，右键操作`" @keydown="key">
+      <article ref="root" class="history-item" :class="{ 'is-selected': selected }" tabindex="0" :aria-label="`${item.kind === 'image' ? '图片' : item.preview.slice(0, 80)}，回车复制，空格选择，右键操作`" @keydown="key" @click.self="select">
         <input type="checkbox" :checked="selected" :disabled="busy" :aria-label="`选择条目 ${item.id}`" @change="$emit('select')" />
-        <button class="history-content" :disabled="busy" :aria-label="`浏览条目 ${item.id}，双击复制`" @click="root?.focus({ preventScroll: true })" @dblclick="emit('restore')">
+        <button class="history-content" :disabled="busy" :aria-pressed="selected" :aria-label="`选择条目 ${item.id}，双击复制`" @click="select" @dblclick="emit('restore')">
           <img v-if="thumbnail" :src="thumbnail" alt="历史图片缩略图" />
           <span v-else-if="item.kind === 'image'">{{ error || `图片 ${item.width} × ${item.height}` }}</span>
           <span v-else class="history-text">{{ item.preview }}</span>
