@@ -165,6 +165,14 @@ Windows ONNX Runtime CPU 引擎也按需下载为独立 DLL；安装包经过压
 
 日志只记录固定事件、命令名、错误码与数量/耗时，不记录截图、剪贴板、OCR/翻译正文、凭据或完整文件路径。第三方库的日志不写入此诊断文件；前端插件自动附带的调用位置也不输出。旧版本已写出的日志不会自动清洗，分享文件前仍需检查。
 
-当前实现接入方案的 P0：业务关键事件、前端异常捕获与目录入口。P1 的最近日志查看、诊断 ZIP 与归档清理，以及 P2 的临时 Debug 模式尚未实现。
+通用设置 → 诊断与日志支持级别/模块筛选及本地搜索，最多扫描日志尾部 2 MB、展示 500 条记录。查看与导出共用白名单重建：旧版自由文本、未知事件和未经审计的字段会被省略。错误计数仅对应近期样本，不代表全历史。清理历史归档需经过原生确认，当前日志不会删除。
 
-定向检查：`npm run check`，`npx vitest run tests/logger.test.ts tests/api-errors.test.ts tests/recording-api.test.ts`。原生验收需自行构建后检查多窗口日志、重启追加、5 MB 轮转，以及截图/录屏成功与 OCR 失败事件；静态检查不替代这些运行验证。
+Windows 可主动导出 ZIP，固定包含 `diagnostic.json`、`logs/recent.log`、`logs/errors.log` 和 `README.txt`；输出先写同目录临时文件，成功后才发布。包内仅含经过过滤的近期事件及实际资源就绪状态，不包含主配置、媒体或剪贴板数据库。其他平台保留查看/清理功能，ZIP 按钮不可用。
+
+临时 DEBUG 立即生效，固定 30 分钟，由后端单调时钟逐条判断到期；关闭或重启恢复 INFO，不保存永久开关。高频长截图细节每 500ms 最多采样一条，INFO/WARN/ERROR 不受采样限制。panic 仅新增受控行列号摘要并保留原有异常行为。开发控制台转发与可选 JSONL 格式未启用。
+
+诊断读写仅允许主窗口，路径由后端固定解析，不开放通用 fs 权限。应用事件可通过 `op` 关联同一会话；新增事件、错误码或命令时需审计生产处字段，并同步 `src-tauri/src/diagnostics/catalog.rs` 导出白名单。
+
+定向检查：`npm run check`，`npx vitest run tests/diagnostics.test.ts tests/logger.test.ts tests/api-errors.test.ts tests/recording-api.test.ts`。原生验收需自行构建后检查多窗口日志、重启追加、5 MB 轮转，以及截图/录屏成功与 OCR 失败事件；静态检查不替代这些运行验证。
+
+原生补充验收：检查 DEBUG 开启/手动关闭/30 分钟到期/重启复位，辅助窗口无权调用诊断命令，归档清理取消与文件占用，ZIP 的固定条目及失败不留临时文件。已添加 Rust 定向用例（读取上限、无效查询、隐私过滤、ZIP 失败清理等）；按仓库约定未执行需要编译的 Rust 测试。可由维护者在 `src-tauri` 运行 `cargo test --locked diagnostics::` 后，再运行 Windows 打包验收。

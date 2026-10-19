@@ -935,6 +935,9 @@ fn collect(
                 ),
             };
             // 只在统一收尾处记录汇总，不把含完整输出路径的 text/path 写盘。
+            if phase == Phase::Failed {
+                log::error!("event=recording.failed module=recording op=rec-{id} code=RECORDING_PIPELINE_FAILED");
+            }
             let level = if phase == Phase::Failed { log::Level::Error } else { log::Level::Info };
             let outcome = match phase { Phase::Completed => "success", Phase::Cancelled => "cancelled", _ => "failed" };
             log::log!(level, "event=recording.finished module=recording op=rec-{id} result={outcome} duration_ms={} captured={} encoded={} dropped={} encoding_ms={}",
@@ -1062,4 +1065,9 @@ fn write_video(
     progress(app, "completed", Some(&output));
     s.view.phase = Phase::Completed;
     Ok(output.to_string_lossy().into_owned())
+}
+
+/// 诊断不触发试录/编码器探测，不采集视频或音频。
+pub(crate) fn diagnostic_summary() -> serde_json::Value {
+    serde_json::json!({"backend":std::env::consts::OS,"captureSupported":capture::supported().is_ok(),"encoderProbed":false,"systemAudio":false,"microphone":false})
 }

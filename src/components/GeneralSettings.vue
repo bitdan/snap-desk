@@ -3,6 +3,7 @@ import { onMounted, ref } from 'vue'
 import Button from './ui/button/Button.vue'
 import ClipboardSettings from './clipboard/ClipboardSettings.vue'
 import ResourceSettings from './ResourceSettings.vue'
+import DiagnosticsSettings from './DiagnosticsSettings.vue'
 import { api, desktop, type AppDirectory, type DirectoryView } from '@/lib/api'
 
 const directories = ref<DirectoryView[]>([])
@@ -29,7 +30,7 @@ async function toggleAutostart() {
   } finally { startupBusy.value = false }
 }
 const labels: Record<AppDirectory, { name: string; description: string }> = {
-  logs: { name: '应用日志目录', description: '本机诊断日志，默认 INFO；单文件 5 MB，最多保留 5 份归档。分享前请检查内容。' },
+  logs: { name: '应用日志目录', description: '本机诊断日志，默认 INFO，可临时开启 DEBUG；单文件 5 MB，最多保留 5 份归档。分享前请检查内容。' },
   config: { name: '应用配置目录', description: '保存快捷键、主配置与目录偏好，不是图片或视频输出目录' },
   captures: { name: '截图保存目录', description: '查看上一次记住的保存位置；可在截图设置中切换记住目录' },
   recordings: { name: '录屏保存目录', description: '视频输出位置，恢复默认不会移动已有视频' },
@@ -59,6 +60,7 @@ onMounted(() => { void run(refresh); void refreshAutostart() })
     <h1>通用设置</h1><p class="subtitle">启动、文件与存储</p>
     <ClipboardSettings />
     <ResourceSettings />
+    <DiagnosticsSettings />
     <div class="settings-card mb-4">
       <div class="setting-row flex-wrap gap-3">
         <div class="min-w-0 flex-1"><strong>开机自启</strong><small class="block text-zinc-500">登录系统后自动启动到托盘，可直接使用截图快捷键。</small></div>

@@ -119,20 +119,26 @@ fn match_region(a: &Signature, b: &Signature) -> Match {
     }
     scores.sort_by(|a, b| a.0.total_cmp(&b.0));
     let Some(&(score, shift)) = scores.first() else {
-        log::debug!("长截图匹配失败：没有通过行投票和纹理校验的位移候选");
+        if log::log_enabled!(log::Level::Debug) && crate::diagnostics::runtime::sample_debug() {
+            log::debug!("event=scroll.match_retry module=scroll code=MATCH_NO_CANDIDATE");
+        }
         return Match::Uncertain;
     };
-    log::debug!(
-        "长截图候选：shift={shift}, error={score:.3}, candidates={}",
-        scores.len()
-    );
+    if log::log_enabled!(log::Level::Debug) && crate::diagnostics::runtime::sample_debug() {
+        log::debug!(
+            "event=scroll.match_candidate module=scroll frames={}",
+            scores.len()
+        );
+    }
     if score > 8.0
         || scores
             .iter()
             .skip(1)
             .any(|&(other, delta)| delta.abs_diff(shift) > 2 && other <= score + 1.5)
     {
-        log::debug!("长截图匹配失败：候选误差过大或存在歧义位移");
+        if log::log_enabled!(log::Level::Debug) && crate::diagnostics::runtime::sample_debug() {
+            log::debug!("event=scroll.match_retry module=scroll code=MATCH_AMBIGUOUS");
+        }
         return Match::Uncertain;
     }
     Match::Overlap(a.height - shift)
@@ -184,7 +190,9 @@ fn verified_region(a: &RgbaImage, b: &RgbaImage, sa: &Signature, sb: &Signature)
             }
         }
         if good * 100 < count * 90 {
-            log::debug!("长截图匹配失败：原始像素复核不足 90%");
+            if log::log_enabled!(log::Level::Debug) && crate::diagnostics::runtime::sample_debug() {
+                log::debug!("event=scroll.match_retry module=scroll code=MATCH_PIXEL_MISMATCH");
+            }
             return Match::Uncertain;
         }
     }

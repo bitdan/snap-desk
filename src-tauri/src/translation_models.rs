@@ -484,3 +484,11 @@ mod tests {
         assert!(pack.validate().is_err());
     }
 }
+
+/// 不导出安装包自带的 revision 文本或任何路径，仅保留固定模型 ID 与校验状态。
+pub(crate) fn diagnostic_summary(app: &AppHandle) -> serde_json::Value {
+    match status(app) {
+        Ok(value) => serde_json::json!({"provider":"local-ctranslate2", "runtimeReady":value.runtime_ready, "models":value.models.iter().map(|m| serde_json::json!({"model":m.model_id,"ready":m.ready})).collect::<Vec<_>>()}),
+        Err(_) => serde_json::json!({"provider":"local-ctranslate2", "state":"unavailable"}),
+    }
+}

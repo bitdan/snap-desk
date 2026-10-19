@@ -76,12 +76,14 @@ fn sample(
     let cropped =
         image::imageops::crop_imm(&image, region.x, region.y, region.width, region.height)
             .to_image();
-    log::debug!(
-        "长截图采集：source={source_size:?}, roi={}x{}, millis={:.2}",
-        region.width,
-        region.height,
-        started.elapsed().as_secs_f64() * 1000.0
-    );
+    if log::log_enabled!(log::Level::Debug) && crate::diagnostics::runtime::sample_debug() {
+        log::debug!(
+            "event=scroll.sample module=scroll width={} height={} duration_ms={:.2}",
+            region.width,
+            region.height,
+            started.elapsed().as_secs_f64() * 1000.0
+        );
+    }
     Ok(cropped)
 }
 

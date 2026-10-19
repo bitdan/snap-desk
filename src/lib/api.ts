@@ -1,3 +1,4 @@
+import type { DiagnosticsStatus, LogQuery, RecentLogs, ClearArchivesResult } from './diagnostics'
 import type { ClipboardSettings, ClipboardQuery, ClipboardPage, ClipboardStatus, ClipboardExportOptions, ClipboardExportResult } from './clipboard'
 import { invoke as nativeInvoke, isTauri, type InvokeArgs } from '@tauri-apps/api/core'
 import { listen as nativeListen, type EventCallback } from '@tauri-apps/api/event'
@@ -37,7 +38,7 @@ async function invoke<T>(command: IpcCommand, args?: InvokeArgs): Promise<T> {
   try { return await nativeInvoke<T>(command, args) }
   catch (error) {
     const message = errorMessage(error)
-    logIpcFailure(command, message)
+    logIpcFailure(command, message, args && 'id' in args ? args.id : undefined)
     throw new Error(`${command}：${message}`)
   }
 }
@@ -46,6 +47,11 @@ async function listen<T>(event: string, callback: EventCallback<T>) {
   catch (error) { throw new Error(`订阅 ${event}：${errorMessage(error)}`) }
 }
 export const api = {
+  diagnosticsStatus: () => invoke<DiagnosticsStatus>('diagnostics_status'),
+  diagnosticsRecentLogs: (query: LogQuery) => invoke<RecentLogs>('diagnostics_recent_logs', { query }),
+  diagnosticsExport: () => invoke<boolean>('diagnostics_export'),
+  diagnosticsClearArchives: () => invoke<ClearArchivesResult>('diagnostics_clear_archives'),
+  diagnosticsSetDebug: (enabled: boolean) => invoke<DiagnosticsStatus>('diagnostics_set_debug', { enabled }),
   resourceStatus: () => invoke<ResourceStatus>('resource_status'),
   downloadResources: (kind: 'ocr' | 'font') => invoke<ResourceStatus>('download_resources', { kind }),
   chooseExportFont: () => invoke<ResourceStatus>('choose_export_font'),

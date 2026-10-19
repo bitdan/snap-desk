@@ -338,3 +338,11 @@ mod tests {
         assert!(verified(&path, &asset));
     }
 }
+
+/// 导出只投影实际校验结果，不序列化含绝对目录的 ResourceStatus。
+pub(crate) fn diagnostic_summary(app: &AppHandle) -> serde_json::Value {
+    match status(app) {
+        Ok(value) => serde_json::json!({"provider":"local-ppocr", "model":"pp-ocrv5-mobile", "ready":value.ocr_ready, "runtimeReady":value.runtime_ready, "modelsReady":value.models_ready}),
+        Err(_) => serde_json::json!({"provider":"local-ppocr", "state":"unavailable"}),
+    }
+}

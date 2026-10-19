@@ -172,7 +172,12 @@ fn complete(app: &AppHandle, id: u64, message: &str) -> Result<(), String> {
         ),
         Err(error) => format!("已复制到剪贴板，本地保存失败：{error}"),
     };
-    log::info!("event=scroll.finished module=scroll op=scroll-{id} frames={} width={} height={}", result.frames, result.width, result.height);
+    log::info!(
+        "event=scroll.finished module=scroll op=scroll-{id} frames={} width={} height={}",
+        result.frames,
+        result.width,
+        result.height
+    );
     close_session(app, id)?;
     let _ = app.emit_to("capture", "scroll-updated", &result);
     let _ = app.emit_to("main", "capture-result", format!("{message} {output}"));
@@ -215,17 +220,21 @@ fn sample_pair(
         if !stability::stable(snapshot.stitch.last(), &second) {
             if let Some(archive) = &snapshot.archive {
                 if let Err(_error) = archive.frame(second.clone()) {
-                    log::warn!("event=scroll.archive_failed module=scroll code=ARCHIVE_FRAME_FAILED");
+                    log::warn!(
+                        "event=scroll.archive_failed module=scroll code=ARCHIVE_FRAME_FAILED"
+                    );
                     snapshot.archive = None;
                 }
             }
         }
         let started = Instant::now();
         let result = snapshot.recovery.consider(&mut snapshot.stitch, second)?;
-        log::debug!(
-            "长截图恢复匹配耗时：{:.2} ms",
-            started.elapsed().as_secs_f64() * 1000.0
-        );
+        if log::log_enabled!(log::Level::Debug) && crate::diagnostics::runtime::sample_debug() {
+            log::debug!(
+                "event=scroll.recovery_match module=scroll duration_ms={:.2}",
+                started.elapsed().as_secs_f64() * 1000.0
+            );
+        }
         if let Some(archive) = &snapshot.archive {
             if let Err(_error) = archive.record(
                 serde_json::json!({"event":"match", "result":format!("{result:?}"),
@@ -284,10 +293,12 @@ fn refresh_preview(session: &mut ScrollSession) -> Result<(), String> {
         STANDARD.encode(bytes.into_inner())
     )
     .into();
-    log::debug!(
-        "长截图预览耗时：{:.2} ms",
-        started.elapsed().as_secs_f64() * 1000.0
-    );
+    if log::log_enabled!(log::Level::Debug) && crate::diagnostics::runtime::sample_debug() {
+        log::debug!(
+            "event=scroll.preview module=scroll duration_ms={:.2}",
+            started.elapsed().as_secs_f64() * 1000.0
+        );
+    }
     Ok(())
 }
 
@@ -377,6 +388,7 @@ fn collect(app: AppHandle, id: u64, first_delay: u64) {
             }
         }
         if let Some(error) = failure {
+            log::error!("event=scroll.failed module=scroll op=scroll-{id} code=SCROLL_OUTPUT_FAILED");
             report_error(&app, format!("长截图输出重试失败，内存结果仍保留：{error}"));
         }
         break;
@@ -422,7 +434,9 @@ pub async fn start_scroll(
             match Archive::new(&app) {
                 Ok(archive) => Some(archive),
                 Err(_error) => {
-                    log::warn!("event=scroll.archive_failed module=scroll code=ARCHIVE_CREATE_FAILED");
+                    log::warn!(
+                        "event=scroll.archive_failed module=scroll code=ARCHIVE_CREATE_FAILED"
+                    );
                     None
                 }
             }
@@ -471,7 +485,11 @@ pub async fn start_scroll(
             let _ = window.show();
             return Err(error);
         }
-        log::info!("event=scroll.started module=scroll op=scroll-{id} width={} height={}", result.width, result.height);
+        log::info!(
+            "event=scroll.started module=scroll op=scroll-{id} width={} height={}",
+            result.width,
+            result.height
+        );
         Ok(result)
     })
     .await

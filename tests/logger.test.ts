@@ -72,4 +72,15 @@ describe('日志隐私与异常隔离', () => {
     await api.copyAppDirectory('logs')
     expect(mocks.invoke).toHaveBeenLastCalledWith('copy_app_directory', { kind: 'logs' })
   })
+
+  it('跨窗口错误只关联白名单命令的数值会话，不记录用户提供的字符串 ID', async () => {
+    mocks.invoke.mockRejectedValueOnce('encoder failed')
+    await expect(api.controlRecording(42, 'stop')).rejects.toThrow('encoder failed')
+    expect(mocks.write).toHaveBeenLastCalledWith('event=ipc.failed module=frontend command=control_recording code=IPC_FAILED op=rec-42')
+    const unsafe = appLog as (...args: unknown[]) => void
+    unsafe('error', 'ipc.failed', { command: 'control_recording', session: 'private-name' })
+    expect(mocks.write).toHaveBeenLastCalledWith('event=ipc.failed module=frontend command=control_recording code=IPC_FAILED')
+    unsafe('error', 'ipc.failed', { command: 'clipboard_restore', session: 123 })
+    expect(mocks.write).toHaveBeenLastCalledWith('event=ipc.failed module=frontend command=clipboard_restore code=IPC_FAILED')
+  })
 })

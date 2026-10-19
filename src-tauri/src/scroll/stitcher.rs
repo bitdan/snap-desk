@@ -72,10 +72,12 @@ impl Stitch {
         let started = std::time::Instant::now();
         let signature = Signature::new(&image);
         let (result, bottom) = alignment(self.last(), &image, &self.signature, &signature);
-        log::debug!(
-            "长截图匹配：result={result:?}, bottom={bottom}, millis={:.2}",
-            started.elapsed().as_secs_f64() * 1000.0
-        );
+        if log::log_enabled!(log::Level::Debug) && crate::diagnostics::runtime::sample_debug() {
+            log::debug!(
+                "event=scroll.match module=scroll duration_ms={:.2}",
+                started.elapsed().as_secs_f64() * 1000.0
+            );
+        }
         if let Match::Overlap(overlap) = result {
             let last = &self.segments[self.segments.len() - 1];
             // 底栏布局刚变化时，不能用新推断裁掉已提交内容；按不确定匹配重试。

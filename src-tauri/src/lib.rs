@@ -20,6 +20,7 @@ mod resources;
 mod ocr_runtime;
 mod settings;
 mod storage;
+mod diagnostics;
 
 use capture::{require_window, show_main, CaptureState};
 use serde::Serialize;
@@ -165,7 +166,8 @@ pub fn run() {
         .manage(pins::PinState::default())
         .plugin(
             tauri_plugin_log::Builder::new()
-                .level(log::LevelFilter::Info)
+                .level(log::LevelFilter::Debug)
+                .filter(diagnostics::runtime::enabled)
                 // 默认追加写入；保留 stdout 与 LogDir 两个目标，约 30 MB 总预算。
                 .max_file_size(5_000_000)
                 .rotation_strategy(tauri_plugin_log::RotationStrategy::KeepSome(5))
@@ -227,6 +229,7 @@ pub fn run() {
                 .build(),
         )
         .setup(|app| {
+            diagnostics::runtime::install_panic_hook();
             log::info!("event=app.starting module=app version={} platform={}", app.package_info().version, std::env::consts::OS);
             settings::initialize(app.handle()).map_err(|error| {
                 log::error!("event=app.initialize_failed module=app code=SETTINGS_INIT_FAILED");
@@ -403,6 +406,11 @@ pub fn run() {
             autostart::autostart_enabled,
             autostart::set_autostart_enabled,
             select_recording_area,
+            diagnostics::diagnostics_status,
+            diagnostics::diagnostics_recent_logs,
+            diagnostics::diagnostics_export,
+            diagnostics::diagnostics_clear_archives,
+            diagnostics::diagnostics_set_debug,
             storage::app_directories,
             storage::open_app_directory,
             storage::copy_app_directory,

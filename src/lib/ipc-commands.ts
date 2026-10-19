@@ -1,5 +1,11 @@
 /** 审计过的命令名白名单；API 与日志共享，禁止任意字符串写盘。 */
 export const ipcCommands = [
+  "diagnostics_status",
+  "diagnostics_recent_logs",
+  "diagnostics_export",
+  "diagnostics_clear_archives",
+  "diagnostics_set_debug",
+
   "ai_credential_set",
   "ai_provider_status",
   "ai_provider_test",
