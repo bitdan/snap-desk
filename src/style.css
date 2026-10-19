@@ -39,6 +39,8 @@ button:disabled { cursor: default; }
 .topbar { height: 52px; flex-shrink: 0; padding: 0 28px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #e8eaed; font-size: 12px; color: #57606a; }
 .topbar button { font-size: 12px; }
 .page-content { width: 100%; padding: 28px; overflow-y: auto; }
+.page-content.clipboard-page { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; padding: 16px; }
+.clipboard-page > :not(.clipboard-history) { flex-shrink: 0; }
 h1 { font-size: 22px; font-weight: 600; margin: 0; }
 .subtitle { font-size: 13px; color: #6e7781; margin: 8px 0 24px; }
 kbd { display: inline-block; border: 1px solid #d8dee4; border-bottom-width: 2px; border-radius: 4px; padding: 3px 7px; font-family: inherit; font-size: 11px; color: #57606a; background: #f6f8fa; white-space: nowrap; }

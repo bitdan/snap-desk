@@ -5,7 +5,16 @@ import { Copy, Star, Pin, Trash2 } from 'lucide-vue-next'
 import { api } from '@/lib/api'
 import type { ClipboardItem } from '@/lib/clipboard'
 const props = defineProps<{ item: ClipboardItem; selected: boolean; busy: boolean }>()
-defineEmits<{ select: []; restore: []; favorite: []; pin: []; delete: [] }>()
+const emit = defineEmits<{ select: []; restore: []; favorite: []; pin: []; delete: [] }>()
+/** 回车与双击复用右键菜单的复制接口；空格和复选框仍负责批量选择。 */
+function key(event: KeyboardEvent) {
+  if (props.busy || event.repeat || event.isComposing || (event.target as HTMLElement).matches('input')) return
+  if (event.key === 'Enter' || ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'c')) {
+    event.preventDefault(); event.stopPropagation(); emit('restore')
+  } else if (event.key === ' ' && event.target === event.currentTarget) {
+    event.preventDefault(); emit('select')
+  }
+}
 const root = ref<HTMLElement>(); const thumbnail = ref(''); const error = ref('')
 let observer: IntersectionObserver | undefined; let disposed = false
 onMounted(() => {
@@ -23,9 +32,9 @@ onUnmounted(() => { disposed = true; observer?.disconnect() })
 <template>
   <ContextMenuRoot>
     <ContextMenuTrigger as-child :disabled="busy">
-      <article ref="root" class="history-item" :class="{ 'is-selected': selected }" tabindex="0" aria-label="历史条目，右键打开操作菜单">
+      <article ref="root" class="history-item" :class="{ 'is-selected': selected }" tabindex="0" :aria-label="`${item.kind === 'image' ? '图片' : item.preview.slice(0, 80)}，回车复制，空格选择，右键操作`" @keydown="key">
         <input type="checkbox" :checked="selected" :disabled="busy" :aria-label="`选择条目 ${item.id}`" @change="$emit('select')" />
-        <button class="history-content" :disabled="busy" :aria-pressed="selected" :aria-label="`选择条目 ${item.id}`" @click="$emit('select')">
+        <button class="history-content" :disabled="busy" :aria-label="`浏览条目 ${item.id}，双击复制`" @click="root?.focus({ preventScroll: true })" @dblclick="emit('restore')">
           <img v-if="thumbnail" :src="thumbnail" alt="历史图片缩略图" />
           <span v-else-if="item.kind === 'image'">{{ error || `图片 ${item.width} × ${item.height}` }}</span>
           <span v-else class="history-text">{{ item.preview }}</span>

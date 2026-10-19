@@ -156,7 +156,7 @@ onUnmounted(() => { disposed = true; disposers.splice(0).forEach(off => off()) }
     </aside>
     <main class="workspace">
       <header class="topbar"><span>{{ page }}</span><div class="flex items-center gap-2"><Button variant="ghost" :disabled="locked" :aria-pressed="status?.settings.shortcutsEnabled" :title="status?.settings.shortcutsEnabled ? '禁用全部全局快捷键' : '启用全部全局快捷键'" @click="toggleShortcuts"><Keyboard :size="15" />快捷键{{ status?.settings.shortcutsEnabled ? '已启用' : '已禁用' }}</Button><Button variant="ghost" title="隐藏主窗口，保留托盘运行" :disabled="!desktop" @click="hide"><PanelLeftClose :size="15" />收起</Button></div></header>
-      <div class="page-content">
+      <div class="page-content" :class="{ 'clipboard-page': page === '剪贴板' }">
         <div v-if="!desktop" class="notice">当前为网页预览。请通过桌面应用启动以使用屏幕截图和全局快捷键。</div>
         <div v-if="error || status?.shortcutError" class="notice error" role="alert">{{ error || status?.shortcutError }}<Button v-if="initializationFailed" variant="outline" :disabled="initializing" @click="initialize">重新连接</Button></div>
         <div v-if="status?.configWarning" class="notice" role="alert">{{ status.configWarning }}</div>
