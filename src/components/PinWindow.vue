@@ -14,6 +14,21 @@ const busy = ref(false)
 const error = ref('')
 const message = ref('')
 const controls = computed(() => frame.value?.view.toolbarExpanded ?? true)
+const controlsHovered = ref(false)
+let controlsHideTimer: ReturnType<typeof setTimeout> | undefined
+function keepControlsVisible() {
+  clearTimeout(controlsHideTimer)
+  controlsHovered.value = true
+}
+function hideControls() {
+  clearTimeout(controlsHideTimer)
+  controlsHovered.value = false
+}
+// 留出穿过图片与底栏间隙的时间；隐藏的底栏不接收指针事件，不能自行唤出。
+function scheduleControlsHide() {
+  clearTimeout(controlsHideTimer)
+  controlsHideTimer = setTimeout(hideControls, 180)
+}
 const viewport = ref({ width: window.innerWidth, height: window.innerHeight, pixelRatio: window.devicePixelRatio })
 const display = computed(() => pinDisplaySize(frame.value?.width ?? 20, frame.value?.height ?? 20,
   frame.value?.view.zoom ?? 1, viewport.value.width, viewport.value.height, controls.value, viewport.value.pixelRatio))
@@ -160,6 +175,7 @@ onMounted(() => {
   updateFocus(); void load()
 })
 onUnmounted(() => {
+  clearTimeout(controlsHideTimer)
   window.removeEventListener('pointerdown', dismissMenu)
   window.removeEventListener('resize', closeOnResize)
   window.removeEventListener('keydown', key)
@@ -172,8 +188,8 @@ function closeOnResize() {
 </script>
 
 <template>
-  <div class="pin-shell" :class="{ 'is-focused': focused }" :style="shellStyle" @contextmenu.prevent>
-    <div class="pin-stage" tabindex="0" aria-label="贴图，右键编辑标注" :style="stageStyle" @pointerdown="drag" @wheel.prevent="wheel" @contextmenu.capture="openMenu">
+  <div class="pin-shell" :class="{ 'is-focused': focused, 'controls-visible': controlsHovered }" :style="shellStyle" @pointerleave="hideControls" @contextmenu.prevent>
+    <div class="pin-stage" tabindex="0" aria-label="贴图，右键编辑标注" :style="stageStyle" @pointerenter="keepControlsVisible" @pointerleave="scheduleControlsHide" @pointerdown="drag" @wheel.prevent="wheel" @contextmenu.capture="openMenu">
       <div v-if="frame" class="pin-canvas">
         <div class="pin-image-content" :style="{ width: `${display.imageWidth}px`, height: `${display.imageHeight}px`, opacity: frame.view.opacity }">
           <img :src="frame.dataUrl" alt="桌面贴图" draggable="false" @error="error = '贴图预览加载失败，可关闭后重新贴图。'" />
@@ -181,7 +197,7 @@ function closeOnResize() {
         </div>
       </div>
     </div>
-    <section class="pin-controls" :class="{ collapsed: !controls }" aria-label="贴图工具" @contextmenu.stop.prevent>
+    <section class="pin-controls" :class="{ collapsed: !controls }" aria-label="贴图工具" @pointerenter="keepControlsVisible" @pointerleave="scheduleControlsHide" @contextmenu.stop.prevent>
       <AnnotationToolbar v-if="frame && controls" :editor="editor" :disabled="busy || frame.view.locked" :active="annotating" @tool="startEditing">
         <template #leading><button :disabled="!editable" :aria-pressed="!annotating" title="移动贴图" aria-label="移动贴图" @click="annotating = false; editor.selected = -1"><Move :size="16" /></button></template>
         <template #actions>
@@ -241,6 +257,8 @@ function closeOnResize() {
 .pin-image-content { position: relative; flex: none; }
 .pin-image-content img { display: block; width: 100%; height: 100%; }
 .pin-controls { min-width: 0; width: max-content; max-width: 100%; height: 100%; justify-self: end; overflow: hidden; padding: 4px 6px; border: 1px solid #d4d4d8; border-radius: 7px; background: #fffffff5; box-shadow: 0 2px 6px #0002; font-size: 11px; }
+/* 隐藏时保留底栏占位，避免图片跳动；键盘焦点仍可唤出工具。 */
+.pin-shell:not(.controls-visible):not(:has(:focus-visible)) .pin-controls { visibility: hidden; pointer-events: none; }
 .pin-row { display: flex; align-items: center; gap: 3px; height: 34px; overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; white-space: nowrap; }
 .pin-row > * { flex-shrink: 0; }
 .pin-controls button { display: inline-flex; align-items: center; justify-content: center; gap: 4px; height: 26px; min-width: 26px; padding: 3px 5px; border-radius: 4px; }

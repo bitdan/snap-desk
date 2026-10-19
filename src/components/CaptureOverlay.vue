@@ -34,7 +34,7 @@ function closeOcr() {
   void nextTick(() => (translationMode.value ? translationTrigger.value : ocrTrigger.value)?.focus())
 }
 async function recognizeText(translate = false) {
-  if (!frame.value || !pixels.value || busy.value || editor.pending || editor.interacting || gesture) return
+  if (!frame.value || !pixels.value || busy.value || editor.pending || editor.interacting || gesture.value) return
   const id = frame.value.id
   translationMode.value = translate
   busy.value = true; error.value = ''
@@ -47,7 +47,7 @@ async function recognizeText(translate = false) {
 watch(() => frame.value?.id, () => { qrResult.value = null; ocrResult.value = null })
 /** 主动识别保留截图现场；结果面板隔离选区拖动与截图快捷键。 */
 async function recognizeQr() {
-  if (!frame.value || !pixels.value || busy.value || editor.pending || editor.interacting || gesture) return
+  if (!frame.value || !pixels.value || busy.value || editor.pending || editor.interacting || gesture.value) return
   busy.value = true; error.value = ''
   try { qrResult.value = await api.recognizeQr(frame.value.id, pixels.value, editor.history.present) }
   catch (e) { error.value = String(e) }
@@ -76,7 +76,7 @@ async function selectedRecordingRegion() {
   const id = frame.value?.id
   if (!frame.value?.recording || !valid.value) return
   await nextTick()
-  if (frame.value?.id === id && valid.value && !busy.value && !gesture) openRecordingMenu()
+  if (frame.value?.id === id && valid.value && !busy.value && !gesture.value) openRecordingMenu()
 }
 watch(recordingSetup, open => { if (!open && frame.value) void nextTick(() => recordingTrigger.value?.focus()) })
 const recordingCapabilities = ref<RecorderCapabilities | null>(null)
@@ -105,7 +105,8 @@ const showMagnifier = computed(() => frame.value && imageReady.value && screenIm
 const editor = useAnnotations(() => pixels.value ?? { x: 0, y: 0, width: 0, height: 0 }, () => frame.value?.dataUrl ?? '', () => busy.value)
 const marked = computed(() => editor.history.present.length > 0)
 const handles: Handle[] = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w']
-let gesture: { start: Point; initial: Rect; mode: 'draw' | 'move' | Handle } | null = null
+// 手势使用响应式状态，工具栏在框选、移动或缩放结束后才显示。
+const gesture = shallowRef<{ start: Point; initial: Rect; mode: 'draw' | 'move' | Handle } | null>(null)
 let off: (() => void) | undefined
 let offScroll: (() => void) | undefined
 let offPin: (() => void) | undefined
@@ -149,11 +150,11 @@ function chooseTool(tool: AnnotationTool) { if (busy.value || editor.pending || 
 function selectionDown(e: PointerEvent) { if (!annotating.value) down(e, 'move') }
 function reselect() {
   if (busy.value) return
-  editor.reset(); selection.value = null; gesture = null; annotating.value = false; error.value = ''; pointer.value = null; colorCopied.value = false
+  editor.reset(); selection.value = null; gesture.value = null; annotating.value = false; error.value = ''; pointer.value = null; colorCopied.value = false
 }
 /** 恢复只替换空白选区，已有标注、文字草稿和进行中的拖动都必须先完成。 */
 function restoreSelection() {
-  if (!recentRect.value || busy.value || scrollSetup.value || gesture || marked.value || editor.pending || editor.interacting) return
+  if (!recentRect.value || busy.value || scrollSetup.value || gesture.value || marked.value || editor.pending || editor.interacting) return
   const rect = { ...recentRect.value }
   reselect(); selection.value = rect
   void selectedRecordingRegion()
@@ -165,7 +166,7 @@ function receiveScroll(value: ScrollView) {
 }
 function scrollClosed() { scroll.value = null; frame.value = null; scrollSetup.value = false }
 async function startScroll() {
-  if (!frame.value || !pixels.value || !valid.value || busy.value || marked.value || editor.pending || editor.interacting || gesture) return
+  if (!frame.value || !pixels.value || !valid.value || busy.value || marked.value || editor.pending || editor.interacting || gesture.value) return
   busy.value = true; error.value = ''
   try { receiveScroll(await api.startScroll(frame.value.id, pixels.value, saveScrollFrames.value)); scrollSetup.value = false }
   catch (e) { error.value = String(e) }
@@ -173,7 +174,7 @@ async function startScroll() {
 }
 /** 使用与截图相同的原图像素选区，成功后录屏后端接管会话及快捷键。 */
 async function startRecording() {
-  if (!frame.value || !pixels.value || !valid.value || busy.value || marked.value || editor.pending || editor.interacting || gesture) return
+  if (!frame.value || !pixels.value || !valid.value || busy.value || marked.value || editor.pending || editor.interacting || gesture.value) return
   busy.value = true; error.value = ''
   try { await api.startRecording(frame.value.id, pixels.value, recordingConfig(pixels.value, recordingFps.value, captureCursor.value, recordingCountdown.value, recordingEncoding.value, recordingQuality.value, recordingEffects.value, recordingFormat.value === 'gif' ? null : recordingBitrate(recordingMbps.value), recordingFormat.value)); recordingSetup.value = false; frame.value = null }
   catch (e) { error.value = String(e) }
@@ -197,24 +198,24 @@ function down(e: PointerEvent, mode: 'draw' | 'move' | Handle = 'draw') {
   pointer.value = p
   if (mode === 'draw') selection.value = { ...p, width: 0, height: 0 }
   if (!selection.value) return
-  gesture = { start: p, initial: { ...selection.value }, mode }
+  gesture.value = { start: p, initial: { ...selection.value }, mode }
   ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
 }
 function drag(e: PointerEvent) {
   colorCopied.value = false
   // 工具栏不需要像素辅助；捕获阶段监听可覆盖选区控制点的事件。
   pointer.value = (e.target as Element).closest('.capture-toolbar, .capture-modebar, .overlay-error') ? null : point(e)
-  if (!gesture) return
+  if (!gesture.value) return
   const p = point(e)
-  const { start, initial, mode } = gesture
+  const { start, initial, mode } = gesture.value
   selection.value = mode === 'draw' ? normalize(start, p) : mode === 'move' ? move(initial, { x: p.x - start.x, y: p.y - start.y }, viewport.value) : resize(initial, mode, p)
 }
 function up() {
-  const drawn = gesture?.mode === 'draw'
-  gesture = null
+  const drawn = gesture.value?.mode === 'draw'
+  gesture.value = null
   if (drawn) void selectedRecordingRegion()
 }
-function abortGesture() { gesture = null }
+function abortGesture() { gesture.value = null }
 function selectAll() { if (!busy.value && !marked.value && !editor.interacting) { editor.reset(); selection.value = { x: 0, y: 0, ...viewport.value }; void selectedRecordingRegion() } }
 function receive(value: CaptureFrame) { busy.value = false; reselect(); scroll.value = null; scrollSetup.value = false; recordingSetup.value = false; imageReady.value = false; frame.value = value }
 async function loaded() {
@@ -229,7 +230,7 @@ async function cancel() {
   finally { busy.value = false }
 }
 async function finish(action: 'copy' | 'save' | 'pin') {
-  if (!frame.value || !valid.value || !pixels.value || busy.value || qrResult.value || ocrResult.value !== null || editor.pending || editor.interacting || gesture) return
+  if (!frame.value || !valid.value || !pixels.value || busy.value || qrResult.value || ocrResult.value !== null || editor.pending || editor.interacting || gesture.value) return
   busy.value = true; error.value = ''
   try {
     // 保存调用前的快照；取消对话框或导出失败均不覆盖上次成功的范围。
@@ -259,7 +260,7 @@ function key(e: KeyboardEvent) {
   const command = e.ctrlKey || e.metaKey
   if (annotating.value && editor.key(e)) return
   // 取色快捷键仅在放大镜可用时生效；复制后保留选区，修饰键组合仍用于截图操作。
-  if (showMagnifier.value && !gesture && !command && !e.altKey && !e.repeat) {
+  if (showMagnifier.value && !gesture.value && !command && !e.altKey && !e.repeat) {
     if (e.key === 'Shift') { e.preventDefault(); colorFormat.value = colorFormat.value === 'rgb' ? 'hex' : 'rgb'; colorCopied.value = false; return }
     if (e.key.toLowerCase() === 'c') { e.preventDefault(); void copyColor(); return }
     if (e.key.toLowerCase() === 'p') { e.preventDefault(); relativeCoordinates.value = !relativeCoordinates.value; return }
@@ -273,7 +274,7 @@ function key(e: KeyboardEvent) {
   const direction = directions[e.key]
   if (direction && !command) {
     e.preventDefault()
-    if (busy.value || gesture || editor.interacting || marked.value || annotating.value || !valid.value || !selection.value || !frame.value) return
+    if (busy.value || gesture.value || editor.interacting || marked.value || annotating.value || !valid.value || !selection.value || !frame.value) return
     const step = e.shiftKey ? 10 : 1
     selection.value = nudgeSelection(selection.value, { x: direction.x * step, y: direction.y * step }, viewport.value, frame.value, e.altKey)
     editor.reset()
@@ -330,7 +331,7 @@ onUnmounted(() => { disposed = true; off?.(); offScroll?.(); offPin?.(); window.
       <template v-if="!marked && !annotating"><span v-for="handle in handles" :key="handle" :class="['resize-handle', handle]" @pointerdown.stop="down($event, handle)" /></template>
     </div>
     <AnnotationSurface v-if="frame && pixels" :editor="editor" :width="frame.width" :height="frame.height" :bounds="pixels" :enabled="annotating && !busy" />
-    <div v-if="valid" ref="toolbar" class="capture-toolbar annotation-toolbar" :style="toolbarStyle" @pointerdown.stop @contextmenu.stop.prevent>
+    <div v-if="valid && !gesture" ref="toolbar" class="capture-toolbar annotation-toolbar" :style="toolbarStyle" @pointerdown.stop @contextmenu.stop.prevent>
       <AnnotationToolbar :editor="editor" :disabled="busy" :active="annotating" @tool="chooseTool">
         <template #leading><button :disabled="busy || editor.pending || editor.interacting || marked" :aria-pressed="!annotating" title="调整选区" aria-label="调整选区" @click="annotating = false"><Move :size="16" /></button></template>
         <template #actions>
