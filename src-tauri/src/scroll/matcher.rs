@@ -127,6 +127,27 @@ fn fingerprint(image: &RgbaImage, x: u32, y: u32) -> u64 {
     hash
 }
 
+/// 先用两个像素筛掉不可能命中的位置，再计算完整指纹。
+/// 位表只会多放行、不会漏掉相同纹理；最终仍使用原来的完整指纹与像素复核。
+const PREFIX_WORDS: usize = 1024;
+fn prefix(image: &RgbaImage, x: u32, y: u32) -> usize {
+    let a = image.get_pixel(x, y);
+    let b = image.get_pixel(x + 2, y + 2);
+    let rgb =
+        |p: &image::Rgba<u8>| u32::from(p[0]) | (u32::from(p[1]) << 8) | (u32::from(p[2]) << 16);
+    let mixed = rgb(a).wrapping_mul(0x9e3779b1) ^ rgb(b).wrapping_mul(0x85ebca6b);
+    ((mixed ^ (mixed >> 16)) & 0xffff) as usize
+}
+
+/// 已由最新帧确定位置时，历史锚点只需复核这个位移，不再全图搜索一次。
+/// None 表示缺少可信证据；调用方保留完整搜索作为失败回退。
+pub(super) fn verify_at(a: &RgbaImage, b: &RgbaImage, dx: i32, dy: i32) -> Option<Alignment> {
+    if a.dimensions() != b.dimensions() || a.width() < 32 || a.height() < 64 {
+        return None;
+    }
+    verify(a, b, content(a, b), dx, dy)
+}
+
 /// 每个交集分成 4×4 块；独立纹理块须一致，动画块不参与写入决策。
 fn verify(a: &RgbaImage, b: &RgbaImage, roi: Content, dx: i32, dy: i32) -> Option<Alignment> {
     let left = (roi.left as i32).max(roi.left as i32 - dx);
@@ -187,6 +208,11 @@ fn verify(a: &RgbaImage, b: &RgbaImage, roi: Content, dx: i32, dy: i32) -> Optio
 }
 
 pub fn alignment(a: &RgbaImage, b: &RgbaImage, mode: ScrollMode) -> Match {
+    align_impl(a, b, mode, true)
+}
+
+// 测试可关闭前置过滤，与原扫描路径对照；生产路径始终启用。
+fn align_impl(a: &RgbaImage, b: &RgbaImage, mode: ScrollMode, filter_prefix: bool) -> Match {
     if a.dimensions() != b.dimensions() || a.width() < 32 || a.height() < 64 {
         return Match::Uncertain;
     }
@@ -196,11 +222,14 @@ pub fn alignment(a: &RgbaImage, b: &RgbaImage, mode: ScrollMode) -> Match {
     }
     let roi = content(a, b);
     let mut patches: HashMap<u64, Vec<(u32, u32, usize)>> = HashMap::new();
+    let mut prefixes = [0u64; PREFIX_WORDS];
     for row in 0..20 {
         for col in 0..20 {
             let x = roi.left + (roi.right - roi.left - 3) * col / 19;
             let y = roi.top + (roi.bottom - roi.top - 3) * row / 19;
             if texture(b, x, y) {
+                let key = prefix(b, x, y);
+                prefixes[key / 64] |= 1u64 << (key % 64);
                 patches.entry(fingerprint(b, x, y)).or_default().push((
                     x,
                     y,
@@ -209,10 +238,19 @@ pub fn alignment(a: &RgbaImage, b: &RgbaImage, mode: ScrollMode) -> Match {
             }
         }
     }
+    if patches.is_empty() {
+        return Match::Uncertain;
+    }
     // 每块只保留少量命中；高度重复图案不能让候选数量或 CPU 无界增长。
     let mut hits: HashMap<u64, Vec<(u32, u32)>> = HashMap::new();
     for y in roi.top..roi.bottom - 2 {
         for x in roi.left..roi.right - 2 {
+            if filter_prefix {
+                let key = prefix(a, x, y);
+                if prefixes[key / 64] & (1u64 << (key % 64)) == 0 {
+                    continue;
+                }
+            }
             if !texture(a, x, y) {
                 continue;
             }
@@ -274,4 +312,112 @@ pub fn alignment(a: &RgbaImage, b: &RgbaImage, mode: ScrollMode) -> Match {
         return Match::Uncertain;
     }
     Match::Aligned(best)
+}
+
+#[cfg(test)]
+mod performance_tests {
+    use super::*;
+    use image::Rgba;
+    use std::{hint::black_box, time::Instant};
+
+    fn document(width: u32, height: u32, sparse: bool) -> RgbaImage {
+        RgbaImage::from_fn(width, height, |x, y| {
+            if sparse && (y % 30 > 10 || x % 50 > 24) {
+                return Rgba([250, 250, 250, 255]);
+            }
+            let value =
+                (x.wrapping_mul(73856093) ^ y.wrapping_mul(19349663)).wrapping_mul(83492791);
+            Rgba([value as u8, (value >> 8) as u8, (value >> 16) as u8, 255])
+        })
+    }
+
+    #[test]
+    fn prefix_filter_preserves_full_scan_results() {
+        for sparse in [false, true] {
+            let doc = document(560, 560, sparse);
+            let frame = |x, y| image::imageops::crop_imm(&doc, x, y, 160, 160).to_image();
+            let a = frame(160, 160);
+            for (x, y) in [
+                (160, 160),
+                (161, 160),
+                (160, 288),
+                (32, 160),
+                (205, 107),
+                (380, 380),
+            ] {
+                let b = frame(x, y);
+                for mode in [
+                    ScrollMode::Auto,
+                    ScrollMode::Vertical,
+                    ScrollMode::Horizontal,
+                ] {
+                    assert_eq!(alignment(&a, &b, mode), align_impl(&a, &b, mode, false));
+                }
+            }
+        }
+        let repeat = RgbaImage::from_fn(160, 320, |x, y| {
+            Rgba([((x % 20) * 12) as u8, ((y % 20) * 12) as u8, 0, 255])
+        });
+        let a = image::imageops::crop_imm(&repeat, 0, 0, 160, 160).to_image();
+        let b = image::imageops::crop_imm(&repeat, 0, 5, 160, 160).to_image();
+        assert_eq!(alignment(&a, &b, ScrollMode::Auto), Match::Uncertain);
+        assert_eq!(
+            alignment(&a, &b, ScrollMode::Auto),
+            align_impl(&a, &b, ScrollMode::Auto, false)
+        );
+    }
+
+    #[test]
+    fn known_offset_still_requires_pixel_agreement() {
+        let doc = document(400, 400, false);
+        let a = image::imageops::crop_imm(&doc, 80, 80, 160, 160).to_image();
+        let b = image::imageops::crop_imm(&doc, 120, 50, 160, 160).to_image();
+        let expected = verify_at(&a, &b, 40, -30).unwrap();
+        assert_eq!(
+            alignment(&a, &b, ScrollMode::Auto),
+            Match::Aligned(expected)
+        );
+        assert!(verify_at(&a, &b, 41, -30).is_none());
+        assert!(verify_at(&a, &b, 150, 0).is_none());
+    }
+
+    /// 同一进程交替执行优化前后扫描，输出中位数；不把机器相关耗时写成测试阈值。
+    #[test]
+    #[ignore = "滚动识别定向性能基准；需用户允许编译后以 release 手动运行"]
+    fn compare_matcher_scan_cost() {
+        for (width, height) in [(640, 480), (1280, 720), (2560, 1440)] {
+            for sparse in [false, true] {
+                let doc = document(width + 200, height + 200, sparse);
+                let a = image::imageops::crop_imm(&doc, 0, 0, width, height).to_image();
+                let b = image::imageops::crop_imm(&doc, 61, 97, width, height).to_image();
+                let expected = align_impl(&a, &b, ScrollMode::Auto, false);
+                assert!(matches!(expected, Match::Aligned(_)));
+                let mut baseline = Vec::new();
+                let mut optimized = Vec::new();
+                for iteration in 0..6 {
+                    for filter in if iteration % 2 == 0 {
+                        [false, true]
+                    } else {
+                        [true, false]
+                    } {
+                        let started = Instant::now();
+                        let result =
+                            align_impl(black_box(&a), black_box(&b), ScrollMode::Auto, filter);
+                        let elapsed = started.elapsed().as_secs_f64() * 1000.0;
+                        assert_eq!(result, expected);
+                        if filter {
+                            optimized.push(elapsed);
+                        } else {
+                            baseline.push(elapsed);
+                        }
+                    }
+                }
+                baseline.sort_by(f64::total_cmp);
+                optimized.sort_by(f64::total_cmp);
+                let before = (baseline[2] + baseline[3]) / 2.0;
+                let after = (optimized[2] + optimized[3]) / 2.0;
+                eprintln!("scroll.matcher {width}x{height} sparse={sparse} baseline_median_ms={before:.2} optimized_median_ms={after:.2} ratio={:.2}",before/after);
+            }
+        }
+    }
 }

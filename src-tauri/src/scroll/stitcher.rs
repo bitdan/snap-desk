@@ -1,6 +1,6 @@
 //! 稀疏二维画布：256² 图块、逐像素覆盖位、负坐标和有界空间锚点。
 //! 快照共享 Arc，只有新增像素所在图块执行写时复制；预览直接取样图块。
-use super::matcher::{alignment, Alignment, Bounds, Content, Match, ScrollMode};
+use super::matcher::{alignment, verify_at, Alignment, Bounds, Content, Match, ScrollMode};
 use image::{Rgba, RgbaImage};
 use std::{
     collections::{HashMap, VecDeque},
@@ -25,12 +25,14 @@ mod tests;
 struct Tile {
     pixels: Vec<Rgba<u8>>,
     covered: Vec<u64>,
+    filled: usize,
 }
 impl Tile {
     fn new() -> Self {
         Self {
             pixels: vec![Rgba([0, 0, 0, 0]); TILE_PIXELS],
             covered: vec![0; TILE_PIXELS / 64],
+            filled: 0,
         }
     }
     fn has(&self, i: usize) -> bool {
@@ -53,6 +55,8 @@ pub struct Stitch {
     mode: ScrollMode,
     frames: usize,
     covered: u64,
+    // 可信位置或画布变化时递增，用于使失败帧匹配缓存失效。
+    match_revision: u64,
     pub bounds: Bounds,
     pub width: u32,
     pub height: u32,
@@ -90,6 +94,7 @@ impl Stitch {
             mode,
             frames: 1,
             covered: 0,
+            match_revision: 0,
             bounds: Bounds {
                 x: 0,
                 y: 0,
@@ -108,6 +113,9 @@ impl Stitch {
     pub fn count(&self) -> usize {
         self.frames
     }
+    pub(super) fn match_revision(&self) -> u64 {
+        self.match_revision
+    }
     pub fn last(&self) -> &RgbaImage {
         &self.latest.image
     }
@@ -119,6 +127,7 @@ impl Stitch {
         self.latest = observed.latest.clone();
         self.dx = observed.dx;
         self.dy = observed.dy;
+        self.match_revision = self.match_revision.wrapping_add(1);
     }
     /// 固定栏不作为文档内容导出，视口也仅标注实际参与拼接的内容区。
     pub fn viewport(&self) -> Bounds {
@@ -164,7 +173,7 @@ impl Stitch {
             _ => None,
         };
         // 历史锚点带文档坐标。重访只移动视口，不按时间顺序追加旧候选。
-        // 已直接定位时只复核一个附近锚点；失败时尝试全部有界历史锚点。
+        // 已直接定位时只验证已知位移；验证失败才重新搜索，保留位置冲突检测。
         let mut checked = false;
         for anchor in self.anchors.iter().rev() {
             if let Some((x, y, _)) = located {
@@ -172,6 +181,25 @@ impl Stitch {
                     || (x - anchor.x).abs() >= i64::from(image.width())
                     || (y - anchor.y).abs() >= i64::from(image.height())
                 {
+                    continue;
+                }
+                // 完全相同的历史帧仍按原坐标重访处理，不能让周期纹理的偏移复核掩盖冲突。
+                if anchor.image.as_ref() == image.as_ref() {
+                    if x != anchor.x || y != anchor.y {
+                        return Ok(Match::Uncertain);
+                    }
+                    checked = true;
+                    continue;
+                }
+                if verify_at(
+                    &anchor.image,
+                    &image,
+                    (x - anchor.x) as i32,
+                    (y - anchor.y) as i32,
+                )
+                .is_some()
+                {
+                    checked = true;
                     continue;
                 }
             }
@@ -278,6 +306,7 @@ impl Stitch {
         self.latest = next;
         self.dx = result.dx;
         self.dy = result.dy;
+        self.match_revision = self.match_revision.wrapping_add(1);
         Ok(Match::Aligned(result))
     }
 
@@ -366,18 +395,41 @@ impl Stitch {
     }
     fn write(&mut self, anchor: Anchor, content: Content) -> Result<(), String> {
         let bounds = self.check_capacity(&anchor, content)?;
-        for y in content.top..content.bottom {
-            for x in content.left..content.right {
-                let (key, i) = Self::address(anchor.x + i64::from(x), anchor.y + i64::from(y));
+        let frame = Self::frame_bounds(&anchor, content);
+        let right = frame.x + i64::from(frame.width);
+        let bottom = frame.y + i64::from(frame.height);
+        // 一次查找一个图块，而非每像素查 HashMap；回滚经过已填满图块时直接跳过。
+        for ty in frame.y.div_euclid(TILE)..=(bottom - 1).div_euclid(TILE) {
+            for tx in frame.x.div_euclid(TILE)..=(right - 1).div_euclid(TILE) {
                 let tile = self
                     .tiles
-                    .entry(key)
+                    .entry((tx, ty))
                     .or_insert_with(|| Arc::new(Tile::new()));
-                if !tile.has(i) {
-                    let tile = Arc::make_mut(tile);
-                    tile.pixels[i] = *anchor.image.get_pixel(x, y);
-                    tile.covered[i / 64] |= 1u64 << (i % 64);
-                    self.covered += 1;
+                if tile.filled == TILE_PIXELS {
+                    continue;
+                }
+                let left = frame.x.max(tx * TILE);
+                let top = frame.y.max(ty * TILE);
+                let end_x = right.min((tx + 1) * TILE);
+                let end_y = bottom.min((ty + 1) * TILE);
+                let index = |x: i64, y: i64| ((y - ty * TILE) * TILE + x - tx * TILE) as usize;
+                // 部分图块也可能全是重访区域；有新像素才触发 Arc 写时复制。
+                if !(top..end_y).any(|y| (left..end_x).any(|x| !tile.has(index(x, y)))) {
+                    continue;
+                }
+                let tile = Arc::make_mut(tile);
+                for y in top..end_y {
+                    for x in left..end_x {
+                        let i = index(x, y);
+                        if !tile.has(i) {
+                            tile.pixels[i] = *anchor
+                                .image
+                                .get_pixel((x - anchor.x) as u32, (y - anchor.y) as u32);
+                            tile.covered[i / 64] |= 1u64 << (i % 64);
+                            tile.filled += 1;
+                            self.covered += 1;
+                        }
+                    }
                 }
             }
         }

@@ -238,3 +238,38 @@ fn one_pixel_and_minimum_overlap_are_exact() {
         Match::Uncertain
     );
 }
+
+#[test]
+fn tiled_write_preserves_full_tiles_and_negative_coordinate_holes() {
+    let doc = document();
+    let image = image::imageops::crop_imm(&doc, 100, 100, 320, 320).to_image();
+    let mut stitch = Stitch::new(image.clone()).unwrap();
+    let original = stitch.clone();
+    let next = Anchor {
+        image: Arc::new(image::imageops::crop_imm(&doc, 20, 40, 320, 320).to_image()),
+        x: -80,
+        y: -60,
+    };
+    stitch.write(next.clone(), stitch.content).unwrap();
+    assert_eq!(stitch.covered, 320 * 320 * 2 - 240 * 260);
+    assert_truth(&stitch, &doc, (100, 100));
+    assert_eq!(stitch.pixel(-70, 310)[3], 0);
+    assert!(Arc::ptr_eq(
+        &stitch.tiles[&(0, 0)],
+        &original.tiles[&(0, 0)]
+    ));
+    assert_eq!(original.compose(), image);
+    let before = stitch.clone();
+    stitch.write(next, stitch.content).unwrap();
+    assert_eq!(stitch.covered, before.covered);
+    for (key, tile) in &stitch.tiles {
+        assert!(Arc::ptr_eq(tile, &before.tiles[key]));
+        assert_eq!(
+            tile.filled,
+            tile.covered
+                .iter()
+                .map(|bits| bits.count_ones() as usize)
+                .sum::<usize>()
+        );
+    }
+}

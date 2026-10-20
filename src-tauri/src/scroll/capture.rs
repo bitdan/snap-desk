@@ -41,6 +41,12 @@ impl FrameCache {
     pub(super) fn len(&self) -> usize {
         self.frames.len()
     }
+    /// 只复用完全相同的像素，不能用“基本稳定”代替失败帧身份判断。
+    pub(super) fn latest_matches(&self, image: &RgbaImage) -> bool {
+        self.frames
+            .back()
+            .is_some_and(|(_, previous)| previous.as_ref() == image)
+    }
     pub(super) fn candidate(&self, index: usize) -> Arc<RgbaImage> {
         self.frames[index].1.clone()
     }

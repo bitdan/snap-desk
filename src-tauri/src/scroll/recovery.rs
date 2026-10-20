@@ -10,6 +10,7 @@ pub struct Recovery {
     failures: u32,
     // 最多三帧、合计 800 万像素、五秒有效；不因无限重试积累内存。
     recent: FrameCache,
+    failed_revision: Option<u64>,
 }
 
 impl Recovery {
@@ -30,14 +31,23 @@ impl Recovery {
     ) -> Result<Match, String> {
         let image = image.into();
         self.recent.expire(now);
-        let result = stitch.consider(image.clone())?;
+        // 图像、可信画布版本和五秒有效期都不变时，不再反复搜索同一失败帧。
+        let result = if self.failed_revision == Some(stitch.match_revision())
+            && self.recent.latest_matches(&image)
+        {
+            Match::Uncertain
+        } else {
+            stitch.consider(image.clone())?
+        };
         match result {
             Match::Uncertain => {
                 self.failures = self.failures.saturating_add(1);
+                self.failed_revision = Some(stitch.match_revision());
                 self.recent.remember(image, now);
             }
             Match::Aligned(_) => {
                 self.failures = 0;
+                self.failed_revision = None;
                 let observed = stitch.clone();
                 // 新画面补上缺口后，可依次接回最近已采到的后续帧；每一帧重新验证，
                 // 不能仅凭采集时间推断顺序，更不能跳过仍无重叠的内容。
@@ -60,6 +70,7 @@ impl Recovery {
             }
             Match::Unchanged => {
                 self.failures = 0;
+                self.failed_revision = None;
             }
         }
         Ok(result)
@@ -144,5 +155,35 @@ mod tests {
             .unwrap();
         assert_eq!(recovery.recent.len(), 1);
         assert_eq!(stitch.count(), 1);
+    }
+
+    #[test]
+    fn failed_frame_cache_is_invalidated_when_trusted_canvas_advances() {
+        let doc = RgbaImage::from_fn(96, 600, |x, y| {
+            let v = (x.wrapping_mul(73856093) ^ y.wrapping_mul(19349663)).wrapping_mul(83492791);
+            Rgba([v as u8, (v >> 8) as u8, (v >> 16) as u8, 255])
+        });
+        let frame = |y| image::imageops::crop_imm(&doc, 0, y, 96, 160).to_image();
+        let mut stitch = Stitch::new(frame(0)).unwrap();
+        let mut recovery = Recovery::default();
+        let now = Instant::now();
+        assert_eq!(
+            recovery.consider_at(&mut stitch, frame(240), now).unwrap(),
+            Match::Uncertain
+        );
+        let failed_revision = recovery.failed_revision.unwrap();
+        assert!(matches!(
+            stitch.consider(frame(120)).unwrap(),
+            Match::Aligned(_)
+        ));
+        assert_ne!(stitch.match_revision(), failed_revision);
+        assert!(matches!(
+            recovery.consider_at(&mut stitch, frame(240), now).unwrap(),
+            Match::Aligned(_)
+        ));
+        assert_eq!(
+            stitch.compose(),
+            image::imageops::crop_imm(&doc, 0, 0, 96, 400).to_image()
+        );
     }
 }
