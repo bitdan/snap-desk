@@ -47,25 +47,30 @@ const recentRect = computed(() => frame.value ? restoreRecentSelection(recentSel
 const busy = ref(false)
 const qrResult = ref<QrResult | null>(null)
 const ocrResult = ref<OcrResult | null>(null)
+// 识别与翻译共享可编辑草稿，切换面板不重复 OCR，也不丢失修正后的文字。
+const ocrDraft = ref('')
+const ocrEntryWasTranslation = ref(false)
 const translationMode = ref(false)
 const translationTrigger = ref<HTMLButtonElement | null>(null)
 const ocrTrigger = ref<HTMLButtonElement | null>(null)
 function closeOcr() {
   ocrResult.value = null
-  void nextTick(() => (translationMode.value ? translationTrigger.value : ocrTrigger.value)?.focus())
+  ocrDraft.value = ''
+  void nextTick(() => (ocrEntryWasTranslation.value ? translationTrigger.value : ocrTrigger.value)?.focus())
 }
 async function recognizeText(translate = false) {
   if (!frame.value || !pixels.value || busy.value || editor.pending || editor.interacting || gesture.value) return
   const id = frame.value.id
   translationMode.value = translate
+  ocrEntryWasTranslation.value = translate
   busy.value = true; error.value = ''
   try {
     const text = await api.recognizeCapture(id, pixels.value)
-    if (frame.value?.id === id) ocrResult.value = text
+    if (frame.value?.id === id) { ocrDraft.value = text.fullText; ocrResult.value = text }
   } catch (e) { error.value = String(e) }
   finally { busy.value = false }
 }
-watch(() => frame.value?.id, () => { qrResult.value = null; ocrResult.value = null })
+watch(() => frame.value?.id, () => { qrResult.value = null; ocrResult.value = null; ocrDraft.value = '' })
 /** 主动识别保留截图现场；结果面板隔离选区拖动与截图快捷键。 */
 async function recognizeQr() {
   if (!frame.value || !pixels.value || busy.value || editor.pending || editor.interacting || gesture.value) return
@@ -355,13 +360,13 @@ onUnmounted(() => { disposed = true; off?.(); offScroll?.(); offPin?.(); window.
   <div v-if="scroll" />
   <div v-else class="capture-overlay" @pointerdown="down($event)" @pointermove.capture="drag" @pointerleave="pointer = null" @pointerup="up" @pointercancel="abortGesture(); pointer = null" @contextmenu.prevent="cancel">
     <img v-if="frame" :key="frame.id" ref="screenImage" class="screen-image" :src="frame.dataUrl" alt="当前屏幕截图" draggable="false" @load="loaded" @error="imageFailed" />
-    <div v-if="!selection" class="initial-shade" />
+    <!-- 截图和录屏共用选区入口：开始框选前保持原图，仅在形成选区后遮暗外围。 -->
     <div v-if="!selection" class="capture-tip" :style="{ left: `${activeDisplay.x + activeDisplay.width / 2}px`, top: `${activeDisplay.y + 64}px`, maxWidth: `${activeDisplay.width - 32}px`, whiteSpace: 'normal' }">{{ frame?.recording ? '拖动选择录屏范围' : frame?.targets.length ? '点击吸附 · 拖动框选 · Alt 选窗口 · Shift 自由框选' : '拖动框选屏幕' }} <span>C 取色 · Esc 取消 · Ctrl / ⌘ + A 全屏 · R 最近选区</span></div>
     <div v-if="frame" class="capture-modebar" :style="{ left: `${activeDisplay.x + 16}px`, top: `${activeDisplay.y + 16}px` }" @pointerdown.stop @contextmenu.stop.prevent>
       <button :disabled="!recentRect || busy || marked || editor.pending || editor.interacting" :title="recentRect ? '恢复上次成功复制、保存或贴图的选区（R）' : '暂无最近选区，或当前屏幕分辨率已变化'" @click="restoreSelection"><Scan :size="15" />最近选区 R</button>
     </div>
     <div v-if="hoverTarget !== null" class="snap-target" :style="hoverStyle" />
-    <div v-if="selection" class="selection" :style="{ ...boxStyle, cursor: marked ? 'default' : 'move' }" @pointerdown.stop="selectionDown">
+    <div v-if="selection" class="selection" :style="{ ...boxStyle, boxShadow: valid ? undefined : 'none', cursor: marked ? 'default' : 'move' }" @pointerdown.stop="selectionDown">
       <span class="size-label">{{ pixels?.width }} × {{ pixels?.height }} px · ({{ pixels?.x }}, {{ pixels?.y }})</span>
       <template v-if="!marked && !annotating"><span v-for="handle in handles" :key="handle" :class="['resize-handle', handle]" @pointerdown.stop="down($event, handle)" /></template>
     </div>
@@ -387,9 +392,9 @@ onUnmounted(() => { disposed = true; off?.(); offScroll?.(); offPin?.(); window.
     </div>
     <CaptureMagnifier v-if="showMagnifier && screenImage && pointer && frame" :image="screenImage" :point="pointer" :viewport="viewport" :image-size="frame" :format="colorFormat" :relative="relativeCoordinates" :origin="pixels" :copied="colorCopied" :bounds="pointerDisplay" />
     <div v-if="ocrResult !== null" class="qr-shade" @pointerdown.stop @pointermove.stop @pointerup.stop @contextmenu.stop.prevent>
-      <div :class="['qr-dialog', { 'translation-dialog': translationMode }]" :style="dialogStyle" role="dialog" aria-modal="true" :aria-label="translationMode ? '截图翻译' : '文字识别结果'">
-        <TranslationPanel v-if="translationMode" :result="ocrResult" @close="closeOcr" />
-        <OcrResultCard v-else :text="ocrResult.fullText" @close="closeOcr" />
+      <div :class="['qr-dialog', 'ocr-dialog', { 'translation-dialog': translationMode }]" :style="dialogStyle" role="dialog" aria-modal="true" :aria-label="translationMode ? '文字翻译' : '文字识别结果'">
+        <TranslationPanel v-if="translationMode" v-model:text="ocrDraft" @back="translationMode = false" @close="closeOcr" />
+        <OcrResultCard v-else v-model:text="ocrDraft" @translate="translationMode = true" @close="closeOcr" />
       </div>
     </div>
     <div v-if="qrResult" class="qr-shade" @pointerdown.stop @pointermove.stop @pointerup.stop @contextmenu.stop.prevent>
@@ -407,7 +412,8 @@ onUnmounted(() => { disposed = true; off?.(); offScroll?.(); offPin?.(); window.
 <style scoped>
 .qr-shade { position: absolute; inset: 0; z-index: 10; display: grid; place-items: center; cursor: default; background: #0003; }
 .qr-dialog { width: min(440px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow-y: auto; color: #20232b; }
-.translation-dialog { width: min(820px, calc(100vw - 32px)); }
+.ocr-dialog { width: min(560px, calc(100vw - 32px)); }
+.translation-dialog { width: min(920px, calc(100vw - 32px)); }
 .recording-menu-shade { position: absolute; inset: 0; z-index: 6; cursor: default; }
 .capture-toolbar.annotation-toolbar { max-width: none; }
 .capture-toolbar :deep(.annotation-tools) { width: max-content; max-width: none; }
@@ -415,5 +421,5 @@ onUnmounted(() => { disposed = true; off?.(); offScroll?.(); offPin?.(); window.
 .capture-modebar { position: absolute; top: 8px; left: 8px; z-index: 4; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; max-width: calc(100vw - 16px); border-radius: 6px; padding: 6px 8px; background: #242330ed; color: white; font-size: 12px; cursor: default; }
 .capture-modebar button { display: flex; align-items: center; gap: 5px; padding: 3px; }
 .capture-modebar button:disabled { opacity: .5; }
-.snap-target { position: absolute; outline: 2px solid #60a5fa; background: #60a5fa18; pointer-events: none; }
+.snap-target { position: absolute; outline: 2px solid #60a5fa; pointer-events: none; }
 </style>

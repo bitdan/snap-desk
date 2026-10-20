@@ -1,0 +1,38 @@
+/* 识别和翻译共用结果样式；限定根类，避免影响截图工具栏、主窗口及透明贴图。 */
+.recognition-result { container-type: inline-size; background: #fff; border: 1px solid #d8dee4; border-radius: 8px; color: #24292f; font-size: 13px; overflow: hidden; }
+.recognition-result .result-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 16px; border-bottom: 1px solid #e1e4e8; }
+.recognition-result h2 { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; margin: 0; }
+.recognition-result h2 svg { color: #2563eb; }
+.recognition-result button { min-height: 32px; padding: 5px 10px; font-size: 13px; border-radius: 5px; }
+.recognition-result .result-close { width: 32px; padding: 6px; }
+.recognition-result .result-body { padding: 16px; }
+.recognition-result .result-editor { min-width: 0; border: 1px solid #d8dee4; border-radius: 5px; overflow: hidden; }
+.recognition-result .editor-heading { min-height: 36px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 8px; padding: 7px 12px; border-bottom: 1px solid #e8eaed; background: #f6f7f8; }
+.recognition-result .editor-heading label { font-weight: 600; }
+.recognition-result .editor-heading > span, .recognition-result .editor-subtitle { font-size: 12px; color: #6e7781; font-weight: 400; }
+.recognition-result .editor-subtitle { margin-left: 8px; }
+.recognition-result textarea { display: block; width: 100%; height: clamp(180px, 42vh, 360px); min-height: 120px; padding: 12px; margin: 0; border: 0; border-radius: 0; background: white; color: #24292f; font: inherit; line-height: 1.7; resize: none; user-select: text; cursor: text; }
+.recognition-result textarea::placeholder { color: #8c959f; }
+.recognition-result textarea:focus-visible { outline: 2px solid #2563eb; outline-offset: -2px; }
+.recognition-result .result-footer { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 12px 16px; border-top: 1px solid #e1e4e8; background: #fafbfc; }
+.recognition-result .result-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-left: auto; }
+.recognition-result .result-success, .recognition-result .editor-heading > .result-success { display: inline-flex; align-items: center; gap: 4px; color: #24834b; font-size: 12px; }
+.recognition-result .result-context { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 12px; color: #57606a; font-size: 12px; }
+.recognition-result .result-badge { padding: 2px 6px; border-radius: 4px; background: #eef4fc; color: #315a86; }
+.recognition-result .result-columns { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
+.recognition-result .translated-editor textarea { background: #fafcfe; }
+.recognition-result .result-destination { margin: 12px 0 8px; overflow-wrap: anywhere; color: #57606a; font-size: 12px; user-select: text; }
+.recognition-result .result-consent { display: flex; align-items: flex-start; gap: 8px; font-size: 12px; line-height: 1.6; }
+.recognition-result .result-consent input { margin-top: 3px; accent-color: #2563eb; }
+.recognition-result .result-consent input:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
+.recognition-result .result-error { margin: 12px 0 0; padding: 8px 10px; border-radius: 4px; background: #fff0f0; color: #a12f38; overflow-wrap: anywhere; }
+.recognition-result .result-progress { display: inline-flex; align-items: center; gap: 4px; }
+.recognition-result .result-spinner { animation: result-spin 1s linear infinite; }
+@keyframes result-spin { to { transform: rotate(360deg); } }
+/* 按弹窗实际宽度响应，覆盖多屏大视口里显示在较窄显示器上的情况。 */
+@container (max-width: 580px) {
+  .recognition-result .result-columns { grid-template-columns: 1fr; }
+  .recognition-result .result-columns textarea { height: 160px; }
+  .recognition-result .result-body { padding: 12px; }
+}
+@media (prefers-reduced-motion: reduce) { .recognition-result .result-spinner { animation: none; } }
