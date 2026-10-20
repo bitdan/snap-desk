@@ -36,15 +36,16 @@ impl Recovery {
                 self.failures = self.failures.saturating_add(1);
                 self.recent.remember(image, now);
             }
-            Match::Overlap(_) => {
+            Match::Aligned(_) => {
                 self.failures = 0;
+                let observed = stitch.clone();
                 // 新画面补上缺口后，可依次接回最近已采到的后续帧；每一帧重新验证，
                 // 不能仅凭采集时间推断顺序，更不能跳过仍无重叠的内容。
                 loop {
                     let mut advanced = false;
                     for index in 0..self.recent.len() {
                         let candidate = self.recent.candidate(index);
-                        if matches!(stitch.consider(candidate)?, Match::Overlap(_)) {
+                        if matches!(stitch.consider(candidate)?, Match::Aligned(_)) {
                             self.recent.remove(index);
                             advanced = true;
                             break;
@@ -54,6 +55,8 @@ impl Recovery {
                         break;
                     }
                 }
+                // 缓存只补齐已观察内容，视口最终回到本次真正采到的位置。
+                stitch.restore_viewport(&observed);
             }
             Match::Unchanged => {
                 self.failures = 0;
@@ -65,7 +68,7 @@ impl Recovery {
     pub fn message(&self, result: Option<Match>) -> &'static str {
         match result {
             Some(Match::Uncertain) | None if self.failures >= 3 => {
-                "未找到可靠重叠，可能滚动过快；请稍微向上滚动，匹配后自动继续。"
+                "未找到可靠重叠，可能滚动过快；请沿原路滚回一点或缩小选区，匹配后自动继续。"
             }
             Some(Match::Uncertain) => "正在重新匹配，请稍作停顿；已拼接内容保留。",
             None => "等待页面稳定；局部动画会自动过滤。",
@@ -104,7 +107,7 @@ mod tests {
         assert_eq!(recovery.recent.len(), 1);
         assert!(recovery
             .message(Some(Match::Uncertain))
-            .contains("向上滚动"));
+            .contains("原路滚回"));
         recovery.consider_at(&mut stitch, frame(240), now).unwrap();
         recovery.consider_at(&mut stitch, frame(120), now).unwrap();
         assert_eq!(
@@ -113,6 +116,7 @@ mod tests {
         );
         assert_eq!(recovery.failures, 0);
         assert_eq!(recovery.delay(), 80);
+        assert_eq!(stitch.viewport().y, 120);
     }
 
     #[test]

@@ -1,35 +1,71 @@
-//! 分段存储可信图像，自动去重并处理固定底栏；负责容量、预览和组图。
-use super::matcher::{alignment, Match, Signature, MIN_OVERLAP};
-use image::RgbaImage;
-use std::sync::Arc;
+//! 稀疏二维画布：256² 图块、逐像素覆盖位、负坐标和有界空间锚点。
+//! 快照共享 Arc，只有新增像素所在图块执行写时复制；预览直接取样图块。
+use super::matcher::{alignment, Alignment, Bounds, Content, Match, ScrollMode};
+use image::{Rgba, RgbaImage};
+use std::{
+    collections::{HashMap, VecDeque},
+    sync::Arc,
+};
+
 pub const MAX_PIXELS: u64 = 32_000_000;
 pub const MAX_HEIGHT: u32 = 60_000;
-const MAX_FRAMES: usize = 64;
+const TILE: i64 = 256;
+const TILE_PIXELS: usize = 256 * 256;
+const MAX_TILES: usize = 512;
+const ANCHOR_PIXELS: u64 = 8_000_000;
 
 #[cfg(test)]
 #[path = "regression_tests.rs"]
 mod regression_tests;
+#[cfg(test)]
+#[path = "mosaic_tests.rs"]
+mod tests;
 
 #[derive(Clone)]
-struct Segment {
+struct Tile {
+    pixels: Vec<Rgba<u8>>,
+    covered: Vec<u64>,
+}
+impl Tile {
+    fn new() -> Self {
+        Self {
+            pixels: vec![Rgba([0, 0, 0, 0]); TILE_PIXELS],
+            covered: vec![0; TILE_PIXELS / 64],
+        }
+    }
+    fn has(&self, i: usize) -> bool {
+        self.covered[i / 64] & (1u64 << (i % 64)) != 0
+    }
+}
+#[derive(Clone)]
+struct Anchor {
     image: Arc<RgbaImage>,
-    overlap: u32,
-    end: u32,
+    x: i64,
+    y: i64,
 }
 
 #[derive(Clone)]
 pub struct Stitch {
-    // 快照仅复制分段边界，图片和特征共享；匹配失败可直接丢弃快照。
-    segments: Vec<Segment>,
-    // 仅随可信锚点更新；不确定候选不能污染下一轮匹配。
-    signature: Arc<Signature>,
+    tiles: HashMap<(i64, i64), Arc<Tile>>,
+    anchors: VecDeque<Anchor>,
+    latest: Anchor,
+    content: Content,
+    mode: ScrollMode,
+    frames: usize,
+    covered: u64,
+    pub bounds: Bounds,
     pub width: u32,
-    pub frame_height: u32,
     pub height: u32,
+    pub frame_height: u32,
+    pub dx: i32,
+    pub dy: i32,
 }
 
 impl Stitch {
     pub fn new(image: RgbaImage) -> Result<Self, String> {
+        Self::with_mode(image, ScrollMode::Auto)
+    }
+    pub fn with_mode(image: RgbaImage, mode: ScrollMode) -> Result<Self, String> {
         let (width, height) = image.dimensions();
         if width < 32
             || height < 64
@@ -38,256 +74,342 @@ impl Stitch {
             || u64::from(width) * u64::from(height) > 8_000_000
         {
             return Err(
-                "长截图选区须至少 32 × 64 像素，宽高不超过 8192，单帧不超过 800 万像素。".into(),
+                "滚动截图选区须至少 32 × 64 像素，宽高不超过 8192，单帧不超过 800 万像素。".into(),
             );
         }
-        Ok(Self {
-            signature: Arc::new(Signature::new(&image)),
-            segments: vec![Segment {
+        let content = Content::full(&image);
+        let mut stitch = Self {
+            tiles: HashMap::new(),
+            anchors: VecDeque::new(),
+            latest: Anchor {
                 image: Arc::new(image),
-                overlap: 0,
-                end: height,
-            }],
+                x: 0,
+                y: 0,
+            },
+            content,
+            mode,
+            frames: 1,
+            covered: 0,
+            bounds: Bounds {
+                x: 0,
+                y: 0,
+                width,
+                height,
+            },
             width,
-            frame_height: height,
             height,
-        })
+            frame_height: height,
+            dx: 0,
+            dy: 0,
+        };
+        stitch.write(stitch.latest.clone(), content)?;
+        Ok(stitch)
     }
     pub fn count(&self) -> usize {
-        self.segments.len()
+        self.frames
     }
     pub fn last(&self) -> &RgbaImage {
-        &self.segments[self.segments.len() - 1].image
+        &self.latest.image
     }
-    /// 存档与恢复共享不可变帧，不复制整张 RGBA 图片。
     pub fn last_shared(&self) -> Arc<RgbaImage> {
-        self.segments[self.segments.len() - 1].image.clone()
+        self.latest.image.clone()
+    }
+    /// 恢复缓存可以补图，但不能把历史帧误显示为用户当前看到的视口。
+    pub(super) fn restore_viewport(&mut self, observed: &Self) {
+        self.latest = observed.latest.clone();
+        self.dx = observed.dx;
+        self.dy = observed.dy;
+    }
+    /// 固定栏不作为文档内容导出，视口也仅标注实际参与拼接的内容区。
+    pub fn viewport(&self) -> Bounds {
+        Bounds {
+            x: self.latest.x + i64::from(self.content.left),
+            y: self.latest.y + i64::from(self.content.top),
+            width: self.content.right - self.content.left,
+            height: self.content.bottom - self.content.top,
+        }
+    }
+    pub fn coverage(&self) -> f64 {
+        self.covered as f64 / (u64::from(self.width) * u64::from(self.height)) as f64 * 100.0
+    }
+    pub fn has_holes(&self) -> bool {
+        self.covered < u64::from(self.width) * u64::from(self.height)
+    }
+    pub fn direction(&self) -> &'static str {
+        match (self.dx.signum(), self.dy.signum()) {
+            (0, 0) => "none",
+            (0, -1) => "up",
+            (0, 1) => "down",
+            (-1, 0) => "left",
+            (1, 0) => "right",
+            _ => "diagonal",
+        }
     }
 
     pub fn consider(&mut self, image: impl Into<Arc<RgbaImage>>) -> Result<Match, String> {
         let image = image.into();
-        if image.dimensions() != (self.width, self.frame_height) {
-            return Err("采集区域尺寸发生变化，请结束本次长截图。".into());
+        if image.dimensions() != self.last().dimensions() {
+            return Err("采集区域尺寸发生变化，请重新开始滚动截图。".into());
         }
-        let started = std::time::Instant::now();
-        let signature = Signature::new(&image);
-        let (result, bottom) = alignment(self.last(), &image, &self.signature, &signature);
-        if log::log_enabled!(log::Level::Debug) && crate::diagnostics::runtime::sample_debug() {
-            log::debug!(
-                "event=scroll.match module=scroll duration_ms={:.2}",
-                started.elapsed().as_secs_f64() * 1000.0
-            );
+        let direct = alignment(self.last(), &image, self.mode);
+        if direct == Match::Unchanged {
+            return Ok(direct);
         }
-        if let Match::Overlap(overlap) = result {
-            let last = &self.segments[self.segments.len() - 1];
-            // 底栏布局刚变化时，不能用新推断裁掉已提交内容；按不确定匹配重试。
-            if bottom >= last.end - last.overlap || bottom > overlap {
-                return Ok(Match::Uncertain);
+        let mut located = match direct {
+            Match::Aligned(a) => Some((
+                self.latest.x + i64::from(a.dx),
+                self.latest.y + i64::from(a.dy),
+                a,
+            )),
+            _ => None,
+        };
+        // 历史锚点带文档坐标。重访只移动视口，不按时间顺序追加旧候选。
+        // 已直接定位时只复核一个附近锚点；失败时尝试全部有界历史锚点。
+        let mut checked = false;
+        for anchor in self.anchors.iter().rev() {
+            if let Some((x, y, _)) = located {
+                if checked
+                    || (x - anchor.x).abs() >= i64::from(image.width())
+                    || (y - anchor.y).abs() >= i64::from(image.height())
+                {
+                    continue;
+                }
             }
-            self.append(image, overlap, bottom)?;
-            self.signature = Arc::new(signature);
+            let candidate = match alignment(&anchor.image, &image, self.mode) {
+                Match::Unchanged => Some((
+                    anchor.x,
+                    anchor.y,
+                    Alignment {
+                        dx: 0,
+                        dy: 0,
+                        overlap: Bounds {
+                            x: 0,
+                            y: 0,
+                            width: image.width(),
+                            height: image.height(),
+                        },
+                        confidence: 1.0,
+                        content: self.content,
+                    },
+                )),
+                Match::Aligned(a) => {
+                    Some((anchor.x + i64::from(a.dx), anchor.y + i64::from(a.dy), a))
+                }
+                _ => None,
+            };
+            checked = true;
+            if let Some(next) = candidate {
+                if located.is_some_and(|p| p.0 != next.0 || p.1 != next.1) {
+                    return Ok(Match::Uncertain);
+                }
+                located = Some(next);
+            }
         }
-        Ok(result)
+        let Some((x, y, mut result)) = located else {
+            return Ok(Match::Uncertain);
+        };
+        // 后续固定边界发生变化时不回溯篡改已提交内容，等待用户返回相同布局。
+        if self.frames > 1 && result.content != self.content {
+            return Ok(Match::Uncertain);
+        }
+        result.dx = i32::try_from(x - self.latest.x).map_err(|_| "滚动位移超限。")?;
+        result.dy = i32::try_from(y - self.latest.y).map_err(|_| "滚动位移超限。")?;
+        if (self.mode == ScrollMode::Vertical && result.dx != 0)
+            || (self.mode == ScrollMode::Horizontal && result.dy != 0)
+        {
+            return Ok(Match::Uncertain);
+        }
+        let next = Anchor { image, x, y };
+        if !self.consistent(&next, result.content) {
+            return Ok(Match::Uncertain);
+        }
+        // 所有可能失败的容量检查先完成；失败不改变画布、锚点或视口。
+        self.check_capacity(&next, result.content)?;
+        if self.frames == 1 && result.content != self.content {
+            self.tiles.clear();
+            self.covered = 0;
+            self.content = result.content;
+            self.bounds = Self::frame_bounds(&self.latest, self.content);
+            self.width = self.bounds.width;
+            self.height = self.bounds.height;
+            self.write(self.latest.clone(), self.content)?;
+        }
+        let before = self.covered;
+        self.write(next.clone(), self.content)?;
+        if self.covered > before {
+            self.frames += 1;
+        }
+        // 除最新帧外最多保留六个锚点且总计不超过八百万像素。
+        if !self
+            .anchors
+            .iter()
+            .any(|a| a.x == self.latest.x && a.y == self.latest.y)
+        {
+            self.anchors.push_back(self.latest.clone());
+        }
+        while self.anchors.len() > 6
+            || self
+                .anchors
+                .iter()
+                .map(|a| u64::from(a.image.width()) * u64::from(a.image.height()))
+                .sum::<u64>()
+                > ANCHOR_PIXELS
+        {
+            // 优先淘汰空间上最冗余的中间锚点，保留起点和最近端点；
+            // 大图仅容纳一个历史帧时优先保留最近帧，仍遵守像素预算。
+            let remove = if self.anchors.len() <= 2 {
+                0
+            } else {
+                (1..self.anchors.len() - 1)
+                    .min_by_key(|&i| {
+                        let a = &self.anchors[i];
+                        self.anchors
+                            .iter()
+                            .enumerate()
+                            .filter(|(j, _)| *j != i)
+                            .map(|(_, b)| (a.x - b.x).abs() + (a.y - b.y).abs())
+                            .min()
+                            .unwrap_or(0)
+                    })
+                    .unwrap_or(0)
+            };
+            self.anchors.remove(remove);
+        }
+        self.latest = next;
+        self.dx = result.dx;
+        self.dy = result.dy;
+        Ok(Match::Aligned(result))
     }
 
-    /// 仅供自动匹配成功后提交；先校验所有容量，失败时锚点和成图完全不变。
-    fn append(&mut self, image: Arc<RgbaImage>, overlap: u32, bottom: u32) -> Result<(), String> {
-        if !(MIN_OVERLAP..self.frame_height).contains(&overlap) {
-            return Err("重叠行数超出允许范围。".into());
+    /// 与已提交覆盖区再做空间一致性检查，防止候选只对最新帧成立却冲突于旧画布。
+    fn consistent(&self, next: &Anchor, content: Content) -> bool {
+        let mut total = 0u32;
+        let mut good = 0u32;
+        let step_x = ((content.right - content.left) / 64).max(1) as usize;
+        let step_y = ((content.bottom - content.top) / 64).max(1) as usize;
+        for y in (content.top..content.bottom).step_by(step_y) {
+            for x in (content.left..content.right).step_by(step_x) {
+                let gx = next.x + i64::from(x);
+                let gy = next.y + i64::from(y);
+                // 首次识别到固定栏时，这些旧像素即将被剔除，不能投反对票。
+                if self.frames == 1 {
+                    let first = Self::frame_bounds(&self.latest, content);
+                    if gx < first.x
+                        || gy < first.y
+                        || gx >= first.x + i64::from(first.width)
+                        || gy >= first.y + i64::from(first.height)
+                    {
+                        continue;
+                    }
+                }
+                let (key, index) = Self::address(gx, gy);
+                if let Some(tile) = self.tiles.get(&key).filter(|t| t.has(index)) {
+                    let pixel = next.image.get_pixel(x, y);
+                    let diff: u32 = (0..3)
+                        .map(|c| u32::from(tile.pixels[index][c].abs_diff(pixel[c])))
+                        .sum();
+                    total += 1;
+                    good += u32::from(diff <= 36);
+                }
+            }
         }
-        let height = self
-            .height
-            .checked_add(self.frame_height - overlap)
-            .ok_or("长截图高度溢出。")?;
-        if self.count() >= MAX_FRAMES
-            || height > MAX_HEIGHT
-            || u64::from(self.width) * u64::from(height) > MAX_PIXELS
-            || (self.count() as u64 + 1) * u64::from(self.width) * u64::from(self.frame_height)
-                > MAX_PIXELS
+        total == 0 || good * 100 >= total * 90
+    }
+
+    fn frame_bounds(anchor: &Anchor, content: Content) -> Bounds {
+        Bounds {
+            x: anchor.x + i64::from(content.left),
+            y: anchor.y + i64::from(content.top),
+            width: content.right - content.left,
+            height: content.bottom - content.top,
+        }
+    }
+    fn union(&self, next: Bounds) -> Bounds {
+        let x = self.bounds.x.min(next.x);
+        let y = self.bounds.y.min(next.y);
+        Bounds {
+            x,
+            y,
+            width: ((self.bounds.x + i64::from(self.width)).max(next.x + i64::from(next.width)) - x)
+                as u32,
+            height: ((self.bounds.y + i64::from(self.height)).max(next.y + i64::from(next.height))
+                - y) as u32,
+        }
+    }
+    fn check_capacity(&self, anchor: &Anchor, content: Content) -> Result<Bounds, String> {
+        let frame = Self::frame_bounds(anchor, content);
+        let bounds = self.union(frame);
+        let mut missing = 0;
+        for ty in
+            frame.y.div_euclid(TILE)..=(frame.y + i64::from(frame.height) - 1).div_euclid(TILE)
         {
-            return Err("已达到长截图容量限制（64 帧 / 60000 行 / 3200 万像素或源帧缓存上限），已自动结束，仅输出已确认部分。".into());
+            for tx in
+                frame.x.div_euclid(TILE)..=(frame.x + i64::from(frame.width) - 1).div_euclid(TILE)
+            {
+                missing += usize::from(!self.tiles.contains_key(&(tx, ty)));
+            }
         }
-        // 旧帧底栏不进入中间接缝；新帧从同一内容坐标接续，底栏仅在最终末尾保留。
-        let previous = self.segments.last_mut().ok_or("缺少可信锚点。")?;
-        if bottom >= previous.end - previous.overlap || bottom > overlap {
-            return Err("固定底栏超出有效内容区域。".into());
+        if bounds.width > MAX_HEIGHT
+            || bounds.height > MAX_HEIGHT
+            || u64::from(bounds.width) * u64::from(bounds.height) > MAX_PIXELS
+            || self.tiles.len() + missing > MAX_TILES
+        {
+            return Err("已达到滚动截图容量限制（边长 60000 / 包围盒 3200 万像素 / 512 图块），仅输出已确认部分。".into());
         }
-        previous.end -= bottom;
-        self.segments.push(Segment {
-            image,
-            overlap: overlap - bottom,
-            end: self.frame_height,
-        });
-        self.height = height;
+        Ok(bounds)
+    }
+    fn address(x: i64, y: i64) -> ((i64, i64), usize) {
+        (
+            (x.div_euclid(TILE), y.div_euclid(TILE)),
+            (y.rem_euclid(TILE) * TILE + x.rem_euclid(TILE)) as usize,
+        )
+    }
+    fn write(&mut self, anchor: Anchor, content: Content) -> Result<(), String> {
+        let bounds = self.check_capacity(&anchor, content)?;
+        for y in content.top..content.bottom {
+            for x in content.left..content.right {
+                let (key, i) = Self::address(anchor.x + i64::from(x), anchor.y + i64::from(y));
+                let tile = self
+                    .tiles
+                    .entry(key)
+                    .or_insert_with(|| Arc::new(Tile::new()));
+                if !tile.has(i) {
+                    let tile = Arc::make_mut(tile);
+                    tile.pixels[i] = *anchor.image.get_pixel(x, y);
+                    tile.covered[i / 64] |= 1u64 << (i % 64);
+                    self.covered += 1;
+                }
+            }
+        }
+        self.bounds = bounds;
+        self.width = bounds.width;
+        self.height = bounds.height;
         Ok(())
     }
-
-    /// 仅在预览/导出时组装整图，采集过程中不反复复制逐渐变长的图片。
-    pub fn compose(&self) -> RgbaImage {
-        let mut output = RgbaImage::new(self.width, self.height);
-        let mut y = 0u32;
-        for segment in &self.segments {
-            let rows = segment.end - segment.overlap;
-            let start = segment.overlap as usize * self.width as usize * 4;
-            let target = y as usize * self.width as usize * 4;
-            let bytes: &mut [u8] = output.as_mut();
-            bytes[target..target + rows as usize * self.width as usize * 4].copy_from_slice(
-                &segment.image.as_raw()[start..start + rows as usize * self.width as usize * 4],
-            );
-            y += rows;
-        }
-        output
+    fn pixel(&self, x: i64, y: i64) -> Rgba<u8> {
+        let (key, i) = Self::address(x, y);
+        self.tiles
+            .get(&key)
+            .filter(|t| t.has(i))
+            .map_or(Rgba([0, 0, 0, 0]), |t| t.pixels[i])
     }
-
-    /// 直接从分段取样缩略图，避免预览时先分配整张超长 RGBA 图片。
+    /// 空洞透明保留；导出背景选项在会话层统一应用，不污染占用掩码。
+    pub fn compose(&self) -> RgbaImage {
+        RgbaImage::from_fn(self.width, self.height, |x, y| {
+            self.pixel(self.bounds.x + i64::from(x), self.bounds.y + i64::from(y))
+        })
+    }
     pub fn preview(&self, max_width: u32, max_height: u32) -> RgbaImage {
         let scale = (f64::from(max_width) / f64::from(self.width))
             .min(f64::from(max_height) / f64::from(self.height))
             .min(1.0);
         let width = (f64::from(self.width) * scale).floor().max(1.0) as u32;
         let height = (f64::from(self.height) * scale).floor().max(1.0) as u32;
-        let mut output = RgbaImage::new(width, height);
-        let mut index = 0;
-        let mut start = 0;
-        for y in 0..height {
-            let source_y = (u64::from(y) * u64::from(self.height) / u64::from(height)) as u32;
-            while source_y >= start + self.segments[index].end - self.segments[index].overlap {
-                start += self.segments[index].end - self.segments[index].overlap;
-                index += 1;
-            }
-            let segment = &self.segments[index];
-            for x in 0..width {
-                let source_x = (u64::from(x) * u64::from(self.width) / u64::from(width)) as u32;
-                output.put_pixel(
-                    x,
-                    y,
-                    *segment
-                        .image
-                        .get_pixel(source_x, source_y - start + segment.overlap),
-                );
-            }
-        }
-        output
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use image::Rgba;
-
-    fn document() -> RgbaImage {
-        RgbaImage::from_fn(96, 600, |x, y| {
-            let v = (x.wrapping_mul(73856093) ^ y.wrapping_mul(19349663)).wrapping_mul(83492791);
-            Rgba([v as u8, (v >> 8) as u8, (v >> 16) as u8, 255])
+        RgbaImage::from_fn(width, height, |x, y| {
+            self.pixel(
+                self.bounds.x + (u64::from(x) * u64::from(self.width) / u64::from(width)) as i64,
+                self.bounds.y + (u64::from(y) * u64::from(self.height) / u64::from(height)) as i64,
+            )
         })
-    }
-    fn frame(source: &RgbaImage, y: u32) -> RgbaImage {
-        image::imageops::crop_imm(source, 0, y, 96, 160).to_image()
-    }
-
-    #[test]
-    fn joins_multiple_scrolls_without_duplicate_or_missing_rows() {
-        let doc = document();
-        let mut stitch = Stitch::new(frame(&doc, 0)).unwrap();
-        assert_eq!(
-            stitch.consider(frame(&doc, 60)).unwrap(),
-            Match::Overlap(100)
-        );
-        assert_eq!(
-            stitch.consider(frame(&doc, 135)).unwrap(),
-            Match::Overlap(85)
-        );
-        assert_eq!(
-            stitch.compose(),
-            image::imageops::crop_imm(&doc, 0, 0, 96, 295).to_image()
-        );
-    }
-    #[test]
-    fn ambiguous_patterns_never_change_the_anchor() {
-        let pattern = RgbaImage::from_fn(96, 600, |x, y| {
-            Rgba([((y % 20) * 12) as u8, (x * 2) as u8, 0, 255])
-        });
-        let mut stitch = Stitch::new(frame(&pattern, 0)).unwrap();
-        for _ in 0..8 {
-            assert_eq!(
-                stitch.consider(frame(&pattern, 55)).unwrap(),
-                Match::Uncertain
-            );
-            assert_eq!(stitch.compose(), frame(&pattern, 0));
-        }
-    }
-    #[test]
-    fn retry_returning_to_anchor_preserves_output() {
-        let doc = document();
-        let mut stitch = Stitch::new(frame(&doc, 0)).unwrap();
-        stitch.consider(frame(&doc, 300)).unwrap();
-        assert_eq!(stitch.last(), &frame(&doc, 0));
-        assert_eq!(stitch.consider(frame(&doc, 0)).unwrap(), Match::Unchanged);
-        assert_eq!(stitch.compose(), frame(&doc, 0));
-    }
-
-    #[test]
-    fn preview_reads_correct_segment_rows_without_composing() {
-        let doc = document();
-        let mut stitch = Stitch::new(frame(&doc, 0)).unwrap();
-        stitch.consider(frame(&doc, 60)).unwrap();
-        assert_eq!(stitch.preview(96, 220), stitch.compose());
-        let small = stitch.preview(48, 110);
-        assert_eq!(small.dimensions(), (48, 110));
-        for y in 0..110 {
-            for x in 0..48 {
-                assert_eq!(small.get_pixel(x, y), doc.get_pixel(x * 2, y * 2));
-            }
-        }
-    }
-    #[test]
-    fn capacity_failure_preserves_previous_output() {
-        let mut stitch = Stitch::new(frame(&document(), 0)).unwrap();
-        stitch.height = MAX_HEIGHT;
-        assert!(stitch.consider(frame(&document(), 60)).is_err());
-        assert_eq!(stitch.count(), 1);
-        assert_eq!(stitch.last(), &frame(&document(), 0));
-        assert!(Stitch::new(RgbaImage::new(31, 64)).is_err());
-    }
-
-    #[test]
-    fn frame_limit_and_invalid_overlap_preserve_output() {
-        let first = frame(&document(), 0);
-        let mut stitch = Stitch::new(first.clone()).unwrap();
-        for _ in 1..MAX_FRAMES {
-            stitch.append(Arc::new(first.clone()), 100, 0).unwrap();
-        }
-        let before = stitch.compose();
-        assert!(stitch.append(Arc::new(first.clone()), 100, 0).is_err());
-        assert!(stitch.append(Arc::new(first), 160, 0).is_err());
-        assert_eq!(stitch.compose(), before);
-        assert_eq!(stitch.count(), MAX_FRAMES);
-    }
-
-    #[test]
-    fn fixed_header_and_footer_appear_only_once() {
-        let doc = document();
-        let fixed = |offset| {
-            let mut image = frame(&doc, offset);
-            for y in (0..12).chain(148..160) {
-                for x in 0..96 {
-                    image.put_pixel(x, y, *doc.get_pixel(x, y + 400));
-                }
-            }
-            image
-        };
-        let mut stitch = Stitch::new(fixed(0)).unwrap();
-        assert_eq!(stitch.consider(fixed(60)).unwrap(), Match::Overlap(100));
-        assert_eq!(stitch.consider(fixed(120)).unwrap(), Match::Overlap(100));
-        let mut expected = image::imageops::crop_imm(&doc, 0, 0, 96, 280).to_image();
-        for y in (0..12).chain(268..280) {
-            for x in 0..96 {
-                let source_y = if y < 12 { y } else { y - 120 };
-                expected.put_pixel(x, y, *doc.get_pixel(x, source_y + 400));
-            }
-        }
-        assert_eq!(stitch.compose(), expected);
-        assert_eq!(stitch.preview(96, 280), expected);
     }
 }

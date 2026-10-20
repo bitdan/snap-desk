@@ -19,3 +19,21 @@ describe('原生窗口截图 IPC', () => {
     expect(readFileSync(new URL('../src-tauri/src/diagnostics/catalog.rs', import.meta.url), 'utf8')).toContain('"capture_native_window",')
   })
 })
+
+describe('二维滚动截图 IPC', () => {
+  const rect = { x: 10, y: 20, width: 640, height: 480 }
+  it('旧调用默认自动识别和白底，不开启原始帧存档', async () => {
+    invoke.mockResolvedValueOnce({ id: 12 })
+    await api.startScroll(12, rect, false)
+    expect(invoke).toHaveBeenLastCalledWith('start_scroll', {
+      id: 12, rect, saveFrames: false, mode: 'auto', background: 'white',
+    })
+  })
+  it('横向与透明背景选项通过同一命令发送', async () => {
+    invoke.mockResolvedValueOnce({ id: 13 })
+    await api.startScroll(13, rect, false, 'horizontal', 'transparent')
+    expect(invoke).toHaveBeenLastCalledWith('start_scroll', {
+      id: 13, rect, saveFrames: false, mode: 'horizontal', background: 'transparent',
+    })
+  })
+})

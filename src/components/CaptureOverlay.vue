@@ -6,7 +6,7 @@ import TranslationPanel from './TranslationPanel.vue'
 import type { OcrResult } from '@/lib/ai'
 import { computed, nextTick, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue'
 import { Copy, Save, X, Monitor, RotateCcw, Scan, Move, Pin, Video, QrCode, ScanText, Languages, AppWindow } from 'lucide-vue-next'
-import { api, onFrame, onCapturePin, onScroll, type CaptureFrame, type ColorFormat, type ScrollView, type QrResult } from '@/lib/api'
+import { api, onFrame, onCapturePin, onScroll, type CaptureFrame, type ColorFormat, type ScrollView, type ScrollMode, type ScrollBackground, type QrResult } from '@/lib/api'
 import { clamp, move, normalize, resize, toPixels, nudgeSelection, type Handle, type Point, type Rect } from '@/lib/selection'
 import { useAnnotations, type AnnotationTool } from '@/lib/use-annotations'
 import AnnotationSurface from './AnnotationSurface.vue'
@@ -81,6 +81,8 @@ async function recognizeQr() {
 }
 const error = ref('')
 const scroll = ref<ScrollView | null>(null)
+const scrollMode = ref<ScrollMode>('auto')
+const scrollBackground = ref<ScrollBackground>('white')
 const recordingSetup = ref(false)
 const recordingTrigger = ref<HTMLButtonElement | null>(null)
 const recordingAnchor = ref<{ left: number; right: number; top: number; bottom: number } | null>(null)
@@ -192,8 +194,8 @@ function scrollClosed() { scroll.value = null; frame.value = null }
 async function startScroll() {
   if (!frame.value || !pixels.value || !valid.value || busy.value || marked.value || editor.pending || editor.interacting || gesture.value) return
   busy.value = true; error.value = ''
-  // 长截图仅输出拼接结果；排错使用应用日志，不再额外保存原始帧。
-  try { receiveScroll(await api.startScroll(frame.value.id, pixels.value, false)) }
+  // 滚动截图仅输出拼接结果；排错使用应用日志，不再额外保存原始帧。
+  try { receiveScroll(await api.startScroll(frame.value.id, pixels.value, false, scrollMode.value, scrollBackground.value)) }
   catch (e) { error.value = String(e) }
   finally { busy.value = false }
 }
@@ -343,7 +345,7 @@ onMounted(async () => {
     offScroll = await onScroll(receiveScroll)
     if (disposed) { offScroll(); return }
     offPin = await onCapturePin(id => {
-      // 复用工具栏的导出校验，编辑/拖动/长截图期间不提交，也不回退剪贴板。
+      // 复用工具栏的导出校验，编辑/拖动/滚动截图期间不提交，也不回退剪贴板。
       if (frame.value?.id === id && !scroll.value && !recordingSetup.value) void finish('pin')
     })
     if (disposed) { offPin(); return }
@@ -378,7 +380,13 @@ onUnmounted(() => { disposed = true; off?.(); offScroll?.(); offPin?.(); window.
           <button v-if="selectedTarget !== null && frame?.targets[selectedTarget]?.kind === 'window'" :disabled="busy || marked || editor.pending || editor.interacting" title="原生窗口截图" aria-label="原生窗口截图" @click="captureNative"><AppWindow :size="16" /></button>
           <button :disabled="busy || editor.pending || editor.interacting" title="清空标注并重新框选" aria-label="清空标注并重新框选" @click="reselect"><RotateCcw :size="16" /></button>
           <button :disabled="busy || editor.pending || editor.interacting || marked" title="选择整个屏幕 Ctrl/⌘+A" aria-label="选择整个屏幕" @click="selectAll"><Monitor :size="16" /></button>
-          <button :disabled="busy || editor.pending || editor.interacting || marked" title="开始长截图，手动向下滚动后停顿拼接" aria-label="开始长截图" @click="startScroll"><ScrollCaptureIcon :size="16" /></button>
+          <select v-model="scrollMode" class="scroll-option" :disabled="busy" aria-label="滚动截图方向" title="滚动截图识别方向">
+            <option value="auto">自动识别</option><option value="vertical">只纵向</option><option value="horizontal">只横向</option>
+          </select>
+          <select v-model="scrollBackground" class="scroll-option" :disabled="busy" aria-label="滚动截图空白背景" title="未采集区域的导出背景">
+            <option value="white">白色背景</option><option value="transparent">透明背景</option>
+          </select>
+          <button :disabled="busy || editor.pending || editor.interacting || marked" title="开始滚动截图，手动上下左右滚动后停顿拼接" aria-label="开始滚动截图" @click="startScroll"><ScrollCaptureIcon :size="16" /></button>
           <button ref="recordingTrigger" :disabled="busy || editor.pending || editor.interacting || marked || !recordingCapabilities?.available" :title="recordingCapabilities?.reason ?? (recordingCapabilityError || (recordingCapabilities ? '录屏选项' : '正在检查录屏能力…'))" aria-label="录屏选项" aria-haspopup="dialog" :aria-expanded="recordingSetup" @click="openRecordingMenu"><Video :size="16" /></button>
         <button :disabled="busy || editor.pending || editor.interacting" title="贴图 Ctrl/⌘+P" aria-label="贴图" @click="finish('pin')"><Pin :size="16" /></button>
         <button ref="ocrTrigger" :disabled="busy || editor.pending || editor.interacting" title="识别文字" aria-label="识别文字" aria-haspopup="dialog" :aria-expanded="ocrResult !== null && !translationMode" @click="recognizeText(false)"><ScanText :size="16" /></button>
@@ -410,6 +418,8 @@ onUnmounted(() => { disposed = true; off?.(); offScroll?.(); offPin?.(); window.
 </template>
 
 <style scoped>
+.scroll-option { height: 32px; max-width: 100px; font-size: 12px; border: 1px solid #e1e4e8; border-radius: 4px; background: white; color: #24292f; }
+.scroll-option:focus-visible { outline: 2px solid #2563eb; }
 .qr-shade { position: absolute; inset: 0; z-index: 10; display: grid; place-items: center; cursor: default; background: #0003; }
 .qr-dialog { width: min(440px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow-y: auto; color: #20232b; }
 .ocr-dialog { width: min(560px, calc(100vw - 32px)); }

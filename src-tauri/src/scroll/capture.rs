@@ -68,7 +68,7 @@ fn sample(
     let started = Instant::now();
     let image = monitor
         .capture_image()
-        .map_err(|e| format!("长截图采集失败：{e}"))?;
+        .map_err(|e| format!("滚动截图采集失败：{e}"))?;
     if image.dimensions() != source_size {
         return Err("显示器像素尺寸发生变化，已结束采集，仅输出已确认部分。".into());
     }

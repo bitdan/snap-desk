@@ -1,4 +1,4 @@
-//! 长截图辅助窗口：边框放在选区外，不盖住原页面；右侧预览和下方操作条独立显示。
+//! 滚动截图辅助窗口：边框放在选区外；预览优先右侧、空间不足时左侧，操作条独立显示。
 use super::super::{err, Rect};
 use super::session::Screen;
 #[cfg(target_os = "windows")]
@@ -69,12 +69,22 @@ fn layout_with_controls(screen: &Screen, r: Rect, controls_width: f64) -> [BoxRe
     let right = (r.x + r.width) as i32;
     let bottom = (r.y + r.height) as i32;
     let available_right = screen.width.saturating_sub(r.x + r.width + gap as u32);
-    let preferred_width = (240.0 * scale) as u32;
-    // 右侧至少能放 100 CSS 像素时缩窄预览；实在放不下才贴屏幕右边并在取样时避让。
-    let preview_width = if available_right >= (100.0 * scale) as u32 {
-        preferred_width.min(available_right)
+    let available_left = r.x.saturating_sub(gap as u32);
+    let preferred_width = (320.0 * scale) as u32;
+    let minimum_width = (100.0 * scale) as u32;
+    // 优先完整放在右侧，右侧不足则尝试左侧；两侧都不足时才缩窄。
+    // 间距和宽度均先转换为物理像素，左侧位置以选区左边界减去间距及预览宽度。
+    let (preview_x, preview_width) = if available_right >= preferred_width {
+        (right + gap, preferred_width)
+    } else if available_left >= preferred_width {
+        (x - gap - preferred_width as i32, preferred_width)
+    } else if available_right >= minimum_width {
+        (right + gap, available_right)
+    } else if available_left >= minimum_width {
+        (x - gap - available_left as i32, available_left)
     } else {
-        preferred_width
+        // 全屏或两侧都过窄：沿用屏幕内限位，遮挡选区时由取样保护器暂时隐藏。
+        (right + gap, preferred_width)
     };
     let controls_w = (controls_width * scale) as u32;
     let controls_h = (48.0 * scale) as u32;
@@ -87,10 +97,12 @@ fn layout_with_controls(screen: &Screen, r: Rect, controls_width: f64) -> [BoxRe
     };
     [
         fit(
-            right + gap,
+            preview_x,
             y,
             preview_width,
-            r.height.max((180.0 * scale) as u32),
+            r.height
+                .max((240.0 * scale) as u32)
+                .min((600.0 * scale) as u32),
         ),
         fit(
             right - controls_w as i32,
@@ -231,7 +243,7 @@ fn place_windows(
             .title(if recording {
                 "录屏选区"
             } else {
-                "长截图选区"
+                "滚动截图选区"
             })
             // 无边框不等于无最小尺寸：Windows 默认仍有最小跟踪宽高，
             // 不显式设置时，2px 边框会被撑成约 136px 宽、38px 高的色块。
@@ -252,7 +264,7 @@ fn place_windows(
             .build()
             .map_err(err)?
         } else {
-            return Err(format!("长截图辅助窗口不可用：{label}"));
+            return Err(format!("滚动截图辅助窗口不可用：{label}"));
         };
         if edge {
             window.set_ignore_cursor_events(true).map_err(err)?;
@@ -453,6 +465,41 @@ mod tests {
         assert!(boxes.iter().all(|b| !b.overlaps(rect)));
         assert!(boxes[0].x > 1000);
         assert!(boxes[1].y > 700);
+    }
+    #[test]
+    fn preview_switches_sides_and_shrinks_only_when_needed() {
+        for scale in [1.0, 1.5, 2.0] {
+            let pixels = |value: u32| (f64::from(value) * scale) as u32;
+            let mut screen = screen(scale);
+            screen.width = pixels(1920);
+            screen.height = pixels(1080);
+            // 右侧足够、右侧不足但左侧足够，以及两侧都不足时的左右缩窄。
+            for (x, width, left, preview_width) in [
+                (100, 900, false, 320),
+                (900, 900, true, 320),
+                (450, 1250, true, 320),
+                (150, 1700, true, 142),
+                (50, 1720, false, 142),
+            ] {
+                let rect = Rect {
+                    x: pixels(x),
+                    y: pixels(100),
+                    width: pixels(width),
+                    height: pixels(600),
+                };
+                let preview = layout(&screen, rect)[0];
+                assert!(!preview.overlaps(rect));
+                assert_eq!(preview.w, pixels(preview_width));
+                if left {
+                    assert_eq!(
+                        preview.x + preview.w as i32 + pixels(8) as i32,
+                        rect.x as i32
+                    );
+                } else {
+                    assert_eq!(preview.x, (rect.x + rect.width + pixels(8)) as i32);
+                }
+            }
+        }
     }
     #[test]
     fn fullscreen_and_high_dpi_stay_on_screen_and_detect_overlap() {

@@ -6,13 +6,13 @@ use super::{
     archive::Archive,
     capture::{self, wait},
     chrome,
-    matcher::Match,
+    matcher::{Bounds, Match, ScrollMode},
     recovery, stability,
     stitcher::Stitch,
 };
 use base64::{engine::general_purpose::STANDARD, Engine};
 use image::ImageFormat;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{
     io::Cursor,
     sync::{atomic::Ordering, Arc},
@@ -45,6 +45,15 @@ pub(in crate::capture) fn screen(app: &AppHandle) -> Result<Screen, String> {
     })
 }
 
+/// 空洞默认白底；透明选项仅影响导出，预览始终保留透明覆盖信息。
+#[derive(Clone, Copy, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ExportBackground {
+    #[default]
+    White,
+    Transparent,
+}
+
 #[derive(Clone)]
 pub(in crate::capture) struct ScrollSession {
     id: u64,
@@ -56,6 +65,8 @@ pub(in crate::capture) struct ScrollSession {
     recovery: recovery::Recovery,
     message: String,
     preview: Arc<str>,
+    status: &'static str,
+    background: ExportBackground,
     obscuring_windows: Vec<String>,
     archive: Option<Archive>,
 }
@@ -72,10 +83,16 @@ pub struct ScrollView {
     frames: usize,
     preview: String,
     frame_height: u32,
+    canvas_bounds: Bounds,
+    viewport_rect: Bounds,
+    coverage_percent: f64,
+    has_holes: bool,
+    direction: &'static str,
+    status: &'static str,
     message: String,
 }
 
-// 采集时只传分段缩略图，导出仍使用原始像素。
+// 采集时只传图块缩略图，导出仍使用原始像素。
 fn view(session: &ScrollSession, collecting: bool) -> Result<ScrollView, String> {
     Ok(ScrollView {
         id: session.id,
@@ -89,6 +106,12 @@ fn view(session: &ScrollSession, collecting: bool) -> Result<ScrollView, String>
         height: session.stitch.height,
         frames: session.stitch.count(),
         frame_height: session.stitch.frame_height,
+        canvas_bounds: session.stitch.bounds,
+        viewport_rect: session.stitch.viewport(),
+        coverage_percent: session.stitch.coverage(),
+        has_holes: session.stitch.has_holes(),
+        direction: session.stitch.direction(),
+        status: session.status,
         preview: if collecting {
             session.preview.to_string()
         } else {
@@ -106,12 +129,12 @@ pub fn control_scroll(
     cancel: bool,
 ) -> Result<(), String> {
     if !matches!(window.label(), "scroll-preview" | "scroll-controls") {
-        return Err("窗口无权控制长截图。".into());
+        return Err("窗口无权控制滚动截图。".into());
     }
     let state = app.state::<CaptureState>();
     let guard = state.scroll.lock().map_err(err)?;
     if !guard.as_ref().is_some_and(|s| s.id == id) {
-        return Err("长截图已结束。".into());
+        return Err("滚动截图已结束。".into());
     }
     if cancel {
         state.scroll_cancel.store(true, Ordering::SeqCst);
@@ -130,10 +153,18 @@ fn complete(app: &AppHandle, id: u64, message: &str) -> Result<(), String> {
         };
         s.revision += 1;
         s.message = message.into();
+        s.status = "finishing";
         s.clone()
     };
     // 快照只克隆 Arc；整图分配与像素复制不占状态锁。
-    let image = snapshot.stitch.compose();
+    let mut image = snapshot.stitch.compose();
+    if matches!(snapshot.background, ExportBackground::White) {
+        for pixel in image.pixels_mut() {
+            if pixel[3] == 0 {
+                *pixel = image::Rgba([255, 255, 255, 255]);
+            }
+        }
+    }
     let result = view(&snapshot, false)?;
     if state.scroll_cancel.load(Ordering::SeqCst) {
         return close_session(app, id);
@@ -207,7 +238,7 @@ fn sample_pair(
             .as_ref()
             .filter(|s| s.id == id)
             .cloned()
-            .ok_or("长截图会话已结束。")?
+            .ok_or("滚动截图会话已结束。")?
     };
     let revision = snapshot.revision;
     if screen(app)? != snapshot.screen {
@@ -249,9 +280,19 @@ fn sample_pair(
         None
     };
     let message = snapshot.recovery.message(result);
-    let changed = snapshot.message != message || matches!(result, Some(Match::Overlap(_)));
+    let status = if finishing {
+        "finishing"
+    } else if matches!(result, Some(Match::Uncertain)) {
+        "recovering"
+    } else {
+        "collecting"
+    };
+    let changed = snapshot.message != message
+        || snapshot.status != status
+        || matches!(result, Some(Match::Aligned(_)));
     snapshot.message = message.into();
-    if matches!(result, Some(Match::Overlap(_))) {
+    snapshot.status = status;
+    if matches!(result, Some(Match::Aligned(_))) {
         refresh_preview(&mut snapshot)?;
     }
     snapshot.revision += 1;
@@ -266,7 +307,7 @@ fn sample_pair(
         let current = guard
             .as_mut()
             .filter(|s| s.id == id && s.revision == revision)
-            .ok_or("长截图状态已更新，丢弃过期计算结果。")?;
+            .ok_or("滚动截图状态已更新，丢弃过期计算结果。")?;
         if state.scroll_cancel.load(Ordering::SeqCst) {
             return Ok(None);
         }
@@ -285,7 +326,7 @@ fn refresh_preview(session: &mut ScrollSession) -> Result<(), String> {
     let mut bytes = Cursor::new(Vec::new());
     session
         .stitch
-        .preview(240, 900)
+        .preview(360, 600)
         .write_to(&mut bytes, ImageFormat::Png)
         .map_err(err)?;
     session.preview = format!(
@@ -305,7 +346,7 @@ fn refresh_preview(session: &mut ScrollSession) -> Result<(), String> {
 fn collect(app: AppHandle, id: u64, first_delay: u64) {
     let state = app.state::<CaptureState>();
     let deadline = Instant::now() + Duration::from_secs(300);
-    let mut message = "长截图采集结束。".to_string();
+    let mut message = "滚动截图采集结束。".to_string();
     let mut finish_latest = true;
     let mut delay = first_delay;
     while finish_latest && wait(&state, delay) {
@@ -388,8 +429,23 @@ fn collect(app: AppHandle, id: u64, first_delay: u64) {
             }
         }
         if let Some(error) = failure {
-            log::error!("event=scroll.failed module=scroll op=scroll-{id} code=SCROLL_OUTPUT_FAILED");
-            report_error(&app, format!("长截图输出重试失败，内存结果仍保留：{error}"));
+            log::error!(
+                "event=scroll.failed module=scroll op=scroll-{id} code=SCROLL_OUTPUT_FAILED"
+            );
+            if let Ok(mut guard) = state.scroll.lock() {
+                if let Some(session) = guard.as_mut().filter(|s| s.id == id) {
+                    session.status = "failed";
+                    session.message = format!("输出失败，结果仍保留：{error}");
+                    session.revision += 1;
+                    if let Ok(update) = view(session, false) {
+                        let _ = app.emit_to("capture", "scroll-updated", &update);
+                    }
+                }
+            }
+            report_error(
+                &app,
+                format!("滚动截图输出重试失败，内存结果仍保留：{error}"),
+            );
         }
         break;
     }
@@ -411,18 +467,20 @@ pub async fn start_scroll(
     id: u64,
     rect: Rect,
     save_frames: bool,
+    mode: Option<ScrollMode>,
+    background: Option<ExportBackground>,
 ) -> Result<ScrollView, String> {
     require_window(&window, "capture")?;
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<CaptureState>();
         let _operation = Operation::acquire(&state.operation)?;
         if state.scroll.lock().map_err(err)?.is_some() {
-            return Err("长截图会话已存在。".into());
+            return Err("滚动截图会话已存在。".into());
         }
         let seed = crop(&app, id, rect, &[])?;
         let (rect, source_size) = super::super::primary_region(&app, id, rect)?;
         // 先校验选区容量，非法选区不创建持久化目录。
-        let stitch = Stitch::new(seed)?;
+        let stitch = Stitch::with_mode(seed, mode.unwrap_or_default())?;
         let mut archive = if save_frames {
             match Archive::new(&app) {
                 Ok(archive) => Some(archive),
@@ -460,6 +518,8 @@ pub async fn start_scroll(
             message: "自动拼接中，请正常滚动页面，完成后点击完成。".into(),
             archive,
             preview: Arc::from(""),
+            status: "collecting",
+            background: background.unwrap_or_default(),
         };
         refresh_preview(&mut session)?;
         let result = view(&session, true)?;
@@ -498,7 +558,7 @@ pub async fn current_scroll(
         window.label(),
         "capture" | "scroll-preview" | "scroll-controls"
     ) {
-        return Err("窗口无权读取长截图。".into());
+        return Err("窗口无权读取滚动截图。".into());
     }
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<CaptureState>();

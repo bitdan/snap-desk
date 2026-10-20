@@ -12,7 +12,7 @@ use std::{
 use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut};
 
-/// 普通截图和贴图共用的导出偏好；长截图的自动 PNG 存档保持独立。
+/// 普通截图和贴图共用的导出偏好；滚动截图的自动 PNG 存档保持独立。
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ExportFormat {

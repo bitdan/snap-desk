@@ -486,7 +486,7 @@ pub async fn start_recording(
         let state = app.state::<CaptureState>();
         let _operation = Operation::acquire(&state.operation)?;
         if state.scroll.lock().map_err(err)?.is_some() {
-            return Err("请先结束长截图。".into());
+            return Err("请先结束滚动截图。".into());
         }
         let size = state
             .session
@@ -597,7 +597,7 @@ pub async fn start_recording(
             let _ = window.show();
             return Err(error);
         }
-        // 将选区会话所有权交给录屏；active 保持 true，阻止截图/长截图抢占屏幕。
+        // 将选区会话所有权交给录屏；active 保持 true，阻止截图/滚动截图抢占屏幕。
         *state.session.lock().map_err(err)? = None;
         // 工作线程从这里起拥有全局占用与统一收尾责任。
         if app.state::<ExitState>().requested.load(Ordering::SeqCst) {

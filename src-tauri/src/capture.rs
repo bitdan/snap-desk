@@ -358,7 +358,7 @@ pub async fn capture_native_window(
         let state = app.state::<CaptureState>();
         let _operation = Operation::acquire(&state.operation)?;
         if state.scroll.lock().map_err(err)?.is_some() {
-            return Err("请先结束长截图。".into());
+            return Err("请先结束滚动截图。".into());
         }
         let (native, old, include_cursor, origin) = {
             let guard = state.session.lock().map_err(err)?;
@@ -425,7 +425,7 @@ pub async fn capture_native_window(
     .map_err(err)?
 }
 
-/// 普通截图坐标属于虚拟桌面，旧录屏/长截图后端仍要求主屏局部像素。
+/// 普通截图坐标属于虚拟桌面，旧录屏/滚动截图后端仍要求主屏局部像素。
 /// 在边界集中转换并拒绝跨屏，不能把副屏选区静默交给主屏采集器。
 fn primary_region(app: &AppHandle, id: u64, rect: Rect) -> Result<(Rect, (u32, u32)), String> {
     let state = app.state::<CaptureState>();
@@ -456,7 +456,7 @@ fn primary_region(app: &AppHandle, id: u64, rect: Rect) -> Result<(Rect, (u32, u
         (session.frame.origin_x, session.frame.origin_y),
         display,
     )
-    .ok_or("录屏与长截图目前仅支持主屏内选区，请在主屏重新框选。")?;
+    .ok_or("录屏与滚动截图目前仅支持主屏内选区，请在主屏重新框选。")?;
     Ok((local, (display.width, display.height)))
 }
 
@@ -553,7 +553,7 @@ fn crop(
 ) -> Result<RgbaImage, String> {
     let state = app.state::<CaptureState>();
     if state.scroll.lock().map_err(err)?.is_some() {
-        return Err("长截图进行中，请使用长截图预览中的导出按钮。".into());
+        return Err("滚动截图进行中，请使用滚动截图预览中的导出按钮。".into());
     }
     let guard = state.session.lock().map_err(err)?;
     let session = guard
@@ -577,7 +577,7 @@ fn crop(
     Ok(image)
 }
 
-/// 空标注沿用原有会话、选区和长截图校验，不让标注污染 OCR 输入。
+/// 空标注沿用原有会话、选区和滚动截图校验，不让标注污染 OCR 输入。
 pub(crate) fn crop_source(app: &AppHandle, id: u64, rect: Rect) -> Result<RgbaImage, String> {
     crop(app, id, rect, &[])
 }
@@ -712,7 +712,7 @@ pub async fn copy_capture_color(
         let state = app.state::<CaptureState>();
         let _operation = Operation::acquire(&state.operation)?;
         if state.scroll.lock().map_err(err)?.is_some() {
-            return Err("长截图进行中，不能取色。".into());
+            return Err("滚动截图进行中，不能取色。".into());
         }
         let text = {
             let guard = state.session.lock().map_err(err)?;

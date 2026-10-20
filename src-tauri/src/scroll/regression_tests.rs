@@ -5,6 +5,17 @@ use serde::Deserialize;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
+// 真值用例只比较位移，置信度和交集由 matcher 的独立测试验证。
+fn down(overlap: u32) -> (i32, i32) {
+    (0, (568 - overlap) as i32)
+}
+fn displacement(result: Match) -> (i32, i32) {
+    match result {
+        Match::Aligned(a) => (a.dx, a.dy),
+        other => panic!("预期成功定位，实际 {other:?}"),
+    }
+}
+
 fn fixture() -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/scroll/qrgxj8")
 }
@@ -29,10 +40,12 @@ fn real_page_replays_through_recovery_without_missing_or_duplicate_rows() {
     .enumerate()
     {
         assert_eq!(
-            recovery
-                .consider(&mut stitch, read(&root, &format!("{:04}.png", index + 1)))
-                .unwrap(),
-            Match::Overlap(overlap)
+            displacement(
+                recovery
+                    .consider(&mut stitch, read(&root, &format!("{:04}.png", index + 1)))
+                    .unwrap()
+            ),
+            down(overlap)
         );
         assert_eq!(stitch.compose(), expected(height));
     }
@@ -61,10 +74,12 @@ fn real_page_skipped_frame_reconnects_only_before_cache_expiry() {
         assert_eq!(stitch.compose(), expected(568));
         let later = now + Duration::from_secs(if expired { 6 } else { 1 });
         assert_eq!(
-            recovery
-                .consider_at(&mut stitch, read(&root, "0001.png"), later)
-                .unwrap(),
-            Match::Overlap(101)
+            displacement(
+                recovery
+                    .consider_at(&mut stitch, read(&root, "0001.png"), later)
+                    .unwrap()
+            ),
+            down(101)
         );
         assert_eq!(
             stitch.compose(),
@@ -92,15 +107,11 @@ fn real_page_with_derived_fixed_bands_has_no_repeated_header_or_footer() {
             recovery
                 .consider(&mut stitch, with_bands(read(&root, &format!("{i:04}.png"))))
                 .unwrap(),
-            Match::Overlap(_)
+            Match::Aligned(_)
         ));
     }
-    let mut truth = expected(2435);
-    for y in 0..24 {
-        for x in 0..856 {
-            truth.put_pixel(x, 2411 + y, *first.get_pixel(x, 544 + y));
-        }
-    }
+    // 二维版本明确排除固定页头/页脚，只导出实际运动的正文。
+    let truth = image::imageops::crop_imm(&expected(2435), 0, 24, 856, 2387).to_image();
     assert_eq!(stitch.compose(), truth);
 }
 
@@ -116,10 +127,12 @@ fn real_page_derived_loading_placeholder_keeps_anchor_until_content_returns() {
     );
     assert_eq!(stitch.compose(), expected(568));
     assert_eq!(
-        recovery
-            .consider(&mut stitch, read(&root, "0001.png"))
-            .unwrap(),
-        Match::Overlap(101)
+        displacement(
+            recovery
+                .consider(&mut stitch, read(&root, "0001.png"))
+                .unwrap()
+        ),
+        down(101)
     );
     assert_eq!(stitch.compose(), expected(1035));
 }
@@ -187,18 +200,15 @@ fn real_scroll_sequences_match_reviewed_images() {
         assert!(!case.steps.is_empty(), "{} 缺少滚动步骤", case.name);
         let mut stitch = Stitch::new(read(root, &case.first)).unwrap();
         for (index, step) in case.steps.into_iter().enumerate() {
-            let expected_match = match step.outcome {
-                Outcome::Unchanged => Match::Unchanged,
-                Outcome::Uncertain => Match::Uncertain,
-                Outcome::Overlap(rows) => Match::Overlap(rows),
-            };
-            assert_eq!(
-                stitch.consider(read(root, &step.frame)).unwrap(),
-                expected_match,
-                "{} 第 {} 步匹配结果",
-                case.name,
-                index + 1
-            );
+            let result = stitch.consider(read(root, &step.frame)).unwrap();
+            match step.outcome {
+                Outcome::Unchanged => assert_eq!(result, Match::Unchanged),
+                Outcome::Uncertain => assert_eq!(result, Match::Uncertain),
+                Outcome::Overlap(rows) => assert_eq!(
+                    displacement(result),
+                    (0, (stitch.frame_height - rows) as i32)
+                ),
+            }
             let actual = stitch.compose();
             let expected = read(root, &step.expected);
             assert_eq!(

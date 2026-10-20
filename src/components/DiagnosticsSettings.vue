@@ -13,7 +13,7 @@ const loadedAt = ref(0), now = ref(performance.now())
 const remaining = computed(() => debugSeconds(status.value?.debugRemainingSeconds ?? 0, loadedAt.value, now.value))
 const visible = computed(() => searchLogs(recent.value?.entries ?? [], search.value))
 const modules: { value: LogModule; label: string }[] = [
-  { value: 'app', label: '应用' }, { value: 'capture', label: '截图' }, { value: 'scroll', label: '长截图' },
+  { value: 'app', label: '应用' }, { value: 'capture', label: '截图' }, { value: 'scroll', label: '滚动截图' },
   { value: 'recording', label: '录屏' }, { value: 'ocr', label: 'OCR' }, { value: 'translation', label: '翻译' },
   { value: 'clipboard', label: '剪贴板' }, { value: 'frontend', label: '前端' }, { value: 'diagnostics', label: '诊断' },
 ]
