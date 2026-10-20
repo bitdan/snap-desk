@@ -1,4 +1,4 @@
-//! 截图会话：先等待可取消的延时，再冻结主屏画面，最后裁剪并导出。
+//! 截图会话：先等待可取消的延时，再冻结桌面画面，最后裁剪并导出。
 use base64::{engine::general_purpose::STANDARD, Engine};
 use image::{ImageFormat, RgbaImage};
 use serde::{Deserialize, Serialize};
@@ -41,6 +41,7 @@ struct Session {
     frame: Frame,
     image: RgbaImage,
     shown: bool,
+    desktop: crate::desktop_capture::Desktop,
 }
 
 #[derive(Clone, Serialize)]
@@ -52,15 +53,20 @@ pub struct Frame {
     data_url: String,
     /// F3 进入录屏框选；随帧传递意图，窗口重新加载也不会丢失入口状态。
     recording: bool,
+    origin_x: i32,
+    origin_y: i32,
+    displays: Vec<crate::desktop_capture::Display>,
+    targets: Vec<crate::desktop_capture::Target>,
+    layout_key: String,
 }
 
 #[derive(Clone, Copy, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Rect {
-    x: u32,
-    y: u32,
-    width: u32,
-    height: u32,
+    pub(crate) x: u32,
+    pub(crate) y: u32,
+    pub(crate) width: u32,
+    pub(crate) height: u32,
 }
 
 impl Rect {
@@ -230,13 +236,42 @@ fn prepare(app: &AppHandle, recording: bool) -> Result<(), String> {
     window.hide().map_err(err)?;
     // 保留主窗口以支持截取 Snap Desk 自身；只等待旧截图蒙层从桌面移除。
     std::thread::sleep(Duration::from_millis(180));
-    let monitor = window
-        .primary_monitor()
-        .map_err(err)?
-        .ok_or("无法获取主显示器信息。")?;
-    window.set_position(*monitor.position()).map_err(err)?;
-    window.set_size(*monitor.size()).map_err(err)?;
-    let image = crate::platform::capture_primary()?;
+    let (include_cursor, snap) = {
+        let settings = app.state::<crate::settings::SettingsState>();
+        let guard = settings.0.lock().map_err(err)?;
+        (
+            !recording && guard.value.screenshot_cursor,
+            guard.value.screenshot_snap,
+        )
+    };
+    let mut desktop = crate::desktop_capture::capture(recording, include_cursor, snap)?;
+    #[cfg(not(windows))]
+    {
+        let monitor = window
+            .primary_monitor()
+            .map_err(err)?
+            .ok_or("主显示器不可用。")?;
+        desktop.x = monitor.position().x;
+        desktop.y = monitor.position().y;
+        desktop.displays = vec![crate::desktop_capture::Display {
+            x: desktop.x,
+            y: desktop.y,
+            width: desktop.image.width(),
+            height: desktop.image.height(),
+            primary: true,
+            scale: monitor.scale_factor(),
+        }];
+    }
+    window
+        .set_position(tauri::PhysicalPosition::new(desktop.x, desktop.y))
+        .map_err(err)?;
+    window
+        .set_size(tauri::PhysicalSize::new(
+            desktop.image.width(),
+            desktop.image.height(),
+        ))
+        .map_err(err)?;
+    let image = std::mem::take(&mut desktop.image);
     let mut png = Cursor::new(Vec::new());
     image.write_to(&mut png, ImageFormat::Png).map_err(err)?;
     let state = app.state::<CaptureState>();
@@ -244,6 +279,11 @@ fn prepare(app: &AppHandle, recording: bool) -> Result<(), String> {
     let frame = Frame {
         id,
         recording,
+        origin_x: desktop.x,
+        origin_y: desktop.y,
+        displays: desktop.displays.clone(),
+        targets: desktop.targets.clone(),
+        layout_key: serde_json::to_string(&desktop.displays).map_err(err)?,
         width: image.width(),
         height: image.height(),
         data_url: format!(
@@ -255,6 +295,7 @@ fn prepare(app: &AppHandle, recording: bool) -> Result<(), String> {
         frame: frame.clone(),
         image,
         shown: false,
+        desktop,
     });
     app.emit_to("capture", "capture-ready", &frame)
         .map_err(err)?;
@@ -302,6 +343,121 @@ pub fn current_capture(app: AppHandle, window: WebviewWindow) -> Result<Option<F
     let state = app.state::<CaptureState>();
     let session = state.session.lock().map_err(err)?;
     Ok(session.as_ref().map(|session| session.frame.clone()))
+}
+
+/// 原生窗口抓取由“原生窗口截图”按钮触发；尺寸或位置变化时保留旧截图供用户重选。
+#[tauri::command]
+pub async fn capture_native_window(
+    app: AppHandle,
+    window: WebviewWindow,
+    id: u64,
+    target: usize,
+) -> Result<Frame, String> {
+    require_window(&window, "capture")?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<CaptureState>();
+        let _operation = Operation::acquire(&state.operation)?;
+        if state.scroll.lock().map_err(err)?.is_some() {
+            return Err("请先结束长截图。".into());
+        }
+        let (native, old, include_cursor, origin) = {
+            let guard = state.session.lock().map_err(err)?;
+            let session = guard
+                .as_ref()
+                .filter(|s| s.frame.id == id)
+                .ok_or("截图已过期。")?;
+            let candidate = session
+                .frame
+                .targets
+                .get(target)
+                .filter(|t| t.kind == "window")
+                .ok_or("请选择已识别窗口。")?;
+            (
+                session.desktop.windows[candidate.window_index].clone(),
+                candidate.rect,
+                session.desktop.include_cursor,
+                (session.frame.origin_x, session.frame.origin_y),
+            )
+        };
+        window.hide().map_err(err)?;
+        let result = (|| {
+            let (image, x, y) = crate::desktop_capture::native_window(&native, include_cursor)?;
+            let mut guard = state.session.lock().map_err(err)?;
+            let session = guard
+                .as_mut()
+                .filter(|s| s.frame.id == id)
+                .ok_or("截图已过期。")?;
+            let rect = crate::desktop_capture::clipped(
+                x,
+                y,
+                image.width(),
+                image.height(),
+                origin,
+                session.image.dimensions(),
+            )
+            .ok_or("窗口已移出截图范围。")?;
+            if (rect.x, rect.y, rect.width, rect.height) != (old.x, old.y, old.width, old.height) {
+                return Err("窗口位置或尺寸已变化，请重新截图。".into());
+            }
+            // 编码成功后才提交新像素；失败时原会话和选区仍可继续操作。
+            let mut composed = session.image.clone();
+            image::imageops::replace(
+                &mut composed,
+                &image,
+                i64::from(x) - i64::from(origin.0),
+                i64::from(y) - i64::from(origin.1),
+            );
+            let mut png = Cursor::new(Vec::new());
+            composed.write_to(&mut png, ImageFormat::Png).map_err(err)?;
+            session.frame.data_url = format!(
+                "data:image/png;base64,{}",
+                STANDARD.encode(png.into_inner())
+            );
+            session.image = composed;
+            Ok(session.frame.clone())
+        })();
+        // 无论成功失败均恢复窗口；相同 PNG 不会再次触发前端 load，不能依赖它解锁显示。
+        window.show().map_err(err)?;
+        window.set_focus().map_err(err)?;
+        result
+    })
+    .await
+    .map_err(err)?
+}
+
+/// 普通截图坐标属于虚拟桌面，旧录屏/长截图后端仍要求主屏局部像素。
+/// 在边界集中转换并拒绝跨屏，不能把副屏选区静默交给主屏采集器。
+fn primary_region(app: &AppHandle, id: u64, rect: Rect) -> Result<(Rect, (u32, u32)), String> {
+    let state = app.state::<CaptureState>();
+    let guard = state.session.lock().map_err(err)?;
+    let session = guard
+        .as_ref()
+        .filter(|s| s.frame.id == id)
+        .ok_or("截图已过期。")?;
+    rect.validate(session.image.width(), session.image.height())?;
+    let display = session
+        .frame
+        .displays
+        .iter()
+        .find(|d| d.primary)
+        .ok_or("主屏不可用。")?;
+    let current = app.primary_monitor().map_err(err)?.ok_or("主屏不可用。")?;
+    if (
+        current.position().x,
+        current.position().y,
+        current.size().width,
+        current.size().height,
+    ) != (display.x, display.y, display.width, display.height)
+    {
+        return Err("显示器布局已变化，请重新截图。".into());
+    }
+    let local = crate::desktop_capture::within_display(
+        rect,
+        (session.frame.origin_x, session.frame.origin_y),
+        display,
+    )
+    .ok_or("录屏与长截图目前仅支持主屏内选区，请在主屏重新框选。")?;
+    Ok((local, (display.width, display.height)))
 }
 
 #[tauri::command]
@@ -499,7 +655,11 @@ pub async fn copy_capture(
         let _operation = Operation::acquire(&state.operation)?;
         let cropped = crop(&app, id, rect, &annotations)?;
         crate::image_io::copy(&app, &cropped)?;
-        log::info!("event=capture.copied module=capture op=cap-{id} width={} height={}", cropped.width(), cropped.height());
+        log::info!(
+            "event=capture.copied module=capture op=cap-{id} width={} height={}",
+            cropped.width(),
+            cropped.height()
+        );
         close_session(&app, id)?;
         let _ = app.emit_to("main", "capture-result", "截图已复制到剪贴板。");
         Ok(())
@@ -591,7 +751,11 @@ pub async fn save_capture(
         let result = crate::pins::save_capture_image(&app, &cropped);
         match result {
             Ok(true) => {
-                log::info!("event=capture.saved module=capture op=cap-{id} width={} height={}", cropped.width(), cropped.height());
+                log::info!(
+                    "event=capture.saved module=capture op=cap-{id} width={} height={}",
+                    cropped.width(),
+                    cropped.height()
+                );
                 close_session(&app, id)?;
                 let _ = app.emit_to("main", "capture-result", "截图已保存。");
                 Ok(true)

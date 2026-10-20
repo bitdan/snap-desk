@@ -507,6 +507,10 @@ pub async fn start_recording(
             return Err("录屏配置与确认选区不一致。".into());
         }
         config.validate(size)?;
+        let (rect, primary_size) = super::primary_region(&app, id, rect)?;
+        config.region.x = rect.x;
+        config.region.y = rect.y;
+        config.validate(primary_size)?;
         capture::supported()?;
         // 准备时固定本次目录；临时录制文件和最终文件同盘，停止时无需跨盘移动。
         let root = output::prepare(&app)?;
@@ -558,7 +562,7 @@ pub async fn start_recording(
             .name("screen-recording".into())
             .spawn(move || {
                 let _worker = worker_guard;
-                match capture::prepare(&config, size) {
+                match capture::prepare(&config, primary_size) {
                     Ok(backend) => {
                         if ready_tx.send(Ok(())).is_ok() && go_rx.recv().unwrap_or(false) {
                             collect(worker_app, id, config, screen, root, backend);

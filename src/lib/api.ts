@@ -16,7 +16,9 @@ export type { Settings } from './settings'
 export interface QrResult { id: number; items: { text: string; url: string | null }[] }
 export interface ResourceStatus { directory: string; ocrReady: boolean; modelsReady: boolean; runtimeReady: boolean; runtimeDownloadMib: number; fontReady: boolean }
 export interface ResourceProgress { name: string; received: number; total: number }
-export interface CaptureFrame { id: number; width: number; height: number; dataUrl: string; recording: boolean }
+export interface CaptureTarget { rect: Rect; kind: 'window' | 'element'; windowIndex: number }
+export interface CaptureDisplay { x: number; y: number; width: number; height: number; primary: boolean; scale: number }
+export interface CaptureFrame { originX: number; originY: number; displays: CaptureDisplay[]; targets: CaptureTarget[]; layoutKey: string; id: number; width: number; height: number; dataUrl: string; recording: boolean }
 export interface PinView { zoom: number; opacity: number; locked: boolean; topmost: boolean; toolbarExpanded: boolean }
 export interface PinFrame { label: string; width: number; height: number; dataUrl: string; view: PinView; transparencySupported: boolean; annotations: Annotation[] }
 export interface PinSummary { label: string; width: number; height: number; visible: boolean; group: string }
@@ -99,6 +101,7 @@ export const api = {
   setShortcutEditing: (editing: boolean) => invoke<void>('set_shortcut_editing', { editing }),
   cancelPending: () => invoke<void>('cancel_pending_capture'),
   start: () => invoke<void>('start_capture'),
+  nativeWindow: (id: number, target: number) => invoke<CaptureFrame>('capture_native_window', { id, target }),
   current: () => invoke<CaptureFrame | null>('current_capture'),
   ready: (id: number) => invoke<void>('show_capture', { id }),
   cancel: (id: number) => invoke<void>('cancel_capture', { id }),

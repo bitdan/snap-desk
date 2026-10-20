@@ -5,6 +5,7 @@ mod local_translation;
 mod translation_models;
 mod autostart;
 mod capture;
+mod desktop_capture;
 mod clipboard;
 mod image_io;
 mod ocr;
@@ -425,6 +426,7 @@ pub fn run() {
             capture::cancel_pending_capture,
             capture::start_capture,
             capture::current_capture,
+            capture::capture_native_window,
             capture::show_capture,
             capture::cancel_capture,
             capture::recognize_capture_qr,

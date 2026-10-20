@@ -155,6 +155,9 @@ pub struct Settings {
     pub shortcuts: Shortcuts,
     pub shortcuts_enabled: bool,
     pub delay_seconds: u8,
+    /// 普通截图包含系统光标，与录屏光标设置独立。
+    pub screenshot_cursor: bool,
+    pub screenshot_snap: bool,
     pub export: ExportSettings,
     pub clipboard: crate::clipboard::model::ClipboardSettings,
     /// 只在首次或引导大版本变化时展示，与应用版本号无关。
@@ -173,6 +176,10 @@ struct SettingsWire {
     shortcuts_enabled: bool,
     #[serde(default)]
     delay_seconds: u8,
+    #[serde(default)]
+    screenshot_cursor: bool,
+    #[serde(default = "enabled_by_default")]
+    screenshot_snap: bool,
     #[serde(default)]
     export: ExportSettings,
     #[serde(default)]
@@ -195,6 +202,8 @@ impl TryFrom<SettingsWire> for Settings {
             shortcuts,
             shortcuts_enabled: wire.shortcuts_enabled,
             delay_seconds: wire.delay_seconds,
+            screenshot_cursor: wire.screenshot_cursor,
+            screenshot_snap: wire.screenshot_snap,
             export: wire.export,
             clipboard: wire.clipboard,
             onboarding_version: wire.onboarding_version,
@@ -211,6 +220,8 @@ impl Default for Settings {
             shortcuts: Shortcuts::default(),
             shortcuts_enabled: true,
             delay_seconds: 0,
+            screenshot_cursor: false,
+            screenshot_snap: true,
             export: ExportSettings::default(),
             clipboard: crate::clipboard::model::ClipboardSettings::default(),
             onboarding_version: 0,
@@ -779,6 +790,8 @@ mod tests {
             serde_json::from_str(r#"{"shortcut":"Ctrl+F8","delaySeconds":5}"#).unwrap();
         assert_eq!(value.shortcuts.capture, "Ctrl+F8");
         assert_eq!(value.delay_seconds, 5);
+        assert!(!value.screenshot_cursor);
+        assert!(value.screenshot_snap);
         assert!(value.shortcuts_enabled);
         assert_eq!(value.export, ExportSettings::default());
         assert_eq!(value.ai, crate::translation::AiSettings::default());

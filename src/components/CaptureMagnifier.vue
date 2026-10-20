@@ -1,15 +1,19 @@
 <script setup lang="ts">
 import { computed, onUnmounted, ref, watch } from 'vue'
 import { MAGNIFIER_SIZE, MAGNIFIER_ZOOM, magnifierPosition, magnifierSample } from '@/lib/magnifier'
-import type { Point, Size } from '@/lib/selection'
+import type { Point, Size, Rect } from '@/lib/selection'
 import { colorLabels } from '@/lib/color-picker'
 import type { ColorFormat } from '@/lib/api'
 
-const props = defineProps<{ image: HTMLImageElement; point: Point; viewport: Size; imageSize: Size; format: ColorFormat; relative: boolean; origin: Point | null; copied: boolean }>()
+const props = defineProps<{ image: HTMLImageElement; point: Point; viewport: Size; imageSize: Size; format: ColorFormat; relative: boolean; origin: Point | null; copied: boolean; bounds?: Rect }>()
 const color = ref<{ hex: string; rgb: string } | null>(null)
 const canvas = ref<HTMLCanvasElement | null>(null)
 const sample = computed(() => magnifierSample(props.point, props.viewport, props.imageSize))
-const position = computed(() => magnifierPosition(props.point, props.viewport, { width: 167, height: 212 }))
+const position = computed(() => {
+  const bounds = props.bounds ?? { x: 0, y: 0, ...props.viewport }
+  const local = magnifierPosition({ x: props.point.x - bounds.x, y: props.point.y - bounds.y }, bounds, { width: 167, height: 212 })
+  return { x: local.x + bounds.x, y: local.y + bounds.y }
+})
 // 全局坐标以当前截图左上角为原点；相对坐标以选区左上角为原点，未框选时两者一致。
 const coordinate = computed(() => ({
   x: sample.value.pixel.x - (props.relative ? props.origin?.x ?? 0 : 0),

@@ -420,14 +420,7 @@ pub async fn start_scroll(
             return Err("长截图会话已存在。".into());
         }
         let seed = crop(&app, id, rect, &[])?;
-        let source_size = state
-            .session
-            .lock()
-            .map_err(err)?
-            .as_ref()
-            .filter(|s| s.frame.id == id)
-            .map(|s| s.image.dimensions())
-            .ok_or("截图已过期。")?;
+        let (rect, source_size) = super::super::primary_region(&app, id, rect)?;
         // 先校验选区容量，非法选区不创建持久化目录。
         let stitch = Stitch::new(seed)?;
         let mut archive = if save_frames {
