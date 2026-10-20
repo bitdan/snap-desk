@@ -5,6 +5,7 @@ use std::{
     path::PathBuf,
     sync::mpsc::{self, TrySendError},
 };
+mod audio;
 mod capture;
 mod compositor;
 mod config;
@@ -438,6 +439,7 @@ pub async fn recording_capabilities(window: WebviewWindow) -> Result<RecorderCap
                     1_000_000,
                     config::EncodingPreference::Auto,
                     format,
+                    false,
                 )
                 .is_ok()
                 {
@@ -446,6 +448,14 @@ pub async fn recording_capabilities(window: WebviewWindow) -> Result<RecorderCap
             }
         }
         let available = result.is_ok() && !formats.is_empty();
+        // 能力查询只以合成静音试写 AAC；不开始麦克风或系统声音采集。
+        let audio_available = cfg!(target_os = "windows")
+            && formats.iter().any(|f| matches!(f, OutputFormat::Mp4))
+            && (|| {
+                let root = tempfile::tempdir().map_err(err)?;
+                encoder::probe(root.path(), 64, 64, 30, 1_000_000,
+                    config::EncodingPreference::Auto, OutputFormat::Mp4, true)
+            })().is_ok();
         Ok(RecorderCapabilities {
             available,
             reason: result
@@ -462,8 +472,8 @@ pub async fn recording_capabilities(window: WebviewWindow) -> Result<RecorderCap
                 vec![]
             },
             capture_cursor: available,
-            system_audio: false,
-            microphone: false,
+            system_audio: audio_available,
+            microphone: audio_available,
             formats,
         })
     })
@@ -522,6 +532,7 @@ pub async fn start_recording(
             config.target_bitrate(),
             config.encoding,
             config.format,
+            config.system_audio || config.microphone,
         )?;
         config.encoding = selected_encoding;
         let screen = super::scroll::screen(&app)?;
@@ -562,10 +573,23 @@ pub async fn start_recording(
             .name("screen-recording".into())
             .spawn(move || {
                 let _worker = worker_guard;
-                match capture::prepare(&config, primary_size) {
-                    Ok(backend) => {
+                let prepared = capture::prepare(&config, primary_size).and_then(|backend| {
+                    let audio = if config.system_audio || config.microphone {
+                        let audio_app = worker_app.clone();
+                        // 初始化在确认选区阶段完成；只有 Recording 阶段才 Start 设备。
+                        Some(audio::Worker::start(config.system_audio, config.microphone, move || {
+                            audio_app.state::<RecordingState>().0.lock().ok()
+                                .and_then(|guard| guard.as_ref().map(|s| {
+                                    s.view.id == id && s.view.phase == Phase::Recording && !s.stop && !s.cancel
+                                })).unwrap_or(false)
+                        })?)
+                    } else { None };
+                    Ok((backend, audio))
+                });
+                match prepared {
+                    Ok((backend, audio)) => {
                         if ready_tx.send(Ok(())).is_ok() && go_rx.recv().unwrap_or(false) {
-                            collect(worker_app, id, config, screen, root, backend);
+                            collect(worker_app, id, config, screen, root, backend, audio);
                         }
                     }
                     Err(e) => {
@@ -642,6 +666,7 @@ fn collect(
     screen: super::scroll::Screen,
     root: PathBuf,
     mut backend: Box<dyn capture::CaptureBackend>,
+    audio: Option<audio::Worker>,
 ) {
     let state = app.state::<RecordingState>();
     let (sender, receiver) = mpsc::sync_channel::<QueuedFrame>(2);
@@ -650,7 +675,7 @@ fn collect(
     let writer_app = app.clone();
     let writer = std::thread::Builder::new()
         .name("recording-encoder".into())
-        .spawn(move || write_video(&writer_app, id, config, root, receiver, &writer_abort));
+        .spawn(move || write_video(&writer_app, id, config, root, receiver, &writer_abort, audio));
     let result = match writer {
         Err(e) => Err(err(e)),
         Ok(writer) => {
@@ -969,6 +994,7 @@ fn write_video(
     root: PathBuf,
     receiver: mpsc::Receiver<QueuedFrame>,
     abort: &AtomicBool,
+    mut audio: Option<audio::Worker>,
 ) -> Result<String, String> {
     let mut recovery = recovery::Pending::new(app, id, &root, config.format)?;
     let pending = recovery.path();
@@ -981,6 +1007,7 @@ fn write_video(
         config.target_bitrate(),
         config.encoding,
         config.format,
+        config.system_audio || config.microphone,
     )?;
     let state = app.state::<RecordingState>();
     let encoder_kind = encoder.kind();
@@ -991,10 +1018,20 @@ fn write_video(
             s.view.revision += 1;
         }
     }
-    for frame in receiver {
+    let mut mixer = audio::Mixer::default();
+    loop {
         if abort.load(Ordering::Acquire) {
             return Err("录屏采集已中止。".into());
         }
+        if let Some(worker) = audio.as_mut() {
+            // 音频独立于 WGC 新帧；静态桌面和暂停期间仍排空已采集数据。
+            pump_audio(worker, &mut mixer, encoder.as_mut(), &state, id, false)?;
+        }
+        let frame = match receiver.recv_timeout(Duration::from_millis(10)) {
+            Ok(frame) => frame,
+            Err(mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        };
         {
             let mut guard = state.0.lock().map_err(err)?;
             let s = guard
@@ -1039,6 +1076,11 @@ fn write_video(
             .ok_or("已取消录屏。")?;
         s.timeline.elapsed(capture::now())
     };
+    if let Some(worker) = audio.as_mut() {
+        // 停止设备并 join 后再取尾包；停止时间之后的样本会被 Timeline 裁掉。
+        worker.stop()?;
+        pump_audio(worker, &mut mixer, encoder.as_mut(), &state, id, true)?;
+    }
     recovery.stage("finalizing", false)?;
     progress(app, "finalizing", Some(&pending));
     encoder.finish(end)?;
@@ -1073,5 +1115,30 @@ fn write_video(
 
 /// 诊断不触发试录/编码器探测，不采集视频或音频。
 pub(crate) fn diagnostic_summary() -> serde_json::Value {
-    serde_json::json!({"backend":std::env::consts::OS,"captureSupported":capture::supported().is_ok(),"encoderProbed":false,"systemAudio":false,"microphone":false})
+    serde_json::json!({"backend":std::env::consts::OS,"captureSupported":capture::supported().is_ok(),"encoderProbed":false,"audioBackend":if cfg!(target_os = "windows") { "wasapi" } else { "unsupported" },"audioProbed":false})
+}
+
+/// 原生编码放在状态锁外；与视频共用 Timeline，暂停不会在成品中留下音频空洞。
+fn pump_audio(
+    worker: &mut audio::Worker,
+    mixer: &mut audio::Mixer,
+    encoder: &mut dyn encoder::Encoder,
+    state: &RecordingState,
+    id: u64,
+    finishing: bool,
+) -> Result<(), String> {
+    let frames = worker.drain()?;
+    let end = {
+        let guard = state.0.lock().map_err(err)?;
+        let session = guard.as_ref().filter(|s| s.view.id == id && !s.cancel)
+            .ok_or("已取消录屏。")?;
+        for frame in frames { mixer.ingest(frame, &session.timeline)?; }
+        let elapsed = session.timeline.elapsed(capture::now());
+        if finishing { elapsed } else { elapsed.saturating_sub(audio::MIX_DELAY) }
+    };
+    while let Some(packet) = mixer.next_packet(end) {
+        encoder.advance_video(packet.pts + packet.duration)?;
+        encoder.push_audio(&packet)?;
+    }
+    Ok(())
 }

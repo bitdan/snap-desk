@@ -110,6 +110,9 @@ const recordingMbps = ref<string | number>('')
 
 const recordingCountdown = ref<0 | 3 | 5>(0)
 const captureCursor = ref(true)
+// 每次提交显式附带声音偏好，默认不采集；能力尚未加载时保持禁用。
+const recordingSystemAudio = ref(false)
+const recordingMicrophone = ref(false)
 const recordingEffects = ref(defaultInputEffects())
 const viewport = ref({ width: innerWidth, height: innerHeight })
 const annotating = ref(false)
@@ -203,7 +206,7 @@ async function startScroll() {
 async function startRecording() {
   if (!frame.value || !pixels.value || !valid.value || busy.value || marked.value || editor.pending || editor.interacting || gesture.value) return
   busy.value = true; error.value = ''
-  try { await api.startRecording(frame.value.id, pixels.value, recordingConfig(pixels.value, recordingFps.value, captureCursor.value, recordingCountdown.value, recordingEncoding.value, recordingQuality.value, recordingEffects.value, recordingFormat.value === 'gif' ? null : recordingBitrate(recordingMbps.value), recordingFormat.value)); recordingSetup.value = false; frame.value = null }
+  try { await api.startRecording(frame.value.id, pixels.value, recordingConfig(pixels.value, recordingFps.value, captureCursor.value, recordingCountdown.value, recordingEncoding.value, recordingQuality.value, recordingEffects.value, recordingFormat.value === 'gif' ? null : recordingBitrate(recordingMbps.value), recordingFormat.value, recordingSystemAudio.value && !!recordingCapabilities.value?.systemAudio, recordingMicrophone.value && !!recordingCapabilities.value?.microphone)); recordingSetup.value = false; frame.value = null }
   catch (e) { error.value = String(e) }
   finally { busy.value = false }
 }
@@ -411,7 +414,7 @@ onUnmounted(() => { disposed = true; off?.(); offScroll?.(); offPin?.(); window.
       </div>
     </div>
     <div v-if="recordingSetup" class="recording-menu-shade" @pointerdown.self.stop="!busy && (recordingSetup = false)" @pointermove.stop @contextmenu.stop.prevent>
-      <RecordingSetupMenu v-model:format="recordingFormat" :formats="recordingCapabilities?.formats ?? []" v-model:fps="recordingFps" v-model:encoding="recordingEncoding" v-model:quality="recordingQuality" v-model:mbps="recordingMbps" v-model:countdown="recordingCountdown" v-model:cursor="captureCursor" v-model:effects="recordingEffects" :busy="busy" :error="error" :style="recordingMenuStyle" @confirm="startRecording" @close="recordingSetup = false" />
+      <RecordingSetupMenu v-model:format="recordingFormat" :formats="recordingCapabilities?.formats ?? []" v-model:fps="recordingFps" v-model:encoding="recordingEncoding" v-model:quality="recordingQuality" v-model:mbps="recordingMbps" v-model:countdown="recordingCountdown" v-model:cursor="captureCursor" v-model:effects="recordingEffects" v-model:system-audio="recordingSystemAudio" v-model:microphone="recordingMicrophone" :system-audio-available="!!recordingCapabilities?.systemAudio" :microphone-available="!!recordingCapabilities?.microphone" :busy="busy" :error="error" :style="recordingMenuStyle" @confirm="startRecording" @close="recordingSetup = false" />
     </div>
     <div v-if="error && !recordingSetup" class="overlay-error" :style="{ left: `${activeDisplay.x + activeDisplay.width / 2}px`, bottom: 'auto', top: `${activeDisplay.y + 16}px`, maxWidth: `${activeDisplay.width - 32}px` }" role="alert" @pointerdown.stop>{{ error }}</div>
   </div>

@@ -4,6 +4,15 @@ import { defaultInputEffects, newerRecording, recordingBitrate, recordingStats, 
 const emptyStats = { capturePolls: 0, capturedFrames: 0, captureMillis: 0, captureCopyBytes: 0, compositionCopyBytes: 0, nv12OutputBytes: 0, throttledSamples: 0, composedFrames: 0, compositionMillis: 0, queuedFrames: 0, queueDroppedFrames: 0, staleQueuedFrames: 0, rejectedCaptureFrames: 0, rejectedComposedFrames: 0, recentFps: 0 }
 const view: RecordingView = { id: 7, revision: 3, phase: 'paused', seconds: 23, frames: 180, droppedFrames: 2, targetFps: 30, encodingMillis: 360, targetBitrate: 8_087_040, encoderKind: 'system', encoderFallback: null, countdownRemaining: 0, message: '', path: null, stats: emptyStats }
 describe('录屏会话状态', () => {
+  it('系统声音与麦克风独立传递，GIF 清除声音请求', () => {
+    const region = { x: 0, y: 0, width: 100, height: 100 }
+    for (const systemAudio of [false, true]) for (const microphone of [false, true]) {
+      expect(recordingConfig(region, 30, true, 0, 'auto', 'balanced', defaultInputEffects(), null, 'mp4', systemAudio, microphone))
+        .toMatchObject({ systemAudio, microphone })
+    }
+    expect(recordingConfig(region, 10, true, 0, 'auto', 'balanced', defaultInputEffects(), null, 'gif', true, true))
+      .toMatchObject({ systemAudio: false, microphone: false })
+  })
   it('GIF 与 MP4 共用配置入口，格式约束帧率且 GIF 不携带视频码率', () => {
     const region = { x: 0, y: 0, width: 101, height: 99 }
     const config = recordingConfig(region, 10, true, 3, 'auto', 'balanced', defaultInputEffects(), 8_000_000, 'gif')

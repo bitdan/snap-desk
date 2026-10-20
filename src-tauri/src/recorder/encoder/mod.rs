@@ -1,5 +1,6 @@
 //! 平台编码器独占写入线程。Drop 即取消，临时文件由管理器清理；finish 才完成封装。
 use super::{
+    audio::AudioPacket,
     config::{EncodingPreference, OutputFormat},
     frame::BgraImage,
 };
@@ -23,6 +24,12 @@ pub trait Encoder {
     /// 成功转换并交给编码器拥有的 NV12 字节数，不计系统编码器内部拷贝。
     fn converted_bytes(&self) -> u64;
     fn push(&mut self, image: &BgraImage, pts: i64) -> Result<(), String>;
+    /// 音视频交给同一个 Sink Writer，时间单位均为 100 ns；GIF 不允许声音。
+    fn push_audio(&mut self, _: &AudioPacket) -> Result<(), String> {
+        Err("当前编码格式不支持音频。".into())
+    }
+    /// 静态桌面也要推进视频流，否则 MP4 交织器可能长期缓存音频等待下一视频样本。
+    fn advance_video(&mut self, _: i64) -> Result<(), String> { Ok(()) }
     fn finish(&mut self, end: i64) -> Result<(), String>;
 }
 
@@ -34,20 +41,22 @@ pub fn create(
     bitrate: u32,
     preference: EncodingPreference,
     format: OutputFormat,
+    audio: bool,
 ) -> Result<Box<dyn Encoder>, String> {
     if matches!(format, OutputFormat::Gif) {
+        if audio { return Err("GIF 不支持音频。".into()); }
         return Ok(Box::new(super::gif::GifEncoder::new(path, width, height)?));
     }
     #[cfg(target_os = "windows")]
     return Ok(Box::new(
-        media_foundation::MediaFoundation::new(path, width, height, fps, bitrate, preference)
+        media_foundation::MediaFoundation::new(path, width, height, fps, bitrate, preference, audio)
             .map_err(|e| {
-                format!("无法初始化系统 H.264 编码器：{e}。请检查媒体组件、分辨率和磁盘空间。")
+                format!("无法初始化系统 H.264 / AAC 编码器：{e}。请检查媒体组件、分辨率和磁盘空间。")
             })?,
     ));
     #[cfg(not(target_os = "windows"))]
     {
-        let _ = (path, width, height, fps, bitrate, preference);
+        let _ = (path, width, height, fps, bitrate, preference, audio);
         Err("UnsupportedPlatform：当前平台尚未实现原生录屏编码。".into())
     }
 }
@@ -82,6 +91,7 @@ pub fn probe(
     bitrate: u32,
     preference: EncodingPreference,
     format: OutputFormat,
+    audio: bool,
 ) -> Result<(EncoderKind, EncodingPreference, Option<String>), String> {
     with_fallback(preference, |mode| {
         let temp = tempfile::tempdir_in(root).map_err(|e| e.to_string())?;
@@ -93,8 +103,16 @@ pub fn probe(
             bitrate,
             mode,
             format,
+            audio,
         )?;
         encoder.push(&BgraImage::new(width, height), 0)?;
+        if audio {
+            // 试写 AAC 使用合成静音，不打开麦克风或录制系统播放。
+            let mut mixer = super::audio::Mixer::default();
+            while let Some(packet) = mixer.next_packet(10_000_000 / i64::from(fps)) {
+                encoder.push_audio(&packet)?;
+            }
+        }
         encoder.finish(10_000_000 / i64::from(fps))?;
         Ok(encoder.kind())
     })

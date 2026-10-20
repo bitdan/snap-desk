@@ -1,4 +1,4 @@
-//! 录屏配置只表达当前已支持的能力；声音请求必须明确拒绝。
+//! 录屏配置只表达当前已支持的能力；Windows MP4 可选系统声音与麦克风。
 use crate::capture::Rect;
 use serde::{Deserialize, Serialize};
 
@@ -181,8 +181,10 @@ impl RecorderConfig {
         } {
             return Err("MP4 支持 30 / 60 FPS，GIF 支持 10 / 20 FPS。".into());
         }
-        if self.system_audio || self.microphone {
-            return Err("当前版本尚未支持系统声音或麦克风录制。".into());
+        if (self.system_audio || self.microphone)
+            && (matches!(self.format, OutputFormat::Gif) || !cfg!(target_os = "windows"))
+        {
+            return Err("音频录制仅支持 Windows MP4，GIF 不支持声音。".into());
         }
         if matches!(self.format, OutputFormat::Gif) && (r.width > 65535 || r.height > 65535) {
             return Err("GIF 单边不能超过 65535 像素。".into());
@@ -310,7 +312,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_audio_bad_rates_and_region_overflow() {
+    fn validates_platform_audio_bad_rates_and_region_overflow() {
         let mut config = RecorderConfig::for_region(Rect {
             x: 0,
             y: 0,
@@ -350,7 +352,14 @@ mod tests {
             RecordingQuality::Balanced
         ));
         config.system_audio = true;
-        assert!(config.validate((1920, 1080)).is_err());
+        assert_eq!(config.validate((1920, 1080)).is_ok(), cfg!(target_os = "windows"));
+        config.microphone = true;
+        assert_eq!(config.validate((1920, 1080)).is_ok(), cfg!(target_os = "windows"));
+        config.format = OutputFormat::Gif;
+        config.fps = 10;
+        assert!(config.validate((1920, 1080)).unwrap_err().contains("GIF"));
+        config.format = OutputFormat::Mp4;
+        config.microphone = false;
         config.system_audio = false;
         config.fps = 10;
         assert!(config.validate((1920, 1080)).is_err());

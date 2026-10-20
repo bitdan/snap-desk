@@ -4,6 +4,9 @@ pub struct Timeline {
     elapsed: i64,
     since: Option<i64>,
     pub generation: u64,
+    /// 音频包可能跨越暂停边界或晚于停止到达，保留有效区间用于逐样本裁剪。
+    /// (QPC 起点, QPC 终点, 媒体起点)，全部为 100 ns；开放区间没有终点。
+    audio_spans: Vec<(i64, Option<i64>, i64)>,
 }
 
 /// 按媒体时钟分桶采样，避免用“距上一帧 >= 间隔”把略有抖动的 60 Hz 误降为 30 FPS。
@@ -21,11 +24,13 @@ impl Timeline {
         if self.since.is_none() {
             self.generation += 1;
             self.since = Some(now);
+            self.audio_spans.push((now, None, self.elapsed));
         }
     }
 
     pub fn pause(&mut self, now: i64) {
         if self.since.is_some() {
+            self.close_audio_span(now);
             self.elapsed = self.elapsed(now);
             self.since = None;
             self.generation += 1;
@@ -34,6 +39,7 @@ impl Timeline {
 
     /// 停止保留当前代次，允许排空停止前已入队的有效帧。
     pub fn stop(&mut self, now: i64) {
+        self.close_audio_span(now);
         self.elapsed = self.elapsed(now);
         self.since = None;
     }
@@ -49,6 +55,25 @@ impl Timeline {
     pub fn project(&self, source: i64) -> Option<(u64, i64)> {
         let since = self.since?;
         (source >= since).then_some((self.generation, self.elapsed + source - since))
+    }
+
+    fn close_audio_span(&mut self, now: i64) {
+        if let Some((start, end, _)) = self.audio_spans.last_mut() {
+            // 重复 stop/freeze 不得延长已经关闭的区间。
+            if end.is_none() {
+                *end = Some(now.max(*start));
+            }
+        }
+    }
+
+    /// 与视频使用同一时钟，但允许停止后排空包；暂停区间内的样本不会进入成品。
+    pub fn project_audio(&self, source: i64) -> Option<i64> {
+        let index = self.audio_spans.partition_point(|(start, _, _)| *start <= source);
+        let &(start, end, media) = self.audio_spans.get(index.checked_sub(1)?)?;
+        if end.is_some_and(|end| source >= end) {
+            return None;
+        }
+        Some(media + source - start)
     }
 }
 

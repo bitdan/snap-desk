@@ -1,4 +1,4 @@
-//! Windows Media Foundation Sink Writer：NV12 → 系统 H.264 编码器 → MP4。
+//! Windows Media Foundation Sink Writer：NV12 → H.264，PCM16 → AAC，共用 MP4 时间轴。
 //! 所有 COM 对象只在创建它们的后台线程使用，先释放 writer，再关闭 MF 和 COM。
 use super::{
     pixels::{nv12_into, nv12_len},
@@ -11,7 +11,7 @@ use windows::{
 };
 
 fn native_error(error: windows::core::Error) -> String {
-    format!("Windows 系统视频编码失败：{error}。请检查系统媒体组件、所选分辨率及磁盘空间；Windows N 版本需启用 Media Feature Pack。")
+    format!("Windows 系统音视频编码失败：{error}。请检查系统媒体组件、所选分辨率及磁盘空间；Windows N 版本需启用 Media Feature Pack。")
 }
 
 /// 配对管理线程 COM 初始化以及进程 MF 引用计数，任何提前返回都会正确清理。
@@ -41,6 +41,8 @@ pub struct MediaFoundation {
     // Rust 按声明顺序释放字段：writer 必须比 runtime 先释放。
     writer: IMFSinkWriter,
     stream: u32,
+    audio_stream: Option<u32>,
+    audio_end: i64,
     preference: EncodingPreference,
     input_size: u32,
     converted_bytes: u64,
@@ -114,6 +116,7 @@ impl MediaFoundation {
         fps: u32,
         bitrate: u32,
         preference: EncodingPreference,
+        audio: bool,
     ) -> WinResult<Self> {
         let runtime = Runtime::new()?;
         let original = (width, height);
@@ -138,11 +141,26 @@ impl MediaFoundation {
             input.SetUINT32(&MF_MT_DEFAULT_STRIDE, width)?;
             input.SetUINT32(&MF_MT_SAMPLE_SIZE, width * height * 3 / 2)?;
             writer.SetInputMediaType(stream, &input, None)?;
+            let audio_stream = if audio {
+                let output = audio_type(&MFAudioFormat_AAC)?;
+                // AAC-LC，48 kHz 双声道、160 kbit/s；MP4 使用 raw AAC payload。
+                output.SetUINT32(&MF_MT_AUDIO_AVG_BYTES_PER_SECOND, 20_000)?;
+                output.SetUINT32(&MF_MT_AAC_PAYLOAD_TYPE, 0)?;
+                output.SetUINT32(&MF_MT_AAC_AUDIO_PROFILE_LEVEL_INDICATION, 0x29)?;
+                let index = writer.AddStream(&output)?;
+                let input = audio_type(&MFAudioFormat_PCM)?;
+                input.SetUINT32(&MF_MT_AUDIO_BLOCK_ALIGNMENT, 4)?;
+                input.SetUINT32(&MF_MT_AUDIO_AVG_BYTES_PER_SECOND, super::super::audio::RATE * 4)?;
+                writer.SetInputMediaType(index, &input, None)?;
+                Some(index)
+            } else { None };
             writer.BeginWriting()?;
             Ok(Self {
                 writer,
                 _runtime: runtime,
                 stream,
+                audio_stream,
+                audio_end: 0,
                 preference,
                 input_size: width * height * 3 / 2,
                 converted_bytes: 0,
@@ -165,6 +183,17 @@ impl MediaFoundation {
     fn finish(&self) -> WinResult<()> {
         unsafe { self.writer.Finalize() }
     }
+}
+
+/// PCM 与 AAC 的公共格式；系统 AAC 编码器要求 16-bit 输入。
+unsafe fn audio_type(subtype: &GUID) -> WinResult<IMFMediaType> {
+    let media = MFCreateMediaType()?;
+    media.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Audio)?;
+    media.SetGUID(&MF_MT_SUBTYPE, subtype)?;
+    media.SetUINT32(&MF_MT_AUDIO_SAMPLES_PER_SECOND, super::super::audio::RATE)?;
+    media.SetUINT32(&MF_MT_AUDIO_NUM_CHANNELS, 2)?;
+    media.SetUINT32(&MF_MT_AUDIO_BITS_PER_SAMPLE, 16)?;
+    Ok(media)
 }
 
 /// MFSetAttributeSize / Ratio 是 SDK 内联函数；其等价编码为高 32 位 / 低 32 位。
@@ -190,6 +219,52 @@ unsafe fn media_type(
 }
 
 impl super::Encoder for MediaFoundation {
+    fn advance_video(&mut self, end: i64) -> Result<(), String> {
+        if let Some((time, buffer)) = self.pending.take() {
+            // 每 100 ms 最多复用一次已转换的画面。MF 只读持有缓冲，无须重复 NV12 转换。
+            // 留下同一缓冲作为后续静态区间底图，避免只录一帧时音轨无限堆积。
+            if end - time >= 1_000_000 {
+                self.write(&buffer, time, end - time).map_err(native_error)?;
+                self.pending = Some((end, buffer));
+            } else {
+                self.pending = Some((time, buffer));
+            }
+        }
+        Ok(())
+    }
+
+    fn push_audio(&mut self, packet: &super::AudioPacket) -> Result<(), String> {
+        let stream = self.audio_stream.ok_or("本次录制未启用 AAC 音轨。")?;
+        if packet.pts != self.audio_end || packet.duration <= 0
+            || packet.samples.is_empty() || packet.samples.len() % 2 != 0
+        {
+            return Err("AAC 输入时间戳不连续或 PCM 数据无效。".into());
+        }
+        let length = u32::try_from(packet.samples.len() * 2).map_err(|_| "音频包过大。")?;
+        unsafe {
+            let buffer = MFCreateMemoryBuffer(length).map_err(native_error)?;
+            let mut pointer = std::ptr::null_mut();
+            let mut capacity = 0;
+            buffer.Lock(&mut pointer, Some(&mut capacity), None).map_err(native_error)?;
+            let lock = BufferLock { buffer: &buffer, locked: true };
+            if pointer.is_null() || capacity < length {
+                return Err("系统音频编码缓冲容量不足。".into());
+            }
+            for (index, value) in packet.samples.iter().enumerate() {
+                std::ptr::copy_nonoverlapping(value.to_le_bytes().as_ptr(), pointer.add(index * 2), 2);
+            }
+            lock.unlock().map_err(native_error)?;
+            buffer.SetCurrentLength(length).map_err(native_error)?;
+            let sample = MFCreateSample().map_err(native_error)?;
+            sample.AddBuffer(&buffer).map_err(native_error)?;
+            sample.SetSampleTime(packet.pts).map_err(native_error)?;
+            sample.SetSampleDuration(packet.duration).map_err(native_error)?;
+            self.writer.WriteSample(stream, &sample).map_err(native_error)?;
+        }
+        self.audio_end = packet.pts + packet.duration;
+        Ok(())
+    }
+
     fn converted_bytes(&self) -> u64 {
         self.converted_bytes
     }
@@ -239,6 +314,12 @@ impl super::Encoder for MediaFoundation {
         }
         if let Some((time, buffer)) = self.pending.take() {
             if pts <= time {
+                if self.audio_stream.is_some() {
+                    // 静态补帧已推进到此刻；迟到画面从尚未提交的位置起生效，不倒写时间戳。
+                    self.pending = Some((time, converted_buffer(image)?));
+                    self.converted_bytes += u64::from(self.input_size);
+                    return Ok(());
+                }
                 self.pending = Some((time, buffer));
                 return Err("编码时间戳必须严格递增。".into());
             }
@@ -258,8 +339,12 @@ impl super::Encoder for MediaFoundation {
             .pending
             .take()
             .ok_or("录制时间过短，没有可编码画面。")?;
-        self.write(&data, time, (end - time).max(1))
-            .map_err(native_error)?;
+        // 音频泵可能已把静态视频恰好提交到停止时间，此时 pending 只是复用底图。
+        // 不再追加 1 个 100 ns 的样本：MP4 时间刻度会将其舍入成零时长帧。
+        if end > time || time == 0 {
+            self.write(&data, time, (end - time).max(1))
+                .map_err(native_error)?;
+        }
         MediaFoundation::finish(self).map_err(native_error)
     }
 }
@@ -303,5 +388,48 @@ mod tests {
         assert_ne!(bytes(&retained), bytes(&second));
         assert_eq!(&bytes(&second)[..16], &[16; 16]);
         assert_eq!(&bytes(&second)[16..], &[128; 8]);
+    }
+
+    /// 合成音频验证真实 AAC/H.264 封装，不访问用户设备；需要 Windows 媒体组件。
+    #[test]
+    fn aac_and_static_video_are_muxed_with_monotonic_timestamps() {
+        use super::super::Encoder;
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("audio-video.mp4");
+        let mut encoder = MediaFoundation::new(&path, 64, 64, 30, 1_000_000,
+            EncodingPreference::Software, true).unwrap();
+        encoder.push(&BgraImage::new(64, 64), 0).unwrap();
+        let mut mixer = super::super::super::audio::Mixer::default();
+        while let Some(packet) = mixer.next_packet(5_000_000) {
+            encoder.advance_video(packet.pts + packet.duration).unwrap();
+            encoder.push_audio(&packet).unwrap();
+        }
+        Encoder::finish(&mut encoder, 5_000_000).unwrap();
+        drop(encoder);
+        let _runtime = Runtime::new().unwrap();
+        unsafe {
+            let reader = MFCreateSourceReaderFromURL(&HSTRING::from(path.as_os_str()), None).unwrap();
+            // MP4 读取端的流序号不保证与 Sink Writer 的添加顺序一致；
+            // 按媒体类别定位轨道，验证真实输出而不假定视频一定是第 0 轨。
+            for (index, expected) in [
+                (MF_SOURCE_READER_FIRST_VIDEO_STREAM.0 as u32, MFMediaType_Video),
+                (MF_SOURCE_READER_FIRST_AUDIO_STREAM.0 as u32, MFMediaType_Audio),
+            ] {
+                assert_eq!(reader.GetNativeMediaType(index, 0).unwrap().GetGUID(&MF_MT_MAJOR_TYPE).unwrap(), expected);
+                let (mut previous, mut count) = (None, 0);
+                loop {
+                    let (mut flags, mut pts, mut sample) = (0, 0, None);
+                    reader.ReadSample(index, 0, None, Some(&mut flags), Some(&mut pts), Some(&mut sample)).unwrap();
+                    if flags & MF_SOURCE_READERF_ENDOFSTREAM.0 as u32 != 0 { break; }
+                    if let Some(sample) = sample {
+                        assert!(previous.is_none_or(|last| pts > last));
+                        assert!(sample.GetSampleDuration().unwrap() > 0);
+                        previous = Some(pts);
+                        count += 1;
+                    }
+                }
+                assert!(count > 1);
+            }
+        }
     }
 }

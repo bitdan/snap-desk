@@ -5,6 +5,7 @@ src-tauri/translator-runtime/
 scripts/__pycache__/
 scripts/ci/__pycache__/
 .ci/
+.ai/
 out/
 src-tauri/gen/schemas/
 *.log

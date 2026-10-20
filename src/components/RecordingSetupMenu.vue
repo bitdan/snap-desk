@@ -4,7 +4,7 @@ import { ChevronRight, X } from 'lucide-vue-next'
 import RecordingInputSettings from './RecordingInputSettings.vue'
 import { recordingBitrate, type RecordingFormat, type RecordingFps, type EncodingPreference, type InputEffects, type RecordingQuality } from '@/lib/recording'
 
-const props = defineProps<{ busy: boolean; error: string; formats: RecordingFormat[] }>()
+const props = defineProps<{ busy: boolean; error: string; formats: RecordingFormat[]; systemAudioAvailable: boolean; microphoneAvailable: boolean }>()
 const emit = defineEmits<{ confirm: []; close: [] }>()
 const format = defineModel<RecordingFormat>('format', { required: true })
 // 切换格式时选用兼容帧率；共享倒计时、光标和键鼠特效。
@@ -15,8 +15,10 @@ const quality = defineModel<RecordingQuality>('quality', { required: true })
 const mbps = defineModel<string | number>('mbps', { required: true })
 const countdown = defineModel<0 | 3 | 5>('countdown', { required: true })
 const cursor = defineModel<boolean>('cursor', { required: true })
+const systemAudio = defineModel<boolean>('systemAudio', { required: true })
+const microphone = defineModel<boolean>('microphone', { required: true })
 const effects = defineModel<InputEffects>('effects', { required: true })
-const groups = [{ id: 'format', label: '输出格式' }, { id: 'quality', label: '画质与码率' }, { id: 'fps', label: '帧率' }, { id: 'encoding', label: '编码方式' }, { id: 'countdown', label: '倒计时' }, { id: 'cursor', label: '鼠标指针' }, { id: 'effects', label: '键鼠特效' }]
+const groups = [{ id: 'format', label: '输出格式' }, { id: 'quality', label: '画质与码率' }, { id: 'fps', label: '帧率' }, { id: 'encoding', label: '编码方式' }, { id: 'audio', label: '声音' }, { id: 'countdown', label: '倒计时' }, { id: 'cursor', label: '鼠标指针' }, { id: 'effects', label: '键鼠特效' }]
 const active = ref('format')
 const root = ref<HTMLElement | null>(null)
 const bitrateInput = ref<HTMLInputElement | null>(null)
@@ -69,12 +71,21 @@ onMounted(() => root.value?.querySelector<HTMLButtonElement>('[role=tab]')?.focu
         <section v-show="active === 'encoding' && format === 'mp4'" id="recording-option-encoding" role="tabpanel" aria-labelledby="recording-tab-encoding"><label><input v-model="encoding" type="radio" value="auto" :disabled="busy" />自动</label><label><input v-model="encoding" type="radio" value="software" :disabled="busy" />软件兼容</label><small>自动模式优先尝试硬件编码</small></section>
         <section v-show="active === 'countdown'" id="recording-option-countdown" role="tabpanel" aria-labelledby="recording-tab-countdown"><label v-for="value in [0, 3, 5]" :key="value"><input v-model="countdown" type="radio" :value="value" :disabled="busy" />{{ value ? `${value} 秒` : '立即开始' }}</label></section>
         <section v-show="active === 'cursor'" id="recording-option-cursor" role="tabpanel" aria-labelledby="recording-tab-cursor"><label><input v-model="cursor" type="checkbox" :disabled="busy" />录制鼠标指针</label></section>
+        <section v-show="active === 'audio'" id="recording-option-audio" role="tabpanel" aria-labelledby="recording-tab-audio">
+          <template v-if="format === 'mp4'">
+            <label><input v-model="systemAudio" type="checkbox" :disabled="busy || !systemAudioAvailable" />系统声音</label>
+            <label><input v-model="microphone" type="checkbox" :disabled="busy || !microphoneAvailable" />麦克风</label>
+            <small v-if="systemAudioAvailable || microphoneAvailable">使用默认设备；仅在录制中采集声音，暂停时停止采集。</small>
+            <small v-else>当前系统的音频录制不可用。</small>
+          </template>
+          <small v-else>GIF 不支持声音。</small>
+        </section>
         <section v-show="active === 'effects'" id="recording-option-effects" role="tabpanel" aria-labelledby="recording-tab-effects"><RecordingInputSettings v-model="effects" :disabled="busy" /></section>
         <small v-if="format === 'gif' && ['quality', 'encoding'].includes(active)">GIF 使用软件调色板编码，无需设置视频码率。</small>
       </div>
     </div>
     <p v-if="error || invalid" class="menu-error" role="alert">{{ error || invalid }}</p>
-    <footer><small>{{ format.toUpperCase() }} · 无声 · {{ fps }} FPS</small><button class="confirm" :disabled="busy" title="确认选区后，在控制条开始录制" @click="confirm">{{ busy ? '准备中…' : '确认选区' }}</button></footer>
+    <footer><small>{{ format.toUpperCase() }} · {{ format === 'mp4' && (systemAudio || microphone) ? '有声' : '无声' }} · {{ fps }} FPS</small><button class="confirm" :disabled="busy" title="确认选区后，在控制条开始录制" @click="confirm">{{ busy ? '准备中…' : '确认选区' }}</button></footer>
   </section>
 </template>
 
