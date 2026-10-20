@@ -1,9 +1,11 @@
+import { initializeAppearance } from './lib/appearance'
 import { createApp, defineComponent, h } from 'vue'
 import { isTauri } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { resolveWindowKind } from './lib/window-kind'
 import { appLog, installGlobalErrorLogging } from './lib/logger'
 
+initializeAppearance()
 installGlobalErrorLogging(window)
 
 // 原生窗口标签是固定契约，避免辅助窗口导航/重载后查询参数丢失挂错页面。

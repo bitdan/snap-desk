@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t } from '@/lib/i18n'
 import { onMounted, ref } from 'vue'
 import Button from './ui/button/Button.vue'
 import ClipboardSettings from './clipboard/ClipboardSettings.vue'
@@ -59,31 +60,31 @@ onMounted(() => { void run(refresh); void refreshAutostart() })
   <section>
     <div class="settings-card mb-4">
       <div class="setting-row flex-wrap gap-3">
-        <div class="min-w-0 flex-1"><strong>开机自启</strong></div>
-        <span :class="autostart && !startupBusy ? 'status-ok' : 'text-sm text-zinc-500'" role="status"><Check v-if="autostart && !startupBusy" :size="14" />{{ startupBusy ? '处理中…' : autostart === null ? '状态未读取' : autostart ? '已开启' : '已关闭' }}</span>
-        <Button variant="outline" :disabled="!desktop || startupBusy || autostart === null" :aria-pressed="autostart === true" aria-label="开机自启" @click="toggleAutostart">{{ autostart ? '关闭' : '开启' }}</Button>
-        <Button variant="ghost" :disabled="!desktop || startupBusy" @click="refreshAutostart">刷新状态</Button>
+        <div class="min-w-0 flex-1"><strong>{{ t('开机自启') }}</strong></div>
+        <span :class="autostart && !startupBusy ? 'status-ok' : 'text-sm text-zinc-500'" role="status"><Check v-if="autostart && !startupBusy" :size="14" />{{ startupBusy ? t('处理中…') : autostart === null ? t('状态未读取') : autostart ? t('已开启') : t('已关闭') }}</span>
+        <Button variant="outline" :disabled="!desktop || startupBusy || autostart === null" :aria-pressed="autostart === true" aria-label="开机自启" @click="toggleAutostart">{{ autostart ? t('关闭') : t('开启') }}</Button>
+        <Button variant="ghost" :disabled="!desktop || startupBusy" @click="refreshAutostart">{{ t('刷新状态') }}</Button>
       </div>
       <p v-if="startupError" class="notice error" role="alert">{{ startupError }}</p>
     </div>
     <ClipboardSettings />
     <ResourceSettings kind="font" />
-    <h2 class="section-heading">文件与存储</h2>
+    <h2 class="section-heading">{{ t('文件与存储') }}</h2>
     <p v-if="error" class="notice error" role="alert">{{ error }}</p>
     <p v-if="message" class="notice" role="status">{{ message }}</p>
     <div class="settings-card">
       <div v-for="directory in directories.filter(item => item.kind !== 'logs')" :key="directory.kind" class="setting-row flex-wrap gap-3">
-        <div class="min-w-0 flex-1"><strong>{{ labels[directory.kind].name }}</strong><small v-if="directory.kind === 'clipboard'" class="block text-zinc-500">请通过剪贴板页面清理历史，勿手动删除数据库。</small><p class="mt-2 break-all text-xs">{{ directory.error || directory.path || '尚未记录可用位置，请先保存一张截图。' }}</p></div>
+        <div class="min-w-0 flex-1"><strong>{{ t(labels[directory.kind].name) }}</strong><small v-if="directory.kind === 'clipboard'" class="block text-zinc-500">{{ t('请通过剪贴板页面清理历史，勿手动删除数据库。') }}</small><p class="mt-2 break-all text-xs">{{ directory.error || directory.path || t('尚未记录可用位置，请先保存一张截图。') }}</p></div>
         <div class="flex flex-wrap gap-2">
-          <Button variant="outline" :disabled="busy || !directory.path" @click="run(() => api.openAppDirectory(directory.kind))">打开</Button>
-          <Button variant="ghost" :disabled="busy || !directory.path" @click="run(() => api.copyAppDirectory(directory.kind), '目录路径已复制。')">复制路径</Button>
+          <Button variant="outline" :disabled="busy || !directory.path" @click="run(() => api.openAppDirectory(directory.kind))">{{ t('打开') }}</Button>
+          <Button variant="ghost" :disabled="busy || !directory.path" @click="run(() => api.copyAppDirectory(directory.kind), '目录路径已复制。')">{{ t('复制路径') }}</Button>
           <template v-if="directory.kind === 'recordings'">
-            <Button variant="outline" :disabled="busy" @click="run(() => choose())">选择</Button>
-            <Button variant="ghost" :disabled="busy" @click="run(() => choose(true))">恢复默认</Button>
+            <Button variant="outline" :disabled="busy" @click="run(() => choose())">{{ t('选择') }}</Button>
+            <Button variant="ghost" :disabled="busy" @click="run(() => choose(true))">{{ t('恢复默认') }}</Button>
           </template>
         </div>
       </div>
-      <div class="flex gap-2 py-3"><Button :disabled="!desktop || busy" @click="run(exportConfig)">导出主配置</Button><Button variant="outline" :disabled="!desktop || busy" @click="run(refresh)">刷新目录</Button></div>
+      <div class="flex gap-2 py-3"><Button :disabled="!desktop || busy" @click="run(exportConfig)">{{ t('导出主配置') }}</Button><Button variant="outline" :disabled="!desktop || busy" @click="run(refresh)">{{ t('刷新目录') }}</Button></div>
     </div>
   </section>
 </template>

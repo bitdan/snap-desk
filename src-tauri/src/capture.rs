@@ -18,6 +18,19 @@ pub mod recording;
 #[path = "scroll/mod.rs"]
 pub mod scroll;
 
+/// 直接向最终 Data URL 编码，避免 format! 同时持有两份整屏 Base64 字符串。
+/// PNG 压缩策略保持 image 的快速默认值，原图和导出像素不发生变化。
+fn preview_data_url(image: &RgbaImage) -> Result<String, String> {
+    let mut png = Cursor::new(Vec::new());
+    image.write_to(&mut png, ImageFormat::Png).map_err(err)?;
+    let png = png.into_inner();
+    let prefix = "data:image/png;base64,";
+    let mut data_url = String::with_capacity(prefix.len() + png.len().div_ceil(3) * 4);
+    data_url.push_str(prefix);
+    STANDARD.encode_string(&png, &mut data_url);
+    Ok(data_url)
+}
+
 #[derive(Default)]
 pub struct CaptureState {
     /// 从倒计时开始到导出/取消结束只允许一个会话。
@@ -272,8 +285,7 @@ fn prepare(app: &AppHandle, recording: bool) -> Result<(), String> {
         ))
         .map_err(err)?;
     let image = std::mem::take(&mut desktop.image);
-    let mut png = Cursor::new(Vec::new());
-    image.write_to(&mut png, ImageFormat::Png).map_err(err)?;
+    let data_url = preview_data_url(&image)?;
     let state = app.state::<CaptureState>();
     let id = state.next_id.fetch_add(1, Ordering::SeqCst) + 1;
     let frame = Frame {
@@ -286,10 +298,7 @@ fn prepare(app: &AppHandle, recording: bool) -> Result<(), String> {
         layout_key: serde_json::to_string(&desktop.displays).map_err(err)?,
         width: image.width(),
         height: image.height(),
-        data_url: format!(
-            "data:image/png;base64,{}",
-            STANDARD.encode(png.into_inner())
-        ),
+        data_url,
     };
     *state.session.lock().map_err(err)? = Some(Session {
         frame: frame.clone(),
@@ -301,8 +310,9 @@ fn prepare(app: &AppHandle, recording: bool) -> Result<(), String> {
         .map_err(err)?;
     // WebView 未能加载图片时自动释放会话，防止看不见蒙层又无法重新截图。
     let app = app.clone();
-    std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_secs(15));
+    // Tokio 定时器不占用休眠 OS 线程；会话 ID 校验避免旧任务关闭新截图。
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(Duration::from_secs(15)).await;
         let state = app.state::<CaptureState>();
         let Ok(_operation) = Operation::acquire(&state.operation) else {
             return;
@@ -407,12 +417,7 @@ pub async fn capture_native_window(
                 i64::from(x) - i64::from(origin.0),
                 i64::from(y) - i64::from(origin.1),
             );
-            let mut png = Cursor::new(Vec::new());
-            composed.write_to(&mut png, ImageFormat::Png).map_err(err)?;
-            session.frame.data_url = format!(
-                "data:image/png;base64,{}",
-                STANDARD.encode(png.into_inner())
-            );
+            session.frame.data_url = preview_data_url(&composed)?;
             session.image = composed;
             Ok(session.frame.clone())
         })();
@@ -835,6 +840,17 @@ pub async fn pin_capture(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn preview_encoding_preserves_rgba_pixels() {
+        let image = RgbaImage::from_fn(17, 9, |x, y| {
+            image::Rgba([x as u8 * 13, y as u8 * 27, 123, (x + y) as u8 * 9])
+        });
+        let url = preview_data_url(&image).unwrap();
+        let bytes = STANDARD.decode(url.strip_prefix("data:image/png;base64,").unwrap()).unwrap();
+        let decoded = image::load_from_memory(&bytes).unwrap().to_rgba8();
+        assert_eq!(decoded, image);
+    }
     #[test]
     fn color_picker_formats_exact_source_pixels_and_rejects_edges() {
         let mut image = RgbaImage::new(2, 2);

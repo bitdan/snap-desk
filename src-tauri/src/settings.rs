@@ -148,9 +148,34 @@ impl Shortcuts {
     }
 }
 
+/// 外观配置拒绝未知值；旧配置缺少字段时自动使用默认值。
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Theme {
+    #[default]
+    System,
+    Light,
+    Dark,
+}
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub enum Language {
+    #[default]
+    #[serde(rename = "zh-CN")]
+    Chinese,
+    #[serde(rename = "en")]
+    English,
+}
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields, default)]
+pub struct Appearance {
+    pub theme: Theme,
+    pub language: Language,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", try_from = "SettingsWire")]
 pub struct Settings {
+    pub appearance: Appearance,
     pub ai: crate::translation::AiSettings,
     pub shortcuts: Shortcuts,
     pub shortcuts_enabled: bool,
@@ -168,6 +193,8 @@ pub struct Settings {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct SettingsWire {
+    #[serde(default)]
+    appearance: Appearance,
     #[serde(default)]
     ai: crate::translation::AiSettings,
     shortcut: Option<String>,
@@ -208,6 +235,7 @@ impl TryFrom<SettingsWire> for Settings {
             clipboard: wire.clipboard,
             onboarding_version: wire.onboarding_version,
             ai: wire.ai,
+            appearance: wire.appearance,
         })
     }
 }
@@ -226,6 +254,7 @@ impl Default for Settings {
             clipboard: crate::clipboard::model::ClipboardSettings::default(),
             onboarding_version: 0,
             ai: crate::translation::AiSettings::default(),
+            appearance: Appearance::default(),
         }
     }
 }
@@ -710,6 +739,26 @@ pub async fn complete_onboarding(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn appearance_legacy_defaults_roundtrip_and_rejects_unknown_values() {
+        let old: Settings = serde_json::from_str("{}").unwrap();
+        assert_eq!(old.appearance, Appearance::default());
+        let configured: Settings = serde_json::from_str(
+            r#"{"appearance":{"theme":"dark","language":"en"}}"#,
+        ).unwrap();
+        assert_eq!(configured.appearance.theme, Theme::Dark);
+        assert_eq!(configured.appearance.language, Language::English);
+        let restored: Settings = serde_json::from_value(serde_json::to_value(&configured).unwrap()).unwrap();
+        assert_eq!(restored.appearance, configured.appearance);
+        for invalid in [
+            r#"{"appearance":{"theme":"invalid"}}"#,
+            r#"{"appearance":{"language":"invalid"}}"#,
+            r#"{"appearance":{"extra":true}}"#,
+        ] {
+            assert!(serde_json::from_str::<Settings>(invalid).is_err());
+        }
+    }
     #[test]
     fn maps_actions_clears_keys_and_migrates_strictly() {
         let mut value = Settings::default();

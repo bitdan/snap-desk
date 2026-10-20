@@ -19,7 +19,8 @@ import RecordingSetupMenu from './RecordingSetupMenu.vue'
 import { targetAt, fromPixels, snapPoint, displayBounds } from '@/lib/capture-targets'
 import { readRecentSelection, restoreRecentSelection, writeRecentSelection } from '@/lib/recent-selection'
 
-const frame = ref<CaptureFrame | null>(null)
+// 截图帧是不可变快照，大量窗口目标不需要逐项响应式代理。
+const frame = shallowRef<CaptureFrame | null>(null)
 const selection = ref<Rect | null>(null)
 const selectedTarget = ref<number | null>(null)
 const windowsOnly = ref(false)
@@ -193,7 +194,15 @@ function receiveScroll(value: ScrollView) {
   if (next && !next.collecting) scrollClosed()
   else scroll.value = next
 }
-function scrollClosed() { scroll.value = null; frame.value = null }
+/** 只在后端确认结束后调用；保存取消或失败时保留标注及撤销栈。 */
+function releaseFrame() {
+  frame.value = null
+  editor.reset()
+  selection.value = null; gesture.value = null; pointer.value = null
+  imageReady.value = false; selectedTarget.value = null; annotating.value = false
+  qrResult.value = null; ocrResult.value = null
+}
+function scrollClosed() { scroll.value = null; releaseFrame() }
 async function startScroll() {
   if (!frame.value || !pixels.value || !valid.value || busy.value || marked.value || editor.pending || editor.interacting || gesture.value) return
   busy.value = true; error.value = ''
@@ -206,7 +215,7 @@ async function startScroll() {
 async function startRecording() {
   if (!frame.value || !pixels.value || !valid.value || busy.value || marked.value || editor.pending || editor.interacting || gesture.value) return
   busy.value = true; error.value = ''
-  try { await api.startRecording(frame.value.id, pixels.value, recordingConfig(pixels.value, recordingFps.value, captureCursor.value, recordingCountdown.value, recordingEncoding.value, recordingQuality.value, recordingEffects.value, recordingFormat.value === 'gif' ? null : recordingBitrate(recordingMbps.value), recordingFormat.value, recordingSystemAudio.value && !!recordingCapabilities.value?.systemAudio, recordingMicrophone.value && !!recordingCapabilities.value?.microphone)); recordingSetup.value = false; frame.value = null }
+  try { await api.startRecording(frame.value.id, pixels.value, recordingConfig(pixels.value, recordingFps.value, captureCursor.value, recordingCountdown.value, recordingEncoding.value, recordingQuality.value, recordingEffects.value, recordingFormat.value === 'gif' ? null : recordingBitrate(recordingMbps.value), recordingFormat.value, recordingSystemAudio.value && !!recordingCapabilities.value?.systemAudio, recordingMicrophone.value && !!recordingCapabilities.value?.microphone)); recordingSetup.value = false; releaseFrame() }
   catch (e) { error.value = String(e) }
   finally { busy.value = false }
 }
@@ -272,7 +281,7 @@ async function loaded() {
 async function cancel() {
   if (!frame.value || busy.value || editor.pending) return
   busy.value = true
-  try { await api.cancel(frame.value.id); frame.value = null } catch (e) { error.value = String(e) }
+  try { await api.cancel(frame.value.id); releaseFrame() } catch (e) { error.value = String(e) }
   finally { busy.value = false }
 }
 async function finish(action: 'copy' | 'save' | 'pin') {
@@ -285,7 +294,7 @@ async function finish(action: 'copy' | 'save' | 'pin') {
     const result = await api[action](frame.value.id, rect, editor.history.present)
     if (result !== false) {
       recentSelection.value = writeRecentSelection(rect, image)
-      frame.value = null
+      releaseFrame()
     }
   } catch (e) { error.value = String(e) }
   finally { busy.value = false }
@@ -358,7 +367,7 @@ onMounted(async () => {
     if (currentScroll && !disposed) receiveScroll(currentScroll)
   } catch (e) { error.value = String(e) }
 })
-onUnmounted(() => { disposed = true; off?.(); offScroll?.(); offPin?.(); window.removeEventListener('keydown', key); window.removeEventListener('keyup', keyUp); window.removeEventListener('resize', resized) })
+onUnmounted(() => { releaseFrame(); disposed = true; off?.(); offScroll?.(); offPin?.(); window.removeEventListener('keydown', key); window.removeEventListener('keyup', keyUp); window.removeEventListener('resize', resized) })
 </script>
 
 <template>

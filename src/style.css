@@ -105,3 +105,27 @@ kbd { display: inline-block; border: 1px solid #d8dee4; border-bottom-width: 2px
   .app-shell .topbar, .app-shell .page-content { padding-inline: 12px; }
   .app-shell .setting-row > .flex { flex-wrap: wrap; }
 }
+
+/* 深色配色限定在主工作区，不反色截图像素，也不填充透明贴图窗口。 */
+:root[data-theme=dark]:not(.pin-window):not(.capture-window):not(.selection-edge) { background: #181b20; color: #e6edf3; color-scheme: dark; }
+[data-theme=dark] .app-shell { background: #181b20; color: #e6edf3; color-scheme: dark; }
+[data-theme=dark] .app-shell :is(.sidebar, kbd, .pill) { background: #20252c; color: #b6c2cf; border-color: #39424e; }
+[data-theme=dark] .app-shell :is(.settings-card, .capture-controls, input:not([type=checkbox]), select, textarea, .bg-white) { background: #181b20; color: #e6edf3; border-color: #39424e; }
+[data-theme=dark] .app-shell :is(.topbar, .setting-row, .capture-panel) { border-color: #39424e; }
+[data-theme=dark] .app-shell :is(.nav-item, .topbar, .setting-row strong, .about p) { color: #c9d1d9; }
+[data-theme=dark] .app-shell :is(.nav-caption, .sidebar-bottom, small, .text-zinc-500, .text-zinc-600, .subtitle) { color: #a6b2c0; }
+[data-theme=dark] .app-shell :is(.nav-item:hover, .github-link) { background: #303843; color: #e6edf3; }
+[data-theme=dark] .app-shell .nav-item.active { background: #223c62; color: #a9ccff; }
+[data-theme=dark] .app-shell .brand-icon { background: #223c62; color: #a9ccff; }
+[data-theme=dark] .app-shell .notice { background: #22364d; color: #c4dfff; }
+[data-theme=dark] .app-shell .notice.error { background: #49282e; color: #ffb8bd; }
+[data-theme=dark] .app-shell :is(.notice.success, .status-ok, .status-check) { color: #73d69a; }
+[data-theme=dark] .app-shell button.border { border-color: #465160; }
+[data-theme=dark] .app-shell button.hover\:bg-zinc-100:hover { background: #303843; }
+[data-theme=dark] :is(.history-export-dialog, .history-context-menu) { background: #20252c; color: #e6edf3; border-color: #39424e; color-scheme: dark; }
+[data-theme=dark] :is(.history-export-dialog, .history-context-menu) :is(input, select, .bg-white) { background: #181b20; color: #e6edf3; border-color: #39424e; }
+[data-theme=dark] .app-shell :is(.history-item, .history-categories, .history-search, .history-footer, .diagnostics-list, .diagnostics-entry) { border-color: #39424e; }
+[data-theme=dark] .app-shell :is(.history-footer, .history-categories button, .history-search, .pin-empty, .text-zinc-700) { color: #b6c2cf; }
+[data-theme=dark] .app-shell .history-item:hover { background: #303843; }
+[data-theme=dark] .app-shell :is(.history-item.is-selected, .history-categories button.active) { background: #223c62; color: #a9ccff; border-color: #6386b8; }
+[data-theme=dark] .history-context-menu button:hover { background: #303843; }
