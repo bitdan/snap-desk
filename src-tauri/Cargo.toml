@@ -1,6 +1,6 @@
 [package]
 name = "snap-desk"
-version = "0.1.6-beta.1"
+version = "0.1.6-beta.2"
 license = "GPL-3.0-only"
 repository = "https://github.com/bitdan/snap-desk"
 description = "A focused cross-platform screenshot tool"
