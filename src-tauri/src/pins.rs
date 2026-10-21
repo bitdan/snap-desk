@@ -90,6 +90,62 @@ struct Pin {
     group: String,
 }
 
+impl Pin {
+    /// 新贴图的原图/当前图共享 Arc；变换后才是两份独立 RGBA 缓冲。
+    /// 这里只计 Rust 常驻像素，不把 WebView 解码、标注和操作临时副本伪装成已受限。
+    fn retained_pixels(&self) -> u64 {
+        let original = u64::from(self.original.width()) * u64::from(self.original.height());
+        original
+            + if Arc::ptr_eq(&self.original, &self.image) {
+                0
+            } else {
+                u64::from(self.image.width()) * u64::from(self.image.height())
+            }
+    }
+
+    /// 恢复原图直接共享原缓冲，不再次复制整张图片。
+    fn transformed_image(&self, action: Transform) -> Arc<RgbaImage> {
+        if matches!(action, Transform::Reset) {
+            Arc::clone(&self.original)
+        } else {
+            Arc::new(transform(&self.image, &self.original, action))
+        }
+    }
+}
+
+/// 只记录数量与字节数，不记录图片、标注、分组或文件名。
+fn log_retained(images: &BTreeMap<String, Pin>, reason: &str) {
+    let bytes: u64 = images.values().map(|pin| pin.retained_pixels() * 4).sum();
+    log::info!(
+        "event=pins.memory module=capture reason={} count={} rgba_bytes={}",
+        reason,
+        images.len(),
+        bytes
+    );
+}
+
+/// 预检变换后的常驻预算；所有现有变换保持像素总数，旋转只交换宽高。
+fn validate_transform_budget(
+    pin: &Pin,
+    other_pixels: u64,
+    action: Transform,
+) -> Result<(), String> {
+    let original = u64::from(pin.original.width()) * u64::from(pin.original.height());
+    let next = original
+        + if matches!(action, Transform::Reset) {
+            0
+        } else {
+            u64::from(pin.image.width()) * u64::from(pin.image.height())
+        };
+    if other_pixels.saturating_add(next) > MAX_TOTAL_PIXELS {
+        return Err(
+            "变换后原图与处理图将超过贴图像素缓存上限，请先关闭部分贴图（隐藏不会释放缓存）。"
+                .into(),
+        );
+    }
+    Ok(())
+}
+
 /// zoom 使用逻辑像素比例；1 表示一图像像素对应一 CSS 像素。
 /// opacity 仅影响显示，locked 防止拖动、缩放和图像处理，仍允许复制/保存/关闭。
 #[derive(Clone, Serialize, Deserialize)]
@@ -206,7 +262,7 @@ fn validate_capacity(width: u32, height: u32, count: usize, used: u64) -> Result
         return Err("图片为空或超过 1600 万像素限制。".into());
     }
     if count >= MAX_PINS || used.saturating_add(pixels) > MAX_TOTAL_PIXELS {
-        return Err("贴图最多 12 张，总计最多 3200 万像素；请先关闭部分贴图。".into());
+        return Err("贴图最多 12 张，原图与处理图的独立缓存合计最多 3200 万像素；请先关闭部分贴图（隐藏不会释放缓存）。".into());
     }
     Ok(())
 }
@@ -223,10 +279,7 @@ pub fn create(
     let _operation = Operation::acquire(&state)?;
     {
         let images = state.images.lock().map_err(err)?;
-        let used = images
-            .values()
-            .map(|p| u64::from(p.image.width()) * u64::from(p.image.height()))
-            .sum();
+        let used = images.values().map(Pin::retained_pixels).sum();
         validate_capacity(image.width(), image.height(), images.len(), used)?;
     }
     let monitor = app
@@ -284,6 +337,9 @@ pub fn create(
     let builder = builder.transparent(true);
     match builder.build() {
         Ok(window) => {
+            if let Ok(images) = state.images.lock() {
+                log_retained(&images, "created");
+            }
             changed(app);
             Ok(window)
         }
@@ -298,6 +354,7 @@ pub fn create(
 pub fn destroyed(app: &AppHandle, label: &str) {
     if let Ok(mut images) = app.state::<PinState>().images.lock() {
         images.remove(label);
+        log_retained(&images, "destroyed");
     }
     changed(app);
 }
@@ -780,6 +837,15 @@ pub async fn transform_pin(
         if pin.view.locked {
             return Err("请先解锁贴图再处理图片。".into());
         }
+        {
+            let images = state.images.lock().map_err(err)?;
+            let other_pixels = images
+                .iter()
+                .filter(|(label, _)| label.as_str() != window.label())
+                .map(|(_, value)| value.retained_pixels())
+                .sum();
+            validate_transform_budget(&pin, other_pixels, action)?;
+        }
         if matches!(action, Transform::Reset) {
             pin.annotations = pin.original_annotations.clone();
         } else {
@@ -790,7 +856,7 @@ pub async fn transform_pin(
                 action,
             )?;
         }
-        pin.image = Arc::new(transform(&pin.image, &pin.original, action));
+        pin.image = pin.transformed_image(action);
         crate::annotations::validate(&pin.annotations, pin.image.width(), pin.image.height())?;
         let result = frame(window.label(), &pin)?;
         state
@@ -798,6 +864,9 @@ pub async fn transform_pin(
             .lock()
             .map_err(err)?
             .insert(window.label().into(), pin);
+        if let Ok(images) = state.images.lock() {
+            log_retained(&images, "transformed");
+        }
         changed(&app);
         Ok(result)
     })
@@ -913,6 +982,31 @@ pub async fn pin_action(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn pixel_budget_counts_unique_buffers_and_reset_reuses_original() {
+        let mut pin = grouped_pin("");
+        assert_eq!(pin.retained_pixels(), 1);
+        pin.image = pin.transformed_image(Transform::Invert);
+        assert!(!Arc::ptr_eq(&pin.image, &pin.original));
+        assert_eq!(pin.retained_pixels(), 2);
+        let transformed = Arc::downgrade(&pin.image);
+        pin.image = pin.transformed_image(Transform::Reset);
+        assert!(Arc::ptr_eq(&pin.image, &pin.original));
+        assert_eq!(pin.retained_pixels(), 1);
+        assert!(transformed.upgrade().is_none());
+    }
+
+    #[test]
+    fn transformation_budget_allows_reset_but_rejects_extra_buffer_at_limit() {
+        let pin = grouped_pin("");
+        assert!(validate_transform_budget(&pin, MAX_TOTAL_PIXELS - 1, Transform::Invert).is_err());
+        assert!(validate_transform_budget(&pin, MAX_TOTAL_PIXELS - 1, Transform::Reset).is_ok());
+        assert!(
+            validate_transform_budget(&pin, MAX_TOTAL_PIXELS - 2, Transform::RotateRight).is_ok()
+        );
+        assert!(Arc::ptr_eq(&pin.image, &pin.original));
+    }
+
     fn grouped_pin(group: &str) -> Pin {
         let image = Arc::new(RgbaImage::new(1, 1));
         Pin {

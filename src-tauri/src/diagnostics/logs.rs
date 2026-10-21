@@ -286,6 +286,10 @@ pub fn sanitize(line: &str) -> Option<Entry> {
     let mut safe = vec![format!("event={event}")];
     for (key, value) in fields {
         let allowed = match key {
+            "reason" if event == "pins.memory" => {
+                ["created", "destroyed", "transformed"].contains(&value)
+            }
+            "count" | "rgba_bytes" if event == "pins.memory" => value.parse::<u64>().is_ok(),
             "code" => super::catalog::CODES.contains(&value),
             "command" => super::catalog::COMMANDS.contains(&value),
             "op" => ["cap-", "rec-", "scroll-", "ocr-", "tr-"]
@@ -332,6 +336,19 @@ pub fn sanitize(line: &str) -> Option<Entry> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn pin_memory_diagnostics_keep_only_counts_and_known_reasons() {
+        let line = "2026-10-21T09:00:00+08:00 [INFO] [pins] event=pins.memory module=capture reason=destroyed count=0 rgba_bytes=0 image=private";
+        assert_eq!(
+            sanitize(line).unwrap().message,
+            "event=pins.memory reason=destroyed count=0 rgba_bytes=0"
+        );
+        let invalid = line
+            .replace("reason=destroyed", "reason=private")
+            .replace("count=0", "count=-1")
+            .replace("rgba_bytes=0", "rgba_bytes=NaN");
+        assert_eq!(sanitize(&invalid).unwrap().message, "event=pins.memory");
+    }
     #[test]
     fn rejects_paths_and_legacy_secrets() {
         for name in [

@@ -29,6 +29,7 @@ pub const EVENTS: &[&str] = &[
     "ocr.engine_ready",
     "ocr.failed",
     "ocr.finished",
+    "pins.memory",
     "recording.finished",
     "recording.input_restore_failed",
     "recording.recovery_retained",
