@@ -15,7 +15,6 @@ import { api, desktop, onDelay, onError, onSettingsChanged, onClipboardOpen, typ
 import { defaultSettings, exportFilenamePreview, validateExportSettings, validateShortcuts, shortcutActions, needsOnboarding } from '@/lib/settings'
 import { errorMessage } from '@/lib/errors'
 import AppearanceSettings from '@/components/AppearanceSettings.vue'
-import PrivacyGuide from '@/components/PrivacyGuide.vue'
 import { applyAppearance, type Appearance } from '@/lib/appearance'
 
 const page = ref('截图')
@@ -175,7 +174,7 @@ onUnmounted(() => { disposed = true; disposers.splice(0).forEach(off => off()) }
         <div v-if="status?.configWarning" class="notice" role="alert">{{ status.configWarning }}</div>
         <div v-if="remaining > 0" class="notice flex items-center justify-between" role="status"><span>{{ remaining }} {{ t('秒后截图，可切换到目标窗口；再次按截图快捷键可取消。') }}</span><Button variant="outline" @click="cancelPending">{{ t('取消截图') }}</Button></div>
 
-        <OnboardingGuide v-if="onboarding && status" :settings="status.settings" :platform="status.platform" :busy="completingOnboarding" @complete="completeOnboarding" @navigate="page = $event" />
+        <OnboardingGuide v-if="onboarding && status" :settings="status.settings" :busy="completingOnboarding" @complete="completeOnboarding" @navigate="page = $event" />
         <template v-if="page === '截图'">
           <section class="capture-panel" aria-label="截图操作">
             <div class="capture-controls">
@@ -206,11 +205,9 @@ onUnmounted(() => { disposed = true; disposers.splice(0).forEach(off => off()) }
           <AppearanceSettings :busy="locked" @save="saveAppearance" />
           <span v-if="savedSection === '通用'" class="status-ok" role="status">{{ t('已保存') }}</span>
           <GeneralSettings />
-          <PrivacyGuide :platform="status?.platform" />
         </template>
         <AiProviderSettings v-else-if="page === '识别与翻译'" />
         <template v-else-if="page === '帮助'">
-          <PrivacyGuide :platform="status?.platform" />
           <Button :disabled="!status || completingOnboarding" @click="onboarding = true">{{ t('重新打开新手引导') }}</Button>
         </template>
         <RecordingPanel v-else-if="page === '录屏'" />
