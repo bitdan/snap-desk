@@ -1,10 +1,20 @@
 import { describe, expect, it, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 const invoke = vi.hoisted(() => vi.fn())
+const listen = vi.hoisted(() => vi.fn())
 vi.mock('@tauri-apps/api/core', () => ({ invoke, isTauri: () => true }))
-vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn() }))
-import { api } from '../src/lib/api'
+vi.mock('@tauri-apps/api/event', () => ({ listen }))
+import { api, onCaptureClosed } from '../src/lib/api'
 import { ipcCommands } from '../src/lib/ipc-commands'
+
+it('将原生会话关闭编号交给前端释放图片，并返回取消订阅函数', async () => {
+  const off = vi.fn(), closed = vi.fn()
+  listen.mockResolvedValueOnce(off)
+  expect(await onCaptureClosed(closed)).toBe(off)
+  expect(listen.mock.calls.at(-1)?.[0]).toBe('capture-closed')
+  listen.mock.calls.at(-1)?.[1]({ payload: 42 })
+  expect(closed).toHaveBeenCalledWith(42)
+})
 
 describe('原生窗口截图 IPC', () => {
   it('提交会话和候选序号，返回新的冻结画面，不向前端暴露 HWND', async () => {

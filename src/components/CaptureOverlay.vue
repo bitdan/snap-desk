@@ -6,7 +6,7 @@ import TranslationPanel from './TranslationPanel.vue'
 import type { OcrResult } from '@/lib/ai'
 import { computed, nextTick, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue'
 import { Copy, Save, X, Monitor, RotateCcw, Scan, Move, Pin, Video, QrCode, ScanText, Languages, AppWindow } from 'lucide-vue-next'
-import { api, onFrame, onCapturePin, onScroll, type CaptureFrame, type ColorFormat, type ScrollView, type ScrollMode, type ScrollBackground, type QrResult } from '@/lib/api'
+import { api, onFrame, onCaptureClosed, onCapturePin, onScroll, type CaptureFrame, type ColorFormat, type ScrollView, type ScrollMode, type ScrollBackground, type QrResult } from '@/lib/api'
 import { clamp, move, normalize, resize, toPixels, nudgeSelection, type Handle, type Point, type Rect } from '@/lib/selection'
 import { useAnnotations, type AnnotationTool } from '@/lib/use-annotations'
 import AnnotationSurface from './AnnotationSurface.vue'
@@ -39,7 +39,8 @@ const hoverStyle = computed(() => {
 async function captureNative() {
   if (!frame.value || selectedTarget.value === null || busy.value || marked.value) return
   busy.value = true; error.value = ''
-  try { frame.value = await api.nativeWindow(frame.value.id, selectedTarget.value) }
+  const id = frame.value.id
+  try { const next = await api.nativeWindow(id, selectedTarget.value); if (!disposed && frame.value?.id === id) frame.value = next }
   catch (e) { error.value = String(e) }
   finally { busy.value = false }
 }
@@ -131,6 +132,9 @@ const handles: Handle[] = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w']
 // 手势使用响应式状态，工具栏在框选、移动或缩放结束后才显示。
 const gesture = shallowRef<{ start: Point; initial: Rect; mode: 'draw' | 'move' | Handle; target: number | null } | null>(null)
 let off: (() => void) | undefined
+let offClosed: (() => void) | undefined
+// current() 的旧响应或迟到 ready 事件不能让已关闭的大图重新驻留。
+let closedThroughId = 0
 let offScroll: (() => void) | undefined
 let offPin: (() => void) | undefined
 let disposed = false
@@ -196,12 +200,16 @@ function receiveScroll(value: ScrollView) {
   else scroll.value = next
 }
 /** 只在后端确认结束后调用；保存取消或失败时保留标注及撤销栈。 */
-function releaseFrame() {
+function releaseFrame(id = frame.value?.id) {
+  if (id !== undefined) closedThroughId = Math.max(closedThroughId, id)
+  // 旧导出响应可能晚于新截图 ready 到达，不能清掉新会话。
+  if (frame.value && frame.value.id !== id) return
   frame.value = null
   editor.reset()
   selection.value = null; gesture.value = null; pointer.value = null
   imageReady.value = false; selectedTarget.value = null; annotating.value = false
   qrResult.value = null; ocrResult.value = null
+  ocrDraft.value = ''; recordingSetup.value = false
 }
 function scrollClosed() { scroll.value = null; releaseFrame() }
 async function startScroll() {
@@ -215,8 +223,9 @@ async function startScroll() {
 /** 使用与截图相同的原图像素选区，成功后录屏后端接管会话及快捷键。 */
 async function startRecording() {
   if (!frame.value || !pixels.value || !valid.value || busy.value || marked.value || editor.pending || editor.interacting || gesture.value) return
+  const id = frame.value.id
   busy.value = true; error.value = ''
-  try { await api.startRecording(frame.value.id, pixels.value, recordingConfig(pixels.value, recordingFps.value, captureCursor.value, recordingCountdown.value, recordingEncoding.value, recordingQuality.value, recordingEffects.value, recordingFormat.value === 'gif' ? null : recordingBitrate(recordingMbps.value), recordingFormat.value, recordingSystemAudio.value && !!recordingCapabilities.value?.systemAudio, recordingMicrophone.value && !!recordingCapabilities.value?.microphone)); recordingSetup.value = false; releaseFrame() }
+  try { await api.startRecording(id, pixels.value, recordingConfig(pixels.value, recordingFps.value, captureCursor.value, recordingCountdown.value, recordingEncoding.value, recordingQuality.value, recordingEffects.value, recordingFormat.value === 'gif' ? null : recordingBitrate(recordingMbps.value), recordingFormat.value, recordingSystemAudio.value && !!recordingCapabilities.value?.systemAudio, recordingMicrophone.value && !!recordingCapabilities.value?.microphone)); releaseFrame(id) }
   catch (e) { error.value = String(e) }
   finally { busy.value = false }
 }
@@ -273,7 +282,10 @@ function up(e: PointerEvent) {
 }
 function abortGesture() { gesture.value = null }
 function selectAll() { selectedTarget.value = null; if (!busy.value && !marked.value && !editor.interacting) { editor.reset(); selection.value = { x: 0, y: 0, ...viewport.value }; void selectedRecordingRegion() } }
-function receive(value: CaptureFrame) { busy.value = false; reselect(); windowsOnly.value = false; scroll.value = null; recordingSetup.value = false; imageReady.value = false; frame.value = value }
+function receive(value: CaptureFrame) {
+  if (disposed || value.id <= closedThroughId || (frame.value && value.id < frame.value.id)) return
+  busy.value = false; reselect(); windowsOnly.value = false; scroll.value = null; recordingSetup.value = false; imageReady.value = false; frame.value = value
+}
 async function loaded() {
   if (!frame.value) return
   imageReady.value = true
@@ -281,21 +293,23 @@ async function loaded() {
 }
 async function cancel() {
   if (!frame.value || busy.value || editor.pending) return
+  const id = frame.value.id
   busy.value = true
-  try { await api.cancel(frame.value.id); releaseFrame() } catch (e) { error.value = String(e) }
+  try { await api.cancel(id); releaseFrame(id) } catch (e) { error.value = String(e) }
   finally { busy.value = false }
 }
 async function finish(action: 'copy' | 'save' | 'pin') {
   if (!frame.value || !valid.value || !pixels.value || busy.value || qrResult.value || ocrResult.value !== null || editor.pending || editor.interacting || gesture.value) return
+  const id = frame.value.id
   busy.value = true; error.value = ''
   try {
     // 保存调用前的快照；取消对话框或导出失败均不覆盖上次成功的范围。
     const image = { width: frame.value.width, height: frame.value.height, layoutKey: frame.value.layoutKey }
     const rect = { ...pixels.value }
-    const result = await api[action](frame.value.id, rect, editor.history.present)
+    const result = await api[action](id, rect, editor.history.present)
     if (result !== false) {
       recentSelection.value = writeRecentSelection(rect, image)
-      releaseFrame()
+      releaseFrame(id)
     }
   } catch (e) { error.value = String(e) }
   finally { busy.value = false }
@@ -353,6 +367,11 @@ onMounted(async () => {
     .catch(e => { if (!disposed) recordingCapabilityError.value = String(e) })
   window.addEventListener('keydown', key); window.addEventListener('keyup', keyUp); window.addEventListener('resize', resized)
   try {
+    offClosed = await onCaptureClosed(id => {
+      closedThroughId = Math.max(closedThroughId, id)
+      if (frame.value?.id === id) { scroll.value = null; releaseFrame() }
+    })
+    if (disposed) { offClosed(); return }
     off = await onFrame(receive)
     if (disposed) { off(); return }
     offScroll = await onScroll(receiveScroll)
@@ -368,7 +387,7 @@ onMounted(async () => {
     if (currentScroll && !disposed) receiveScroll(currentScroll)
   } catch (e) { error.value = String(e) }
 })
-onUnmounted(() => { releaseFrame(); disposed = true; off?.(); offScroll?.(); offPin?.(); window.removeEventListener('keydown', key); window.removeEventListener('keyup', keyUp); window.removeEventListener('resize', resized) })
+onUnmounted(() => { releaseFrame(); disposed = true; offClosed?.(); off?.(); offScroll?.(); offPin?.(); window.removeEventListener('keydown', key); window.removeEventListener('keyup', keyUp); window.removeEventListener('resize', resized) })
 </script>
 
 <template>

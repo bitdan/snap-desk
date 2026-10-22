@@ -243,18 +243,31 @@ fn frame(label: &str, pin: &Pin) -> Result<PinFrame, String> {
     pin.image
         .write_to(&mut png, image::ImageFormat::Png)
         .map_err(err)?;
+    // 直接写入最终字符串，避免 base64 临时字符串与 format! 结果同时驻留。
+    let png = png.into_inner();
+    let prefix = "data:image/png;base64,";
+    let mut data_url = String::with_capacity(prefix.len() + png.len().div_ceil(3) * 4);
+    data_url.push_str(prefix);
+    STANDARD.encode_string(&png, &mut data_url);
     Ok(PinFrame {
         label: label.into(),
         width: pin.image.width(),
         height: pin.image.height(),
-        data_url: format!(
-            "data:image/png;base64,{}",
-            STANDARD.encode(png.into_inner())
-        ),
+        data_url,
         view: pin.view.clone(),
         transparency_supported: !cfg!(target_os = "macos"),
         annotations: pin.annotations.clone(),
     })
+}
+
+/// 变换/编码期间用户可能关闭窗口；只替换仍存在的贴图，禁止重新插入无窗口的大图。
+fn commit_transformed_pin(
+    images: &mut BTreeMap<String, Pin>,
+    label: &str,
+    pin: Pin,
+) -> Result<(), String> {
+    *images.get_mut(label).ok_or("贴图已关闭。")? = pin;
+    Ok(())
 }
 fn validate_capacity(width: u32, height: u32, count: usize, used: u64) -> Result<(), String> {
     let pixels = u64::from(width) * u64::from(height);
@@ -859,11 +872,7 @@ pub async fn transform_pin(
         pin.image = pin.transformed_image(action);
         crate::annotations::validate(&pin.annotations, pin.image.width(), pin.image.height())?;
         let result = frame(window.label(), &pin)?;
-        state
-            .images
-            .lock()
-            .map_err(err)?
-            .insert(window.label().into(), pin);
+        commit_transformed_pin(&mut *state.images.lock().map_err(err)?, window.label(), pin)?;
         if let Ok(images) = state.images.lock() {
             log_retained(&images, "transformed");
         }
@@ -982,6 +991,33 @@ pub async fn pin_action(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn closed_pin_is_not_resurrected_by_an_in_flight_transform() {
+        let mut images = BTreeMap::new();
+        let pin = grouped_pin("");
+        let original = Arc::downgrade(&pin.original);
+        images.insert("pin-1".into(), pin.clone());
+        let mut transformed = pin;
+        transformed.image = transformed.transformed_image(Transform::Invert);
+        let pixels = Arc::downgrade(&transformed.image);
+        // 模拟变换拿到 Arc 快照后，窗口销毁回调先移除了管理表中的贴图。
+        images.remove("pin-1");
+        assert!(commit_transformed_pin(&mut images, "pin-1", transformed).is_err());
+        assert!(images.is_empty());
+        assert!(pixels.upgrade().is_none());
+        assert!(original.upgrade().is_none());
+    }
+
+    #[test]
+    fn open_pin_accepts_transform_and_releases_previous_pixels() {
+        let mut images = BTreeMap::new();
+        images.insert("pin-1".into(), grouped_pin(""));
+        let previous = Arc::downgrade(&images["pin-1"].image);
+        commit_transformed_pin(&mut images, "pin-1", grouped_pin("new")).unwrap();
+        assert_eq!(images["pin-1"].group, "new");
+        assert!(previous.upgrade().is_none());
+    }
+
     #[test]
     fn pixel_budget_counts_unique_buffers_and_reset_reuses_original() {
         let mut pin = grouped_pin("");

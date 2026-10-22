@@ -491,7 +491,16 @@ fn cleanup(app: &AppHandle) -> Result<(), String> {
     state.scroll_stop.store(true, Ordering::SeqCst);
     state.scroll_collecting.store(false, Ordering::SeqCst);
     *state.scroll.lock().map_err(err)? = None;
-    *state.session.lock().map_err(err)? = None;
+    let session = state.session.lock().map_err(err)?.take();
+    let closed_id = session.as_ref().map(|session| session.frame.id);
+    // 先释放原生 RGBA/PNG，再通知常驻 WebView 清空图片和标注历史。
+    // 关闭窗口/全局取消也会经过这里，不能只依赖前端按钮的成功回调。
+    drop(session);
+    if let Some(id) = closed_id {
+        if let Err(error) = app.emit_to("capture", "capture-closed", id) {
+            log::warn!("通知截图窗口释放会话 {id} 失败: {error}");
+        }
+    }
     state.active.store(false, Ordering::SeqCst);
     Ok(())
 }
@@ -847,7 +856,9 @@ mod tests {
             image::Rgba([x as u8 * 13, y as u8 * 27, 123, (x + y) as u8 * 9])
         });
         let url = preview_data_url(&image).unwrap();
-        let bytes = STANDARD.decode(url.strip_prefix("data:image/png;base64,").unwrap()).unwrap();
+        let bytes = STANDARD
+            .decode(url.strip_prefix("data:image/png;base64,").unwrap())
+            .unwrap();
         let decoded = image::load_from_memory(&bytes).unwrap().to_rgba8();
         assert_eq!(decoded, image);
     }
