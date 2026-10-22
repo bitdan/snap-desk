@@ -1,6 +1,9 @@
 //! 稀疏二维画布：256² 图块、逐像素覆盖位、负坐标和有界空间锚点。
 //! 快照共享 Arc，只有新增像素所在图块执行写时复制；预览直接取样图块。
-use super::matcher::{alignment_in, verify_at, Alignment, Bounds, Content, Match, ScrollMode};
+use super::matcher::{
+    alignment_in, stationary_overlay_conflict, verify_at, Alignment, Bounds, Content, Match,
+    ScrollMode,
+};
 use image::{Rgba, RgbaImage};
 use std::{
     collections::{HashMap, VecDeque},
@@ -156,7 +159,26 @@ impl Stitch {
     }
 
     pub fn consider(&mut self, image: impl Into<Arc<RgbaImage>>) -> Result<Match, String> {
+        self.consider_recoverable(image).map(|(result, _)| result)
+    }
+
+    /// 恢复层区分“暂时缺少重叠”与“已发现屏幕固定遮挡”。后者不能缓存重放，
+    /// 否则隐藏控件后的新视口可能不再提供静止对照，把问题帧重新补进画布。
+    pub(super) fn consider_recoverable(
+        &mut self,
+        image: impl Into<Arc<RgbaImage>>,
+    ) -> Result<(Match, bool), String> {
         let image = image.into();
+        let mut cacheable = true;
+        let result = self.consider_impl(image, &mut cacheable)?;
+        Ok((result, cacheable))
+    }
+
+    fn consider_impl(
+        &mut self,
+        image: Arc<RgbaImage>,
+        cacheable: &mut bool,
+    ) -> Result<Match, String> {
         if image.dimensions() != self.last().dimensions() {
             return Err("采集区域尺寸发生变化，请重新开始滚动截图。".into());
         }
@@ -246,6 +268,12 @@ impl Stitch {
         if (self.mode == ScrollMode::Vertical && result.dx != 0)
             || (self.mode == ScrollMode::Horizontal && result.dy != 0)
         {
+            return Ok(Match::Uncertain);
+        }
+        // 最终位移必须同时满足最新视口的屏幕固定纹理检查。放在统一提交入口，
+        // 避免历史锚点搜索或已知位移快速复核绕过它；拒绝时尚未修改任何状态。
+        if stationary_overlay_conflict(self.last(), &image, result.content, result.dx, result.dy) {
+            *cacheable = false;
             return Ok(Match::Uncertain);
         }
         let next = Anchor { image, x, y };

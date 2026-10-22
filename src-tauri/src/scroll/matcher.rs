@@ -126,6 +126,57 @@ fn texture(image: &RgbaImage, x: u32, y: u32) -> bool {
         .any(|&(dx, dy)| (0..3).any(|c| p[c].abs_diff(image.get_pixel(x + dx, y + dy)[c]) > 20))
 }
 
+/// 检查正文中是否存在随屏幕静止、却不服从文档位移的纹理小块。
+/// 仅凭大多数重叠像素一致不能安全写入整帧：悬浮按钮可能位于新增条带，
+/// 根本不参加重叠复核。这里扫描整个有效内容区，发现冲突就保留可信画布。
+/// 这不是控件识别器；不尝试猜测遮挡下的正文，也不放宽动画的匹配阈值。
+pub(super) fn stationary_overlay_conflict(
+    a: &RgbaImage,
+    b: &RgbaImage,
+    roi: Content,
+    dx: i32,
+    dy: i32,
+) -> bool {
+    if dx == 0 && dy == 0 {
+        return false;
+    }
+    // 每隔 8 像素检查一个 5×5 小块的九个点。先比较屏幕同位置，通常首点
+    // 就能排除正常正文；只有九点均静止且有纹理时才检查文档坐标。
+    for y in (roi.top..roi.bottom.saturating_sub(4)).step_by(8) {
+        for x in (roi.left..roi.right.saturating_sub(4)).step_by(8) {
+            let stationary = (0..=4).step_by(2).all(|oy| {
+                (0..=4)
+                    .step_by(2)
+                    .all(|ox| difference(a, b, x + ox, y + oy, x + ox, y + oy) <= 6)
+            });
+            if !stationary || !texture(b, x, y) {
+                continue;
+            }
+            let mut conflicts = 0;
+            for oy in (0..=4).step_by(2) {
+                for ox in (0..=4).step_by(2) {
+                    let ax = i64::from(x + ox) + i64::from(dx);
+                    let ay = i64::from(y + oy) + i64::from(dy);
+                    // 位移后的点在旧内容区之外时也算冲突：否则新增条带内的
+                    // 悬浮按钮会绕过检查。空白块没有纹理，不会走到这里。
+                    if ax < i64::from(roi.left)
+                        || ax >= i64::from(roi.right)
+                        || ay < i64::from(roi.top)
+                        || ay >= i64::from(roi.bottom)
+                        || difference(a, b, ax as u32, ay as u32, x + ox, y + oy) > 36
+                    {
+                        conflicts += 1;
+                    }
+                }
+            }
+            if conflicts >= 5 {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 /// 小纹理块哈希只用于提名，不作为匹配结论。索引最多 400 个采样块，避免按屏幕像素建表。
 fn fingerprint(image: &RgbaImage, x: u32, y: u32) -> u64 {
     let mut hash = 0xcbf29ce484222325u64;

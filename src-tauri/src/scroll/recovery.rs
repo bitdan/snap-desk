@@ -32,18 +32,23 @@ impl Recovery {
         let image = image.into();
         self.recent.expire(now);
         // 图像、可信画布版本和五秒有效期都不变时，不再反复搜索同一失败帧。
-        let result = if self.failed_revision == Some(stitch.match_revision())
+        let (result, cacheable) = if self.failed_revision == Some(stitch.match_revision())
             && self.recent.latest_matches(&image)
         {
-            Match::Uncertain
+            (Match::Uncertain, true)
         } else {
-            stitch.consider(image.clone())?
+            stitch.consider_recoverable(image.clone())?
         };
         match result {
             Match::Uncertain => {
                 self.failures = self.failures.saturating_add(1);
                 self.failed_revision = Some(stitch.match_revision());
-                self.recent.remember(image, now);
+                if cacheable {
+                    self.recent.remember(image, now);
+                } else {
+                    // 已发现遮挡时清空旧候选，避免同一遮挡的早期帧绕过新检查。
+                    self.recent = FrameCache::default();
+                }
             }
             Match::Aligned(_) => {
                 self.failures = 0;
@@ -55,7 +60,8 @@ impl Recovery {
                     let mut advanced = false;
                     for index in 0..self.recent.len() {
                         let candidate = self.recent.candidate(index);
-                        if matches!(stitch.consider(candidate)?, Match::Aligned(_)) {
+                        let (replayed, cacheable) = stitch.consider_recoverable(candidate)?;
+                        if matches!(replayed, Match::Aligned(_)) || !cacheable {
                             self.recent.remove(index);
                             advanced = true;
                             break;
@@ -104,6 +110,42 @@ impl Recovery {
 mod tests {
     use super::*;
     use image::Rgba;
+
+    #[test]
+    fn detected_overlay_is_not_replayed_after_it_disappears() {
+        let doc = RgbaImage::from_fn(400, 400, |x, y| {
+            let v = (x.wrapping_mul(73856093) ^ y.wrapping_mul(19349663)).wrapping_mul(83492791);
+            Rgba([v as u8, (v >> 8) as u8, (v >> 16) as u8, 255])
+        });
+        let frame = |y| image::imageops::crop_imm(&doc, 0, y, 160, 160).to_image();
+        let overlay = |mut image: RgbaImage| {
+            for y in 136..152 {
+                for x in 136..152 {
+                    image.put_pixel(x, y, *doc.get_pixel(x + 200, y + 200));
+                }
+            }
+            image
+        };
+        let mut stitch = Stitch::new(overlay(frame(0))).unwrap();
+        let before = stitch.compose();
+        let mut recovery = Recovery::default();
+        assert_eq!(
+            recovery.consider(&mut stitch, overlay(frame(40))).unwrap(),
+            Match::Uncertain
+        );
+        assert!(recovery.is_recovering());
+        assert_eq!(recovery.recent.len(), 0);
+        assert_eq!(stitch.compose(), before);
+        assert!(matches!(
+            recovery.consider(&mut stitch, frame(20)).unwrap(),
+            Match::Aligned(_)
+        ));
+        // 若被拒绝的 y=40 帧仍在缓存，会再次匹配并把成图错误扩到 200 高。
+        assert_eq!(stitch.height, 180);
+        assert_eq!(stitch.viewport().y, 20);
+        assert!(!recovery.is_recovering());
+        assert_eq!(recovery.recent.len(), 0);
+    }
 
     #[test]
     fn returning_to_last_confirmed_frame_resumes_without_growing_canvas() {

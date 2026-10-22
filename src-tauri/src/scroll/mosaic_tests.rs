@@ -262,6 +262,68 @@ fn unsupported_motion_patterns_and_size_changes_do_not_modify_canvas() {
     assert_eq!(stitch.consider(split).unwrap(), Match::Uncertain);
     assert_eq!(stitch.compose(), before);
 }
+
+#[test]
+fn stationary_floating_texture_cannot_enter_new_strips() {
+    let doc = document();
+    for (dx, dy) in [(40, 0), (0, 40), (40, 40), (-40, 0), (0, -40)] {
+        // 控件只占 1% 画面，旧的多数像素投票足以放行；至少一个方向
+        // 将它放在新覆盖条带，专门验证不能只检查重叠矩形。
+        let px = if dx < 0 { 8 } else { 136 };
+        let py = if dy < 0 { 8 } else { 136 };
+        let overlay = |x, y| {
+            let mut image = frame(&doc, x, y);
+            for oy in 0..16 {
+                for ox in 0..16 {
+                    image.put_pixel(px + ox, py + oy, *doc.get_pixel(400 + ox, 400 + oy));
+                }
+            }
+            image
+        };
+        let first = overlay(200, 200);
+        let next = overlay((200 + dx) as u32, (200 + dy) as u32);
+        // 明确锁定漏洞前提：常规匹配能定位正文，并不意味着整帧都可写入。
+        moved(
+            alignment_in(&first, &next, ScrollMode::Auto, Content::full(&first)),
+            dx,
+            dy,
+        );
+        let mut stitch = Stitch::new(first).unwrap();
+        let before = stitch.clone();
+        assert_eq!(stitch.consider(next).unwrap(), Match::Uncertain);
+        assert_eq!(stitch.compose(), before.compose());
+        assert_eq!(stitch.viewport(), before.viewport());
+        assert_eq!(stitch.covered, before.covered);
+        assert_eq!(stitch.count(), before.count());
+        assert_eq!(stitch.match_revision(), before.match_revision());
+        assert_eq!(stitch.anchors.len(), before.anchors.len());
+        // 隐藏控件后仍可从可信起点接续，不会被拒绝帧改变位置。
+        moved(
+            stitch
+                .consider(frame(&doc, (200 + dx) as u32, (200 + dy) as u32))
+                .unwrap(),
+            dx,
+            dy,
+        );
+    }
+}
+
+#[test]
+fn document_attached_texture_is_not_a_stationary_overlay() {
+    let doc = document();
+    let roi = Content::full(&frame(&doc, 200, 200));
+    for (dx, dy) in [(1, 0), (0, 1), (40, 40), (-40, 0), (0, -40)] {
+        assert!(!stationary_overlay_conflict(
+            &frame(&doc, 200, 200),
+            &frame(&doc, (200 + dx) as u32, (200 + dy) as u32),
+            roi,
+            dx,
+            dy,
+        ));
+    }
+    let blank = RgbaImage::from_pixel(160, 160, Rgba([250, 250, 250, 255]));
+    assert!(!stationary_overlay_conflict(&blank, &blank, roi, 40, 40));
+}
 #[test]
 fn repeated_grid_is_not_position_evidence() {
     let repeat = RgbaImage::from_fn(160, 320, |x, y| {
