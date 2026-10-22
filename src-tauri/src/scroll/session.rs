@@ -56,7 +56,7 @@ pub enum ExportBackground {
 
 #[derive(Clone)]
 pub(in crate::capture) struct ScrollSession {
-    id: u64,
+    pub(in crate::capture) id: u64,
     revision: u64,
     rect: Rect,
     screen: Screen,
@@ -146,6 +146,10 @@ pub fn control_scroll(
 /// 后台直接落盘并复制。匹配不可靠的候选帧不会进入成图，不要求用户修接缝。
 fn complete(app: &AppHandle, id: u64, message: &str) -> Result<(), String> {
     let state = app.state::<CaptureState>();
+    // 取消无需分配最多 3200 万像素的连续导出画布。
+    if state.scroll_cancel.load(Ordering::SeqCst) {
+        return close_session(app, id);
+    }
     let snapshot = {
         let mut guard = state.scroll.lock().map_err(err)?;
         let Some(s) = guard.as_mut().filter(|s| s.id == id) else {
@@ -538,6 +542,9 @@ pub async fn start_scroll(
             let _ = window.show();
             return Err(error);
         }
+        // 后续匹配仅使用选区帧/图块；不再常驻整桌面的 RGBA 和 Base64。
+        // Operation 在本闭包结束前仍被持有，采集线程不会抢先结束会话。
+        super::super::release_selection(&app, id)?;
         log::info!(
             "event=scroll.started module=scroll op=scroll-{id} width={} height={}",
             result.width,

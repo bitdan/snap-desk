@@ -2,7 +2,7 @@
 use image::{ImageFormat, RgbaImage};
 use std::{
     fs,
-    io::{Cursor, Write},
+    io::Write,
     path::PathBuf,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -46,22 +46,25 @@ impl Writer {
     }
     /// 文件名只由后端编号生成；限额到达时暂停，避免无限写盘。
     pub fn frame(&mut self, image: &RgbaImage) -> Result<(), String> {
-        let mut bytes = Cursor::new(Vec::new());
-        image.write_to(&mut bytes, ImageFormat::Png).map_err(err)?;
-        let bytes = bytes.into_inner();
-        if self.count >= 128 || self.bytes + bytes.len() as u64 > 512 * 1024 * 1024 {
+        if self.count >= 128 {
+            return Err("原始帧存档达到 128 帧 / 512 MiB 上限，请保存当前结果。".into());
+        }
+        // PNG 直接编码到同目录临时文件，不在 RGBA 之外再保留整份压缩字节。
+        // 编码/限额/同步失败由 NamedTempFile 清理，不能留下半张正式 PNG。
+        let mut file = tempfile::Builder::new()
+            .prefix(".frame-")
+            .tempfile_in(&self.path)
+            .map_err(err)?;
+        image.write_to(&mut file, ImageFormat::Png).map_err(err)?;
+        let bytes = file.as_file().metadata().map_err(err)?.len();
+        if self.bytes + bytes > 512 * 1024 * 1024 {
             return Err("原始帧存档达到 128 帧 / 512 MiB 上限，请保存当前结果。".into());
         }
         let name = format!("{:04}.png", self.count);
-        let mut file = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(self.path.join(&name))
-            .map_err(err)?;
-        file.write_all(&bytes).map_err(err)?;
-        file.sync_all().map_err(err)?;
+        file.as_file().sync_all().map_err(err)?;
+        file.persist_noclobber(self.path.join(&name)).map_err(err)?;
         self.count += 1;
-        self.bytes += bytes.len() as u64;
+        self.bytes += bytes;
         self.record(serde_json::json!({"event":"frame", "file":name}))
     }
 }
@@ -96,7 +99,9 @@ impl Archive {
                     };
                     if let Err(_error) = result {
                         failure.store(true, Ordering::Release);
-                        log::warn!("event=scroll.archive_failed module=scroll code=ARCHIVE_WRITE_FAILED");
+                        log::warn!(
+                            "event=scroll.archive_failed module=scroll code=ARCHIVE_WRITE_FAILED"
+                        );
                         break;
                     }
                 }
@@ -131,6 +136,34 @@ fn err(e: impl std::fmt::Display) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn streamed_archive_preserves_pixels_and_cleans_failed_output() {
+        let root = tempfile::tempdir().unwrap();
+        let mut writer = Writer {
+            path: root.path().into(),
+            count: 0,
+            bytes: 0,
+        };
+        let image = RgbaImage::from_pixel(32, 64, image::Rgba([12, 34, 56, 255]));
+        writer.frame(&image).unwrap();
+        let path = root.path().join("0000.png");
+        assert_eq!(image::open(&path).unwrap().into_rgba8(), image);
+        assert_eq!(writer.bytes, fs::metadata(&path).unwrap().len());
+        writer.bytes = 512 * 1024 * 1024;
+        assert!(writer.frame(&image).is_err());
+        assert_eq!(writer.count, 1);
+        assert!(!root.path().join("0001.png").exists());
+        assert!(fs::read_dir(root.path()).unwrap().all(|entry| !entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".frame-")));
+        writer.bytes = 0;
+        writer.count = 0;
+        assert!(writer.frame(&image).is_err(), "已有存档不能被覆盖");
+        assert_eq!(image::open(path).unwrap().into_rgba8(), image);
+    }
+
     #[test]
     fn bounded_archive_never_waits_when_disk_worker_is_busy() {
         let (sender, receiver) = mpsc::sync_channel(2);

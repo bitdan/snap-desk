@@ -216,7 +216,13 @@ async function startScroll() {
   if (!frame.value || !pixels.value || !valid.value || busy.value || marked.value || editor.pending || editor.interacting || gesture.value) return
   busy.value = true; error.value = ''
   // 滚动截图仅输出拼接结果；排错使用应用日志，不再额外保存原始帧。
-  try { receiveScroll(await api.startScroll(frame.value.id, pixels.value, false, scrollMode.value, scrollBackground.value)) }
+  const id = frame.value.id
+  try {
+    await api.startScroll(id, pixels.value, false, scrollMode.value, scrollBackground.value)
+    // 独立预览窗口接管进度；隐藏浮层不保留整桌面图片或标注历史。
+    releaseFrame(id)
+    if (!frame.value) scroll.value = null
+  }
   catch (e) { error.value = String(e) }
   finally { busy.value = false }
 }

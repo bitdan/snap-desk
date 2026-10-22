@@ -1,5 +1,11 @@
 import type { ScrollView } from './api'
 
+/** 常驻预览窗口拒绝已关闭会话的迟到事件和查询响应，避免隐藏后重新持有图片。 */
+export function newerScrollPreview(current: ScrollView | null, next: ScrollView, closedThroughId: number): ScrollView | null {
+  if (next.id <= closedThroughId || (current && next.id < current.id)) return current
+  return newerScroll(current, next, next.id)
+}
+
 /** 同一会话只接受更新版本，防止“开始”响应迟于“已经暂停”事件到达。 */
 export function newerScroll(current: ScrollView | null, next: ScrollView, captureId: number | undefined): ScrollView | null {
   if (next.id !== captureId) return current

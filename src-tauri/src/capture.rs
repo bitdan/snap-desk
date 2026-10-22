@@ -490,15 +490,19 @@ fn cleanup(app: &AppHandle) -> Result<(), String> {
     let state = app.state::<CaptureState>();
     state.scroll_stop.store(true, Ordering::SeqCst);
     state.scroll_collecting.store(false, Ordering::SeqCst);
-    *state.scroll.lock().map_err(err)? = None;
+    let scroll_id = state.scroll.lock().map_err(err)?.take().map(|s| s.id);
     let session = state.session.lock().map_err(err)?.take();
     let closed_id = session.as_ref().map(|session| session.frame.id);
     // 先释放原生 RGBA/PNG，再通知常驻 WebView 清空图片和标注历史。
     // 关闭窗口/全局取消也会经过这里，不能只依赖前端按钮的成功回调。
     drop(session);
-    if let Some(id) = closed_id {
+    if let Some(id) = closed_id.or(scroll_id) {
         if let Err(error) = app.emit_to("capture", "capture-closed", id) {
             log::warn!("通知截图窗口释放会话 {id} 失败: {error}");
+        }
+        // 辅助 WebView 常驻隐藏；结束/取消后也必须释放其缩略图。
+        for label in ["scroll-preview", "scroll-controls"] {
+            let _ = app.emit_to(label, "capture-closed", id);
         }
     }
     state.active.store(false, Ordering::SeqCst);
@@ -507,14 +511,40 @@ fn cleanup(app: &AppHandle) -> Result<(), String> {
 
 fn close_session(app: &AppHandle, id: u64) -> Result<(), String> {
     let state = app.state::<CaptureState>();
-    state
+    let capture_matches = state
         .session
         .lock()
         .map_err(err)?
         .as_ref()
-        .filter(|s| s.frame.id == id)
-        .ok_or("截图已过期。")?;
+        .is_some_and(|s| s.frame.id == id);
+    // 滚动采集接管后，冻结桌面已释放；结束仍按滚动会话编号校验。
+    let scroll_matches = state
+        .scroll
+        .lock()
+        .map_err(err)?
+        .as_ref()
+        .is_some_and(|s| s.id == id);
+    if !capture_matches && !scroll_matches {
+        return Err("截图已过期。".into());
+    }
     cleanup(app)
+}
+
+/// 录屏/滚动采集准备成功后接管选区，只释放冻结桌面，不解除 active 占用。
+/// 调用方持有 Operation；失败准备仍保留截图，供用户重选或重试。
+fn release_selection(app: &AppHandle, id: u64) -> Result<(), String> {
+    let state = app.state::<CaptureState>();
+    let mut guard = state.session.lock().map_err(err)?;
+    if !guard.as_ref().is_some_and(|s| s.frame.id == id) {
+        return Err("截图已过期。".into());
+    }
+    let session = guard.take();
+    drop(guard);
+    drop(session);
+    if let Err(error) = app.emit_to("capture", "capture-closed", id) {
+        log::warn!("通知截图窗口释放选区 {id} 失败: {error}");
+    }
+    Ok(())
 }
 
 // 导出与取消互斥；Drop 在正常返回和 ? 提前返回时都会释放占用标志。
@@ -544,6 +574,7 @@ pub fn cancel_active(app: &AppHandle) -> Result<(), String> {
         .map_err(err)?
         .as_ref()
         .map(|s| s.frame.id);
+    let id = id.or(state.scroll.lock().map_err(err)?.as_ref().map(|s| s.id));
     if let Some(id) = id {
         close_session(app, id)?;
     }

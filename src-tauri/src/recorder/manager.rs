@@ -622,7 +622,7 @@ pub async fn start_recording(
             return Err(error);
         }
         // 将选区会话所有权交给录屏；active 保持 true，阻止截图/滚动截图抢占屏幕。
-        *state.session.lock().map_err(err)? = None;
+        super::release_selection(&app, id)?;
         // 工作线程从这里起拥有全局占用与统一收尾责任。
         if app.state::<ExitState>().requested.load(Ordering::SeqCst) {
             request_stop(&app, false);

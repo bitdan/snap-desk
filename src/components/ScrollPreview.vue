@@ -4,8 +4,8 @@ import { Save, X, AlertCircle } from 'lucide-vue-next'
 import { isTauri } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { resolveWindowKind } from '@/lib/window-kind'
-import { api, onScroll, type ScrollView } from '@/lib/api'
-import { scrollViewportStyle } from '@/lib/scroll-capture'
+import { api, onCaptureClosed, onScroll, type ScrollView } from '@/lib/api'
+import { newerScrollPreview, scrollViewportStyle } from '@/lib/scroll-capture'
 
 const controls = resolveWindowKind(isTauri() ? getCurrentWindow().label : null, location.search) === 'scroll-controls'
 const view = ref<ScrollView | null>(null)
@@ -16,10 +16,14 @@ const status = computed(() => busy.value ? (cancelling.value ? '正在取消…'
   : !view.value ? '准备中…' : view.value.status === 'failed' ? '输出失败' : view.value.status === 'finishing' ? '正在保存…' : view.value.status === 'recovering' ? '等待重叠' : !view.value.collecting ? '采集结束' : '自动拼接')
 const hint = computed(() => error.value || view.value?.message || '滚动后稍作停顿，等待拼接')
 let off: (() => void) | undefined
+let offClosed: (() => void) | undefined
 let disposed = false
 let updates = 0
+let closedThroughId = 0
 function receive(next: ScrollView) {
-  if (view.value && (next.id < view.value.id || (next.id === view.value.id && next.revision < view.value.revision))) return
+  if (disposed) return
+  const accepted = newerScrollPreview(view.value, next, closedThroughId)
+  if (accepted !== next) return
   updates++
   if (next.id !== view.value?.id) { busy.value = false; error.value = '' }
   view.value = next
@@ -34,6 +38,14 @@ async function finish(cancel: boolean) {
 }
 onMounted(async () => {
   try {
+    offClosed = await onCaptureClosed(id => {
+      closedThroughId = Math.max(closedThroughId, id)
+      updates++
+      if (view.value && view.value.id <= id) {
+        view.value = null; busy.value = false; error.value = ''
+      }
+    })
+    if (disposed) { offClosed(); return }
     off = await onScroll(receive)
     if (disposed) { off(); return }
     const revision = updates
@@ -41,7 +53,7 @@ onMounted(async () => {
     if (!disposed && updates === revision && current) receive(current)
   } catch (e) { error.value = String(e) }
 })
-onUnmounted(() => { disposed = true; off?.() })
+onUnmounted(() => { disposed = true; off?.(); offClosed?.() })
 </script>
 
 <template>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { newerScroll, scrollViewportStyle } from '../src/lib/scroll-capture'
+import { newerScroll, newerScrollPreview, scrollViewportStyle } from '../src/lib/scroll-capture'
 import type { ScrollView } from '../src/lib/api'
 const view: ScrollView = { id: 3, revision: 2, collecting: false,
   archivePath: null, width: 800, height: 1800, frames: 4, message: 'finished', preview: '', frameHeight: 600,
@@ -7,6 +7,14 @@ const view: ScrollView = { id: 3, revision: 2, collecting: false,
   viewportRect: { x: 0, y: 600, width: 400, height: 600 },
   coveragePercent: 80, hasHoles: true, direction: 'down', status: 'finishing' }
 describe('scroll completion state', () => {
+  it('关闭后拒绝迟到预览和挂起查询，但允许下一会话', () => {
+    expect(newerScrollPreview(null, view, 3)).toBeNull()
+    expect(newerScrollPreview(null, { ...view, revision: 99 }, 3)).toBeNull()
+    const next = { ...view, id: 4, revision: 1, collecting: true }
+    expect(newerScrollPreview(null, next, 3)).toBe(next)
+    expect(newerScrollPreview(next, { ...view, revision: 100 }, 3)).toBe(next)
+    expect(newerScrollPreview({ ...next, revision: 2 }, next, 3)?.revision).toBe(2)
+  })
   it('does not overwrite completion with a delayed start response', () => {
     expect(newerScroll(view, { ...view, revision: 1, collecting: true }, 3)).toBe(view)
   })
