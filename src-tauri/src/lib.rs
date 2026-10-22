@@ -2,6 +2,7 @@ mod annotations;
 mod ai_credentials;
 mod translation;
 mod local_translation;
+mod resource_lifecycle;
 mod translation_models;
 mod autostart;
 mod capture;
@@ -159,6 +160,7 @@ pub fn run() {
         .manage(settings::ShortcutPressState::default())
         .manage(qr::QrState::default())
         .manage(ocr::OcrState::default())
+        .manage(resource_lifecycle::ResourceLifecycle::default())
         .manage(translation::TranslationState::default())
         .manage(local_translation::LocalTranslationState::default())
         .manage(capture::recording::RecordingState::default())
@@ -237,6 +239,7 @@ pub fn run() {
                 error
             })?;
             clipboard::initialize(app.handle());
+            resource_lifecycle::initialize(app.handle());
             let capture = MenuItem::with_id(app, "capture", "开始截图", true, None::<&str>)?;
             let pin = MenuItem::with_id(app, "pin", "贴图（选区 / 剪贴板）", true, None::<&str>)?;
             let recording = MenuItem::with_id(app, "recording", "录屏", true, None::<&str>)?;
@@ -466,6 +469,7 @@ pub fn run() {
             // 录屏的退出流程完成后才收到 Exit；等待历史在途写入释放。
             if matches!(event, tauri::RunEvent::Exit) {
                 log::info!("event=app.exiting module=app");
+                resource_lifecycle::shutdown(app);
                 translation::cancel_all(app);
                 local_translation::shutdown(app);
                 app.state::<clipboard::Service>().shutdown();

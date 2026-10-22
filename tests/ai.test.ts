@@ -37,4 +37,13 @@ describe('翻译设置契约', () => {
     expect(validateAiSettings({ ...defaultAiSettings(), model: 'x\nAuthorization' })).not.toBeNull()
     expect(validateAiSettings({ ...defaultAiSettings(), model: 'x'.repeat(201) })).not.toBeNull()
   })
+  it('闲置回收默认五分钟，允许关闭且拒绝非法时长', () => {
+    expect(defaultAiSettings().localIdleSeconds).toBe(300)
+    for (const localIdleSeconds of [0, 30, 300, 3600]) {
+      expect(validateAiSettings({ ...defaultAiSettings(), localIdleSeconds })).toBeNull()
+    }
+    for (const localIdleSeconds of [-1, 1, 29, 3601, NaN, Infinity, 30.5]) {
+      expect(validateAiSettings({ ...defaultAiSettings(), localIdleSeconds })).not.toBeNull()
+    }
+  })
 })

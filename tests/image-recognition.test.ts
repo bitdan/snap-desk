@@ -1,31 +1,32 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
-const invoke = vi.hoisted(() => vi.fn().mockResolvedValue({ id: 1, links: false, items: [] }))
+const invoke = vi.hoisted(() => vi.fn())
 vi.mock('@tauri-apps/api/core', () => ({ invoke, isTauri: () => true }))
 vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn() }))
 import { api } from '../src/lib/api'
 import { ipcCommands } from '../src/lib/ipc-commands'
+import type { Annotation } from '../src/lib/annotations'
 
-describe('图片二维码及文本链接 IPC', () => {
-  it('普通截图区分二维码和 OCR 链接识别，保留裁剪及标注', async () => {
+beforeEach(() => vi.resetAllMocks())
+
+// 与 capture.rs / qr.rs 的现有命令契约对齐，不调用尚未实现的图片识别入口。
+describe('截图二维码 IPC', () => {
+  it('识别请求保留截图会话、裁剪及标注，并返回识别结果', async () => {
     const rect = { x: 1, y: 2, width: 300, height: 200 }
-    await api.recognizeQr(9, rect, [])
-    expect(invoke).toHaveBeenLastCalledWith('recognize_capture_qr', { id: 9, rect, annotations: [], links: false })
-    await api.recognizeQr(9, rect, [], true)
-    expect(invoke).toHaveBeenLastCalledWith('recognize_capture_qr', { id: 9, rect, annotations: [], links: true })
+    const annotations: Annotation[] = [{ kind: 'rectangle', start: { x: 10, y: 20 }, end: { x: 40, y: 60 }, color: '#ff0000', width: 2 }]
+    const result = { id: 9, items: [{ text: 'https://example.com/qr', url: 'https://example.com/qr' }] }
+    invoke.mockResolvedValueOnce(result)
+    expect(await api.recognizeQr(9, rect, annotations)).toEqual(result)
+    expect(invoke).toHaveBeenLastCalledWith('recognize_capture_qr', { id: 9, rect, annotations })
   })
-  it('贴图由原生窗口身份选取图片，滚动截图携带会话 ID', async () => {
-    await api.recognizePinQr(true)
-    expect(invoke).toHaveBeenLastCalledWith('recognize_pin_qr', { links: true })
-    await api.recognizeScrollQr(42)
-    expect(invoke).toHaveBeenLastCalledWith('recognize_scroll_qr', { id: 42, links: false })
-    await api.qrAction(7, 2, 'open')
-    expect(invoke).toHaveBeenLastCalledWith('qr_action', { id: 7, index: 2, action: 'open' })
+  it.each(['open', 'copy'] as const)('通过会话 ID 和结果索引执行 %s，不提交任意链接', async action => {
+    await api.qrAction(7, 2, action)
+    expect(invoke).toHaveBeenLastCalledWith('qr_action', { id: 7, index: 2, action })
   })
-  it('新入口同步原生注册和诊断白名单', () => {
+  it('二维码命令同步前端目录、原生注册和诊断白名单', () => {
     const native = readFileSync(new URL('../src-tauri/src/lib.rs', import.meta.url), 'utf8')
     const catalog = readFileSync(new URL('../src-tauri/src/diagnostics/catalog.rs', import.meta.url), 'utf8')
-    for (const command of ['recognize_pin_qr', 'recognize_scroll_qr']) {
+    for (const command of ['recognize_capture_qr', 'qr_action']) {
       expect(ipcCommands).toContain(command)
       expect(native).toContain(`::${command},`)
       expect(catalog).toContain(`"${command}",`)

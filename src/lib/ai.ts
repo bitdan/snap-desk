@@ -27,14 +27,14 @@ export interface TextSegment {
 }
 
 /** 默认本地 OCR + 离线翻译；在线服务需要显式选择和文本上传确认。 */
-export interface AiSettings { provider: 'local-ctranslate2' | 'online-llm'; endpoint: string; model: string; targetLanguage: string; timeoutSeconds: number }
+export interface AiSettings { provider: 'local-ctranslate2' | 'online-llm'; endpoint: string; model: string; targetLanguage: string; timeoutSeconds: number; localIdleSeconds: number }
 export const targetLanguages = [
   { value: 'zh-CN', label: '简体中文' }, { value: 'en', label: '英语' },
   { value: 'ja', label: '日语' }, { value: 'ko', label: '韩语' },
   { value: 'fr', label: '法语' }, { value: 'de', label: '德语' },
 ]
 export function defaultAiSettings(): AiSettings {
-  return { provider: 'local-ctranslate2', endpoint: '', model: '', targetLanguage: 'zh-CN', timeoutSeconds: 45 }
+  return { provider: 'local-ctranslate2', endpoint: '', model: '', targetLanguage: 'zh-CN', timeoutSeconds: 45, localIdleSeconds: 300 }
 }
 export function validateAiSettings(value: AiSettings): string | null {
   if (!['local-ctranslate2', 'online-llm'].includes(value.provider)) return '不支持此翻译引擎。'
@@ -50,6 +50,7 @@ export function validateAiSettings(value: AiSettings): string | null {
   if (value.model.length > 200 || /\p{Cc}/u.test(value.model)) return '模型名称无效。'
   if (!targetLanguages.some(item => item.value === value.targetLanguage)) return '不支持该目标语言。'
   if (!Number.isInteger(value.timeoutSeconds) || value.timeoutSeconds < 5 || value.timeoutSeconds > 120) return '超时必须为 5～120 秒。'
+  if (!Number.isInteger(value.localIdleSeconds) || (value.localIdleSeconds !== 0 && (value.localIdleSeconds < 30 || value.localIdleSeconds > 3600))) return '闲置回收必须为 0 或 30～3600 秒。'
   return null
 }
 export interface TranslationResult { requestId: string; translatedText: string; targetLanguage: string }

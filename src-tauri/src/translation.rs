@@ -17,6 +17,8 @@ pub struct AiSettings {
     pub model: String,
     pub target_language: String,
     pub timeout_seconds: u64,
+    /// 本地进程空闲回收秒数；0 保持缓存，旧配置默认五分钟。
+    pub local_idle_seconds: u64,
 }
 /// 区分旧字段缺失与显式选择，避免旧日语目标因本地只支持中英而使整个设置失效。
 #[derive(Deserialize)]
@@ -27,6 +29,7 @@ struct AiSettingsWire {
     model: String,
     target_language: String,
     timeout_seconds: u64,
+    local_idle_seconds: u64,
 }
 impl Default for AiSettingsWire {
     fn default() -> Self {
@@ -37,6 +40,7 @@ impl Default for AiSettingsWire {
             model: value.model,
             target_language: value.target_language,
             timeout_seconds: value.timeout_seconds,
+            local_idle_seconds: value.local_idle_seconds,
         }
     }
 }
@@ -57,6 +61,7 @@ impl From<AiSettingsWire> for AiSettings {
             model: wire.model,
             target_language: wire.target_language,
             timeout_seconds: wire.timeout_seconds,
+            local_idle_seconds: wire.local_idle_seconds,
         }
     }
 }
@@ -68,6 +73,7 @@ impl Default for AiSettings {
             model: String::new(),
             target_language: "zh-CN".into(),
             timeout_seconds: 45,
+            local_idle_seconds: 300,
         }
     }
 }
@@ -90,6 +96,9 @@ impl AiSettings {
         }
         if !(5..=120).contains(&self.timeout_seconds) {
             return Err("超时必须为 5～120 秒。".into());
+        }
+        if self.local_idle_seconds != 0 && !(30..=3600).contains(&self.local_idle_seconds) {
+            return Err("闲置回收必须为 0 或 30～3600 秒。".into());
         }
         Ok(())
     }
@@ -227,7 +236,11 @@ pub async fn translate_text(
     static LOG_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
     let op = LOG_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let started = std::time::Instant::now();
-    let provider = if settings.provider == "local-ctranslate2" { "local" } else { "cloud" };
+    let provider = if settings.provider == "local-ctranslate2" {
+        "local"
+    } else {
+        "cloud"
+    };
     log::info!("event=translation.started module=translation op=tr-{op} provider={provider}");
     let translated_text = tokio::select! {
         biased;
@@ -438,6 +451,7 @@ mod tests {
     fn legacy_settings_preserve_online_languages_and_default_to_local() {
         let empty: AiSettings = serde_json::from_str("{}").unwrap();
         assert_eq!(empty.provider, "local-ctranslate2");
+        assert_eq!(empty.local_idle_seconds, 300);
         let old: AiSettings = serde_json::from_str(
             r#"{"endpoint":"https://example.com/v1/chat/completions","targetLanguage":"ja"}"#,
         )
@@ -449,6 +463,24 @@ mod tests {
                 .unwrap();
         assert!(invalid.validate().is_err());
         assert!(serde_json::from_str::<AiSettings>(r#"{"apiKey":"not-allowed"}"#).is_err());
+    }
+    #[test]
+    fn idle_settings_migrate_and_validate_bounds() {
+        for seconds in [0, 30, 300, 3600] {
+            let settings: AiSettings =
+                serde_json::from_value(serde_json::json!({"localIdleSeconds": seconds})).unwrap();
+            assert!(settings.validate().is_ok());
+            let saved = serde_json::to_value(&settings).unwrap();
+            assert_eq!(saved["localIdleSeconds"], seconds);
+        }
+        for seconds in [1, 29, 3601, u64::MAX] {
+            let settings: AiSettings =
+                serde_json::from_value(serde_json::json!({"localIdleSeconds": seconds})).unwrap();
+            assert!(settings.validate().is_err());
+        }
+        for json in [r#"{"localIdleSeconds":-1}"#, r#"{"localIdleSeconds":30.5}"#] {
+            assert!(serde_json::from_str::<AiSettings>(json).is_err());
+        }
     }
     #[test]
     fn cancellation_before_start_and_concurrent_jobs_are_rejected() {

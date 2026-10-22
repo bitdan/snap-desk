@@ -1,6 +1,11 @@
 //! 本地翻译进程桥：固定安装路径、单任务、受限 JSONL；取消/超时丢弃 Future 即杀死进程。
 use serde_json::{json, Value};
-use std::{path::PathBuf, process::Stdio, sync::Arc, time::Duration};
+use std::{
+    path::PathBuf,
+    process::Stdio,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 use tauri::{AppHandle, Manager};
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
@@ -15,6 +20,8 @@ pub struct Worker {
     input: ChildStdin,
     output: BufReader<ChildStdout>,
     model: String,
+    /// 仅成功完成翻译后刷新；任务持锁期间回收器不会接触进程。
+    last_used: Instant,
 }
 
 /// 只运行随应用发布的程序，绝不从 PATH 或模型包加载可执行文件。
@@ -66,6 +73,7 @@ impl Worker {
             input,
             output,
             model: String::new(),
+            last_used: Instant::now(),
         };
         worker
             .exchange(json!({"id":"health", "protocol":1, "action":"health"}))
@@ -118,6 +126,9 @@ pub async fn translate(
     text: &str,
     timeout: u64,
 ) -> Result<String, String> {
+    if crate::resource_lifecycle::stopping(app) {
+        return Err("应用正在退出。".into());
+    }
     let model = crate::translation_models::model_id(target)?;
     let state = app.state::<LocalTranslationState>();
     let mut slot = state
@@ -169,12 +180,54 @@ pub async fn translate(
             }
             output.push(value.to_string());
         }
-        *slot = Some(worker);
+        worker.last_used = Instant::now();
+        if !crate::resource_lifecycle::stopping(app) {
+            *slot = Some(worker);
+        }
         Ok(output.join("\n"))
     };
     tokio::time::timeout(Duration::from_secs(timeout), operation)
         .await
         .map_err(|_| "本地翻译超时，已停止引擎，可重试。")?
+}
+
+/// 使用最新保存的闲置秒数；0 表示保持缓存。先释放设置锁，再尝试 Worker 锁。
+pub async fn release_idle(app: &AppHandle) {
+    let seconds = match app.state::<crate::settings::SettingsState>().0.try_lock() {
+        Ok(settings) => settings.value.ai.local_idle_seconds,
+        Err(_) => return,
+    };
+    let state = app.state::<LocalTranslationState>();
+    // try_lock_owned 避免等待翻译；停止进程期间继续持锁，防止新旧 Worker 重叠驻留。
+    let Ok(mut slot) = state.0.clone().try_lock_owned() else {
+        return;
+    };
+    if slot
+        .as_ref()
+        .is_some_and(|worker| idle_expired(worker.last_used.elapsed(), seconds))
+    {
+        if let Some(worker) = slot.take() {
+            worker.stop().await;
+            log::info!("event=translation.worker_stopped module=translation reason=idle");
+        }
+    }
+}
+
+fn idle_expired(elapsed: Duration, seconds: u64) -> bool {
+    seconds != 0 && elapsed >= Duration::from_secs(seconds)
+}
+
+#[cfg(test)]
+mod lifecycle_tests {
+    use super::*;
+
+    #[test]
+    fn idle_deadline_respects_disable_and_exact_boundary() {
+        assert!(!idle_expired(Duration::from_secs(3601), 0));
+        assert!(!idle_expired(Duration::from_millis(299_999), 300));
+        assert!(idle_expired(Duration::from_secs(300), 300));
+        assert!(idle_expired(Duration::from_secs(301), 300));
+    }
 }
 
 /// 正常退出显式终止缓存进程；活动任务由现有取消信号清理。

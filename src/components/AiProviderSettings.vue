@@ -57,6 +57,7 @@ async function modelAction(modelId: string, action: 'download' | 'import' | 'del
   <section class="ai-settings">
     <h3>文字识别</h3>
     <ResourceSettings kind="ocr" />
+    <p class="hint">识别结束后空闲 5 分钟自动释放模型，下次识别时重新加载。</p>
     <h3>文本翻译</h3>
     <fieldset :disabled="busy || !ready">
       <label>翻译引擎<select v-model="draft.provider"><option value="local-ctranslate2">本地离线 · CTranslate2 / OPUS-MT</option><option value="online-llm">在线文本服务</option></select></label>
@@ -69,6 +70,8 @@ async function modelAction(modelId: string, action: 'download' | 'import' | 'del
           <Button v-if="pack.revision" variant="ghost" @click="modelAction(pack.modelId, 'delete')">卸载</Button>
         </div>
         <p class="hint">仅导入可信来源的语言包；文件校验不代表来源可信。</p>
+        <label>闲置回收（秒）<input v-model.number="draft.localIdleSeconds" type="number" min="0" max="3600" step="1" /></label>
+        <p class="hint">0 表示保持缓存，或设为 30～3600 秒；自动回收后下次翻译会重新加载。</p>
       </template>
       <template v-else>
       <p>每次翻译前确认发送原文，可能产生服务费用。</p>

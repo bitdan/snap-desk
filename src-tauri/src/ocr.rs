@@ -3,16 +3,37 @@ use crate::recognition::{OcrLine, OcrResult, PolygonPoint};
 use oar_ocr::core::config::OrtSessionConfig;
 use oar_ocr::prelude::*;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use std::{path::Path, sync::Mutex};
 use tauri::{AppHandle, Manager, WebviewWindow};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
 static REQUEST_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
-/// 模型首次使用时加载，后续复用；互斥锁限制同时只有一个识别任务，控制内存峰值。
+/// 模型首次使用时加载；识别和回收共用锁，避免卸载正在推理的会话。
 #[derive(Default)]
-pub struct OcrState(Mutex<Option<OAROCR>>);
+pub struct OcrState(Mutex<Option<CachedEngine>>);
+
+struct CachedEngine {
+    engine: OAROCR,
+    /// 从最后一次推理结束计时，失败的推理也会刷新空闲时间。
+    last_used: Instant,
+}
+
+/// 空闲五分钟后释放会话；运行库及分配器是否归还内存需通过实机采样判断。
+pub fn release_idle(app: &AppHandle) {
+    let state = app.state::<OcrState>();
+    if let Ok(mut slot) = state.0.try_lock() {
+        if slot
+            .as_ref()
+            .is_some_and(|cached| cached.last_used.elapsed() >= Duration::from_secs(300))
+        {
+            // 在持锁期间完成析构，避免旧模型尚未释放时又初始化另一份模型。
+            drop(slot.take());
+            log::info!("event=ocr.engine_unloaded module=ocr reason=idle");
+        }
+    };
+}
 
 pub fn recognize(app: &AppHandle, image: &image::RgbaImage) -> Result<String, String> {
     Ok(recognize_structured(app, image)?.full_text)
@@ -41,19 +62,36 @@ pub fn recognize_structured(
             let dir = crate::resources::ocr_paths(app)?;
             code = "OCR_ENGINE_INIT_FAILED";
             let loading = Instant::now();
-            *engine = Some(build_engine(&dir)?);
-            log::info!("event=ocr.engine_ready module=ocr op=ocr-{op} duration_ms={}", loading.elapsed().as_millis());
+            *engine = Some(CachedEngine {
+                engine: build_engine(&dir)?,
+                last_used: Instant::now(),
+            });
+            log::info!(
+                "event=ocr.engine_ready module=ocr op=ocr-{op} duration_ms={}",
+                loading.elapsed().as_millis()
+            );
         }
         code = "OCR_INFERENCE_FAILED";
         let inference = Instant::now();
-        let mut result = recognize_regions(engine.as_ref().ok_or("OCR 未初始化。")?, image)?;
+        let cached = engine.as_mut().ok_or("OCR 未初始化。")?;
+        let result = recognize_regions(&cached.engine, image);
+        cached.last_used = Instant::now();
+        let mut result = result?;
         result.request_id = format!("ocr-{op}");
         result.elapsed_ms = started.elapsed().as_millis() as u64;
-        log::info!("event=ocr.finished module=ocr op=ocr-{op} duration_ms={} inference_ms={} lines={}", result.elapsed_ms, inference.elapsed().as_millis(), result.lines.len());
+        log::info!(
+            "event=ocr.finished module=ocr op=ocr-{op} duration_ms={} inference_ms={} lines={}",
+            result.elapsed_ms,
+            inference.elapsed().as_millis(),
+            result.lines.len()
+        );
         Ok(result)
     })();
     if result.is_err() {
-        log::error!("event=ocr.failed module=ocr op=ocr-{op} code={code} duration_ms={}", started.elapsed().as_millis());
+        log::error!(
+            "event=ocr.failed module=ocr op=ocr-{op} code={code} duration_ms={}",
+            started.elapsed().as_millis()
+        );
     }
     result
 }
