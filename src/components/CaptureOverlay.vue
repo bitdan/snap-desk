@@ -11,6 +11,7 @@ import { clamp, move, normalize, resize, toPixels, nudgeSelection, type Handle, 
 import { useAnnotations, type AnnotationTool } from '@/lib/use-annotations'
 import AnnotationSurface from './AnnotationSurface.vue'
 import AnnotationToolbar from './AnnotationToolbar.vue'
+import { useFloatingToolbar } from '@/lib/toolbar-layout'
 import CaptureMagnifier from './CaptureMagnifier.vue'
 import { magnifierSample } from '@/lib/magnifier'
 import { newerScroll } from '@/lib/scroll-capture'
@@ -150,8 +151,9 @@ const dialogStyle = computed(() => ({ position: 'absolute' as const,
   top: `${activeDisplay.value.y + activeDisplay.value.height / 2}px`, transform: 'translate(-50%, -50%)',
   maxWidth: `${activeDisplay.value.width - 32}px`, maxHeight: `${activeDisplay.value.height - 32}px` }))
 const toolbar = ref<HTMLElement | null>(null)
+const { style: floatingToolbarStyle, start: floatToolbar, reset: resetToolbarPosition } = useFloatingToolbar(toolbar)
 const toolbarSize = ref({ width: 1100, height: 46 })
-// 工具完整展开为一排；窄屏按实际内容宽度整体缩小，不把尾部操作藏进横向滚动区。
+// 按实际尺寸避让屏幕边缘；窄屏允许横向滚动，保留字号和按钮命中区域。
 watch(toolbar, (element, _, cleanup) => {
   if (!element) return
   const observer = new ResizeObserver(() => { toolbarSize.value = { width: element.offsetWidth, height: element.offsetHeight } })
@@ -162,9 +164,8 @@ const toolbarStyle = computed(() => {
   const r = selection.value
   if (!r) return {}
   const bounds = activeDisplay.value
-  const scale = Math.min(1, Math.max(1, bounds.width - 16) / toolbarSize.value.width)
-  const width = toolbarSize.value.width * scale, height = toolbarSize.value.height * scale
-  return { left: `${clamp(r.x, bounds.x + 8, Math.max(bounds.x + 8, bounds.x + bounds.width - width - 8))}px`, top: `${clamp(r.y + r.height + 12, bounds.y + 8, Math.max(bounds.y + 8, bounds.y + bounds.height - height - 8))}px`, transform: `scale(${scale})`, transformOrigin: 'top left' }
+  const { width, height } = toolbarSize.value
+  return { left: `${clamp(r.x, bounds.x + 8, Math.max(bounds.x + 8, bounds.x + bounds.width - width - 8))}px`, top: `${clamp(r.y + r.height + 12, bounds.y + 8, Math.max(bounds.y + 8, bounds.y + bounds.height - height - 8))}px`, maxWidth: `${Math.max(1, bounds.width - 16)}px` }
 })
 // 二级面板紧邻工具栏，空间不足时翻到选区上方，仍保持在屏幕内。
 const recordingMenuStyle = computed(() => {
@@ -385,8 +386,8 @@ onUnmounted(() => { releaseFrame(); disposed = true; off?.(); offScroll?.(); off
       <template v-if="!marked && !annotating"><span v-for="handle in handles" :key="handle" :class="['resize-handle', handle]" @pointerdown.stop="down($event, handle)" /></template>
     </div>
     <AnnotationSurface v-if="frame && pixels" :editor="editor" :width="frame.width" :height="frame.height" :bounds="pixels" :enabled="annotating && !busy" />
-    <div v-if="valid && !gesture" ref="toolbar" class="capture-toolbar annotation-toolbar" :style="toolbarStyle" @pointerdown.stop @contextmenu.stop.prevent>
-      <AnnotationToolbar :editor="editor" :disabled="busy" :active="annotating" @tool="chooseTool">
+    <div v-if="valid && !gesture" ref="toolbar" class="capture-toolbar annotation-toolbar" :style="[toolbarStyle, floatingToolbarStyle]" @pointerdown.stop @contextmenu.stop.prevent>
+      <AnnotationToolbar :editor="editor" :disabled="busy" :active="annotating" @tool="chooseTool" @float="floatToolbar" @reset-position="resetToolbarPosition">
         <template #leading><button :disabled="busy || editor.pending || editor.interacting || marked" :aria-pressed="!annotating" title="调整选区" aria-label="调整选区" @click="annotating = false"><Move :size="16" /></button></template>
         <template #actions>
           <button v-if="selectedTarget !== null && frame?.targets[selectedTarget]?.kind === 'window'" :disabled="busy || marked || editor.pending || editor.interacting" title="原生窗口截图" aria-label="原生窗口截图" @click="captureNative"><AppWindow :size="16" /></button>
@@ -437,9 +438,9 @@ onUnmounted(() => { releaseFrame(); disposed = true; off?.(); offScroll?.(); off
 .ocr-dialog { width: min(560px, calc(100vw - 32px)); }
 .translation-dialog { width: min(920px, calc(100vw - 32px)); }
 .recording-menu-shade { position: absolute; inset: 0; z-index: 6; cursor: default; }
-.capture-toolbar.annotation-toolbar { max-width: none; }
-.capture-toolbar :deep(.annotation-tools) { width: max-content; max-width: none; }
-.capture-toolbar :deep(.annotation-tool-row) { overflow: visible; }
+.capture-toolbar.annotation-toolbar { max-width: calc(100vw - 16px); }
+.capture-toolbar :deep(.annotation-tools) { width: max-content; max-width: 100%; }
+.capture-toolbar :deep(.annotation-tool-row) { overflow-x: auto; }
 .capture-modebar { position: absolute; top: 8px; left: 8px; z-index: 4; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; max-width: calc(100vw - 16px); border-radius: 6px; padding: 6px 8px; background: #242330ed; color: white; font-size: 12px; cursor: default; }
 .capture-modebar button { display: flex; align-items: center; gap: 5px; padding: 3px; }
 .capture-modebar button:disabled { opacity: .5; }

@@ -3,12 +3,15 @@ import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { Pin, PinOff, Lock, Unlock, Minus, Plus, Copy, Save, EyeOff, X, ChevronDown, ChevronUp, Move, Undo2, Redo2, Trash2 } from 'lucide-vue-next'
 import AnnotationSurface from './AnnotationSurface.vue'
 import AnnotationToolbar from './AnnotationToolbar.vue'
+import { useFloatingToolbar } from '@/lib/toolbar-layout'
 import { useAnnotations, type AnnotationTool } from '@/lib/use-annotations'
 import { annotationTools } from '@/lib/annotation-tools'
 import { api, type PinFrame, type PinView, type PinAction, type PinTransform } from '@/lib/api'
 import { canEditPin, minimumZoom, pinDisplaySize, stepZoom } from '@/lib/pins'
 import layout from '@/lib/pin-layout.json'
 
+const toolbar = ref<HTMLElement | null>(null)
+const { style: floatingToolbarStyle, start: floatToolbar, reset: resetToolbarPosition } = useFloatingToolbar(toolbar)
 const frame = ref<PinFrame | null>(null)
 const busy = ref(false)
 const error = ref('')
@@ -197,8 +200,8 @@ function closeOnResize() {
         </div>
       </div>
     </div>
-    <section class="pin-controls" :class="{ collapsed: !controls }" aria-label="贴图工具" @pointerenter="keepControlsVisible" @pointerleave="scheduleControlsHide" @contextmenu.stop.prevent>
-      <AnnotationToolbar v-if="frame && controls" :editor="editor" :disabled="busy || frame.view.locked" :active="annotating" @tool="startEditing">
+    <section ref="toolbar" :style="floatingToolbarStyle" class="pin-controls" :class="{ collapsed: !controls, floating: floatingToolbarStyle.position }" aria-label="贴图工具" @pointerenter="keepControlsVisible" @pointerleave="scheduleControlsHide" @contextmenu.stop.prevent>
+      <AnnotationToolbar v-if="frame && controls" :editor="editor" :disabled="busy || frame.view.locked" :active="annotating" @tool="startEditing" @float="floatToolbar" @reset-position="resetToolbarPosition">
         <template #leading><button :disabled="!editable" :aria-pressed="!annotating" title="移动贴图" aria-label="移动贴图" @click="annotating = false; editor.selected = -1"><Move :size="16" /></button></template>
         <template #actions>
           <button :disabled="busy" :aria-pressed="frame.view.topmost" title="置顶开关" aria-label="置顶开关" @click="setView({ topmost: !frame.view.topmost })"><component :is="frame.view.topmost ? Pin : PinOff" :size="16" /></button>
@@ -258,7 +261,7 @@ function closeOnResize() {
 .pin-image-content img { display: block; width: 100%; height: 100%; }
 .pin-controls { min-width: 0; width: max-content; max-width: 100%; height: 100%; justify-self: end; overflow: hidden; padding: 4px 6px; border: 1px solid #d4d4d8; border-radius: 7px; background: #fffffff5; box-shadow: 0 2px 6px #0002; font-size: 11px; }
 /* 隐藏时保留底栏占位，避免图片跳动；键盘焦点仍可唤出工具。 */
-.pin-shell:not(.controls-visible):not(:has(:focus-visible)) .pin-controls { visibility: hidden; pointer-events: none; }
+.pin-shell:not(.controls-visible):not(:has(:focus-visible)) .pin-controls:not(.floating) { visibility: hidden; pointer-events: none; }
 .pin-row { display: flex; align-items: center; gap: 3px; height: 34px; overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; white-space: nowrap; }
 .pin-row > * { flex-shrink: 0; }
 .pin-controls button { display: inline-flex; align-items: center; justify-content: center; gap: 4px; height: 26px; min-width: 26px; padding: 3px 5px; border-radius: 4px; }
