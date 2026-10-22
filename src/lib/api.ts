@@ -115,7 +115,7 @@ export const api = {
   save: (id: number, rect: Rect, annotations: Annotation[]) => invoke<boolean>('save_capture', { id, rect, annotations }),
   pin: (id: number, rect: Rect, annotations: Annotation[]) => invoke<void>('pin_capture', { id, rect, annotations }),
   startScroll: (id: number, rect: Rect, saveFrames: boolean, mode: ScrollMode = 'auto', background: ScrollBackground = 'white') => invoke<ScrollView>('start_scroll', { id, rect, saveFrames, mode, background }),
-  controlScroll: (id: number, cancel = false) => invoke<void>('control_scroll', { id, cancel }),
+  controlScroll: (id: number, cancel = false, confirmedOnly = false) => invoke<void>('control_scroll', { id, cancel, confirmedOnly }),
   currentScroll: () => invoke<ScrollView | null>('current_scroll'),
   startRecording: (id: number, rect: Rect, config?: RecorderConfig) => invoke<void>('start_recording', { id, rect, config }),
   recordingCapabilities: () => invoke<RecorderCapabilities>('recording_capabilities'),

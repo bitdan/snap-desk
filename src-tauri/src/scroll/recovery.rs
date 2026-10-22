@@ -76,12 +76,19 @@ impl Recovery {
         Ok(result)
     }
 
+    /// 只有可信匹配（包括回到原画面）才解除恢复状态，页面运动不能清除失败记录。
+    pub fn is_recovering(&self) -> bool {
+        self.failures > 0
+    }
+
     pub fn message(&self, result: Option<Match>) -> &'static str {
         match result {
             Some(Match::Uncertain) | None if self.failures >= 3 => {
-                "未找到可靠重叠，可能滚动过快；请沿原路滚回一点或缩小选区，匹配后自动继续。"
+                "未找到可靠重叠，可能滚动过快或纹理重复；已确认内容保留，请沿原路滚回重叠区并停顿，匹配后自动继续。"
             }
-            Some(Match::Uncertain) => "正在重新匹配，请稍作停顿；已拼接内容保留。",
+            Some(Match::Uncertain) | None if self.is_recovering() => {
+                "已确认内容保留；请沿原路滚回重叠区并停顿，匹配后自动继续。"
+            }
             None => "等待页面稳定；局部动画会自动过滤。",
             _ => "自动拼接中，请正常滚动页面，完成后点击完成。",
         }
@@ -97,6 +104,35 @@ impl Recovery {
 mod tests {
     use super::*;
     use image::Rgba;
+
+    #[test]
+    fn returning_to_last_confirmed_frame_resumes_without_growing_canvas() {
+        let first = RgbaImage::from_fn(96, 160, |x, y| {
+            let v = (x.wrapping_mul(73856093) ^ y.wrapping_mul(19349663)).wrapping_mul(83492791);
+            Rgba([v as u8, (v >> 8) as u8, (v >> 16) as u8, 255])
+        });
+        let mut stitch = Stitch::new(first.clone()).unwrap();
+        let mut recovery = Recovery::default();
+        assert_eq!(
+            recovery
+                .consider(
+                    &mut stitch,
+                    RgbaImage::from_pixel(96, 160, Rgba([0, 0, 0, 255]))
+                )
+                .unwrap(),
+            Match::Uncertain
+        );
+        assert!(recovery.is_recovering());
+        assert!(recovery.message(None).contains("重叠区"));
+        assert_eq!(stitch.compose(), first);
+        assert_eq!(
+            recovery.consider(&mut stitch, first.clone()).unwrap(),
+            Match::Unchanged
+        );
+        assert!(!recovery.is_recovering());
+        assert_eq!(stitch.compose(), first);
+        assert_eq!(stitch.count(), 1);
+    }
 
     #[test]
     fn repeated_failures_preserve_anchor_and_bridge_recent_frames() {
@@ -115,6 +151,9 @@ mod tests {
             );
         }
         assert_eq!(stitch.compose(), frame(0));
+        assert!(recovery.is_recovering());
+        // 不稳定帧不参与匹配；其提示仍必须保留恢复操作，不能闪回“自动拼接”。
+        assert!(recovery.message(None).contains("重叠区"));
         assert_eq!(recovery.recent.len(), 1);
         assert!(recovery
             .message(Some(Match::Uncertain))
@@ -126,6 +165,7 @@ mod tests {
             image::imageops::crop_imm(&doc, 0, 0, 96, 460).to_image()
         );
         assert_eq!(recovery.failures, 0);
+        assert!(!recovery.is_recovering());
         assert_eq!(recovery.delay(), 80);
         assert_eq!(stitch.viewport().y, 120);
     }

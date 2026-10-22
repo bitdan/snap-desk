@@ -1,6 +1,6 @@
 //! 稀疏二维画布：256² 图块、逐像素覆盖位、负坐标和有界空间锚点。
 //! 快照共享 Arc，只有新增像素所在图块执行写时复制；预览直接取样图块。
-use super::matcher::{alignment, verify_at, Alignment, Bounds, Content, Match, ScrollMode};
+use super::matcher::{alignment_in, verify_at, Alignment, Bounds, Content, Match, ScrollMode};
 use image::{Rgba, RgbaImage};
 use std::{
     collections::{HashMap, VecDeque},
@@ -160,7 +160,7 @@ impl Stitch {
         if image.dimensions() != self.last().dimensions() {
             return Err("采集区域尺寸发生变化，请重新开始滚动截图。".into());
         }
-        let direct = alignment(self.last(), &image, self.mode);
+        let direct = alignment_in(self.last(), &image, self.mode, self.content);
         if direct == Match::Unchanged {
             return Ok(direct);
         }
@@ -196,6 +196,7 @@ impl Stitch {
                     &image,
                     (x - anchor.x) as i32,
                     (y - anchor.y) as i32,
+                    self.content,
                 )
                 .is_some()
                 {
@@ -203,7 +204,7 @@ impl Stitch {
                     continue;
                 }
             }
-            let candidate = match alignment(&anchor.image, &image, self.mode) {
+            let candidate = match alignment_in(&anchor.image, &image, self.mode, self.content) {
                 Match::Unchanged => Some((
                     anchor.x,
                     anchor.y,

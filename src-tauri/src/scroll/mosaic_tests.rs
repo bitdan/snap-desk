@@ -146,6 +146,90 @@ fn fixed_header_footer_and_frozen_column_are_excluded_from_content() {
     assert!(stitch.has_holes());
 }
 #[test]
+fn established_fixed_bands_survive_axis_changes_and_reverse_paths() {
+    let doc = document();
+    // 表头随横向滚动、冻结列随纵向滚动，因此它们并非始终在屏幕坐标静止。
+    // 先沿垂直于固定栏的方向识别边界，再切换方向与折返，边界不能重新扩张。
+    for columns in [false, true] {
+        let fixed = |x, y| {
+            let mut image = frame(&doc, x, y);
+            for py in 0..160 {
+                for px in 0..160 {
+                    if columns && (px < 12 || px >= 148) {
+                        image.put_pixel(px, py, *doc.get_pixel(400 + px, y + py));
+                    } else if !columns && (py < 12 || py >= 148) {
+                        image.put_pixel(px, py, *doc.get_pixel(x + px, 400 + py));
+                    }
+                }
+            }
+            image
+        };
+        let path = if columns {
+            [(180, 100), (180, 180), (140, 180), (100, 100)]
+        } else {
+            [(100, 180), (180, 180), (180, 140), (100, 100)]
+        };
+        let mut stitch = Stitch::new(fixed(100, 100)).unwrap();
+        let mut previous = (100, 100);
+        for (x, y) in path {
+            moved(
+                stitch.consider(fixed(x, y)).unwrap(),
+                x as i32 - previous.0,
+                y as i32 - previous.1,
+            );
+            previous = (x as i32, y as i32);
+            assert_eq!(
+                stitch.content,
+                if columns {
+                    Content {
+                        left: 12,
+                        top: 0,
+                        right: 148,
+                        bottom: 160,
+                    }
+                } else {
+                    Content {
+                        left: 0,
+                        top: 12,
+                        right: 160,
+                        bottom: 148,
+                    }
+                }
+            );
+            assert_truth(&stitch, &doc, (100, 100));
+        }
+        // 当前帧无重叠时也通过起点历史锚点重定位；不能退回全选区匹配。
+        for (x, y) in [(180, 100), (260, 100), (340, 100)] {
+            moved(stitch.consider(fixed(x, y)).unwrap(), 80, 0);
+        }
+        let before = stitch.compose();
+        moved(stitch.consider(fixed(100, 100)).unwrap(), -240, 0);
+        assert_eq!(stitch.compose(), before);
+        assert_truth(&stitch, &doc, (100, 100));
+    }
+}
+
+#[test]
+fn newly_appearing_fixed_band_does_not_rewrite_confirmed_canvas() {
+    let doc = document();
+    let mut stitch = Stitch::new(frame(&doc, 100, 100)).unwrap();
+    moved(stitch.consider(frame(&doc, 100, 180)).unwrap(), 0, 80);
+    let before = stitch.compose();
+    let viewport = stitch.viewport();
+    let revision = stitch.match_revision();
+    let mut next = frame(&doc, 100, 240);
+    for y in 0..12 {
+        for x in 0..160 {
+            next.put_pixel(x, y, *stitch.last().get_pixel(x, y));
+        }
+    }
+    assert_eq!(stitch.consider(next).unwrap(), Match::Uncertain);
+    assert_eq!(stitch.compose(), before);
+    assert_eq!(stitch.viewport(), viewport);
+    assert_eq!(stitch.match_revision(), revision);
+}
+
+#[test]
 fn unsupported_motion_patterns_and_size_changes_do_not_modify_canvas() {
     let doc = document();
     for mode in [ScrollMode::Vertical, ScrollMode::Horizontal] {

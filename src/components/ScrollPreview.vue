@@ -12,6 +12,8 @@ const view = ref<ScrollView | null>(null)
 const busy = ref(false)
 const error = ref('')
 const cancelling = ref(false)
+// 恢复时仍持续取样，用户滚回重叠区即可接续，无需另点“继续”。
+const recovering = computed(() => view.value?.collecting && view.value.status === 'recovering')
 const status = computed(() => busy.value ? (cancelling.value ? '正在取消…' : '正在保存…')
   : !view.value ? '准备中…' : view.value.status === 'failed' ? '输出失败' : view.value.status === 'finishing' ? '正在保存…' : view.value.status === 'recovering' ? '等待重叠' : !view.value.collecting ? '采集结束' : '自动拼接')
 const hint = computed(() => error.value || view.value?.message || '滚动后稍作停顿，等待拼接')
@@ -33,7 +35,7 @@ const marker = computed(() => view.value ? scrollViewportStyle(view.value) : {})
 async function finish(cancel: boolean) {
   if (!view.value || busy.value) return
   busy.value = true; cancelling.value = cancel; error.value = ''
-  try { await api.controlScroll(view.value.id, cancel) }
+  try { await api.controlScroll(view.value.id, cancel, !!recovering.value) }
   catch (e) { error.value = String(e); busy.value = false }
 }
 onMounted(async () => {
@@ -68,7 +70,7 @@ onUnmounted(() => { disposed = true; off?.(); offClosed?.() })
         <span v-else>准备采集…</span>
       </div>
       <p v-if="view" class="coverage">覆盖 {{ view.coveragePercent.toFixed(1) }}%<span v-if="view.hasHoles"> · 棋盘格为未采集区域，请按蛇形路径补齐</span></p>
-      <p class="preview-hint" :class="{ error }" :role="error ? 'alert' : undefined" :title="hint">{{ hint }}</p>
+      <p class="preview-hint" :class="{ error, recovering }" :role="error ? 'alert' : recovering ? 'status' : undefined" :title="hint">{{ hint }}<span v-if="recovering && !error">也可保存已确认部分或取消。</span></p>
     </template>
     <footer v-else>
       <div class="progress" :title="hint">
@@ -76,8 +78,8 @@ onUnmounted(() => { disposed = true; off?.(); offClosed?.() })
         <small v-if="view" aria-live="polite">{{ view.message || `${view.frames} 帧 · ${view.height} px` }}</small>
       </div>
       <span v-if="error" class="error-indicator" role="alert" :title="error" :aria-label="error"><AlertCircle :size="16" /></span>
-      <button class="save" :disabled="busy || !view" title="结束采集，保存并复制滚动截图" @click="finish(false)"><Save :size="15" />完成</button>
-      <button class="cancel" :disabled="busy || !view" title="取消滚动截图（已保留的原始帧不会删除）" aria-label="取消滚动截图" @click="finish(true)"><X :size="17" /></button>
+      <button class="save" :disabled="busy || !view" :title="recovering ? '仅保存并复制当前已确认画布，不追加未匹配画面' : '结束采集，保存并复制滚动截图'" @click="finish(false)"><Save :size="15" />{{ recovering ? '保存已确认部分' : '完成' }}</button>
+      <button class="cancel" :disabled="busy || !view" title="取消滚动截图，不导出当前画布" aria-label="取消滚动截图" @click="finish(true)"><X :size="17" /><span v-if="recovering">取消</span></button>
     </footer>
   </main>
 </template>
@@ -92,6 +94,8 @@ img { display: block; width: 100%; height: 100%; }
 .current-frame { position: absolute; box-sizing: border-box; border: 2px solid #24834b; background: #84cc1610; pointer-events: none; }
 .coverage { margin: 0; flex: none; font-size: 12px; color: #57606a; }
 .preview-hint { flex: none; margin: 0; color: #71717a; font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.preview-hint.recovering { white-space: normal; overflow-wrap: anywhere; font-size: 12px; color: #92400e; }
+.preview-hint.recovering.error { color: #b91c1c; }
 .controls { justify-content: center; padding: 5px 8px; }
 footer { display: flex; align-items: center; gap: 7px; min-width: 0; }
 .progress { flex: 1; min-width: 0; display: grid; gap: 1px; }

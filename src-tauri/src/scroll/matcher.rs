@@ -40,6 +40,17 @@ impl Content {
             bottom: image.height(),
         }
     }
+
+    /// 已确认排除的固定栏不因滚动方向改变而重新进入正文。
+    /// 新检测到更窄的区域仍交给 Stitch 的布局检查拒绝，不能静默改写旧画布。
+    fn intersect(self, known: Self) -> Self {
+        Self {
+            left: self.left.max(known.left),
+            top: self.top.max(known.top),
+            right: self.right.min(known.right),
+            bottom: self.bottom.min(known.bottom),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -141,11 +152,17 @@ fn prefix(image: &RgbaImage, x: u32, y: u32) -> usize {
 
 /// 已由最新帧确定位置时，历史锚点只需复核这个位移，不再全图搜索一次。
 /// None 表示缺少可信证据；调用方保留完整搜索作为失败回退。
-pub(super) fn verify_at(a: &RgbaImage, b: &RgbaImage, dx: i32, dy: i32) -> Option<Alignment> {
+pub(super) fn verify_at(
+    a: &RgbaImage,
+    b: &RgbaImage,
+    dx: i32,
+    dy: i32,
+    known: Content,
+) -> Option<Alignment> {
     if a.dimensions() != b.dimensions() || a.width() < 32 || a.height() < 64 {
         return None;
     }
-    verify(a, b, content(a, b), dx, dy)
+    verify(a, b, content(a, b).intersect(known), dx, dy)
 }
 
 /// 每个交集分成 4×4 块；独立纹理块须一致，动画块不参与写入决策。
@@ -207,12 +224,34 @@ fn verify(a: &RgbaImage, b: &RgbaImage, roi: Content, dx: i32, dy: i32) -> Optio
     })
 }
 
+#[cfg(test)]
 pub fn alignment(a: &RgbaImage, b: &RgbaImage, mode: ScrollMode) -> Match {
     align_impl(a, b, mode, true)
 }
 
+/// 直接匹配与历史锚点匹配共用内容区，保证候选提名、像素复核和写入边界一致。
+pub(super) fn alignment_in(
+    a: &RgbaImage,
+    b: &RgbaImage,
+    mode: ScrollMode,
+    known: Content,
+) -> Match {
+    align_content(a, b, mode, true, known)
+}
+
 // 测试可关闭前置过滤，与原扫描路径对照；生产路径始终启用。
+#[cfg(test)]
 fn align_impl(a: &RgbaImage, b: &RgbaImage, mode: ScrollMode, filter_prefix: bool) -> Match {
+    align_content(a, b, mode, filter_prefix, Content::full(a))
+}
+
+fn align_content(
+    a: &RgbaImage,
+    b: &RgbaImage,
+    mode: ScrollMode,
+    filter_prefix: bool,
+    known: Content,
+) -> Match {
     if a.dimensions() != b.dimensions() || a.width() < 32 || a.height() < 64 {
         return Match::Uncertain;
     }
@@ -220,7 +259,13 @@ fn align_impl(a: &RgbaImage, b: &RgbaImage, mode: ScrollMode, filter_prefix: boo
     if a == b {
         return Match::Unchanged;
     }
-    let roi = content(a, b);
+    let roi = content(a, b).intersect(known);
+    // 防止无效内容区在下面的无符号采样坐标计算中下溢。
+    if roi.right.saturating_sub(roi.left) < MIN_OVERLAP
+        || roi.bottom.saturating_sub(roi.top) < MIN_OVERLAP
+    {
+        return Match::Uncertain;
+    }
     let mut patches: HashMap<u64, Vec<(u32, u32, usize)>> = HashMap::new();
     let mut prefixes = [0u64; PREFIX_WORDS];
     for row in 0..20 {
@@ -372,13 +417,13 @@ mod performance_tests {
         let doc = document(400, 400, false);
         let a = image::imageops::crop_imm(&doc, 80, 80, 160, 160).to_image();
         let b = image::imageops::crop_imm(&doc, 120, 50, 160, 160).to_image();
-        let expected = verify_at(&a, &b, 40, -30).unwrap();
+        let expected = verify_at(&a, &b, 40, -30, Content::full(&a)).unwrap();
         assert_eq!(
             alignment(&a, &b, ScrollMode::Auto),
             Match::Aligned(expected)
         );
-        assert!(verify_at(&a, &b, 41, -30).is_none());
-        assert!(verify_at(&a, &b, 150, 0).is_none());
+        assert!(verify_at(&a, &b, 41, -30, Content::full(&a)).is_none());
+        assert!(verify_at(&a, &b, 150, 0, Content::full(&a)).is_none());
     }
 
     /// 同一进程交替执行优化前后扫描，输出中位数；不把机器相关耗时写成测试阈值。

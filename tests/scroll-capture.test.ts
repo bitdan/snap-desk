@@ -27,11 +27,15 @@ describe('scroll completion state', () => {
   })
   it('accepts recovery hints without ending capture and ignores stale progress', () => {
     const collecting = { ...view, collecting: true }
-    const recovering = { ...collecting, revision: 3, message: '请稍微向上滚动，匹配后自动继续。' }
+    const recovering = { ...collecting, revision: 3, status: 'recovering' as const, message: '请沿原路滚回重叠区，匹配后自动继续。' }
     expect(newerScroll(collecting, recovering, 3)).toBe(recovering)
     expect(newerScroll(recovering, collecting, 3)).toBe(recovering)
-    const resumed = { ...recovering, revision: 4, frames: 5, height: 2100, message: '自动拼接中' }
-    expect(newerScroll(recovering, resumed, 3)).toBe(resumed)
+    const unsettled = { ...recovering, revision: 4, message: '已确认内容保留；请沿原路滚回重叠区并停顿。' }
+    expect(newerScroll(recovering, unsettled, 3)?.status).toBe('recovering')
+    expect(unsettled.preview).toBe(recovering.preview)
+    expect(unsettled.frames).toBe(recovering.frames)
+    const resumed = { ...unsettled, revision: 5, status: 'collecting' as const, frames: 5, height: 2100, message: '自动拼接中' }
+    expect(newerScroll(unsettled, resumed, 3)).toBe(resumed)
   })
 })
 

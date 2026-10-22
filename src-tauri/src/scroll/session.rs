@@ -67,6 +67,8 @@ pub(in crate::capture) struct ScrollSession {
     preview: Arc<str>,
     status: &'static str,
     background: ExportBackground,
+    // 用户选择“保存已确认部分”时冻结当前可信画布，不再采集结束前的末帧。
+    confirmed_only: bool,
     obscuring_windows: Vec<String>,
     archive: Option<Archive>,
 }
@@ -127,15 +129,18 @@ pub fn control_scroll(
     window: WebviewWindow,
     id: u64,
     cancel: bool,
+    confirmed_only: Option<bool>,
 ) -> Result<(), String> {
     if !matches!(window.label(), "scroll-preview" | "scroll-controls") {
         return Err("窗口无权控制滚动截图。".into());
     }
     let state = app.state::<CaptureState>();
-    let guard = state.scroll.lock().map_err(err)?;
-    if !guard.as_ref().is_some_and(|s| s.id == id) {
-        return Err("滚动截图已结束。".into());
-    }
+    let mut guard = state.scroll.lock().map_err(err)?;
+    let session = guard
+        .as_mut()
+        .filter(|s| s.id == id)
+        .ok_or("滚动截图已结束。")?;
+    session.confirmed_only |= confirmed_only.unwrap_or(false);
     if cancel {
         state.scroll_cancel.store(true, Ordering::SeqCst);
     }
@@ -286,7 +291,7 @@ fn sample_pair(
     let message = snapshot.recovery.message(result);
     let status = if finishing {
         "finishing"
-    } else if matches!(result, Some(Match::Uncertain)) {
+    } else if snapshot.recovery.is_recovering() {
         "recovering"
     } else {
         "collecting"
@@ -312,7 +317,11 @@ fn sample_pair(
             .as_mut()
             .filter(|s| s.id == id && s.revision == revision)
             .ok_or("滚动截图状态已更新，丢弃过期计算结果。")?;
-        if state.scroll_cancel.load(Ordering::SeqCst) {
+        // 控制命令和提交共用会话锁：停止后不提交普通采样；部分保存连末帧也不追加。
+        if state.scroll_cancel.load(Ordering::SeqCst)
+            || current.confirmed_only
+            || (!finishing && state.scroll_stop.load(Ordering::SeqCst))
+        {
             return Ok(None);
         }
         *current = snapshot;
@@ -400,7 +409,14 @@ fn collect(app: AppHandle, id: u64, first_delay: u64) {
             let _ = close_session(&app, id);
             break;
         }
-        if finish_latest {
+        let confirmed_only = state.scroll.lock().ok().is_some_and(|s| {
+            s.as_ref()
+                .is_some_and(|s| s.id == id && (s.confirmed_only || s.recovery.is_recovering()))
+        });
+        if confirmed_only {
+            message.push_str(" 仅输出已确认部分；未匹配画面未追加。");
+        }
+        if finish_latest && !confirmed_only {
             // 等待托盘菜单收起；采集原窗口的最终静止画面，避免刚滚动完就结束而漏掉末尾。
             std::thread::sleep(Duration::from_millis(180));
             match sample_pair(&app, &state, id, true) {
@@ -524,6 +540,7 @@ pub async fn start_scroll(
             preview: Arc::from(""),
             status: "collecting",
             background: background.unwrap_or_default(),
+            confirmed_only: false,
         };
         refresh_preview(&mut session)?;
         let result = view(&session, true)?;

@@ -31,6 +31,14 @@ describe('原生窗口截图 IPC', () => {
 })
 
 describe('二维滚动截图 IPC', () => {
+  it('部分保存冻结可信画布，普通完成和取消沿用同一控制命令', async () => {
+    await api.controlScroll(12, false, true)
+    expect(invoke).toHaveBeenLastCalledWith('control_scroll', { id: 12, cancel: false, confirmedOnly: true })
+    await api.controlScroll(12)
+    expect(invoke).toHaveBeenLastCalledWith('control_scroll', { id: 12, cancel: false, confirmedOnly: false })
+    await api.controlScroll(12, true)
+    expect(invoke).toHaveBeenLastCalledWith('control_scroll', { id: 12, cancel: true, confirmedOnly: false })
+  })
   const rect = { x: 10, y: 20, width: 640, height: 480 }
   it('旧调用默认自动识别和白底，不开启原始帧存档', async () => {
     invoke.mockResolvedValueOnce({ id: 12 })
