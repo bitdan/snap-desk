@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { Pin, PinOff, Lock, Unlock, Minus, Plus, Copy, Save, EyeOff, X, ChevronDown, ChevronUp, Move, Undo2, Redo2, Trash2 } from 'lucide-vue-next'
+import PinRecognition from './PinRecognition.vue'
 import AnnotationSurface from './AnnotationSurface.vue'
 import AnnotationToolbar from './AnnotationToolbar.vue'
 import { useFloatingToolbar } from '@/lib/toolbar-layout'
@@ -14,6 +15,18 @@ const toolbar = ref<HTMLElement | null>(null)
 const { style: floatingToolbarStyle, start: floatToolbar, reset: resetToolbarPosition } = useFloatingToolbar(toolbar)
 const frame = ref<PinFrame | null>(null)
 const busy = ref(false)
+const recognitionMode = ref<'ocr' | 'qr' | null>(null)
+let recognitionTrigger: HTMLElement | null = null
+function recognize(mode: 'ocr' | 'qr', event: MouseEvent) {
+  if (!frame.value || busy.value || editor.pending || editor.interacting) return
+  recognitionTrigger = event.currentTarget as HTMLElement
+  closeMenu()
+  recognitionMode.value = mode
+}
+function closeRecognition() {
+  recognitionMode.value = null
+  void nextTick(() => recognitionTrigger?.isConnected ? recognitionTrigger.focus() : menuTrigger?.focus())
+}
 const error = ref('')
 const message = ref('')
 const controls = computed(() => frame.value?.view.toolbarExpanded ?? true)
@@ -155,7 +168,7 @@ async function opacity(event: Event) {
   input.value = String(Math.round((frame.value?.view.opacity ?? 1) * 100))
 }
 function key(event: KeyboardEvent) {
-  if (contextMenu.value) return
+  if (contextMenu.value || recognitionMode.value) return
   if (annotating.value && editor.key(event)) return
   if ((event.target as HTMLElement).closest('input, textarea, select')) return
   if (event.repeat) return
@@ -192,7 +205,7 @@ function closeOnResize() {
 
 <template>
   <div class="pin-shell" :class="{ 'is-focused': focused, 'controls-visible': controlsHovered }" :style="shellStyle" @pointerleave="hideControls" @contextmenu.prevent>
-    <div class="pin-stage" tabindex="0" aria-label="贴图，右键编辑标注" :style="stageStyle" @pointerenter="keepControlsVisible" @pointerleave="scheduleControlsHide" @pointerdown="drag" @wheel.prevent="wheel" @contextmenu.capture="openMenu">
+    <div class="pin-stage" :inert="!!recognitionMode" tabindex="0" aria-label="贴图，右键编辑标注" :style="stageStyle" @pointerenter="keepControlsVisible" @pointerleave="scheduleControlsHide" @pointerdown="drag" @wheel.prevent="wheel" @contextmenu.capture="openMenu">
       <div v-if="frame" class="pin-canvas">
         <div class="pin-image-content" :style="{ width: `${display.imageWidth}px`, height: `${display.imageHeight}px`, opacity: frame.view.opacity }">
           <img :src="frame.dataUrl" alt="桌面贴图" draggable="false" @error="error = '贴图预览加载失败，可关闭后重新贴图。'" />
@@ -200,7 +213,7 @@ function closeOnResize() {
         </div>
       </div>
     </div>
-    <section ref="toolbar" :style="floatingToolbarStyle" class="pin-controls" :class="{ collapsed: !controls, floating: floatingToolbarStyle.position }" aria-label="贴图工具" @pointerenter="keepControlsVisible" @pointerleave="scheduleControlsHide" @contextmenu.stop.prevent>
+    <section ref="toolbar" :inert="!!recognitionMode" :style="floatingToolbarStyle" class="pin-controls" :class="{ collapsed: !controls, floating: floatingToolbarStyle.position }" aria-label="贴图工具" @pointerenter="keepControlsVisible" @pointerleave="scheduleControlsHide" @contextmenu.stop.prevent>
       <AnnotationToolbar v-if="frame && controls" :editor="editor" :disabled="busy || frame.view.locked" :active="annotating" @tool="startEditing" @float="floatToolbar" @reset-position="resetToolbarPosition">
         <template #leading><button :disabled="!editable" :aria-pressed="!annotating" title="移动贴图" aria-label="移动贴图" @click="annotating = false; editor.selected = -1"><Move :size="16" /></button></template>
         <template #actions>
@@ -220,6 +233,8 @@ function closeOnResize() {
         <template #options><div class="pin-row pin-options">
           <select aria-label="图片处理" :disabled="!editable" @change="chooseTransform"><option value="">图片处理</option><option v-for="item in transforms" :key="item.action" :value="item.action">{{ item.label }}</option></select>
           <label v-if="frame.transparencySupported" class="pin-opacity">不透明度 <input type="range" min="20" max="100" step="5" :value="Math.round(frame.view.opacity * 100)" :disabled="busy" @change="opacity" /><span>{{ Math.round(frame.view.opacity * 100) }}%</span></label>
+          <button :disabled="busy || editor.pending || editor.interacting" @click="recognize('ocr', $event)">识别文字</button>
+          <button :disabled="busy || editor.pending || editor.interacting" @click="recognize('qr', $event)">识别二维码</button>
           <span class="pin-dimensions">{{ frame.width }} × {{ frame.height }} px</span>
         </div></template>
       </AnnotationToolbar>
@@ -229,6 +244,7 @@ function closeOnResize() {
       <p v-else-if="message" role="status" class="pin-status" :title="message">{{ message }}</p>
       <p v-else-if="controls && !annotating" class="pin-status">拖动移动 · 滚轮缩放 · 右键编辑 · Esc 隐藏</p>
     </section>
+    <PinRecognition v-if="frame && recognitionMode" :frame="frame" :mode="recognitionMode" @close="closeRecognition" />
     <div v-if="contextMenu" ref="menuElement" class="pin-context-menu" role="menu" aria-label="贴图菜单" :style="{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }" @pointerdown.stop @contextmenu.stop.prevent @keydown.stop="menuKey">
       <div class="context-annotation-tools" role="group" aria-label="标注工具">
         <button v-for="item in annotationTools" :key="item.tool" role="menuitemradio" :aria-checked="annotating && editor.tool === item.tool" :disabled="!editable" @click="startEditing(item.tool)"><component :is="item.icon" :size="16" />{{ item.name }}</button>
@@ -241,6 +257,8 @@ function closeOnResize() {
       <button v-if="annotating" role="menuitem" @click="closeMenu(true); annotating = false">完成标注</button>
       <button role="menuitem" @click="closeMenu(true); setView({ locked: !frame!.view.locked })"><component :is="frame?.view.locked ? Unlock : Lock" :size="16" />{{ frame?.view.locked ? '解锁贴图' : '锁定贴图' }}</button>
       <div role="separator" />
+      <button role="menuitem" @click="recognize('ocr', $event)">识别文字</button>
+      <button role="menuitem" @click="recognize('qr', $event)">识别二维码</button>
       <button role="menuitem" @click="closeMenu(true); action('copy')"><Copy :size="16" />复制图片<span>Ctrl/⌘+C</span></button>
       <button role="menuitem" @click="closeMenu(true); action('save')"><Save :size="16" />保存图片<span>Ctrl/⌘+S</span></button>
       <button role="menuitem" @click="closeMenu(true); toggleControls()"><ChevronDown :size="16" />{{ controls ? '收起工具栏' : '展开工具栏' }}</button>

@@ -67,3 +67,14 @@ pub struct TextSegment {
     pub line_ids: Vec<String>,
     pub source_language: Option<String>,
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn only_the_maintained_local_engine_is_registered() {
+        assert!(super::provider("local-ppocr").is_ok());
+        for id in ["ppocrv5", "online", "", "unknown"] {
+            assert!(super::provider(id).is_err());
+        }
+    }
+}

@@ -49,11 +49,46 @@ fn decode(image: &RgbaImage) -> Vec<QrItem> {
     items
 }
 
+impl QrResult {
+    /// 供截图与贴图共用；不读取文件、不联网，调用方负责结果归属与过期检查。
+    pub(crate) fn from_image(id: u64, image: &RgbaImage) -> Result<Self, String> {
+        let items = std::panic::catch_unwind(|| decode(image))
+            .map_err(|_| "二维码识别失败，请重试。".to_string())?;
+        Ok(Self { id, items })
+    }
+
+    fn item(&self, id: u64, index: usize) -> Result<&QrItem, String> {
+        self.items
+            .get(index)
+            .filter(|_| self.id == id)
+            .ok_or_else(|| "二维码结果已更新，请重新识别。".into())
+    }
+
+    /// 只按原生保存的结果索引操作，拒绝旧结果和前端提供的任意网址。
+    pub(crate) fn act(
+        &self,
+        app: &AppHandle,
+        id: u64,
+        index: usize,
+        action: QrAction,
+    ) -> Result<(), String> {
+        let item = self.item(id, index)?;
+        match action {
+            QrAction::Copy => app
+                .clipboard()
+                .write_text(item.text.clone())
+                .map_err(|e| format!("复制失败：{e}")),
+            QrAction::Open => {
+                open::that(item.url.as_ref().ok_or("仅支持打开 HTTP / HTTPS 链接。")?)
+                    .map_err(|e| format!("打开链接失败：{e}"))
+            }
+        }
+    }
+}
+
 /// 工具栏主动识别时返回结果，不隐藏截图窗口，也不唤起主页。
 pub fn recognize(app: &AppHandle, id: u64, image: &RgbaImage) -> Result<QrResult, String> {
-    let items = std::panic::catch_unwind(|| decode(image))
-        .map_err(|_| "二维码识别失败，请调整选区后重试。".to_string())?;
-    let result = QrResult { id, items };
+    let result = QrResult::from_image(id, image)?;
     *app.state::<QrState>().0.lock().map_err(|e| e.to_string())? = result.clone();
     Ok(result)
 }
@@ -78,23 +113,9 @@ pub async fn qr_action(
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<QrState>();
         let result = state.0.lock().map_err(|e| e.to_string())?;
-        let item = result
-            .items
-            .get(index)
-            .filter(|_| result.id == id)
-            .ok_or("二维码结果已更新，请使用最新结果。")?
-            .clone();
+        let snapshot = result.clone();
         drop(result);
-        match action {
-            QrAction::Copy => app
-                .clipboard()
-                .write_text(item.text)
-                .map_err(|e| format!("复制失败：{e}")),
-            QrAction::Open => {
-                let url = item.url.ok_or("仅支持打开 HTTP / HTTPS 链接。")?;
-                open::that(url).map_err(|e| format!("打开链接失败：{e}"))
-            }
-        }
+        snapshot.act(&app, id, index, action)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -153,6 +174,14 @@ mod tests {
             .iter()
             .any(|item| item.text == "你好，二维码" && item.url.is_none()));
     }
+    #[test]
+    fn results_reject_stale_ids_and_invalid_indices() {
+        let result = QrResult::from_image(17, &code_image("https://example.com/pin")).unwrap();
+        assert_eq!(result.item(17, 0).unwrap().text, "https://example.com/pin");
+        assert!(result.item(16, 0).is_err());
+        assert!(result.item(17, 1).is_err());
+    }
+
     #[test]
     fn allows_only_web_links() {
         assert!(web_url("https://example.com/path?a=1&b=2").is_some());

@@ -216,10 +216,12 @@ mod tests {
     }
 }
 
-/// 结果允许用户编辑；仅截图窗口可写文本剪贴板，且限制消息大小。
+/// 结果允许用户编辑；仅截图或仍存在的贴图窗口可写文本剪贴板，且限制消息大小。
 #[tauri::command]
 pub fn copy_ocr_text(app: AppHandle, window: WebviewWindow, text: String) -> Result<(), String> {
-    crate::capture::require_window(&window, "capture")?;
+    if window.label() != "capture" {
+        crate::pins::require_pin(&app, &window)?;
+    }
     if text.is_empty() || text.len() > 1024 * 1024 {
         return Err("复制文本为空或超过 1 MiB。".into());
     }

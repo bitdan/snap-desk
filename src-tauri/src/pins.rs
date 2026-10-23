@@ -81,6 +81,8 @@ pub struct PinState {
 
 #[derive(Clone)]
 struct Pin {
+    /// 二维码仅属于当前贴图；关闭释放，图片变换后失效。
+    qr_result: Option<crate::qr::QrResult>,
     original: Arc<RgbaImage>,
     image: Arc<RgbaImage>,
     view: PinView,
@@ -229,6 +231,10 @@ fn err(e: impl std::fmt::Display) -> String {
 fn changed(app: &AppHandle) {
     let _ = app.emit_to("main", "pins-changed", ());
 }
+pub(crate) fn require_pin(app: &AppHandle, window: &WebviewWindow) -> Result<(), String> {
+    own(app, window).map(|_| ())
+}
+
 fn own(app: &AppHandle, window: &WebviewWindow) -> Result<Pin, String> {
     app.state::<PinState>()
         .images
@@ -323,6 +329,7 @@ pub fn create(
     state.images.lock().map_err(err)?.insert(
         label.clone(),
         Pin {
+            qr_result: None,
             original: image.clone(),
             image,
             original_annotations: annotations.clone(),
@@ -448,6 +455,76 @@ pub fn clipboard_pin(app: &AppHandle) -> Result<(), String> {
     )
     .ok_or("剪贴板图片数据无效。")?;
     create_visible(app, image, vec![])
+}
+
+/// 识别当前处理后的原始像素，不合成标注；坐标直接对应贴图原图像素。
+/// 先取得 Arc 快照再进入阻塞线程，推理不持有贴图集合锁，也不接收任意文件路径。
+#[tauri::command]
+pub async fn recognize_pin_text(
+    app: AppHandle,
+    window: WebviewWindow,
+) -> Result<crate::recognition::OcrResult, String> {
+    let image = own(&app, &window)?.image;
+    tauri::async_runtime::spawn_blocking(move || {
+        let result = crate::recognition::provider("local-ppocr")?.recognize(&app, &image)?;
+        let current = own(&app, &window)?;
+        if !Arc::ptr_eq(&current.image, &image) {
+            return Err("图片已更新，请重新识别。".into());
+        }
+        Ok(result)
+    })
+    .await
+    .map_err(err)?
+}
+
+/// 每张贴图独立保存最近结果，避免多窗口与截图识别互相覆盖。
+#[tauri::command]
+pub async fn recognize_pin_qr(
+    app: AppHandle,
+    window: WebviewWindow,
+) -> Result<crate::qr::QrResult, String> {
+    static NEXT_RESULT: AtomicU64 = AtomicU64::new(1);
+    let image = own(&app, &window)?.image;
+    tauri::async_runtime::spawn_blocking(move || {
+        let result =
+            crate::qr::QrResult::from_image(NEXT_RESULT.fetch_add(1, Ordering::Relaxed), &image)?;
+        let state = app.state::<PinState>();
+        let mut images = state.images.lock().map_err(err)?;
+        commit_pin_qr(&mut images, window.label(), &image, result.clone())?;
+        Ok(result)
+    })
+    .await
+    .map_err(err)?
+}
+
+/// 提交时再次确认贴图和图像身份；异步解码不能复活已关闭的贴图或污染新图。
+fn commit_pin_qr(
+    images: &mut BTreeMap<String, Pin>,
+    label: &str,
+    image: &Arc<RgbaImage>,
+    result: crate::qr::QrResult,
+) -> Result<(), String> {
+    let pin = images.get_mut(label).ok_or("贴图已关闭。")?;
+    if !Arc::ptr_eq(&pin.image, image) {
+        return Err("图片已更新，请重新识别。".into());
+    }
+    pin.qr_result = Some(result);
+    Ok(())
+}
+
+/// 链接须经界面明确确认；原生只接受本窗口最近结果的 ID 与索引。
+#[tauri::command]
+pub async fn pin_qr_action(
+    app: AppHandle,
+    window: WebviewWindow,
+    id: u64,
+    index: usize,
+    action: crate::qr::QrAction,
+) -> Result<(), String> {
+    let result = own(&app, &window)?.qr_result.ok_or("请先识别二维码。")?;
+    tauri::async_runtime::spawn_blocking(move || result.act(&app, id, index, action))
+        .await
+        .map_err(err)?
 }
 
 #[tauri::command]
@@ -869,6 +946,7 @@ pub async fn transform_pin(
                 action,
             )?;
         }
+        pin.qr_result = None;
         pin.image = pin.transformed_image(action);
         crate::annotations::validate(&pin.annotations, pin.image.width(), pin.image.height())?;
         let result = frame(window.label(), &pin)?;
@@ -992,6 +1070,42 @@ pub async fn pin_action(
 mod tests {
     use super::*;
     #[test]
+    fn qr_results_stay_with_the_unchanged_live_pin() {
+        let mut images = BTreeMap::from([
+            ("pin-1".into(), grouped_pin("")),
+            ("pin-2".into(), grouped_pin("")),
+        ]);
+        let source = images["pin-1"].image.clone();
+        commit_pin_qr(
+            &mut images,
+            "pin-1",
+            &source,
+            crate::qr::QrResult::default(),
+        )
+        .unwrap();
+        assert!(images["pin-1"].qr_result.is_some());
+        assert!(images["pin-2"].qr_result.is_none());
+        let replacement = Arc::new(RgbaImage::new(1, 1));
+        images.get_mut("pin-1").unwrap().image = replacement;
+        assert!(commit_pin_qr(
+            &mut images,
+            "pin-1",
+            &source,
+            crate::qr::QrResult::default()
+        )
+        .is_err());
+        images.remove("pin-1");
+        assert!(commit_pin_qr(
+            &mut images,
+            "pin-1",
+            &source,
+            crate::qr::QrResult::default()
+        )
+        .is_err());
+        assert_eq!(images.len(), 1);
+    }
+
+    #[test]
     fn closed_pin_is_not_resurrected_by_an_in_flight_transform() {
         let mut images = BTreeMap::new();
         let pin = grouped_pin("");
@@ -1046,6 +1160,7 @@ mod tests {
     fn grouped_pin(group: &str) -> Pin {
         let image = Arc::new(RgbaImage::new(1, 1));
         Pin {
+            qr_result: None,
             original: image.clone(),
             image,
             view: PinView::default(),
@@ -1151,6 +1266,7 @@ mod tests {
         })).unwrap();
         let image = Arc::new(RgbaImage::new(30, 30));
         let pin = Pin {
+            qr_result: None,
             original: image.clone(),
             image,
             view: PinView::default(),
