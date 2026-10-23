@@ -376,7 +376,7 @@ onMounted(async () => {
     offClosed = await onCaptureClosed(id => {
       closedThroughId = Math.max(closedThroughId, id)
       if (frame.value?.id === id) { scroll.value = null; releaseFrame() }
-    })
+    }, 'capture')
     if (disposed) { offClosed(); return }
     off = await onFrame(receive)
     if (disposed) { off(); return }

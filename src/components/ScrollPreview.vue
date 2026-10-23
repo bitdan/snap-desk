@@ -46,7 +46,7 @@ onMounted(async () => {
       if (view.value && view.value.id <= id) {
         view.value = null; busy.value = false; error.value = ''
       }
-    })
+    }, controls ? 'scroll-controls' : 'scroll-preview')
     if (disposed) { offClosed(); return }
     off = await onScroll(receive)
     if (disposed) { off(); return }

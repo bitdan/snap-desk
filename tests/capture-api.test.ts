@@ -10,10 +10,42 @@ import { ipcCommands } from '../src/lib/ipc-commands'
 it('将原生会话关闭编号交给前端释放图片，并返回取消订阅函数', async () => {
   const off = vi.fn(), closed = vi.fn()
   listen.mockResolvedValueOnce(off)
-  expect(await onCaptureClosed(closed)).toBe(off)
+  expect(await onCaptureClosed(closed, 'capture')).toBe(off)
   expect(listen.mock.calls.at(-1)?.[0]).toBe('capture-closed')
+  expect(listen.mock.calls.at(-1)?.[2]).toEqual({ target: 'capture' })
   listen.mock.calls.at(-1)?.[1]({ payload: 42 })
   expect(closed).toHaveBeenCalledWith(42)
+})
+
+it('释放冻结截图仅通知截图浮层，真正结束才清理滚动预览和控制条', async () => {
+  // 按 Tauri match_any_or_filter 的行为投递：默认 Any 会收到其他窗口的定向事件。
+  // 此用例重放 start_scroll → release_selection → cleanup 的关闭通知顺序。
+  const subscriptions: { callback: (event: { payload: number }) => void; target?: string }[] = []
+  const register = (_event: string, callback: (event: { payload: number }) => void, options?: { target: string }) => {
+    subscriptions.push({ callback, target: options?.target })
+    return Promise.resolve(vi.fn())
+  }
+  listen.mockImplementationOnce(register).mockImplementationOnce(register).mockImplementationOnce(register)
+  const overlayClosed = vi.fn(), previewClosed = vi.fn(), controlsClosed = vi.fn()
+  await onCaptureClosed(overlayClosed, 'capture')
+  await onCaptureClosed(previewClosed, 'scroll-preview')
+  await onCaptureClosed(controlsClosed, 'scroll-controls')
+  const emitTo = (target: string) => {
+    for (const subscription of subscriptions) {
+      if (!subscription.target || subscription.target === target) subscription.callback({ payload: 42 })
+    }
+  }
+  emitTo('capture')
+  expect(overlayClosed).toHaveBeenCalledExactlyOnceWith(42)
+  expect(previewClosed).not.toHaveBeenCalled()
+  expect(controlsClosed).not.toHaveBeenCalled()
+  emitTo('scroll-preview')
+  expect(previewClosed).toHaveBeenCalledExactlyOnceWith(42)
+  expect(controlsClosed).not.toHaveBeenCalled()
+  emitTo('scroll-controls')
+  expect(controlsClosed).toHaveBeenCalledExactlyOnceWith(42)
+  expect(overlayClosed).toHaveBeenCalledTimes(1)
+  expect(previewClosed).toHaveBeenCalledTimes(1)
 })
 
 describe('原生窗口截图 IPC', () => {

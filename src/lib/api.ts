@@ -49,8 +49,8 @@ async function invoke<T>(command: IpcCommand, args?: InvokeArgs): Promise<T> {
     throw new Error(`${command}：${message}`)
   }
 }
-async function listen<T>(event: string, callback: EventCallback<T>) {
-  try { return await nativeListen<T>(event, callback) }
+async function listen<T>(event: string, callback: EventCallback<T>, target?: string) {
+  try { return await (target ? nativeListen<T>(event, callback, { target }) : nativeListen<T>(event, callback)) }
   catch (error) { throw new Error(`订阅 ${event}：${errorMessage(error)}`) }
 }
 export const api = {
@@ -140,7 +140,10 @@ export const api = {
 export const onFrame = (fn: (frame: CaptureFrame) => void) => listen<CaptureFrame>('capture-ready', e => fn(e.payload))
 // 原生关闭/取消或采集接管选区后清空常驻 WebView 图片；编号用于过滤迟到事件。
 // 接管时只发给 capture；滚动会话真正结束时再发给两个滚动辅助窗口。
-export const onCaptureClosed = (fn: (id: number) => void) => listen<number>('capture-closed', e => fn(e.payload))
+// Tauri 的默认 Any 监听也会收到 emit_to 发往其他窗口的事件。
+// 接管选区仅关闭 capture 浮层，不能让滚动预览将同编号会话永久判为已关闭。
+export const onCaptureClosed = (fn: (id: number) => void, target: 'capture' | 'scroll-preview' | 'scroll-controls') =>
+  listen<number>('capture-closed', e => fn(e.payload), target)
 export const onResourceProgress = (fn: (progress: ResourceProgress) => void) => listen<ResourceProgress>('resource-download-progress', e => fn(e.payload))
 // 原生入口只发会话 ID，选区与标注由截图窗口提交，避免读取旧剪贴板。
 export const onCapturePin = (fn: (id: number) => void) => listen<number>('capture-pin-requested', e => fn(e.payload))
