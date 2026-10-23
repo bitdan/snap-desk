@@ -162,8 +162,8 @@ impl Stitch {
         self.consider_recoverable(image).map(|(result, _)| result)
     }
 
-    /// 恢复层区分“暂时缺少重叠”与“已发现屏幕固定遮挡”。后者不能缓存重放，
-    /// 否则隐藏控件后的新视口可能不再提供静止对照，把问题帧重新补进画布。
+    /// 恢复层区分“暂时缺少重叠”与已检测到的布局、遮挡或画布冲突。
+    /// 后者不能缓存重放，否则新视口可能失去原有冲突证据，把问题帧补进画布。
     pub(super) fn consider_recoverable(
         &mut self,
         image: impl Into<Arc<RgbaImage>>,
@@ -185,6 +185,12 @@ impl Stitch {
         let direct = alignment_in(self.last(), &image, self.mode, self.content);
         if direct == Match::Unchanged {
             return Ok(direct);
+        }
+        // 新发现的固定栏是布局冲突，不能当作单纯缺少重叠缓存起来。
+        // 必须在历史锚点复核之前拒绝，否则旧锚点可能用较宽的正文区覆盖此证据。
+        if self.frames > 1 && matches!(direct, Match::Aligned(a) if a.content != self.content) {
+            *cacheable = false;
+            return Ok(Match::Uncertain);
         }
         let mut located = match direct {
             Match::Aligned(a) => Some((
@@ -213,15 +219,18 @@ impl Stitch {
                     checked = true;
                     continue;
                 }
-                if verify_at(
+                if let Some(verified) = verify_at(
                     &anchor.image,
                     &image,
                     (x - anchor.x) as i32,
                     (y - anchor.y) as i32,
                     self.content,
-                )
-                .is_some()
-                {
+                ) {
+                    // 快速复核也会检测固定栏，不能只取“匹配成功”而丢掉边界。
+                    if self.frames > 1 && verified.content != self.content {
+                        *cacheable = false;
+                        return Ok(Match::Uncertain);
+                    }
                     checked = true;
                     continue;
                 }
@@ -244,6 +253,10 @@ impl Stitch {
                     },
                 )),
                 Match::Aligned(a) => {
+                    if self.frames > 1 && a.content != self.content {
+                        *cacheable = false;
+                        return Ok(Match::Uncertain);
+                    }
                     Some((anchor.x + i64::from(a.dx), anchor.y + i64::from(a.dy), a))
                 }
                 _ => None,
@@ -261,6 +274,7 @@ impl Stitch {
         };
         // 后续固定边界发生变化时不回溯篡改已提交内容，等待用户返回相同布局。
         if self.frames > 1 && result.content != self.content {
+            *cacheable = false;
             return Ok(Match::Uncertain);
         }
         result.dx = i32::try_from(x - self.latest.x).map_err(|_| "滚动位移超限。")?;
@@ -277,7 +291,16 @@ impl Stitch {
             return Ok(Match::Uncertain);
         }
         let next = Anchor { image, x, y };
+        // 定位正确不等于新增像素可信：跨接缝的动画可能只占整帧 1%，
+        // 通过全局九成一致门槛，却把另一半动画永久写入未覆盖区。
+        if self.seam_conflict(&next, result.content) {
+            *cacheable = false;
+            return Ok(Match::Uncertain);
+        }
         if !self.consistent(&next, result.content) {
+            // 已定位却与旧画布冲突的帧不是可信的桥接材料；禁止在后续
+            // 覆盖率变化后借全局多数票重新放行，避免把问题帧的新增区写入成图。
+            *cacheable = false;
             return Ok(Match::Uncertain);
         }
         // 所有可能失败的容量检查先完成；失败不改变画布、锚点或视口。
@@ -337,6 +360,50 @@ impl Stitch {
         self.dy = result.dy;
         self.match_revision = self.match_revision.wrapping_add(1);
         Ok(Match::Aligned(result))
+    }
+
+    /// 在覆盖区与新增区交界处复核局部一致性，同时适用于负坐标和二维空洞。
+    /// 16×16 窗口每 8 像素滑动、内部每 4 像素取样；窗口相互重叠，
+    /// 避免接缝恰好落在窗口边界而完全不被检查。只拒绝有多个旧像素
+    /// 冲突且确实将写入新像素的窗口，不声称检测完全位于新增区的动画。
+    fn seam_conflict(&self, next: &Anchor, content: Content) -> bool {
+        let first = Self::frame_bounds(&self.latest, content);
+        for y in (content.top..content.bottom).step_by(8) {
+            for x in (content.left..content.right).step_by(8) {
+                let mut known = 0;
+                let mut novel = 0;
+                let mut bad = 0;
+                for py in (y..(y + 16).min(content.bottom)).step_by(4) {
+                    for px in (x..(x + 16).min(content.right)).step_by(4) {
+                        let gx = next.x + i64::from(px);
+                        let gy = next.y + i64::from(py);
+                        // 首次裁去固定栏时，只把即将保留的旧正文视作证据。
+                        let retained = self.frames > 1
+                            || (gx >= first.x
+                                && gy >= first.y
+                                && gx < first.x + i64::from(first.width)
+                                && gy < first.y + i64::from(first.height));
+                        let (key, index) = Self::address(gx, gy);
+                        if let Some(tile) =
+                            self.tiles.get(&key).filter(|t| retained && t.has(index))
+                        {
+                            known += 1;
+                            let pixel = next.image.get_pixel(px, py);
+                            let diff: u32 = (0..3)
+                                .map(|c| u32::from(tile.pixels[index][c].abs_diff(pixel[c])))
+                                .sum();
+                            bad += u32::from(diff > 36);
+                        } else {
+                            novel += 1;
+                        }
+                    }
+                }
+                if known >= 4 && novel >= 4 && bad * 100 >= known * 75 {
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     /// 与已提交覆盖区再做空间一致性检查，防止候选只对最新帧成立却冲突于旧画布。

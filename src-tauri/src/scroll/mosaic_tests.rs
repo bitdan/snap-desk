@@ -223,10 +223,99 @@ fn newly_appearing_fixed_band_does_not_rewrite_confirmed_canvas() {
             next.put_pixel(x, y, *stitch.last().get_pixel(x, y));
         }
     }
-    assert_eq!(stitch.consider(next).unwrap(), Match::Uncertain);
+    assert_eq!(
+        stitch.consider_recoverable(next).unwrap(),
+        (Match::Uncertain, false)
+    );
     assert_eq!(stitch.compose(), before);
     assert_eq!(stitch.viewport(), viewport);
     assert_eq!(stitch.match_revision(), revision);
+}
+
+#[test]
+fn historical_boundary_evidence_is_preserved_in_fast_and_search_paths() {
+    let doc = document();
+    for search in [false, true] {
+        let mut stitch = Stitch::new(frame(&doc, 200, 200)).unwrap();
+        moved(stitch.consider(frame(&doc, 240, 200)).unwrap(), 40, 0);
+        let mut historical = stitch.anchors.front().unwrap().clone();
+        if search {
+            moved(stitch.consider(frame(&doc, 340, 200)).unwrap(), 100, 0);
+            moved(stitch.consider(frame(&doc, 440, 200)).unwrap(), 100, 0);
+        }
+        let mut image = frame(&doc, 220, 200);
+        let mut old = historical.image.as_ref().clone();
+        // 定向构造历史快照的固定左栏证据；最新帧没有该栏。
+        // 快速路径中，新帧左栏位于与最新帧的重叠区外，直接匹配不会发现它。
+        for y in 0..160 {
+            for x in 0..12 {
+                let p = *doc.get_pixel(600 + x, 200 + y);
+                old.put_pixel(x, y, p);
+                image.put_pixel(x, y, p);
+            }
+        }
+        historical.image = Arc::new(old);
+        // 隔离唯一被测历史锚点，分别覆盖已知位移快速复核和无直接重叠的搜索。
+        stitch.anchors.clear();
+        stitch.anchors.push_back(historical);
+        let direct = alignment_in(stitch.last(), &image, ScrollMode::Auto, stitch.content);
+        if search {
+            assert_eq!(direct, Match::Uncertain);
+        } else {
+            moved(direct, -20, 0);
+        }
+        let before = stitch.clone();
+        assert_eq!(
+            stitch.consider_recoverable(image).unwrap(),
+            (Match::Uncertain, false)
+        );
+        assert_eq!(stitch.compose(), before.compose());
+        assert_eq!(stitch.viewport(), before.viewport());
+        assert_eq!(stitch.covered, before.covered);
+        assert_eq!(stitch.count(), before.count());
+        assert_eq!(stitch.match_revision(), before.match_revision());
+        assert_eq!(stitch.anchors.len(), before.anchors.len());
+    }
+}
+
+#[test]
+fn known_canvas_conflict_is_not_cacheable_even_without_a_novel_seam() {
+    let doc = document();
+    let mut first = frame(&doc, 200, 200);
+    // 起点左侧的旧内容与后续真实页面不一致。向右滚动时它不在重叠区，
+    // 回滚才暴露冲突；最新帧定位正确也不能覆盖已确认的旧像素。
+    for y in 0..160 {
+        for x in 0..40 {
+            let p = first.get_pixel_mut(x, y);
+            *p = Rgba([255 - p[0], 255 - p[1], 255 - p[2], 255]);
+        }
+    }
+    let mut stitch = Stitch::new(first).unwrap();
+    moved(stitch.consider(frame(&doc, 240, 200)).unwrap(), 40, 0);
+    let before = stitch.clone();
+    let image = frame(&doc, 220, 200);
+    moved(
+        alignment_in(stitch.last(), &image, ScrollMode::Auto, stitch.content),
+        -20,
+        0,
+    );
+    let next = Anchor {
+        image: Arc::new(image.clone()),
+        x: 20,
+        y: 0,
+    };
+    assert!(!stitch.seam_conflict(&next, stitch.content));
+    assert!(!stitch.consistent(&next, stitch.content));
+    assert_eq!(
+        stitch.consider_recoverable(image).unwrap(),
+        (Match::Uncertain, false)
+    );
+    assert_eq!(stitch.compose(), before.compose());
+    assert_eq!(stitch.viewport(), before.viewport());
+    assert_eq!(stitch.covered, before.covered);
+    assert_eq!(stitch.count(), before.count());
+    assert_eq!(stitch.match_revision(), before.match_revision());
+    assert_eq!(stitch.anchors.len(), before.anchors.len());
 }
 
 #[test]
@@ -306,6 +395,96 @@ fn stationary_floating_texture_cannot_enter_new_strips() {
             dy,
         );
     }
+}
+
+#[test]
+fn animated_seam_rejects_without_changing_confirmed_state() {
+    let doc = document();
+    for (dx, dy) in [(40, 0), (0, 40), (40, 40), (-40, 0), (0, -40)] {
+        let first = frame(&doc, 200, 200);
+        let mut next = frame(&doc, (200 + dx) as u32, (200 + dy) as u32);
+        let (left, top) = if dx != 0 {
+            (if dx > 0 { 112 } else { 32 }, 80)
+        } else {
+            (80, if dy > 0 { 112 } else { 32 })
+        };
+        // 动画在文档接缝两侧改变颜色；不依赖旧帧存在同位置静止纹理。
+        for y in top..top + 16 {
+            for x in left..left + 16 {
+                let p = next.get_pixel_mut(x, y);
+                *p = Rgba([255 - p[0], 255 - p[1], 255 - p[2], 255]);
+            }
+        }
+        moved(
+            alignment_in(&first, &next, ScrollMode::Auto, Content::full(&first)),
+            dx,
+            dy,
+        );
+        let mut stitch = Stitch::new(first).unwrap();
+        let before = stitch.clone();
+        let candidate = Anchor {
+            image: Arc::new(next.clone()),
+            x: i64::from(dx),
+            y: i64::from(dy),
+        };
+        // 原全局检查放行；新增局部检查必须独立检出风险。
+        assert!(stitch.consistent(&candidate, stitch.content));
+        assert!(stitch.seam_conflict(&candidate, stitch.content));
+        assert_eq!(
+            stitch.consider_recoverable(next).unwrap(),
+            (Match::Uncertain, false)
+        );
+        assert_eq!(stitch.compose(), before.compose());
+        assert_eq!(stitch.viewport(), before.viewport());
+        assert_eq!(stitch.covered, before.covered);
+        assert_eq!(stitch.count(), before.count());
+        assert_eq!(stitch.match_revision(), before.match_revision());
+        assert_eq!(stitch.anchors.len(), before.anchors.len());
+        moved(
+            stitch
+                .consider(frame(&doc, (200 + dx) as u32, (200 + dy) as u32))
+                .unwrap(),
+            dx,
+            dy,
+        );
+        assert_truth(&stitch, &doc, (200, 200));
+    }
+}
+
+#[test]
+fn seam_check_uses_sparse_coverage_at_holes() {
+    let doc = document();
+    let mut stitch = Stitch::new(frame(&doc, 200, 200)).unwrap();
+    // 右下方追加形成 L 形透明缺口；接缝检查必须读取覆盖位而非包围盒。
+    let candidate = Anchor {
+        image: Arc::new(frame(&doc, 280, 280)),
+        x: 80,
+        y: 80,
+    };
+    stitch.write(candidate, stitch.content).unwrap();
+    stitch.frames = 2;
+    let mut image = frame(&doc, 280, 200);
+    for y in 72..88 {
+        for x in 128..144 {
+            let p = image.get_pixel_mut(x, y);
+            *p = Rgba([255 - p[0], 255 - p[1], 255 - p[2], 255]);
+        }
+    }
+    let next = Anchor {
+        image: Arc::new(image),
+        x: 80,
+        y: 0,
+    };
+    assert!(stitch.has_holes());
+    assert!(stitch.seam_conflict(&next, stitch.content));
+    assert!(!stitch.seam_conflict(
+        &Anchor {
+            image: Arc::new(frame(&doc, 280, 200)),
+            x: 80,
+            y: 0,
+        },
+        stitch.content,
+    ));
 }
 
 #[test]

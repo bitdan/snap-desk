@@ -216,7 +216,8 @@ pub(super) fn verify_at(
     verify(a, b, content(a, b).intersect(known), dx, dy)
 }
 
-/// 每个交集分成 4×4 块；独立纹理块须一致，动画块不参与写入决策。
+/// 每个交集分成 4×4 块，按多数纹理提名位移；少量差异仍可能通过。
+/// 这里只负责定位，实际写入前还须由 Stitch 复核画布与接缝冲突。
 fn verify(a: &RgbaImage, b: &RgbaImage, roi: Content, dx: i32, dy: i32) -> Option<Alignment> {
     let left = (roi.left as i32).max(roi.left as i32 - dx);
     let top = (roi.top as i32).max(roi.top as i32 - dy);

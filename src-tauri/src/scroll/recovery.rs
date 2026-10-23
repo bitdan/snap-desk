@@ -46,7 +46,7 @@ impl Recovery {
                 if cacheable {
                     self.recent.remember(image, now);
                 } else {
-                    // 已发现遮挡时清空旧候选，避免同一遮挡的早期帧绕过新检查。
+                    // 已发现布局、遮挡或画布冲突时清空旧候选，避免问题帧绕过新检查。
                     self.recent = FrameCache::default();
                 }
             }
@@ -95,7 +95,7 @@ impl Recovery {
             Some(Match::Uncertain) | None if self.is_recovering() => {
                 "已确认内容保留；请沿原路滚回重叠区并停顿，匹配后自动继续。"
             }
-            None => "等待页面稳定；局部动画会自动过滤。",
+            None => "等待页面稳定；若有局部动画，请暂停动画后继续。",
             _ => "自动拼接中，请正常滚动页面，完成后点击完成。",
         }
     }
@@ -110,6 +110,120 @@ impl Recovery {
 mod tests {
     use super::*;
     use image::Rgba;
+
+    #[test]
+    fn new_fixed_boundaries_clear_candidates_and_resume_on_clean_frames() {
+        let doc = RgbaImage::from_fn(700, 700, |x, y| {
+            let v = (x.wrapping_mul(73856093) ^ y.wrapping_mul(19349663)).wrapping_mul(83492791);
+            Rgba([v as u8, (v >> 8) as u8, (v >> 16) as u8, 255])
+        });
+        let frame = |x, y| image::imageops::crop_imm(&doc, x, y, 160, 160).to_image();
+        // 四边分别验证；冻结列沿横向暴露，页头/页脚沿纵向暴露。
+        for side in 0..4 {
+            let columns = side < 2;
+            let position = |offset| {
+                if columns {
+                    (200 + offset, 200)
+                } else {
+                    (200, 200 + offset)
+                }
+            };
+            let mut stitch = Stitch::new(frame(200, 200)).unwrap();
+            let mut recovery = Recovery::default();
+            let now = Instant::now();
+            let (x, y) = position(40);
+            assert!(matches!(
+                recovery.consider_at(&mut stitch, frame(x, y), now).unwrap(),
+                Match::Aligned(_)
+            ));
+            let before = stitch.compose();
+            let viewport = stitch.viewport();
+            // 先放入没有重叠的正常候选，布局冲突必须连同它一起清除。
+            assert_eq!(
+                recovery
+                    .consider_at(&mut stitch, frame(500, 500), now)
+                    .unwrap(),
+                Match::Uncertain
+            );
+            assert_eq!(recovery.recent.len(), 1);
+            let (x, y) = position(80);
+            let mut dirty = frame(x, y);
+            for py in 0..160 {
+                for px in 0..160 {
+                    let fixed = match side {
+                        0 => px < 12,
+                        1 => px >= 148,
+                        2 => py < 12,
+                        _ => py >= 148,
+                    };
+                    if fixed {
+                        dirty.put_pixel(px, py, *stitch.last().get_pixel(px, py));
+                    }
+                }
+            }
+            assert_eq!(
+                recovery.consider_at(&mut stitch, dirty, now).unwrap(),
+                Match::Uncertain
+            );
+            assert!(recovery.is_recovering());
+            assert_eq!(recovery.recent.len(), 0);
+            assert_eq!(stitch.compose(), before);
+            assert_eq!(stitch.viewport(), viewport);
+            let (x, y) = position(60);
+            assert!(matches!(
+                recovery.consider_at(&mut stitch, frame(x, y), now).unwrap(),
+                Match::Aligned(_)
+            ));
+            assert!(!recovery.is_recovering());
+            assert_eq!(
+                stitch.compose(),
+                image::imageops::crop_imm(
+                    &doc,
+                    200,
+                    200,
+                    if columns { 220 } else { 160 },
+                    if columns { 160 } else { 220 }
+                )
+                .to_image()
+            );
+        }
+    }
+
+    #[test]
+    fn animated_seam_is_not_cached_for_later_replay() {
+        let doc = RgbaImage::from_fn(400, 400, |x, y| {
+            let v = (x.wrapping_mul(73856093) ^ y.wrapping_mul(19349663)).wrapping_mul(83492791);
+            Rgba([v as u8, (v >> 8) as u8, (v >> 16) as u8, 255])
+        });
+        let frame = |y| image::imageops::crop_imm(&doc, 0, y, 160, 160).to_image();
+        let mut stitch = Stitch::new(frame(0)).unwrap();
+        let before = stitch.compose();
+        let mut dirty = frame(40);
+        for y in 112..128 {
+            for x in 80..96 {
+                let p = dirty.get_pixel_mut(x, y);
+                *p = Rgba([255 - p[0], 255 - p[1], 255 - p[2], 255]);
+            }
+        }
+        let mut recovery = Recovery::default();
+        assert_eq!(
+            recovery.consider(&mut stitch, dirty).unwrap(),
+            Match::Uncertain
+        );
+        assert!(recovery.is_recovering());
+        assert_eq!(recovery.recent.len(), 0);
+        assert_eq!(stitch.compose(), before);
+        assert!(matches!(
+            recovery.consider(&mut stitch, frame(20)).unwrap(),
+            Match::Aligned(_)
+        ));
+        assert_eq!(stitch.height, 180);
+        assert_eq!(
+            stitch.compose(),
+            image::imageops::crop_imm(&doc, 0, 0, 160, 180).to_image()
+        );
+        assert!(!recovery.is_recovering());
+    }
 
     #[test]
     fn detected_overlay_is_not_replayed_after_it_disappears() {
