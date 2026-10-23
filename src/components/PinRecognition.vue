@@ -1,16 +1,19 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref } from 'vue'
+import ImageTranslation from './ImageTranslation.vue'
 import { api, type PinFrame, type QrResult } from '@/lib/api'
 import type { OcrResult } from '@/lib/ai'
 import { ocrPolygon, selectedOcrText } from '@/lib/pin-recognition'
 
-const props = defineProps<{ frame: PinFrame; mode: 'ocr' | 'qr' }>()
+const props = defineProps<{ frame: PinFrame; mode: 'ocr' | 'qr' | 'translate' }>()
 const emit = defineEmits<{ close: [] }>()
 const panel = ref<HTMLElement | null>(null)
 const textArea = ref<HTMLTextAreaElement | null>(null)
 const busy = ref(false), error = ref(''), message = ref('')
 const ocr = ref<OcrResult | null>(null), qr = ref<QrResult | null>(null)
 const selected = ref<string[]>([])
+const translating = ref(props.mode === 'translate')
+function backToRecognition() { translating.value = false; void nextTick(() => panel.value?.focus()) }
 const pendingLink = ref<number | null>(null)
 const text = computed(() => ocr.value ? selectedOcrText(ocr.value, selected.value) : '')
 const lines = computed(() => [...(ocr.value?.lines ?? [])].sort((a, b) => a.order - b.order))
@@ -25,7 +28,7 @@ async function run(task: () => Promise<void>) {
 async function recognize() {
   await run(async () => {
     pendingLink.value = null
-    if (props.mode === 'ocr') {
+    if (props.mode !== 'qr') {
       ocr.value = await api.recognizePinText()
       selected.value = ocr.value.lines.map(line => line.id)
     } else qr.value = await api.recognizePinQr()
@@ -66,12 +69,15 @@ onMounted(() => { void nextTick(() => panel.value?.focus()); void recognize() })
 
 <template>
   <div class="pin-recognition-shade" @pointerdown.stop @wheel.stop @contextmenu.stop.prevent>
-    <section ref="panel" class="pin-recognition" role="dialog" aria-modal="true" :aria-label="mode === 'ocr' ? '图片文字识别' : '图片二维码识别'" tabindex="-1" @keydown.stop="key">
-      <header><strong>{{ mode === 'ocr' ? '图片文字识别' : '图片二维码识别' }}</strong><button :disabled="busy" @click="emit('close')">关闭</button></header>
+    <section v-if="translating && ocr" class="pin-recognition" role="dialog" aria-modal="true" aria-label="图片翻译">
+      <ImageTranslation :recognition="ocr" :image="frame" @close="emit('close')" @back="backToRecognition" />
+    </section>
+    <section v-else ref="panel" class="pin-recognition" role="dialog" aria-modal="true" :aria-label="mode !== 'qr' ? '图片文字识别' : '图片二维码识别'" tabindex="-1" @keydown.stop="key">
+      <header><strong>{{ mode !== 'qr' ? '图片文字识别' : '图片二维码识别' }}</strong><button :disabled="busy" @click="emit('close')">关闭</button></header>
       <p v-if="busy" role="status">正在处理…</p>
       <p v-if="error" role="alert" class="recognition-error">{{ error }}</p>
       <p v-if="message" role="status">{{ message }}</p>
-      <template v-if="mode === 'ocr' && ocr">
+      <template v-if="mode !== 'qr' && ocr">
         <p v-if="!lines.length">未识别到文字。</p>
         <p v-for="warning in ocr.warnings" :key="warning">{{ warning }}</p>
         <div class="image-preview">
@@ -97,7 +103,7 @@ onMounted(() => { void nextTick(() => panel.value?.focus()); void recognize() })
           </div>
         </div>
       </template>
-      <footer><button :disabled="busy" @click="recognize">重新识别</button></footer>
+      <footer><button :disabled="busy" @click="recognize">重新识别</button><button v-if="ocr && mode !== 'qr'" :disabled="busy || !ocr.fullText.trim()" @click="translating = true">翻译图片</button></footer>
     </section>
   </div>
 </template>

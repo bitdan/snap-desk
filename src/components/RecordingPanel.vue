@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue'
+import { onMounted, onUnmounted, ref, watch } from 'vue'
+import RecordingEditor from './RecordingEditor.vue'
 import Button from './ui/button/Button.vue'
 import { api, desktop } from '@/lib/api'
 import type { RecoverableRecording, RecordingResult, RecordingResultAction } from '@/lib/recording'
@@ -22,6 +23,8 @@ async function discardRecovery(id: string) {
   finally { busy.value = false }
 }
 const result = ref<RecordingResult | null>(null)
+const editorOpen = ref(false)
+watch(() => result.value?.id, () => { editorOpen.value = false })
 const resultBusy = ref(false)
 const resultMessage = ref('')
 async function loadResult() {
@@ -115,10 +118,12 @@ onUnmounted(() => { disposed = true; clearTimeout(timer) })
       <p class="py-2 break-all font-medium">{{ result.filename }}</p>
       <p class="break-all text-xs text-zinc-500">{{ result.path }}</p>
       <div class="flex flex-wrap gap-2 py-4">
-        <Button :disabled="resultBusy || recordingActive(view)" title="使用系统默认播放器打开 MP4 / GIF" @click="resultAction('preview')">预览（系统播放器）</Button>
+        <Button v-if="!editorOpen" :disabled="resultBusy || recordingActive(view)" @click="editorOpen = true">预览与裁剪</Button>
+        <Button variant="outline" :disabled="resultBusy || recordingActive(view)" title="使用系统默认播放器打开 MP4 / GIF" @click="resultAction('preview')">预览（系统播放器）</Button>
         <Button variant="outline" :disabled="resultBusy" @click="resultAction('openDirectory')">打开目录</Button>
         <Button variant="ghost" :disabled="resultBusy" @click="resultAction('copyPath')">复制路径</Button>
       </div>
+      <RecordingEditor v-if="editorOpen" :key="result.id" :result-id="result.id" :disabled="recordingActive(view)" @close="editorOpen = false" />
       <p v-if="resultMessage" class="text-sm pb-3" role="status">{{ resultMessage }}</p>
     </div>
     <div class="mb-3">

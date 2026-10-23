@@ -19,6 +19,7 @@ mod input;
 pub mod output;
 pub mod recovery;
 pub mod result;
+pub mod editing;
 mod stats;
 mod timeline;
 use super::scroll::chrome;

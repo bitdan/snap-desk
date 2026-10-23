@@ -131,7 +131,7 @@ fn endpoint_url(value: &str) -> Result<reqwest::Url, String> {
     Ok(url)
 }
 
-/// 同一截图窗口最多一个请求。Notify 的 permit 保留取消信号，避免开始前取消丢失。
+/// 全应用最多一个翻译请求；请求 ID 加入原生窗口归属，窗口间不能互相取消。Notify 的 permit 保留取消信号，避免开始前取消丢失。
 #[derive(Default)]
 pub struct TranslationState(Mutex<Jobs>);
 #[derive(Default)]
@@ -151,6 +151,14 @@ impl Jobs {
         self.active = Some((id.to_string(), notify));
         Ok(())
     }
+    fn cancel_window(&self, label: &str) {
+        if let Some((id, notify)) = self.active.as_ref() {
+            if id.starts_with(&format!("{label}:")) {
+                notify.notify_one();
+            }
+        }
+    }
+
     fn cancel(&mut self, request_id: String) {
         if let Some((id, notify)) = self.active.as_ref() {
             if id == &request_id {
@@ -163,6 +171,25 @@ impl Jobs {
         self.cancelled.push_back(request_id);
     }
 }
+/// 截图与仍存在的贴图共享文本翻译；不开放给主页或任意窗口。
+fn require_translation_window(app: &AppHandle, window: &WebviewWindow) -> Result<(), String> {
+    if window.label() == "capture" {
+        return Ok(());
+    }
+    crate::pins::require_pin(app, window)
+}
+
+fn owned_job_id(label: &str, request_id: &str) -> String {
+    format!("{label}:{request_id}")
+}
+
+/// 窗口关闭只中止自己的请求，避免关闭截图时误杀贴图翻译。
+pub fn cancel_window(app: &AppHandle, label: &str) {
+    if let Ok(guard) = app.state::<TranslationState>().0.lock() {
+        guard.cancel_window(label);
+    }
+}
+
 pub fn cancel_all(app: &AppHandle) {
     if let Ok(guard) = app.state::<TranslationState>().0.lock() {
         if let Some((_, notify)) = guard.active.as_ref() {
@@ -210,7 +237,7 @@ pub async fn translate_text(
     consent: bool,
     expected_settings: AiSettings,
 ) -> Result<TranslationResult, String> {
-    crate::capture::require_window(&window, "capture")?;
+    require_translation_window(&app, &window)?;
     if request_id.is_empty()
         || request_id.len() > 80
         || text.trim().is_empty()
@@ -226,13 +253,14 @@ pub async fn translate_text(
     if settings.provider == "online-llm" && !consent {
         return Err("请先确认发送识别文本。".into());
     }
+    let job_id = owned_job_id(window.label(), &request_id);
     let notify = Arc::new(tokio::sync::Notify::new());
     {
         let state = app.state::<TranslationState>();
         let mut job = state.0.lock().map_err(|_| "翻译状态不可用。")?;
-        job.start(&request_id, notify.clone())?;
+        job.start(&job_id, notify.clone())?;
     }
-    let _guard = JobGuard(app.clone(), request_id.clone());
+    let _guard = JobGuard(app.clone(), job_id.clone());
     static LOG_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
     let op = LOG_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let started = std::time::Instant::now();
@@ -250,7 +278,7 @@ pub async fn translate_text(
         },
         value = async {
             if settings.provider == "local-ctranslate2" {
-                crate::local_translation::translate(&app, &request_id, &settings.target_language, &text, settings.timeout_seconds).await
+                crate::local_translation::translate(&app, &job_id, &settings.target_language, &text, settings.timeout_seconds).await
             } else { translate(&settings, &text).await }
         } => value.map_err(|error| {
             log::error!("event=translation.failed module=translation op=tr-{op} provider={provider} code=TRANSLATION_REQUEST_FAILED duration_ms={}", started.elapsed().as_millis());
@@ -271,13 +299,13 @@ pub fn cancel_ai_job(
     window: WebviewWindow,
     request_id: String,
 ) -> Result<(), String> {
-    crate::capture::require_window(&window, "capture")?;
+    require_translation_window(&app, &window)?;
     if request_id.is_empty() || request_id.len() > 80 {
         return Err("请求 ID 无效。".into());
     }
     let state = app.state::<TranslationState>();
     let mut guard = state.0.lock().map_err(|_| "翻译状态不可用。")?;
-    guard.cancel(request_id);
+    guard.cancel(owned_job_id(window.label(), &request_id));
     Ok(())
 }
 
@@ -410,13 +438,13 @@ pub async fn ai_provider_status(app: AppHandle, window: WebviewWindow) -> Result
     Ok(crate::ai_credentials::read(&settings.endpoint)?.is_some())
 }
 
-/// 截图面板只读取非敏感配置，用于确认发送目的地，不暴露密钥。
+/// 截图/贴图面板只读取非敏感配置，用于确认发送目的地，不暴露密钥。
 #[tauri::command]
 pub async fn ai_translation_config(
     app: AppHandle,
     window: WebviewWindow,
 ) -> Result<AiSettings, String> {
-    crate::capture::require_window(&window, "capture")?;
+    require_translation_window(&app, &window)?;
     config(&app)
 }
 #[tauri::command]
@@ -501,6 +529,35 @@ mod tests {
         assert_eq!(jobs.cancelled.len(), 64);
         assert_eq!(jobs.active.as_ref().unwrap().0, "current");
     }
+    #[test]
+    fn cancellations_are_scoped_to_the_native_window() {
+        let mut jobs = Jobs::default();
+        let capture = owned_job_id("capture", "same-id");
+        let pin = owned_job_id("pin-1", "same-id");
+        assert_ne!(capture, pin);
+        let notify = Arc::new(tokio::sync::Notify::new());
+        jobs.start(&pin, notify.clone()).unwrap();
+        jobs.cancel(capture.clone());
+        jobs.cancel_window("capture");
+        jobs.cancel_window("pin-10");
+        // enable() 注册等待而不需要启动异步 runtime；其他窗口不能发出 permit。
+        let mut pending = Box::pin(notify.notified());
+        assert!(!pending.as_mut().enable());
+        jobs.cancel_window("pin-1");
+        assert!(pending.as_mut().enable());
+        jobs.cancel(pin.clone());
+        jobs.active = None;
+        assert!(jobs
+            .start(&capture, Arc::new(tokio::sync::Notify::new()))
+            .is_err());
+        assert!(jobs
+            .start(
+                &owned_job_id("pin-2", "same-id"),
+                Arc::new(tokio::sync::Notify::new())
+            )
+            .is_ok());
+    }
+
     #[test]
     fn endpoint_rejects_unsafe_addresses() {
         for url in [

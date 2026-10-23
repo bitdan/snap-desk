@@ -168,8 +168,16 @@ pub fn run() {
         .manage(local_translation::LocalTranslationState::default())
         .manage(capture::recording::RecordingState::default())
         .manage(capture::recording::result::ResultState::default())
+        .manage(capture::recording::editing::EditState::default())
         .manage(capture::recording::ExitState::default())
         .manage(pins::PinState::default())
+        .register_asynchronous_uri_scheme_protocol("recording", |context, request, responder| {
+            let app = context.app_handle().clone();
+            let main = context.webview_label() == "main";
+            tauri::async_runtime::spawn_blocking(move || {
+                responder.respond(capture::recording::editing::preview(&app, main, request));
+            });
+        })
         .plugin(
             tauri_plugin_log::Builder::new()
                 .level(log::LevelFilter::Debug)
@@ -330,8 +338,11 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            if window.label() == "capture" && matches!(event, tauri::WindowEvent::Destroyed | tauri::WindowEvent::CloseRequested { .. }) {
-                translation::cancel_all(window.app_handle());
+            // 关闭截图/贴图时仅取消本窗口的文字任务；退出应用仍由统一出口取消全部任务。
+            if (window.label() == "capture" || window.label().starts_with("pin-"))
+                && matches!(event, tauri::WindowEvent::Destroyed | tauri::WindowEvent::CloseRequested { .. })
+            {
+                translation::cancel_window(window.app_handle(), window.label());
             }
             // 按已提交映射响应事件；try_lock 避免阻塞系统事件线程。??
             if window.label() == "main"
@@ -454,6 +465,10 @@ pub fn run() {
             capture::scroll::session::control_scroll,
             capture::recording::start_recording,
             capture::recording::current_recording,
+            capture::recording::editing::prepare_recording_editor,
+            capture::recording::editing::close_recording_editor,
+            capture::recording::editing::trim_recording,
+            capture::recording::editing::cancel_recording_trim,
             capture::recording::result::latest_recording_result,
             capture::recording::result::recording_result_action,
             capture::recording::recovery::recoverable_recordings,
@@ -484,6 +499,7 @@ pub fn run() {
             // 录屏的退出流程完成后才收到 Exit；等待历史在途写入释放。
             if matches!(event, tauri::RunEvent::Exit) {
                 log::info!("event=app.exiting module=app");
+                capture::recording::editing::shutdown(app);
                 resource_lifecycle::shutdown(app);
                 translation::cancel_all(app);
                 local_translation::shutdown(app);

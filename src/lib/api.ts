@@ -1,3 +1,4 @@
+import type { RecordingEditorView, RecordingTrimRange, RecordingTrimExport } from './recording-editor'
 import type { DiagnosticsStatus, LogQuery, RecentLogs, ClearArchivesResult } from './diagnostics'
 import type { ClipboardSettings, ClipboardQuery, ClipboardPage, ClipboardStatus, ClipboardExportOptions, ClipboardExportResult } from './clipboard'
 import { invoke as nativeInvoke, isTauri, type InvokeArgs } from '@tauri-apps/api/core'
@@ -86,6 +87,10 @@ export const api = {
   clipboardClear: (includeFavorites: boolean) => invoke<void>('clipboard_clear', { includeFavorites }),
   clipboardConfigure: (settings: ClipboardSettings) => invoke<ClipboardStatus>('clipboard_configure', { settings }),
   clipboardExport: (options: ClipboardExportOptions) => invoke<ClipboardExportResult>('clipboard_export', { options }),
+  prepareRecordingEditor: (id: number) => invoke<RecordingEditorView>('prepare_recording_editor', { id }),
+  closeRecordingEditor: (token: number) => invoke<void>('close_recording_editor', { token }),
+  trimRecording: (token: number, range: RecordingTrimRange) => invoke<RecordingTrimExport | null>('trim_recording', { token, range }),
+  cancelRecordingTrim: (token: number) => invoke<void>('cancel_recording_trim', { token }),
   latestRecordingResult: () => invoke<RecordingResult | null>('latest_recording_result'),
   recordingResultAction: (id: number, action: RecordingResultAction) => invoke<void>('recording_result_action', { id, action }),
   autostartEnabled: () => invoke<boolean>('autostart_enabled'),

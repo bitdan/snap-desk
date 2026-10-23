@@ -69,6 +69,17 @@ fn media_path(path: &Path) -> Result<PathBuf, String> {
     Ok(path.to_path_buf())
 }
 
+/// 编辑器只接收结果编号；源路径仍由原生最近成功导出记录解析。
+pub(super) fn source_path(app: &AppHandle, id: u64) -> Result<PathBuf, String> {
+    let state = app.state::<ResultState>();
+    let current = state.0.lock().map_err(|e| e.to_string())?;
+    let result = current
+        .as_ref()
+        .filter(|value| value.id == id)
+        .ok_or("录屏结果已更新，请刷新后重试。")?;
+    media_path(Path::new(&result.path))
+}
+
 /// 预览交给系统默认播放器，避免把大视频整段编码成 Base64 传进 WebView。
 #[tauri::command]
 pub async fn recording_result_action(

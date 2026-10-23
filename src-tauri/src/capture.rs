@@ -499,7 +499,7 @@ pub fn show_capture(app: AppHandle, window: WebviewWindow, id: u64) -> Result<()
 
 /// 完成、取消或失败后仅清理采集窗口和会话，不自动返回主界面。
 fn cleanup(app: &AppHandle) -> Result<(), String> {
-    crate::translation::cancel_all(app);
+    crate::translation::cancel_window(app, "capture");
     // Keep the session recoverable if hiding fails; don't expose a dead overlay.
     overlay(app)?.hide().map_err(err)?;
     scroll::chrome::hide(app);

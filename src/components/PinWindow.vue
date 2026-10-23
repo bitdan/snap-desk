@@ -15,9 +15,9 @@ const toolbar = ref<HTMLElement | null>(null)
 const { style: floatingToolbarStyle, start: floatToolbar, reset: resetToolbarPosition } = useFloatingToolbar(toolbar)
 const frame = ref<PinFrame | null>(null)
 const busy = ref(false)
-const recognitionMode = ref<'ocr' | 'qr' | null>(null)
+const recognitionMode = ref<'ocr' | 'qr' | 'translate' | null>(null)
 let recognitionTrigger: HTMLElement | null = null
-function recognize(mode: 'ocr' | 'qr', event: MouseEvent) {
+function recognize(mode: 'ocr' | 'qr' | 'translate', event: MouseEvent) {
   if (!frame.value || busy.value || editor.pending || editor.interacting) return
   recognitionTrigger = event.currentTarget as HTMLElement
   closeMenu()
@@ -235,6 +235,7 @@ function closeOnResize() {
           <label v-if="frame.transparencySupported" class="pin-opacity">不透明度 <input type="range" min="20" max="100" step="5" :value="Math.round(frame.view.opacity * 100)" :disabled="busy" @change="opacity" /><span>{{ Math.round(frame.view.opacity * 100) }}%</span></label>
           <button :disabled="busy || editor.pending || editor.interacting" @click="recognize('ocr', $event)">识别文字</button>
           <button :disabled="busy || editor.pending || editor.interacting" @click="recognize('qr', $event)">识别二维码</button>
+          <button :disabled="busy || editor.pending || editor.interacting" @click="recognize('translate', $event)">翻译图片</button>
           <span class="pin-dimensions">{{ frame.width }} × {{ frame.height }} px</span>
         </div></template>
       </AnnotationToolbar>
@@ -259,6 +260,7 @@ function closeOnResize() {
       <div role="separator" />
       <button role="menuitem" @click="recognize('ocr', $event)">识别文字</button>
       <button role="menuitem" @click="recognize('qr', $event)">识别二维码</button>
+      <button role="menuitem" @click="recognize('translate', $event)">翻译图片</button>
       <button role="menuitem" @click="closeMenu(true); action('copy')"><Copy :size="16" />复制图片<span>Ctrl/⌘+C</span></button>
       <button role="menuitem" @click="closeMenu(true); action('save')"><Save :size="16" />保存图片<span>Ctrl/⌘+S</span></button>
       <button role="menuitem" @click="closeMenu(true); toggleControls()"><ChevronDown :size="16" />{{ controls ? '收起工具栏' : '展开工具栏' }}</button>

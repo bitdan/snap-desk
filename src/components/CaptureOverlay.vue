@@ -2,7 +2,7 @@
 import ScrollCaptureIcon from './ScrollCaptureIcon.vue'
 import QrResultCard from './QrResultCard.vue'
 import OcrResultCard from './OcrResultCard.vue'
-import TranslationPanel from './TranslationPanel.vue'
+import ImageTranslation from './ImageTranslation.vue'
 import type { OcrResult } from '@/lib/ai'
 import { computed, nextTick, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue'
 import { Copy, Save, X, Monitor, RotateCcw, Scan, Move, Pin, Video, QrCode, ScanText, Languages, AppWindow } from 'lucide-vue-next'
@@ -447,7 +447,7 @@ onUnmounted(() => { releaseFrame(); disposed = true; offClosed?.(); off?.(); off
     <CaptureMagnifier v-if="showMagnifier && screenImage && pointer && frame" :image="screenImage" :point="pointer" :viewport="viewport" :image-size="frame" :format="colorFormat" :relative="relativeCoordinates" :origin="pixels" :copied="colorCopied" :bounds="pointerDisplay" />
     <div v-if="ocrResult !== null" class="qr-shade" @pointerdown.stop @pointermove.stop @pointerup.stop @contextmenu.stop.prevent>
       <div :class="['qr-dialog', 'ocr-dialog', { 'translation-dialog': translationMode }]" :style="dialogStyle" role="dialog" aria-modal="true" :aria-label="translationMode ? '文字翻译' : '文字识别结果'">
-        <TranslationPanel v-if="translationMode" v-model:text="ocrDraft" @back="translationMode = false" @close="closeOcr" />
+        <ImageTranslation v-if="translationMode && frame && pixels" :key="ocrResult.requestId" :recognition="ocrResult" :source-text="ocrDraft" :image="{ dataUrl: frame.dataUrl, width: frame.width, height: frame.height, crop: pixels }" @back="translationMode = false" @close="closeOcr" />
         <OcrResultCard v-else v-model:text="ocrDraft" @translate="translationMode = true" @close="closeOcr" />
       </div>
     </div>
