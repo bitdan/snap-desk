@@ -99,6 +99,7 @@ export const api = {
   selectRecordingArea: () => invoke<void>('select_recording_area'),
   recoverableRecordings: () => invoke<RecoverableRecording[]>('recoverable_recordings'),
   retryRecordingExport: (id: string) => invoke<string>('retry_recording_export', { id }),
+  discardRecordingRecovery: (id: string) => invoke<void>('discard_recording_recovery', { id }),
   openProjectHomepage: () => invoke<void>('open_project_homepage'),
   status: () => invoke<AppStatus>('app_status'),
   saveSettings: (settings: Settings) => invoke<Settings>('save_settings', { settings }),

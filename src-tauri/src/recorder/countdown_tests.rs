@@ -57,6 +57,8 @@ fn session() -> Session {
             frames: 0,
             dropped_frames: 0,
             target_fps: 30,
+            system_audio: false,
+            microphone: false,
             encoding_millis: 0.0,
             stats: stats::RecordingStats::default(),
             target_bitrate: 8_087_040,
@@ -106,6 +108,23 @@ fn stopping_countdown_cancels_and_late_tick_cannot_start_recording() {
         assert_eq!(s.view.frames, 0);
         assert_eq!(s.view.seconds, 0.0);
     }
+}
+
+#[test]
+fn stop_is_visible_immediately_and_cancel_during_encoding_stays_cancelled() {
+    let mut s = session();
+    s.begin(0, 0);
+    let generation = s.timeline.generation;
+    s.stop_requested(false);
+    let elapsed = s.timeline.elapsed(i64::MAX);
+    assert_eq!(s.view.phase, Phase::Encoding);
+    assert!(!s.cancel);
+    assert_eq!(s.timeline.generation, generation);
+    s.stop_requested(true);
+    s.stop_requested(false);
+    assert!(s.cancel);
+    assert_eq!(s.timeline.elapsed(i64::MAX), elapsed);
+    assert!(s.view.message.contains("取消"));
 }
 
 #[test]

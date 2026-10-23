@@ -3,7 +3,7 @@ import { onMounted, onUnmounted, ref } from 'vue'
 import Button from './ui/button/Button.vue'
 import { api, desktop } from '@/lib/api'
 import type { RecoverableRecording, RecordingResult, RecordingResultAction } from '@/lib/recording'
-import { encoderLabels, recordingStats, newerRecording, recordingActive, recordingStatus, recordingTime, type RecorderCapabilities, type RecordingAction, type RecordingDirectory, type RecordingView } from '@/lib/recording'
+import { encoderLabels, recordingAudioStatus, recordingRecoveryStatus, recordingStats, newerRecording, recordingActive, recordingStatus, recordingTime, type RecorderCapabilities, type RecordingAction, type RecordingDirectory, type RecordingView } from '@/lib/recording'
 
 const view = ref<RecordingView | null>(null)
 const error = ref('')
@@ -13,6 +13,14 @@ const directory = ref<RecordingDirectory | null>(null)
 const changingDirectory = ref(false)
 const recoveries = ref<RecoverableRecording[]>([])
 const recoveredPath = ref('')
+const discardId = ref<string | null>(null)
+async function discardRecovery(id: string) {
+  if (busy.value || changingDirectory.value || recordingActive(view.value)) return
+  busy.value = true; error.value = ''
+  try { await api.discardRecordingRecovery(id); discardId.value = null; await loadRecoveries() }
+  catch (e) { error.value = String(e) }
+  finally { busy.value = false }
+}
 const result = ref<RecordingResult | null>(null)
 const resultBusy = ref(false)
 const resultMessage = ref('')
@@ -113,16 +121,26 @@ onUnmounted(() => { disposed = true; clearTimeout(timer) })
       </div>
       <p v-if="resultMessage" class="text-sm pb-3" role="status">{{ resultMessage }}</p>
     </div>
-    <div v-if="recoveries.length" class="settings-card mb-3">
-      <div class="setting-row"><strong>待恢复视频</strong><Button variant="outline" :disabled="busy" @click="loadRecoveries">刷新</Button></div>
-      <p class="py-2 text-sm">已封装视频可重新导出到当前保存位置；也可先选择其他文件夹。</p>
+    <div class="mb-3">
+      <div class="setting-row"><strong>可恢复录制 / 清理残留（{{ recoveries.length }}）</strong><Button variant="outline" :disabled="busy" @click="loadRecoveries">刷新</Button></div>
+      <p class="py-2 text-sm">{{ recoveries.length ? '仅已封装文件可重新导出；未封装数据不会自动修复或删除。' : '暂无待恢复录制。' }}</p>
       <div v-for="item in recoveries" :key="item.id" class="setting-row gap-3">
-        <span class="min-w-0 flex-1 break-all">{{ item.path }}<small>{{ item.finalized ? '封装已完成，源文件已保留' : '封装未确认完成，源文件保留供检查' }}</small></span>
-        <Button v-if="item.finalized" :disabled="busy || changingDirectory || recordingActive(view)" @click="retryExport(item.id)">重试导出</Button>
+        <span class="min-w-0 flex-1 break-all">{{ item.path }}<small>{{ recordingRecoveryStatus(item) }}</small></span>
+        <div class="flex flex-wrap gap-2">
+          <Button v-if="item.finalized && item.sourceExists" :disabled="busy || changingDirectory || recordingActive(view)" @click="retryExport(item.id)">{{ item.exported ? '检查导出' : '重试导出' }}</Button>
+          <Button variant="ghost" :disabled="busy || changingDirectory || recordingActive(view)" @click="discardId = item.id">清理残留</Button>
+        </div>
+      </div>
+      <div v-if="discardId" class="notice" role="alertdialog" aria-label="确认清理录制残留">
+        <p>永久删除这条录制的源文件和恢复记录？未封装数据也会删除；已导出文件保留。</p>
+        <Button :disabled="busy || changingDirectory || recordingActive(view)" @click="discardRecovery(discardId)">确认删除源文件</Button>
+        <Button variant="outline" :disabled="busy" @click="discardId = null">保留</Button>
       </div>
     </div>
     <div class="settings-card">
-      <div class="setting-row"><span>输出</span><strong>MP4 / GIF · 无声 · 可录制光标</strong></div>
+      <div class="setting-row"><span>输出</span><strong>MP4 可选声音 / GIF 无声 · 可录制光标</strong></div>
+      <div v-if="view" class="setting-row"><span>本次音频来源</span><span>{{ recordingAudioStatus(view) }}</span></div>
+      <p v-if="view?.systemAudio" class="text-xs text-zinc-500">系统无播放或设备静音时，音轨对应区间为静音。</p>
       <div class="setting-row gap-3">
         <span class="min-w-0 flex-1">保存位置<small class="break-all">{{ directory?.path ?? (desktop ? '目录尚未读取' : '请在桌面应用中选择') }}</small></span>
         <div class="flex shrink-0 gap-2">

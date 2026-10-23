@@ -1,5 +1,5 @@
 //! 使用 WGC 同源的 QPC 时间（100 ns）计算媒体时间；暂停切换使旧帧失效。
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct Timeline {
     elapsed: i64,
     since: Option<i64>,
@@ -68,7 +68,9 @@ impl Timeline {
 
     /// 与视频使用同一时钟，但允许停止后排空包；暂停区间内的样本不会进入成品。
     pub fn project_audio(&self, source: i64) -> Option<i64> {
-        let index = self.audio_spans.partition_point(|(start, _, _)| *start <= source);
+        let index = self
+            .audio_spans
+            .partition_point(|(start, _, _)| *start <= source);
         let &(start, end, media) = self.audio_spans.get(index.checked_sub(1)?)?;
         if end.is_some_and(|end| source >= end) {
             return None;

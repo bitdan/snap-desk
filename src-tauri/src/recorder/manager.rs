@@ -49,6 +49,8 @@ pub struct RecordingView {
     frames: usize,
     dropped_frames: usize,
     target_fps: u32,
+    system_audio: bool,
+    microphone: bool,
     /// push 的累计墙钟耗时，包含转换和同步提交，不代表 GPU 内部延迟。
     encoding_millis: f64,
     stats: stats::RecordingStats,
@@ -89,7 +91,11 @@ impl Session {
             self.timeline.resume(now);
             self.fps_window.reset(self.timeline.elapsed(now));
             self.view.phase = Phase::Recording;
-            log::info!("event=recording.started module=recording op=rec-{} fps={}", self.view.id, self.view.target_fps);
+            log::info!(
+                "event=recording.started module=recording op=rec-{} fps={}",
+                self.view.id,
+                self.view.target_fps
+            );
             self.view.message = "录制中".into();
         } else {
             self.countdown_until = Some(now + i64::from(delay) * 10_000_000);
@@ -125,6 +131,13 @@ impl Session {
         self.cancel |= cancel || matches!(self.view.phase, Phase::Ready | Phase::Countdown);
         self.freeze();
         self.stop = true;
+        self.view.phase = Phase::Encoding;
+        self.view.message = if self.cancel {
+            "正在取消录屏并释放设备…"
+        } else {
+            "已请求停止，正在排空编码队列并保存…"
+        }
+        .into();
         self.view.revision += 1;
     }
 }
@@ -453,9 +466,18 @@ pub async fn recording_capabilities(window: WebviewWindow) -> Result<RecorderCap
             && formats.iter().any(|f| matches!(f, OutputFormat::Mp4))
             && (|| {
                 let root = tempfile::tempdir().map_err(err)?;
-                encoder::probe(root.path(), 64, 64, 30, 1_000_000,
-                    config::EncodingPreference::Auto, OutputFormat::Mp4, true)
-            })().is_ok();
+                encoder::probe(
+                    root.path(),
+                    64,
+                    64,
+                    30,
+                    1_000_000,
+                    config::EncodingPreference::Auto,
+                    OutputFormat::Mp4,
+                    true,
+                )
+            })()
+            .is_ok();
         Ok(RecorderCapabilities {
             available,
             reason: result
@@ -548,6 +570,8 @@ pub async fn start_recording(
                 frames: 0,
                 dropped_frames: 0,
                 target_fps: config.fps,
+                system_audio: config.system_audio,
+                microphone: config.microphone,
                 encoding_millis: 0.0,
                 stats: stats::RecordingStats::default(),
                 target_bitrate: config.target_bitrate(),
@@ -577,13 +601,29 @@ pub async fn start_recording(
                     let audio = if config.system_audio || config.microphone {
                         let audio_app = worker_app.clone();
                         // 初始化在确认选区阶段完成；只有 Recording 阶段才 Start 设备。
-                        Some(audio::Worker::start(config.system_audio, config.microphone, move || {
-                            audio_app.state::<RecordingState>().0.lock().ok()
-                                .and_then(|guard| guard.as_ref().map(|s| {
-                                    s.view.id == id && s.view.phase == Phase::Recording && !s.stop && !s.cancel
-                                })).unwrap_or(false)
-                        })?)
-                    } else { None };
+                        Some(audio::Worker::start(
+                            config.system_audio,
+                            config.microphone,
+                            move || {
+                                audio_app
+                                    .state::<RecordingState>()
+                                    .0
+                                    .lock()
+                                    .ok()
+                                    .and_then(|guard| {
+                                        guard.as_ref().map(|s| {
+                                            s.view.id == id
+                                                && s.view.phase == Phase::Recording
+                                                && !s.stop
+                                                && !s.cancel
+                                        })
+                                    })
+                                    .unwrap_or(false)
+                            },
+                        )?)
+                    } else {
+                        None
+                    };
                     Ok((backend, audio))
                 });
                 match prepared {
@@ -675,7 +715,17 @@ fn collect(
     let writer_app = app.clone();
     let writer = std::thread::Builder::new()
         .name("recording-encoder".into())
-        .spawn(move || write_video(&writer_app, id, config, root, receiver, &writer_abort, audio));
+        .spawn(move || {
+            write_video(
+                &writer_app,
+                id,
+                config,
+                root,
+                receiver,
+                &writer_abort,
+                audio,
+            )
+        });
     let result = match writer {
         Err(e) => Err(err(e)),
         Ok(writer) => {
@@ -927,7 +977,12 @@ fn collect(
                     s.freeze();
                     s.stop = true;
                     s.view.phase = Phase::Encoding;
-                    s.view.message = "录屏已停止，正在完成 MP4 封装…".into();
+                    s.view.message = if s.cancel {
+                        "正在取消录屏并清理临时文件…"
+                    } else {
+                        "录屏已停止，正在完成文件封装…"
+                    }
+                    .into();
                     s.view.revision += 1;
                 }
             }
@@ -954,12 +1009,14 @@ fn collect(
                 Ok(path) => (Phase::Completed, format!("录屏已保存：{path}"), Some(path)),
                 Err(_) if s.cancel => (
                     Phase::Cancelled,
-                    "录屏已取消，临时视频已清理。".into(),
+                    "录屏已取消；未能清理的残留可在录屏页查看并删除。".into(),
                     None,
                 ),
                 Err(error) => (
                     Phase::Failed,
-                    format!("录屏失败：{error} 已产生的源视频会保留，请在录屏页查看待恢复视频。"),
+                    format!(
+                        "录屏失败：{error} 请在录屏页查看已保留的数据；未封装数据可能无法播放。"
+                    ),
                     None,
                 ),
             };
@@ -967,8 +1024,16 @@ fn collect(
             if phase == Phase::Failed {
                 log::error!("event=recording.failed module=recording op=rec-{id} code=RECORDING_PIPELINE_FAILED");
             }
-            let level = if phase == Phase::Failed { log::Level::Error } else { log::Level::Info };
-            let outcome = match phase { Phase::Completed => "success", Phase::Cancelled => "cancelled", _ => "failed" };
+            let level = if phase == Phase::Failed {
+                log::Level::Error
+            } else {
+                log::Level::Info
+            };
+            let outcome = match phase {
+                Phase::Completed => "success",
+                Phase::Cancelled => "cancelled",
+                _ => "failed",
+            };
             log::log!(level, "event=recording.finished module=recording op=rec-{id} result={outcome} duration_ms={} captured={} encoded={} dropped={} encoding_ms={}",
                 (s.view.seconds * 1000.0) as u64, s.view.stats.captured_frames, s.view.frames, s.view.dropped_frames, s.view.encoding_millis);
             message = text.clone();
@@ -1106,7 +1171,7 @@ fn write_video(
     let output = recovery.output(&root);
     progress(app, "publishing", Some(&pending));
     output::publish(&pending, &output)?;
-    recovery.published();
+    recovery.published(&output);
     result::remember(app, &output);
     progress(app, "completed", Some(&output));
     s.view.phase = Phase::Completed;
@@ -1128,15 +1193,41 @@ fn pump_audio(
     finishing: bool,
 ) -> Result<(), String> {
     let frames = worker.drain()?;
-    let end = {
+    let (timeline, end) = {
         let guard = state.0.lock().map_err(err)?;
-        let session = guard.as_ref().filter(|s| s.view.id == id && !s.cancel)
+        let session = guard
+            .as_ref()
+            .filter(|s| s.view.id == id && !s.cancel)
             .ok_or("已取消录屏。")?;
-        for frame in frames { mixer.ingest(frame, &session.timeline)?; }
         let elapsed = session.timeline.elapsed(capture::now());
-        if finishing { elapsed } else { elapsed.saturating_sub(audio::MIX_DELAY) }
+        let end = if finishing {
+            elapsed
+        } else {
+            elapsed.saturating_sub(audio::MIX_DELAY)
+        };
+        (session.timeline.clone(), end)
     };
+    // 最多 128 个音频包可能累积大量逐样本运算；锁内只复制时间轴快照，
+    // 在锁外混音，避免高负载时暂停/停止/取消按钮等待整批音频处理。
+    for frame in frames {
+        let cancelled = {
+            let guard = state.0.lock().map_err(err)?;
+            !guard.as_ref().is_some_and(|s| s.view.id == id && !s.cancel)
+        };
+        if cancelled {
+            return Err("已取消录屏。".into());
+        }
+        mixer.ingest(frame, &timeline)?;
+    }
     while let Some(packet) = mixer.next_packet(end) {
+        // 长静音段可能需要补交很多包；每 10 ms 媒体数据重新检查取消，
+        // 不让一次泵送在停止后继续占满编码线程。原生驱动调用本身仍不可抢占。
+        {
+            let guard = state.0.lock().map_err(err)?;
+            if !guard.as_ref().is_some_and(|s| s.view.id == id && !s.cancel) {
+                return Err("已取消录屏。".into());
+            }
+        }
         encoder.advance_video(packet.pts + packet.duration)?;
         encoder.push_audio(&packet)?;
     }

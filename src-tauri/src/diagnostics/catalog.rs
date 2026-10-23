@@ -147,6 +147,7 @@ pub const COMMANDS: &[&str] = &[
     "recoverable_recordings",
     "resource_status",
     "retry_recording_export",
+    "discard_recording_recovery",
     "save_capture",
     "save_settings",
     "select_recording_area",

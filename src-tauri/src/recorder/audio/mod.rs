@@ -150,6 +150,66 @@ mod tests {
         }
     }
 
+    /// 三种来源组合均跨越暂停、静音和停止；相邻包必须首尾相接，暂停不占时长。
+    #[test]
+    fn selected_sources_keep_continuous_audio_across_repeated_pauses() {
+        for sources in [
+            &[Source::System][..],
+            &[Source::Microphone][..],
+            &[Source::System, Source::Microphone][..],
+        ] {
+            let mut timeline = Timeline::default();
+            let mut mixer = Mixer::default();
+            let mut duration = 0;
+            for turn in 0..60_i64 {
+                let start = turn * TICKS;
+                timeline.resume(start);
+                timeline.pause(start + 200_000);
+                for &source in sources {
+                    // 前 10 ms 为声音，后 10 ms 显式静音；跨暂停的尾样本被裁掉。
+                    mixer
+                        .ingest(frame(source, start, 480, 0.25), &timeline)
+                        .unwrap();
+                    mixer
+                        .ingest(frame(source, start + 100_000, 960, 0.0), &timeline)
+                        .unwrap();
+                }
+                let end = (turn + 1) * 200_000;
+                let sound = mixer.next_packet(end).unwrap();
+                assert_eq!(sound.pts, duration);
+                let expected = if sources.len() == 2 { 16384 } else { 8192 };
+                assert!(sound.samples.iter().all(|sample| *sample == expected));
+                duration += sound.duration;
+                let silent = mixer.next_packet(end).unwrap();
+                assert_eq!(silent.pts, duration);
+                assert!(silent.samples.iter().all(|sample| *sample == 0));
+                duration += silent.duration;
+                assert_eq!(duration, end);
+                assert!(mixer.next_packet(end).is_none());
+            }
+            timeline.stop(100 * TICKS);
+            assert_eq!(timeline.elapsed(200 * TICKS), duration);
+            assert!(mixer.pending.is_empty());
+        }
+    }
+
+    #[test]
+    fn long_clock_packet_boundaries_do_not_accumulate_rounding_error() {
+        for hours in [1, 8, 24] {
+            let mut mixer = Mixer {
+                cursor: i64::from(RATE) * 3600 * hours + 1,
+                ..Mixer::default()
+            };
+            let mut previous = sample_time(mixer.cursor);
+            let end = previous + TICKS + 137;
+            while let Some(packet) = mixer.next_packet(end) {
+                assert_eq!(packet.pts, previous);
+                previous += packet.duration;
+            }
+            assert!(end - previous <= sample_time(1) + 1);
+        }
+    }
+
     #[test]
     fn mixes_sources_clips_and_fills_silence() {
         let mut timeline = Timeline::default();
