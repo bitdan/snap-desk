@@ -111,6 +111,90 @@ mod tests {
     use super::*;
     use image::Rgba;
 
+    /// 缓存补到远端后恢复真实视口，下一帧只与补采终点重叠也应继续。
+    /// 四向都用正常采样顺序构造，不人工注入锚点；输出必须逐像素等于真值。
+    #[test]
+    fn replay_endpoint_remains_available_after_restoring_observed_viewport() {
+        let doc = RgbaImage::from_fn(900, 900, |x, y| {
+            let mut v =
+                (x.wrapping_mul(73856093) ^ y.wrapping_mul(19349663)).wrapping_mul(83492791);
+            v ^= v >> 13;
+            Rgba([v as u8, (v >> 8) as u8, (v >> 16) as u8, 255])
+        });
+        for (dx, dy) in [(0i64, 1i64), (0, -1), (1, 0), (-1, 0)] {
+            let seed_x = if dx < 0 { 500i64 } else { 0 };
+            let seed_y = if dy < 0 { 500i64 } else { 0 };
+            let frame = |offset: i64| {
+                image::imageops::crop_imm(
+                    &doc,
+                    (seed_x + dx * offset) as u32,
+                    (seed_y + dy * offset) as u32,
+                    160,
+                    160,
+                )
+                .to_image()
+            };
+            let mut stitch = Stitch::new(frame(0)).unwrap();
+            let mut recovery = Recovery::default();
+            let now = Instant::now();
+            for offset in [300, 240] {
+                assert_eq!(
+                    recovery
+                        .consider_at(&mut stitch, frame(offset), now)
+                        .unwrap(),
+                    Match::Uncertain
+                );
+            }
+            assert!(matches!(
+                recovery.consider_at(&mut stitch, frame(120), now).unwrap(),
+                Match::Aligned(_)
+            ));
+            assert_eq!(recovery.recent.len(), 0);
+            assert!(!recovery.is_recovering());
+            assert_eq!(
+                (stitch.viewport().x, stitch.viewport().y),
+                (dx * 120, dy * 120)
+            );
+            let bounds = stitch.bounds;
+            assert_eq!(
+                stitch.compose(),
+                image::imageops::crop_imm(
+                    &doc,
+                    (seed_x + bounds.x) as u32,
+                    (seed_y + bounds.y) as u32,
+                    bounds.width,
+                    bounds.height,
+                )
+                .to_image()
+            );
+            // 距离真实视口 300、其他历史锚点至少 180，只有补采终点留下 40 像素重叠。
+            assert!(matches!(
+                recovery.consider_at(&mut stitch, frame(420), now).unwrap(),
+                Match::Aligned(_)
+            ));
+            assert_eq!(
+                (stitch.viewport().x, stitch.viewport().y),
+                (dx * 420, dy * 420)
+            );
+            assert_eq!(recovery.recent.len(), 0);
+            assert!(!stitch.has_holes());
+            let bounds = stitch.bounds;
+            assert_eq!(bounds.width, if dx == 0 { 160 } else { 580 });
+            assert_eq!(bounds.height, if dy == 0 { 160 } else { 580 });
+            assert_eq!(
+                stitch.compose(),
+                image::imageops::crop_imm(
+                    &doc,
+                    (seed_x + bounds.x) as u32,
+                    (seed_y + bounds.y) as u32,
+                    bounds.width,
+                    bounds.height,
+                )
+                .to_image()
+            );
+        }
+    }
+
     #[test]
     fn new_fixed_boundaries_clear_candidates_and_resume_on_clean_frames() {
         let doc = RgbaImage::from_fn(700, 700, |x, y| {

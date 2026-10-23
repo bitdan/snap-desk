@@ -1,5 +1,11 @@
 import type { ScrollView } from './api'
 
+/** 四舍五入不能把仍有空洞的画布显示为已完整覆盖。 */
+export function scrollCoverageLabel(view: Pick<ScrollView, 'coveragePercent' | 'hasHoles'>): string {
+  const rounded = view.coveragePercent.toFixed(1)
+  return view.hasHoles && rounded === '100.0' ? '<100' : rounded
+}
+
 /** 常驻预览窗口拒绝已关闭会话的迟到事件和查询响应，避免隐藏后重新持有图片。 */
 export function newerScrollPreview(current: ScrollView | null, next: ScrollView, closedThroughId: number): ScrollView | null {
   if (next.id <= closedThroughId || (current && next.id < current.id)) return current

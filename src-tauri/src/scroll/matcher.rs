@@ -78,9 +78,38 @@ fn difference(a: &RgbaImage, b: &RgbaImage, ax: u32, ay: u32, bx: u32, by: u32) 
 
 /// 静止边界必须连续、包含纹理且在四分之一尺寸内终止；空白背景不当成固定栏。
 fn content(a: &RgbaImage, b: &RgbaImage) -> Content {
-    let band = |vertical: bool, reverse: bool| {
+    content_with_motion(a, b, 0, 0)
+}
+
+/// 首次斜向滚动时，固定表头只跟随横向分量，冻结列只跟随纵向分量。
+/// 候选位移只是检测线索：仍要求连续、带纹理的边界和后续正文像素复核。
+/// 纯单轴滚动沿用同位置检测，避免把整个正常正文误识别为固定区。
+fn content_with_motion(a: &RgbaImage, b: &RgbaImage, dx: i32, dy: i32) -> Content {
+    let band = |vertical: bool, reverse: bool, central: bool| {
         let length = if vertical { a.width() } else { a.height() };
         let cross = if vertical { a.height() } else { a.width() };
+        let shift = if dx != 0 && dy != 0 {
+            if vertical {
+                dy
+            } else {
+                dx
+            }
+        } else {
+            0
+        };
+        // q 属于新帧，q + shift 属于旧帧；两点都必须位于切向真实重叠。
+        // 斜向移动时，只在两帧中央半区取样：可识别固定栏本就小于尺寸的
+        // 四分之一，交叉冻结角因而不会混入另一条固定栏的切向复核。
+        // 例如表头随 x 移动，但左上冻结角不动；把它们混采会错误否决表头。
+        // 先尝试完整重叠，仅失败时使用中央区；不能让较大位移下中央重叠
+        // 不足的新限制破坏原本可识别的单条固定栏。证据不足仍不猜边界。
+        let inset = if central { i64::from(cross / 4) } else { 0 };
+        let cross_end = i64::from(cross) - inset;
+        let start = inset.max(inset - i64::from(shift));
+        let end = cross_end.min(cross_end - i64::from(shift));
+        if end - start < i64::from(MIN_OVERLAP) {
+            return 0;
+        }
         let mut textured = 0;
         let mut count = 0;
         for i in 0..length / 4 {
@@ -88,16 +117,18 @@ fn content(a: &RgbaImage, b: &RgbaImage) -> Content {
             let mut same = 0;
             let mut row_texture = 0;
             for n in 1..=48 {
-                let q = n * (cross - 1) / 49;
+                let q = (start + i64::from(n) * (end - start - 1) / 49) as u32;
+                let old_q = (i64::from(q) + i64::from(shift)) as u32;
                 let (x, y) = if vertical { (pos, q) } else { (q, pos) };
-                same += u32::from(difference(a, b, x, y, x, y) <= 6);
+                let (ax, ay) = if vertical { (pos, old_q) } else { (old_q, pos) };
+                same += u32::from(difference(a, b, ax, ay, x, y) <= 6);
                 // 沿边界切向检查纹理，不能借用边界外正文的纹理把空白边距当固定栏。
                 let (nx, ny) = if vertical {
                     (x, (y + 2).min(a.height() - 1))
                 } else {
                     ((x + 2).min(a.width() - 1), y)
                 };
-                row_texture += u32::from(difference(a, a, x, y, nx, ny) > 20);
+                row_texture += u32::from(difference(b, b, x, y, nx, ny) > 20);
             }
             if same < 46 {
                 break;
@@ -111,11 +142,19 @@ fn content(a: &RgbaImage, b: &RgbaImage) -> Content {
             0
         }
     };
+    let detect = |vertical, reverse| {
+        let full = band(vertical, reverse, false);
+        if full == 0 && dx != 0 && dy != 0 {
+            band(vertical, reverse, true)
+        } else {
+            full
+        }
+    };
     Content {
-        left: band(true, false),
-        right: a.width() - band(true, true),
-        top: band(false, false),
-        bottom: a.height() - band(false, true),
+        left: detect(true, false),
+        right: a.width() - detect(true, true),
+        top: detect(false, false),
+        bottom: a.height() - detect(false, true),
     }
 }
 
@@ -219,6 +258,12 @@ pub(super) fn verify_at(
 /// 每个交集分成 4×4 块，按多数纹理提名位移；少量差异仍可能通过。
 /// 这里只负责定位，实际写入前还须由 Stitch 复核画布与接缝冲突。
 fn verify(a: &RgbaImage, b: &RgbaImage, roi: Content, dx: i32, dy: i32) -> Option<Alignment> {
+    // 全搜索和历史位移快速复核共用此入口，不能让其中一路丢掉新边界证据。
+    let roi = if dx != 0 && dy != 0 {
+        content_with_motion(a, b, dx, dy).intersect(roi)
+    } else {
+        roi
+    };
     let left = (roi.left as i32).max(roi.left as i32 - dx);
     let top = (roi.top as i32).max(roi.top as i32 - dy);
     let right = (roi.right as i32).min(roi.right as i32 - dx);
@@ -462,6 +507,53 @@ mod performance_tests {
             alignment(&a, &b, ScrollMode::Auto),
             align_impl(&a, &b, ScrollMode::Auto, false)
         );
+    }
+
+    #[test]
+    fn diagonal_known_offset_preserves_new_fixed_band_evidence() {
+        let doc = document(600, 600, false);
+        for columns in [false, true] {
+            let frame = |x, y| {
+                let mut image = image::imageops::crop_imm(&doc, x, y, 160, 160).to_image();
+                for py in 0..160 {
+                    for px in 0..160 {
+                        if columns && (px < 12 || px >= 148) {
+                            image.put_pixel(px, py, *doc.get_pixel(400 + px, y + py));
+                        } else if !columns && (py < 12 || py >= 148) {
+                            image.put_pixel(px, py, *doc.get_pixel(x + px, 400 + py));
+                        }
+                    }
+                }
+                image
+            };
+            let a = frame(100, 100);
+            let b = frame(140, 60);
+            assert_eq!(content(&a, &b), Content::full(&a));
+            let verified = verify_at(&a, &b, 40, -40, Content::full(&a)).unwrap();
+            assert_eq!(
+                verified.content,
+                if columns {
+                    Content {
+                        left: 12,
+                        top: 0,
+                        right: 148,
+                        bottom: 160,
+                    }
+                } else {
+                    Content {
+                        left: 0,
+                        top: 12,
+                        right: 160,
+                        bottom: 148,
+                    }
+                }
+            );
+            assert_eq!(
+                alignment(&a, &b, ScrollMode::Auto),
+                Match::Aligned(verified)
+            );
+            assert!(verify_at(&a, &b, 41, -40, Content::full(&a)).is_none());
+        }
     }
 
     #[test]

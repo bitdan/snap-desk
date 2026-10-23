@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { newerScroll, newerScrollPreview, scrollViewportStyle } from '../src/lib/scroll-capture'
+import { newerScroll, newerScrollPreview, scrollCoverageLabel, scrollViewportStyle } from '../src/lib/scroll-capture'
 import type { ScrollView } from '../src/lib/api'
 const view: ScrollView = { id: 3, revision: 2, collecting: false,
   archivePath: null, width: 800, height: 1800, frames: 4, message: 'finished', preview: '', frameHeight: 600,
@@ -40,6 +40,12 @@ describe('scroll completion state', () => {
 })
 
 describe('二维滚动预览', () => {
+  it('细小空洞不会因覆盖率取整显示为完整覆盖', () => {
+    expect(scrollCoverageLabel({ coveragePercent: 99.999, hasHoles: true })).toBe('<100')
+    expect(scrollCoverageLabel({ coveragePercent: 99.94, hasHoles: true })).toBe('99.9')
+    expect(scrollCoverageLabel({ coveragePercent: 80, hasHoles: true })).toBe('80.0')
+    expect(scrollCoverageLabel({ coveragePercent: 100, hasHoles: false })).toBe('100.0')
+  })
   it('按负坐标包围盒归一化视口', () => {
     const style = scrollViewportStyle(view)
     expect(style.left).toBe('50%')

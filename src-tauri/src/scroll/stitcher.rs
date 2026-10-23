@@ -127,6 +127,12 @@ impl Stitch {
     }
     /// 恢复缓存可以补图，但不能把历史帧误显示为用户当前看到的视口。
     pub(super) fn restore_viewport(&mut self, observed: &Self) {
+        // 补采的最后一帧也是可信端点。若直接覆盖 latest，它既不在缓存中，
+        // 也从未作为上一帧入锚；随后只与该端点重叠的新画面就无法定位。
+        // 无补采时无需留存当前帧，避免静止取样额外挤占历史预算。
+        if self.latest.x != observed.latest.x || self.latest.y != observed.latest.y {
+            self.remember_latest();
+        }
         self.latest = observed.latest.clone();
         self.dx = observed.dx;
         self.dy = observed.dy;
@@ -201,22 +207,26 @@ impl Stitch {
             _ => None,
         };
         // 历史锚点带文档坐标。重访只移动视口，不按时间顺序追加旧候选。
-        // 已直接定位时只验证已知位移；验证失败才重新搜索，保留位置冲突检测。
-        let mut checked = false;
+        // 已直接定位时先验证已知位移；验证失败才重新搜索，保留位置冲突检测。
+        // 必须复核每个重叠锚点：较新锚点通过不能消除较早锚点的坐标反证。
+        // 历史帧已受六帧/像素预算限制，不引入无界搜索。
         for anchor in self.anchors.iter().rev() {
             if let Some((x, y, _)) = located {
-                if checked
-                    || (x - anchor.x).abs() >= i64::from(image.width())
-                    || (y - anchor.y).abs() >= i64::from(image.height())
-                {
-                    continue;
-                }
                 // 完全相同的历史帧仍按原坐标重访处理，不能让周期纹理的偏移复核掩盖冲突。
+                // 相同画面本身就提供坐标反证，必须先于几何重叠过滤；否则候选
+                // 错移整屏后，恰好会因“不重叠”跳过最直接的重复画面证据。
                 if anchor.image.as_ref() == image.as_ref() {
                     if x != anchor.x || y != anchor.y {
+                        // 同一画面出现两个文档坐标，属于定位歧义而非缺少重叠。
+                        // 锚点淘汰后重放会丢失反证，因此恢复层必须清空候选。
+                        *cacheable = false;
                         return Ok(Match::Uncertain);
                     }
-                    checked = true;
+                    continue;
+                }
+                if (x - anchor.x).abs() >= i64::from(image.width())
+                    || (y - anchor.y).abs() >= i64::from(image.height())
+                {
                     continue;
                 }
                 if let Some(verified) = verify_at(
@@ -231,7 +241,6 @@ impl Stitch {
                         *cacheable = false;
                         return Ok(Match::Uncertain);
                     }
-                    checked = true;
                     continue;
                 }
             }
@@ -261,9 +270,10 @@ impl Stitch {
                 }
                 _ => None,
             };
-            checked = true;
             if let Some(next) = candidate {
                 if located.is_some_and(|p| p.0 != next.0 || p.1 != next.1) {
+                    // 搜索得到的历史位置也必须遵守相同的禁止缓存规则。
+                    *cacheable = false;
                     return Ok(Match::Uncertain);
                 }
                 located = Some(next);
@@ -319,6 +329,17 @@ impl Stitch {
         if self.covered > before {
             self.frames += 1;
         }
+        self.remember_latest();
+        self.latest = next;
+        self.dx = result.dx;
+        self.dy = result.dy;
+        self.match_revision = self.match_revision.wrapping_add(1);
+        Ok(Match::Aligned(result))
+    }
+
+    /// 提交新帧和恢复真实视口共用同一锚点预算，避免补采终点失去定位证据。
+    /// 只共享图像 Arc；相同文档坐标不重复保留，仍由原有空间冗余策略淘汰。
+    fn remember_latest(&mut self) {
         // 除最新帧外最多保留六个锚点且总计不超过八百万像素。
         if !self
             .anchors
@@ -355,11 +376,6 @@ impl Stitch {
             };
             self.anchors.remove(remove);
         }
-        self.latest = next;
-        self.dx = result.dx;
-        self.dy = result.dy;
-        self.match_revision = self.match_revision.wrapping_add(1);
-        Ok(Match::Aligned(result))
     }
 
     /// 在覆盖区与新增区交界处复核局部一致性，同时适用于负坐标和二维空洞。
@@ -547,17 +563,59 @@ impl Stitch {
             self.pixel(self.bounds.x + i64::from(x), self.bounds.y + i64::from(y))
         })
     }
+    /// 检查半开文档矩形是否全部采集过；使用覆盖位而非像素透明度。
+    /// 按图块及每行的 64 位掩码检查，避免为缩略图合成整张原尺寸画布。
+    fn rectangle_covered(&self, left: i64, top: i64, right: i64, bottom: i64) -> bool {
+        for ty in top.div_euclid(TILE)..=(bottom - 1).div_euclid(TILE) {
+            for tx in left.div_euclid(TILE)..=(right - 1).div_euclid(TILE) {
+                let Some(tile) = self.tiles.get(&(tx, ty)) else {
+                    return false;
+                };
+                if tile.filled == TILE_PIXELS {
+                    continue;
+                }
+                let start_x = left.max(tx * TILE) - tx * TILE;
+                let end_x = right.min((tx + 1) * TILE) - tx * TILE;
+                for y in top.max(ty * TILE)..bottom.min((ty + 1) * TILE) {
+                    let row = ((y - ty * TILE) * TILE) as usize;
+                    let mut i = row + start_x as usize;
+                    let end = row + end_x as usize;
+                    while i < end {
+                        let count = (64 - i % 64).min(end - i);
+                        // 右移构造掩码可覆盖完整 64 位，避免 1 << 64 溢出。
+                        let mask = (u64::MAX >> (64 - count)) << (i % 64);
+                        if tile.covered[i / 64] & mask != mask {
+                            return false;
+                        }
+                        i += count;
+                    }
+                }
+            }
+        }
+        true
+    }
+
+    /// 一个缩略像素对应的原图区域只要包含空洞，就透明展示棋盘格。
+    /// 这会放大细小空洞以提示补采；不修改导出像素或真实覆盖率。
     pub fn preview(&self, max_width: u32, max_height: u32) -> RgbaImage {
         let scale = (f64::from(max_width) / f64::from(self.width))
             .min(f64::from(max_height) / f64::from(self.height))
             .min(1.0);
         let width = (f64::from(self.width) * scale).floor().max(1.0) as u32;
         let height = (f64::from(self.height) * scale).floor().max(1.0) as u32;
+        let holes = self.has_holes();
+        let source_x =
+            |x| self.bounds.x + (u64::from(x) * u64::from(self.width) / u64::from(width)) as i64;
+        let source_y =
+            |y| self.bounds.y + (u64::from(y) * u64::from(self.height) / u64::from(height)) as i64;
         RgbaImage::from_fn(width, height, |x, y| {
-            self.pixel(
-                self.bounds.x + (u64::from(x) * u64::from(self.width) / u64::from(width)) as i64,
-                self.bounds.y + (u64::from(y) * u64::from(self.height) / u64::from(height)) as i64,
-            )
+            let left = source_x(x);
+            let top = source_y(y);
+            if holes && !self.rectangle_covered(left, top, source_x(x + 1), source_y(y + 1)) {
+                Rgba([0, 0, 0, 0])
+            } else {
+                self.pixel(left, top)
+            }
         })
     }
 }

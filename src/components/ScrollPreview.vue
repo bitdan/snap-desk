@@ -5,7 +5,7 @@ import { isTauri } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { resolveWindowKind } from '@/lib/window-kind'
 import { api, onCaptureClosed, onScroll, type ScrollView } from '@/lib/api'
-import { newerScrollPreview, scrollViewportStyle } from '@/lib/scroll-capture'
+import { newerScrollPreview, scrollCoverageLabel, scrollViewportStyle } from '@/lib/scroll-capture'
 
 const controls = resolveWindowKind(isTauri() ? getCurrentWindow().label : null, location.search) === 'scroll-controls'
 const view = ref<ScrollView | null>(null)
@@ -69,7 +69,7 @@ onUnmounted(() => { disposed = true; off?.(); offClosed?.() })
         </div>
         <span v-else>准备采集…</span>
       </div>
-      <p v-if="view" class="coverage">覆盖 {{ view.coveragePercent.toFixed(1) }}%<span v-if="view.hasHoles"> · 棋盘格为未采集区域，请按蛇形路径补齐</span></p>
+      <p v-if="view" class="coverage">覆盖 {{ scrollCoverageLabel(view) }}%<span v-if="view.hasHoles"> · 棋盘格标出未采集区域（细小空洞会放大显示），请按蛇形路径补齐</span></p>
       <p class="preview-hint" :class="{ error, recovering }" :role="error ? 'alert' : recovering ? 'status' : undefined" :title="hint">{{ hint }}<span v-if="recovering && !error">也可保存已确认部分或取消。</span></p>
     </template>
     <footer v-else>
