@@ -19,6 +19,7 @@ fn validate_id(id: &str) -> Result<(), String> {
 fn source_path(value: &Recoverable, id: &str) -> Result<PathBuf, String> {
     validate_id(id)?;
     let source = PathBuf::from(&value.path);
+    crate::recovery_center::no_links(&source)?;
     if value.id != id
         || !source.is_absolute()
         || source
@@ -91,8 +92,8 @@ pub struct Recoverable {
 #[serde(rename_all = "camelCase")]
 pub struct RecoveryEntry {
     #[serde(flatten)]
-    record: Recoverable,
-    source_exists: bool,
+    pub(crate) record: Recoverable,
+    pub(crate) source_exists: bool,
 }
 
 fn catalog(app: &AppHandle) -> Result<PathBuf, String> {
@@ -102,6 +103,7 @@ fn catalog(app: &AppHandle) -> Result<PathBuf, String> {
         .map_err(err)?
         .join("recording-recovery");
     fs::create_dir_all(&path).map_err(err)?;
+    crate::recovery_center::no_links(&path)?;
     Ok(path)
 }
 fn store(path: &Path, value: &Recoverable) -> Result<(), String> {
@@ -237,6 +239,7 @@ fn settle(directory: tempfile::TempDir, record: &Path, value: &mut Recoverable, 
 fn export(
     source: &Path,
     destination: &Path,
+    registry: &Path,
     mut advanced: impl FnMut(&Path),
 ) -> Result<PathBuf, String> {
     use std::io::{Read, Write};
@@ -244,36 +247,34 @@ fn export(
     if input.metadata().map_err(err)?.len() == 0 {
         return Err("保留的视频为空。".into());
     }
-    let mut target = tempfile::NamedTempFile::new_in(destination).map_err(err)?;
+    let extension = match source.extension().and_then(|s| s.to_str()) {
+        Some("mp4") => "mp4",
+        Some("gif") => "gif",
+        _ => return Err("不支持的录制文件格式。".into()),
+    };
+    let mut target = crate::recovery_center::TrackedFile::new_in(
+        registry,
+        destination,
+        extension,
+        "录屏恢复导出",
+    )?;
     let mut buffer = vec![0; 1024 * 1024];
     loop {
         let count = input.read(&mut buffer).map_err(err)?;
         if count == 0 {
             break;
         }
-        target
-            .as_file_mut()
-            .write_all(&buffer[..count])
-            .map_err(err)?;
+        target.file_mut().write_all(&buffer[..count]).map_err(err)?;
         advanced(target.path());
     }
-    target.as_file().sync_all().map_err(err)?;
-    let name = target
-        .path()
-        .file_name()
-        .ok_or("导出路径无效")?
-        .to_string_lossy();
-    let extension = match source.extension().and_then(|s| s.to_str()) {
-        Some("mp4") => "mp4",
-        Some("gif") => "gif",
-        _ => return Err("不支持的录制文件格式。".into()),
-    };
+    target.finalize()?;
+    let name = target.id();
     let output = destination.join(output::filename(
         name.trim_start_matches('.'),
         extension,
         true,
     ));
-    target.persist_noclobber(&output).map_err(err)?;
+    target.publish(&output, false)?;
     Ok(output)
 }
 
@@ -283,36 +284,40 @@ pub async fn recoverable_recordings(
     window: WebviewWindow,
 ) -> Result<Vec<RecoveryEntry>, String> {
     require_window(&window, "main")?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let active = ACTIVE.lock().map_err(err)?.clone();
-        let mut items = Vec::new();
-        for entry in fs::read_dir(catalog(&app)?).map_err(err)? {
-            let path = entry.map_err(err)?.path();
-            if path.extension().is_none_or(|e| e != "json") {
-                continue;
-            }
-            let Ok(value) = fs::read(&path)
-                .map_err(err)
-                .and_then(|b| serde_json::from_slice::<Recoverable>(&b).map_err(err))
-            else {
-                continue;
-            };
-            if !active.contains(&value.id)
-                && path
-                    .file_stem()
-                    .is_some_and(|name| name == value.id.as_str())
-                && source_path(&value, &value.id).is_ok()
-            {
-                items.push(RecoveryEntry {
-                    source_exists: Path::new(&value.path).is_file(),
-                    record: value,
-                });
-            }
+    tauri::async_runtime::spawn_blocking(move || entries(&app).map(|(items, _)| items))
+        .await
+        .map_err(err)?
+}
+
+/// 恢复中心与录屏页共用同一目录扫描；损坏记录计数，不能静默报告“没有残留”。
+pub(crate) fn entries(app: &AppHandle) -> Result<(Vec<RecoveryEntry>, usize), String> {
+    let active = ACTIVE.lock().map_err(err)?;
+    let mut items = Vec::new();
+    let mut unreadable = 0;
+    for entry in fs::read_dir(catalog(app)?).map_err(err)? {
+        let path = entry.map_err(err)?.path();
+        if path.extension().is_none_or(|e| e != "json") {
+            continue;
         }
-        Ok(items)
-    })
-    .await
-    .map_err(err)?
+        let Ok(value) = crate::recovery_center::read::<Recoverable>(&path) else {
+            unreadable += 1;
+            continue;
+        };
+        if !active.contains(&value.id)
+            && path
+                .file_stem()
+                .is_some_and(|name| name == value.id.as_str())
+            && source_path(&value, &value.id).is_ok()
+        {
+            items.push(RecoveryEntry {
+                source_exists: Path::new(&value.path).is_file(),
+                record: value,
+            });
+        } else if !active.contains(&value.id) {
+            unreadable += 1;
+        }
+    }
+    Ok((items, unreadable))
 }
 
 #[tauri::command]
@@ -333,8 +338,7 @@ pub async fn retry_recording_export(
         drop(active);
         let result = (|| {
             let record = catalog(&app)?.join(format!("{id}.json"));
-            let mut value: Recoverable =
-                serde_json::from_slice(&fs::read(&record).map_err(err)?).map_err(err)?;
+            let mut value: Recoverable = crate::recovery_center::read(&record)?;
             let source = source_path(&value, &id)?;
             if let Some(path) = value.exported.as_ref() {
                 if fs::metadata(path).is_ok_and(|m| m.is_file() && m.len() > 0) {
@@ -348,9 +352,12 @@ pub async fn retry_recording_export(
                 return Err("该视频未确认完成封装，已保留源文件供检查，不能直接导出。".into());
             }
             progress(&app, "retry-export", Some(&source));
-            let output = export(&source, &output::prepare(&app)?, |path| {
-                progress(&app, "retry-export", Some(path))
-            })?;
+            let output = export(
+                &source,
+                &output::prepare(&app)?,
+                &crate::recovery_center::catalog(&app)?,
+                |path| progress(&app, "retry-export", Some(path)),
+            )?;
             value.exported = Some(output.to_string_lossy().into_owned());
             value.stage = "exported".into();
             // 先记录成功再删除源文件。记录失败仍保留两份，避免丢失唯一副本。
@@ -389,8 +396,7 @@ pub async fn discard_recording_recovery(
         drop(active);
         let result = (|| {
             let record = catalog(&app)?.join(format!("{id}.json"));
-            let value: Recoverable =
-                serde_json::from_slice(&fs::read(&record).map_err(err)?).map_err(err)?;
+            let value: Recoverable = crate::recovery_center::read(&record)?;
             discard_source(&value, &id)?;
             // 文件或空目录清理失败时保留记录，下次仍可发现和重试。
             fs::remove_file(record).map_err(err)
@@ -546,9 +552,15 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let source = root.path().join("video.mp4");
         fs::write(&source, b"finalized-video").unwrap();
-        assert!(export(&source, &root.path().join("missing"), |_| {}).is_err());
+        assert!(export(
+            &source,
+            &root.path().join("missing"),
+            &root.path().join("registry"),
+            |_| {}
+        )
+        .is_err());
         assert_eq!(fs::read(&source).unwrap(), b"finalized-video");
-        let path = export(&source, root.path(), |_| {}).unwrap();
+        let path = export(&source, root.path(), &root.path().join("registry"), |_| {}).unwrap();
         assert_eq!(fs::read(path).unwrap(), fs::read(source).unwrap());
     }
 
@@ -557,7 +569,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let source = root.path().join("video.gif");
         fs::write(&source, b"GIF89a").unwrap();
-        let output = export(&source, root.path(), |_| {}).unwrap();
+        let output = export(&source, root.path(), &root.path().join("registry"), |_| {}).unwrap();
         assert_eq!(output.extension().unwrap(), "gif");
         assert_eq!(fs::read(output).unwrap(), fs::read(source).unwrap());
     }

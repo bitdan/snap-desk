@@ -290,6 +290,9 @@ pub fn sanitize(line: &str) -> Option<Entry> {
                 ["created", "destroyed", "transformed"].contains(&value)
             }
             "count" | "rgba_bytes" if event == "pins.memory" => value.parse::<u64>().is_ok(),
+            "previous_started_ms" | "previous_pid" if event == "app.previous_exit_unclean" => {
+                value.parse::<u64>().is_ok()
+            }
             "code" => super::catalog::CODES.contains(&value),
             "command" => super::catalog::COMMANDS.contains(&value),
             "op" => ["cap-", "rec-", "scroll-", "ocr-", "tr-"]
@@ -336,6 +339,16 @@ pub fn sanitize(line: &str) -> Option<Entry> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn abnormal_exit_log_preserves_only_numeric_run_identity() {
+        let line = "2026-10-23T16:00:00+08:00 [WARN] [app] event=app.previous_exit_unclean module=app previous_started_ms=1792727969001 previous_pid=42 path=private";
+        assert_eq!(
+            sanitize(line).unwrap().message,
+            "event=app.previous_exit_unclean previous_started_ms=1792727969001 previous_pid=42"
+        );
+        let invalid = line.replace("previous_pid=42", "previous_pid=private");
+        assert!(!sanitize(&invalid).unwrap().message.contains("previous_pid"));
+    }
     #[test]
     fn pin_memory_diagnostics_keep_only_counts_and_known_reasons() {
         let line = "2026-10-21T09:00:00+08:00 [INFO] [pins] event=pins.memory module=capture reason=destroyed count=0 rgba_bytes=0 image=private";

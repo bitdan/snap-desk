@@ -21,6 +21,8 @@ mod resources;
 #[cfg(windows)]
 mod ocr_runtime;
 mod settings;
+mod shortcut_probe;
+mod recovery_center;
 mod storage;
 mod diagnostics;
 
@@ -158,6 +160,7 @@ pub fn run() {
         .manage(autostart::AutostartState::default())
         .manage(CaptureState::default())
         .manage(settings::ShortcutPressState::default())
+        .manage(shortcut_probe::ProbeState::default())
         .manage(qr::QrState::default())
         .manage(ocr::OcrState::default())
         .manage(resource_lifecycle::ResourceLifecycle::default())
@@ -219,6 +222,10 @@ pub fn run() {
                                 return None;
                             }
                             keys.push(*shortcut);
+                            // 八秒测试复用此注册回调，只记录配置内的快捷键，不执行功能动作。
+                            if shortcut_probe::receive(app, shortcut.to_string()) {
+                                return None;
+                            }
                             Some(action)
                         });
                     match action {
@@ -234,6 +241,7 @@ pub fn run() {
         .setup(|app| {
             diagnostics::runtime::install_panic_hook();
             log::info!("event=app.starting module=app version={} platform={}", app.package_info().version, std::env::consts::OS);
+            recovery_center::initialize(app.handle());
             settings::initialize(app.handle()).map_err(|error| {
                 log::error!("event=app.initialize_failed module=app code=SETTINGS_INIT_FAILED");
                 error
@@ -426,6 +434,9 @@ pub fn run() {
             settings::save_settings,
             settings::set_shortcuts_enabled,
             settings::set_shortcut_editing,
+            shortcut_probe::probe_shortcuts,
+            recovery_center::recovery_status,
+            recovery_center::recovery_artifact_action,
             capture::cancel_pending_capture,
             capture::start_capture,
             capture::current_capture,
@@ -474,6 +485,7 @@ pub fn run() {
                 translation::cancel_all(app);
                 local_translation::shutdown(app);
                 app.state::<clipboard::Service>().shutdown();
+                recovery_center::shutdown(app);
             }
         });
 }

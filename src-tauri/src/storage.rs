@@ -10,6 +10,7 @@ use tauri_plugin_dialog::DialogExt;
 #[serde(rename_all = "camelCase")]
 pub enum AppDirectory {
     Config,
+    Data,
     Captures,
     Recordings,
     ScrollResults,
@@ -43,6 +44,10 @@ fn resolve(app: &AppHandle, kind: AppDirectory) -> Result<(Option<PathBuf>, bool
             Some(app.path().app_config_dir().map_err(|e| e.to_string())?),
             true,
         )),
+        AppDirectory::Data => Ok((
+            Some(app.path().app_local_data_dir().map_err(|e| e.to_string())?),
+            true,
+        )),
         AppDirectory::Captures => Ok((crate::image_io::current_directory(app)?, false)),
         AppDirectory::Recordings => {
             let (path, is_default) = crate::capture::recording::output::resolve(app)?;
@@ -68,6 +73,7 @@ pub async fn app_directories(
     tauri::async_runtime::spawn_blocking(move || {
         Ok([
             AppDirectory::Config,
+            AppDirectory::Data,
             AppDirectory::Captures,
             AppDirectory::Recordings,
             AppDirectory::ScrollResults,
@@ -174,7 +180,15 @@ mod tests {
     use super::*;
     #[test]
     fn directory_kinds_reject_arbitrary_paths() {
-        for value in ["config", "captures", "recordings", "scrollResults", "clipboard", "logs"] {
+        for value in [
+            "config",
+            "data",
+            "captures",
+            "recordings",
+            "scrollResults",
+            "clipboard",
+            "logs",
+        ] {
             assert!(serde_json::from_str::<AppDirectory>(&format!("\"{value}\"")).is_ok());
         }
         for value in [

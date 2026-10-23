@@ -9,6 +9,8 @@ import type { Point, Rect } from './selection'
 import type { Annotation } from './annotations'
 import type { AiSettings, OcrResult, TranslationResult, LocalTranslationStatus } from './ai'
 import type { Settings } from './settings'
+import type { ShortcutProbeReport } from './shortcut-probe'
+import type { RecoveryStatus, RecoveryArtifactAction } from './recovery-center'
 import type { RecorderCapabilities, RecorderConfig, RecordingAction, RecordingDirectory, RecordingView, RecoverableRecording } from './recording'
 import type { RecordingResult, RecordingResultAction } from './recording'
 export type { Settings } from './settings'
@@ -36,7 +38,7 @@ export type PinTransform = 'rotateRight' | 'rotateLeft' | 'flipHorizontal' | 'fl
 export type PinAction = 'copy' | 'save' | 'hide' | 'close'
 export type PinManageAction = 'show' | 'hide' | 'close'
 // 字段与 Rust Settings / AppStatus 的 camelCase 序列化契约保持一致。
-export type AppDirectory = 'config' | 'captures' | 'recordings' | 'scrollResults' | 'clipboard' | 'logs'
+export type AppDirectory = 'config' | 'data' | 'captures' | 'recordings' | 'scrollResults' | 'clipboard' | 'logs'
 export interface DirectoryView { kind: AppDirectory; path: string | null; error: string | null }
 export interface AppStatus { version: string; settings: Settings; shortcutError: string | null; configWarning: string | null; delayRemaining: number; platform: string }
 export const desktop = isTauri()
@@ -105,6 +107,9 @@ export const api = {
   saveSettings: (settings: Settings) => invoke<Settings>('save_settings', { settings }),
   setShortcutsEnabled: (enabled: boolean) => invoke<Settings>('set_shortcuts_enabled', { enabled }),
   setShortcutEditing: (editing: boolean) => invoke<void>('set_shortcut_editing', { editing }),
+  probeShortcuts: () => invoke<ShortcutProbeReport>('probe_shortcuts'),
+  recoveryStatus: () => invoke<RecoveryStatus>('recovery_status'),
+  recoveryArtifactAction: (id: string, action: RecoveryArtifactAction) => invoke<string | null>('recovery_artifact_action', { id, action }),
   cancelPending: () => invoke<void>('cancel_pending_capture'),
   start: () => invoke<void>('start_capture'),
   nativeWindow: (id: number, target: number) => invoke<CaptureFrame>('capture_native_window', { id, target }),

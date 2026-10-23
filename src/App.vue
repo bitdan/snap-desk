@@ -7,6 +7,9 @@ const GeneralSettings = defineAsyncComponent(() => import('@/components/GeneralS
 const AiProviderSettings = defineAsyncComponent(() => import('@/components/AiProviderSettings.vue'))
 import OnboardingGuide from '@/components/OnboardingGuide.vue'
 import ShortcutInput from '@/components/ShortcutInput.vue'
+import ShortcutCompatibility from '@/components/ShortcutCompatibility.vue'
+import RecoveryCenter from '@/components/RecoveryCenter.vue'
+import type { RecoveryStatus } from '@/lib/recovery-center'
 const RecordingPanel = defineAsyncComponent(() => import('@/components/RecordingPanel.vue'))
 const ClipboardHistory = defineAsyncComponent(() => import('@/components/clipboard/ClipboardHistory.vue'))
 const PinManager = defineAsyncComponent(() => import('@/components/PinManager.vue'))
@@ -22,12 +25,15 @@ const page = ref('截图')
 const groups = [
   { name: '工具', items: [{ name: '截图', icon: Camera }, { name: '录屏', icon: Video }, { name: '贴图', icon: Pin }, { name: '剪贴板', icon: Folder }] },
   { name: '设置', items: [{ name: '通用', icon: SettingsIcon }, { name: '快捷键', icon: Keyboard }, { name: '识别与翻译', icon: Scan }] },
-  { name: '支持', items: [{ name: '日志', icon: FileText }, { name: '帮助', icon: CircleHelp }, { name: '关于', icon: Info }] },
+  { name: '支持', items: [{ name: '恢复与清理', icon: Folder }, { name: '日志', icon: FileText }, { name: '帮助', icon: CircleHelp }, { name: '关于', icon: Info }] },
 ]
 const status = ref<AppStatus | null>(null)
+const recovery = ref<RecoveryStatus | null>(null)
+const recoveryError = ref('')
 const pending = ref(false)
 const saving = ref(false)
 const editingShortcut = ref(false)
+const testingShortcuts = ref(false)
 const onboarding = ref(false)
 const completingOnboarding = ref(false)
 const remaining = ref(0)
@@ -42,7 +48,7 @@ let delayRevision = 0
 const initializing = ref(false)
 const initializationFailed = ref(false)
 const shortcut = computed(() => status.value?.settings.shortcuts.capture || (status.value ? t('未设置') : desktop ? t('未读取') : 'F1'))
-const locked = computed(() => !desktop || !status.value || initializing.value || initializationFailed.value || pending.value || saving.value || editingShortcut.value || remaining.value > 0)
+const locked = computed(() => !desktop || !status.value || initializing.value || initializationFailed.value || pending.value || saving.value || editingShortcut.value || testingShortcuts.value || remaining.value > 0)
 async function refreshStatus() {
   const revision = delayRevision
   status.value = await api.status()
@@ -172,6 +178,8 @@ onUnmounted(() => { disposed = true; disposers.splice(0).forEach(off => off()) }
         <div v-if="!desktop" class="notice">{{ t('当前为网页预览。请通过桌面应用启动以使用屏幕截图和全局快捷键。') }}</div>
         <div v-if="error || status?.shortcutError" class="notice error" role="alert">{{ error || status?.shortcutError }}<Button v-if="initializationFailed" variant="outline" :disabled="initializing" @click="initialize">{{ t('重新连接') }}</Button></div>
         <div v-if="status?.configWarning" class="notice" role="alert">{{ status.configWarning }}</div>
+        <div v-if="page !== '恢复与清理' && recoveryError" class="notice flex flex-wrap items-center justify-between gap-2" role="alert"><span>恢复检查失败，文件保持原样。</span><Button variant="outline" @click="page = '恢复与清理'">查看并重试</Button></div>
+        <div v-if="page !== '恢复与清理' && recovery && (recovery.previousStartedAt || recovery.warning || recovery.items.length || recovery.unreadableRecords)" class="notice flex flex-wrap items-center justify-between gap-2" role="status"><span>{{ recovery.previousStartedAt ? '上次运行未记录正常退出。' : recovery.warning ? recovery.warning : recovery.unreadableRecords ? '部分恢复记录无法读取。' : '' }} 待恢复 / 可清理：{{ recovery.items.length }} 项</span><Button variant="outline" @click="page = '恢复与清理'">检查文件</Button></div>
         <div v-if="remaining > 0" class="notice flex items-center justify-between" role="status"><span>{{ remaining }} {{ t('秒后截图，可切换到目标窗口；再次按截图快捷键可取消。') }}</span><Button variant="outline" @click="cancelPending">{{ t('取消截图') }}</Button></div>
 
         <OnboardingGuide v-if="onboarding && status" :settings="status.settings" :busy="completingOnboarding" @complete="completeOnboarding" @navigate="page = $event" />
@@ -227,9 +235,12 @@ onUnmounted(() => { disposed = true; disposers.splice(0).forEach(off => off()) }
           </form>
         </template>
 
-        <template v-else>
+        <template v-else-if="page !== '恢复与清理'">
           <section class="settings-card about"><span class="brand-icon"><Scan :size="30" /></span><h2>Snap Desk <span class="pill">{{ status?.version ?? t('桌面版本待读取') }}</span></h2><p>{{ t('截图、标注、贴图、滚动截图与录屏，本地处理。') }}</p><p>{{ t('Windows 截图支持多屏；录屏与滚动截图限主屏，录屏需 Windows 10 2004 或更新版本。') }}</p><div class="flex items-center gap-3"><a href="https://github.com/bitdan/snap-desk" target="_blank" rel="noopener noreferrer" class="github-link" aria-label="在浏览器打开 GitHub 项目主页" title="GitHub" @click="desktop && ($event.preventDefault(), openProject())"><svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden="true"><path d="M12 .75a11.25 11.25 0 0 0-3.56 21.92c.56.1.77-.24.77-.54v-2.1c-3.13.68-3.79-1.33-3.79-1.33-.51-1.3-1.25-1.65-1.25-1.65-1.02-.7.08-.69.08-.69 1.13.08 1.73 1.16 1.73 1.16 1 1.72 2.63 1.22 3.27.93.1-.73.39-1.22.71-1.5-2.5-.28-5.13-1.25-5.13-5.56 0-1.23.44-2.23 1.16-3.01-.12-.28-.5-1.43.11-2.98 0 0 .95-.3 3.1 1.15a10.8 10.8 0 0 1 5.64 0c2.15-1.46 3.1-1.15 3.1-1.15.61 1.55.23 2.7.11 2.98.72.78 1.16 1.78 1.16 3.01 0 4.32-2.63 5.28-5.14 5.56.4.35.76 1.03.76 2.09v3.09c0 .3.21.65.77.54A11.25 11.25 0 0 0 12 .75Z" /></svg></a><span class="text-xs text-zinc-500">GPL-3.0-only</span></div></section>
         </template>
+        <ShortcutCompatibility v-show="page === '快捷键'" :disabled="locked" @testing="testingShortcuts = $event" />
+        <!-- 常驻以完成启动检查；切换页面不会重复查询或把旧截图会话带回。 -->
+        <RecoveryCenter v-show="page === '恢复与清理'" @status="recovery = $event" @failure="recoveryError = $event" />
       </div>
     </main>
   </div>

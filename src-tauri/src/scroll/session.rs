@@ -185,14 +185,13 @@ fn complete(app: &AppHandle, id: u64, message: &str) -> Result<(), String> {
             .map_err(err)?
             .join("scroll-results");
         std::fs::create_dir_all(&root).map_err(err)?;
-        let mut file = tempfile::Builder::new()
-            .prefix("scroll-")
-            .suffix(".png")
-            .tempfile_in(root)
+        let mut file = crate::recovery_center::TrackedFile::new(app, &root, "png", "滚动截图导出")?;
+        image
+            .write_to(file.file_mut(), ImageFormat::Png)
             .map_err(err)?;
-        image.write_to(&mut file, ImageFormat::Png).map_err(err)?;
-        file.as_file().sync_all().map_err(err)?;
-        let (_, path) = file.keep().map_err(err)?;
+        file.finalize()?;
+        let path = root.join(format!("scroll-{}.png", file.id()));
+        file.publish(&path, false)?;
         Ok(path)
     })();
     let copied = crate::image_io::copy(app, &image);

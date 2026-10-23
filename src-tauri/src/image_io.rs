@@ -191,11 +191,15 @@ pub fn save(app: &AppHandle, image: &RgbaImage) -> Result<bool, String> {
     let path = path.into_path().map_err(|e| e.to_string())?;
     validate_extension(&path, settings.format)?;
     let parent = path.parent().ok_or("保存路径无效。")?;
-    let mut temporary = tempfile::NamedTempFile::new_in(parent).map_err(|e| e.to_string())?;
-    encode(temporary.as_file_mut(), image, &settings)?;
-    temporary.flush().map_err(|e| e.to_string())?;
-    temporary.as_file().sync_all().map_err(|e| e.to_string())?;
-    temporary.persist(&path).map_err(|e| e.to_string())?;
+    let mut temporary = crate::recovery_center::TrackedFile::new(
+        app,
+        parent,
+        settings.format.extension(),
+        "截图 / 贴图导出",
+    )?;
+    encode(temporary.file_mut(), image, &settings)?;
+    temporary.finalize()?;
+    temporary.publish(&path, true)?;
     if settings.remember_directory {
         if let Some(record) = record {
             if let Err(_error) = remember_directory(&record, parent) {
