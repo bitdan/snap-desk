@@ -1,10 +1,12 @@
-//! 普通截图的物理桌面、窗口候选与原生窗口来源。录屏仍使用自己的主屏采集器。
+//! 截图与录屏选区共用物理桌面坐标、窗口候选及原生窗口身份。
 use image::RgbaImage;
 use serde::Serialize;
 
 #[cfg(windows)]
 #[path = "desktop_capture_windows.rs"]
 mod windows;
+#[cfg(windows)]
+pub(crate) use windows::PhysicalDpi;
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -79,6 +81,32 @@ pub fn within_display(
         y: y as u32,
         ..rect
     })
+}
+
+/// 跨屏窗口的控制条放在可见面积最大的显示器上；返回虚拟桌面图片内的交集。
+/// 该裁剪仅用于辅助窗口布局，WGC 仍采集完整窗口，不能据此裁剪视频。
+pub fn display_intersection(
+    rect: crate::capture::Rect,
+    origin: (i32, i32),
+    displays: &[Display],
+) -> Option<crate::capture::Rect> {
+    displays
+        .iter()
+        .filter_map(|d| {
+            let left = i64::from(rect.x).max(i64::from(d.x) - i64::from(origin.0));
+            let top = i64::from(rect.y).max(i64::from(d.y) - i64::from(origin.1));
+            let right = (i64::from(rect.x) + i64::from(rect.width))
+                .min(i64::from(d.x) - i64::from(origin.0) + i64::from(d.width));
+            let bottom = (i64::from(rect.y) + i64::from(rect.height))
+                .min(i64::from(d.y) - i64::from(origin.1) + i64::from(d.height));
+            (right > left && bottom > top).then(|| crate::capture::Rect {
+                x: left as u32,
+                y: top as u32,
+                width: (right - left) as u32,
+                height: (bottom - top) as u32,
+            })
+        })
+        .max_by_key(|r| u64::from(r.width) * u64::from(r.height))
 }
 
 /// Windows 使用物理像素拼接，不按各屏 DPI 再缩放位图。
@@ -304,6 +332,88 @@ fn native_window_inner(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn cross_screen_window_placement_uses_largest_visible_intersection() {
+        let displays = vec![
+            Display {
+                x: -1920,
+                y: -200,
+                width: 1920,
+                height: 1080,
+                primary: false,
+                scale: 1.25,
+            },
+            Display {
+                x: 0,
+                y: 0,
+                width: 2560,
+                height: 1440,
+                primary: true,
+                scale: 1.5,
+            },
+        ];
+        let window = crate::capture::Rect {
+            x: 1800,
+            y: 100,
+            width: 600,
+            height: 500,
+        };
+        let placement = display_intersection(window, (-1920, -200), &displays).unwrap();
+        assert_eq!(
+            (placement.x, placement.y, placement.width, placement.height),
+            (1920, 200, 480, 400)
+        );
+        assert!(within_display(placement, (-1920, -200), &displays[1]).is_some());
+        assert!(display_intersection(
+            crate::capture::Rect {
+                x: 2100,
+                y: 0,
+                width: 40,
+                height: 40
+            },
+            (-1920, -200),
+            &displays
+        )
+        .is_none());
+    }
+    #[test]
+    fn secondary_region_uses_physical_pixels_with_negative_xy_and_mixed_dpi() {
+        let display = Display {
+            x: -1920,
+            y: -200,
+            width: 1920,
+            height: 1080,
+            primary: false,
+            scale: 1.25,
+        };
+        let rect = crate::capture::Rect {
+            x: 80,
+            y: 40,
+            width: 400,
+            height: 300,
+        };
+        let local = within_display(rect, (-1920, -200), &display).unwrap();
+        assert_eq!(
+            (local.x, local.y, local.width, local.height),
+            (80, 40, 400, 300)
+        );
+        assert!(within_display(
+            crate::capture::Rect { x: 1800, ..rect },
+            (-1920, -200),
+            &display
+        )
+        .is_none());
+        // DPI 只用于浮窗布局，不能改变截图像素和来源内偏移。
+        let other_scale = Display {
+            scale: 1.75,
+            ..display
+        };
+        let other = within_display(rect, (-1920, -200), &other_scale).unwrap();
+        assert_eq!(
+            (other.x, other.y, other.width, other.height),
+            (80, 40, 400, 300)
+        );
+    }
     #[test]
     fn clips_negative_origin_and_offscreen_window() {
         let r = clipped(-2000, -100, 300, 200, (-1920, 0), (4480, 1440)).unwrap();

@@ -1,6 +1,6 @@
 //! WGC 自由线程帧池 + D3D11 区域复制。没有 UI 回调执行编码或等待队列。
 //! 先复制到独立 CPU 内存再 Close 帧，避免归还帧池后继续访问其表面。
-use super::{CaptureBackend, RecorderConfig, VideoFrame};
+use super::{CaptureBackend, NativeSource, RecorderConfig, VideoFrame};
 use crate::capture::Rect;
 use std::{
     marker::PhantomData,
@@ -19,10 +19,11 @@ use windows::{
         DirectX::{Direct3D11::IDirect3DDevice, DirectXPixelFormat},
     },
     Win32::{
-        Foundation::{HMODULE, POINT},
+        Foundation::{HMODULE, HWND, POINT, RECT},
         Graphics::{
             Direct3D::D3D_DRIVER_TYPE_HARDWARE,
             Direct3D11::*,
+            Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS},
             Dxgi::{Common::*, IDXGIDevice},
             Gdi::*,
         },
@@ -33,11 +34,27 @@ use windows::{
                 RoUninitialize, RO_INIT_MULTITHREADED,
             },
         },
+        UI::WindowsAndMessaging::{GetWindowThreadProcessId, IsIconic, IsWindow},
     },
 };
 
 fn error(e: windows::core::Error) -> String {
     format!("Windows 屏幕采集失败：{e}。请检查显示器、图形驱动及屏幕捕获权限后重试。")
+}
+
+/// DWM 返回可见边框的物理像素，与 WGC 窗口表面、截图窗口候选一致。
+fn window_bounds(id: u32) -> Result<RECT, String> {
+    let mut rect = RECT::default();
+    unsafe {
+        DwmGetWindowAttribute(
+            HWND(id as usize as *mut _),
+            DWMWA_EXTENDED_FRAME_BOUNDS,
+            &mut rect as *mut RECT as *mut _,
+            std::mem::size_of::<RECT>() as u32,
+        )
+        .map_err(error)?;
+    }
+    Ok(rect)
 }
 
 struct Runtime(PhantomData<Rc<()>>);
@@ -100,11 +117,16 @@ pub struct Capture {
     region: Rect,
     size: (u32, u32),
     started: bool,
+    source: NativeSource,
     _runtime: Runtime,
 }
 
 impl Capture {
-    pub fn new(config: &RecorderConfig, size: (u32, u32)) -> Result<Self, String> {
+    pub fn new(
+        config: &RecorderConfig,
+        size: (u32, u32),
+        source: NativeSource,
+    ) -> Result<Self, String> {
         supported()?;
         let runtime = Runtime::new()?;
         unsafe {
@@ -130,11 +152,31 @@ impl Capture {
                 .map_err(error)?;
             let interop: IGraphicsCaptureItemInterop =
                 factory::<GraphicsCaptureItem, IGraphicsCaptureItemInterop>().map_err(error)?;
-            let monitor = MonitorFromPoint(POINT { x: 0, y: 0 }, MONITOR_DEFAULTTOPRIMARY);
-            let item: GraphicsCaptureItem = interop.CreateForMonitor(monitor).map_err(error)?;
+            let item: GraphicsCaptureItem = match source {
+                NativeSource::Monitor { x, y } => {
+                    let monitor = MonitorFromPoint(POINT { x, y }, MONITOR_DEFAULTTONULL);
+                    if monitor.0.is_null() {
+                        return Err("录制显示器已移除。".into());
+                    }
+                    interop.CreateForMonitor(monitor).map_err(error)?
+                }
+                NativeSource::Window { id, pid } => {
+                    let hwnd = HWND(id as usize as *mut _);
+                    let mut current_pid = 0;
+                    GetWindowThreadProcessId(hwnd, Some(&mut current_pid));
+                    if !IsWindow(Some(hwnd)).as_bool()
+                        || IsIconic(hwnd).as_bool()
+                        || current_pid != pid
+                    {
+                        return Err("录制窗口已关闭、最小化或被替换。".into());
+                    }
+                    interop.CreateForWindow(hwnd).map_err(error)?
+                }
+            };
             let native_size = item.Size().map_err(error)?;
-            if (native_size.Width as u32, native_size.Height as u32) != size {
-                return Err("主屏尺寸已变化，请重新选择录屏区域。".into());
+            let native_dimensions = (native_size.Width as u32, native_size.Height as u32);
+            if native_dimensions != size {
+                return Err("录制来源尺寸已变化，请重新选择录屏区域。".into());
             }
             let region = config.region;
             let desc = D3D11_TEXTURE2D_DESC {
@@ -227,6 +269,7 @@ impl Capture {
                 region,
                 size,
                 started: false,
+                source,
                 _runtime: runtime,
             })
         }
@@ -283,11 +326,49 @@ impl Capture {
 }
 
 impl CaptureBackend for Capture {
+    fn desktop_origin(&self) -> Result<(i32, i32), String> {
+        match self.source {
+            NativeSource::Monitor { x, y } => Ok((x, y)),
+            NativeSource::Window { id, .. } => {
+                let rect = window_bounds(id)?;
+                Ok((rect.left, rect.top))
+            }
+        }
+    }
+    fn check_source(&self) -> Result<(), String> {
+        if self.closed.load(Ordering::Acquire) {
+            return Err("录制来源已关闭。".into());
+        }
+        if let NativeSource::Window { id, pid } = self.source {
+            unsafe {
+                let hwnd = HWND(id as usize as *mut _);
+                let mut current_pid = 0;
+                GetWindowThreadProcessId(hwnd, Some(&mut current_pid));
+                if !IsWindow(Some(hwnd)).as_bool() || IsIconic(hwnd).as_bool() || current_pid != pid
+                {
+                    return Err("录制窗口已关闭或最小化，录制已结束。".into());
+                }
+            }
+            let bounds = window_bounds(id)?;
+            if (
+                i64::from(bounds.right) - i64::from(bounds.left),
+                i64::from(bounds.bottom) - i64::from(bounds.top),
+            ) != (i64::from(self.size.0), i64::from(self.size.1))
+            {
+                return Err("录制窗口尺寸已改变，录制已结束；请重新选择来源。".into());
+            }
+        }
+        let size = self.item.Size().map_err(error)?;
+        if (size.Width as u32, size.Height as u32) != self.size {
+            return Err("录制来源尺寸已改变，录制已结束；请重新选择来源。".into());
+        }
+        Ok(())
+    }
     fn refresh(&mut self) -> Result<(), String> {
         if self.started {
             // 新会话首次 StartCapture 会提供当前桌面，旧池随赋值释放并注销回调。
             // 创建失败交给 manager 统一结束，不能回退到过期底图。
-            *self = Self::new(&self.config, self.size)?;
+            *self = Self::new(&self.config, self.size, self.source)?;
         }
         Ok(())
     }
@@ -297,6 +378,7 @@ impl CaptureBackend for Capture {
     }
 
     fn next_frame(&mut self) -> Result<Option<VideoFrame>, String> {
+        self.check_source()?;
         // 待开始只准备设备和帧池，用户点击开始后第一次拉帧才启动系统捕获。
         if !self.started {
             self.session.StartCapture().map_err(error)?;

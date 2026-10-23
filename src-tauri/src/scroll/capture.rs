@@ -98,15 +98,23 @@ pub(super) fn sample_pair(
     state: &CaptureState,
     rect: Rect,
     source_size: (u32, u32),
+    screen: &super::Screen,
     finishing: bool,
 ) -> Result<Option<RgbaImage>, String> {
-    // 一轮稳定性检测复用同一个主屏对象，避免每个取样都枚举系统显示器。
+    #[cfg(windows)]
+    let _dpi = crate::desktop_capture::PhysicalDpi::enter()?;
+    // 一轮稳定性检测绑定选区所在屏幕，全部坐标均为物理像素。
     // 仍保留整屏路径；区域采集先由下方定向基准验证，避免未经实测替换默认后端。
     let monitor = xcap::Monitor::all()
         .map_err(|e| e.to_string())?
         .into_iter()
-        .find(|m| m.is_primary().unwrap_or(false))
-        .ok_or("未找到主显示器。")?;
+        .find(|m| {
+            m.x().ok() == Some(screen.x)
+                && m.y().ok() == Some(screen.y)
+                && m.width().ok() == Some(screen.width)
+                && m.height().ok() == Some(screen.height)
+        })
+        .ok_or("来源显示器已变化，已结束采集，仅输出已确认部分。")?;
     let mut reference = sample(&monitor, rect, source_size)?;
     let mut quiet_samples = 0;
     let mut settled = None;

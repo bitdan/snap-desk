@@ -445,6 +445,7 @@ mod tests {
     use super::*;
     fn screen(scale: f64) -> Screen {
         Screen {
+            layout: Vec::new(),
             name: None,
             x: -1920,
             y: 0,

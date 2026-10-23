@@ -23,7 +23,7 @@ export const english: Record<string, string> = {
   '当前为网页预览。请通过桌面应用启动以使用屏幕截图和全局快捷键。': 'Web preview. Launch the desktop app to capture screens and use global shortcuts.',
   '点击快捷键框后直接按键。F1～F12 可单独使用，字母和数字须搭配修饰键；清空即禁用。修改后点击保存生效。': 'Click a shortcut field and press keys. F1–F12 work alone; letters and numbers need modifiers. Clear to disable, then save.',
   '截图、标注、贴图、滚动截图与录屏，本地处理。': 'Capture, annotate, pin, scroll capture and record locally.',
-  'Windows 截图支持多屏；录屏与滚动截图限主屏，录屏需 Windows 10 2004 或更新版本。': 'Windows captures support multiple monitors. Recording and scroll capture use the primary monitor. Recording requires Windows 10 2004 or later.',
+  'Windows 截图、录屏与滚动截图支持多屏选区；录屏需 Windows 10 2004 或更新版本。': 'Windows capture, recording and scroll capture support regions on multiple monitors. Recording requires Windows 10 2004 or later.',
   '未设置': 'Not set', '未读取': 'Not loaded', '版本待读取': 'Version pending',
   '桌面版本待读取': 'Desktop version pending', '快捷键已禁用': 'Shortcuts disabled',
   '注册异常': 'Registration failed', '已启用': 'Enabled', '已禁用': 'Disabled',

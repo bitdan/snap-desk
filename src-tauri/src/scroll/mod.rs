@@ -10,7 +10,7 @@ mod stability;
 mod stitcher;
 
 pub use session::stop;
-pub(super) use session::{screen, Screen, ScrollSession};
+pub(super) use session::{Screen, ScrollSession};
 
 // 原一维算法仅作为测试回归对照，不进入发布路径。
 #[cfg(test)]

@@ -4,7 +4,8 @@ import { ChevronRight, X } from 'lucide-vue-next'
 import RecordingInputSettings from './RecordingInputSettings.vue'
 import { recordingBitrate, type RecordingFormat, type RecordingFps, type EncodingPreference, type InputEffects, type RecordingQuality } from '@/lib/recording'
 
-const props = defineProps<{ busy: boolean; error: string; formats: RecordingFormat[]; systemAudioAvailable: boolean; microphoneAvailable: boolean }>()
+const props = defineProps<{ busy: boolean; error: string; formats: RecordingFormat[]; systemAudioAvailable: boolean; microphoneAvailable: boolean; windowAvailable: boolean }>()
+const source = defineModel<'region' | 'display' | 'window'>('source', { required: true })
 const emit = defineEmits<{ confirm: []; close: [] }>()
 const format = defineModel<RecordingFormat>('format', { required: true })
 // 切换格式时选用兼容帧率；共享倒计时、光标和键鼠特效。
@@ -18,8 +19,8 @@ const cursor = defineModel<boolean>('cursor', { required: true })
 const systemAudio = defineModel<boolean>('systemAudio', { required: true })
 const microphone = defineModel<boolean>('microphone', { required: true })
 const effects = defineModel<InputEffects>('effects', { required: true })
-const groups = [{ id: 'format', label: '输出格式' }, { id: 'quality', label: '画质与码率' }, { id: 'fps', label: '帧率' }, { id: 'encoding', label: '编码方式' }, { id: 'audio', label: '声音' }, { id: 'countdown', label: '倒计时' }, { id: 'cursor', label: '鼠标指针' }, { id: 'effects', label: '键鼠特效' }]
-const active = ref('format')
+const groups = [{ id: 'source', label: '录制来源' }, { id: 'format', label: '输出格式' }, { id: 'quality', label: '画质与码率' }, { id: 'fps', label: '帧率' }, { id: 'encoding', label: '编码方式' }, { id: 'audio', label: '声音' }, { id: 'countdown', label: '倒计时' }, { id: 'cursor', label: '鼠标指针' }, { id: 'effects', label: '键鼠特效' }]
+const active = ref('source')
 const root = ref<HTMLElement | null>(null)
 const bitrateInput = ref<HTMLInputElement | null>(null)
 const invalid = ref('')
@@ -58,6 +59,12 @@ onMounted(() => root.value?.querySelector<HTMLButtonElement>('[role=tab]')?.focu
         <button v-for="(group, index) in groups" :id="`recording-tab-${group.id}`" :key="group.id" role="tab" :aria-selected="active === group.id" :aria-controls="`recording-option-${group.id}`" :disabled="busy" @mouseenter="select(group.id)" @click="select(group.id)" @keydown="navigate($event, index)">{{ group.label }}<ChevronRight :size="13" /></button>
       </nav>
       <div class="menu-panels">
+        <section v-show="active === 'source'" id="recording-option-source" role="tabpanel" aria-labelledby="recording-tab-source">
+          <label><input v-model="source" type="radio" value="region" :disabled="busy" />所选屏幕区域</label>
+          <label><input v-model="source" type="radio" value="display" :disabled="busy" />选区所在的整个显示器</label>
+          <label><input v-model="source" type="radio" value="window" :disabled="busy || !windowAvailable" />吸附的窗口</label>
+          <small>{{ windowAvailable ? '窗口最小化、关闭或尺寸变化时结束录制。' : '使用 Alt 点击吸附窗口后，可选择窗口录制。' }}</small>
+        </section>
         <section v-show="active === 'format'" id="recording-option-format" role="tabpanel" aria-labelledby="recording-tab-format">
           <label v-for="value in formats" :key="value"><input v-model="format" type="radio" :value="value" :disabled="busy" />{{ value === 'gif' ? 'GIF 动图' : 'MP4 视频' }}</label>
           <small>GIF 循环播放，适合短片段演示</small>

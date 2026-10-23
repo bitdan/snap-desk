@@ -1,5 +1,16 @@
 import type { Rect } from './selection'
 
+export type RecordingSource = 'primaryMonitor' | 'selectedMonitor' | 'selectedWindow'
+export type RecordingSelection = 'region' | 'display' | 'window'
+
+/** 输入/输出均是虚拟桌面图片坐标；负屏幕原点只参与平移，不按 DPI 缩放。 */
+export function recordingRegion(region: Rect, mode: RecordingSelection, displays: { x: number; y: number; width: number; height: number }[], origin: { x: number; y: number }): Rect {
+  const display = displays.find(d => region.x + origin.x >= d.x && region.y + origin.y >= d.y
+    && region.x + origin.x + region.width <= d.x + d.width && region.y + origin.y + region.height <= d.y + d.height)
+  if (mode !== 'window' && !display) throw new Error('请选择单个显示器内的区域。')
+  return mode === 'display' && display ? { x: display.x - origin.x, y: display.y - origin.y, width: display.width, height: display.height } : { ...region }
+}
+
 export interface RecordingDirectory { path: string; isDefault: boolean }
 export interface RecoverableRecording { id: string; path: string; finalized: boolean; stage: string; exported: string | null; sourceExists: boolean }
 
@@ -31,14 +42,14 @@ export function defaultInputEffects(): InputEffects {
     leftColor: [64, 160, 255], rightColor: [255, 112, 80], doubleColor: [190, 100, 255] }
 }
 export interface RecorderConfig {
-  source: 'primaryMonitor'; region: Rect; fps: RecordingFps; captureCursor: boolean;
+  source: RecordingSource; region: Rect; fps: RecordingFps; captureCursor: boolean;
   format: RecordingFormat; systemAudio: boolean; microphone: boolean; countdownSeconds: 0 | 3 | 5; encoding: EncodingPreference; quality: RecordingQuality
   inputEffects: InputEffects
   /** bit/s；null 使用画质预设计算目标码率。 */
   bitrate: number | null
 }
 export interface RecorderCapabilities {
-  available: boolean; reason: string | null; sources: 'primaryMonitor'[];
+  available: boolean; reason: string | null; sources: RecordingSource[];
   frameRates: number[]; captureCursor: boolean; systemAudio: boolean; microphone: boolean; formats: RecordingFormat[]
 }
 /** 表单以 Mbps 输入，空白恢复自动；拒绝无效值，避免 NaN 经 IPC 变成 null。 */

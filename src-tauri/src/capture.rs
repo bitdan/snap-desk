@@ -257,7 +257,7 @@ fn prepare(app: &AppHandle, recording: bool) -> Result<(), String> {
             guard.value.screenshot_snap,
         )
     };
-    let mut desktop = crate::desktop_capture::capture(recording, include_cursor, snap)?;
+    let mut desktop = crate::desktop_capture::capture(false, include_cursor, recording || snap)?;
     #[cfg(not(windows))]
     {
         let monitor = window
@@ -430,9 +430,8 @@ pub async fn capture_native_window(
     .map_err(err)?
 }
 
-/// 普通截图坐标属于虚拟桌面，旧录屏/滚动截图后端仍要求主屏局部像素。
-/// 在边界集中转换并拒绝跨屏，不能把副屏选区静默交给主屏采集器。
-fn primary_region(app: &AppHandle, id: u64, rect: Rect) -> Result<(Rect, (u32, u32)), String> {
+/// 将虚拟桌面物理选区绑定到唯一显示器；拒绝跨屏，并核对冻结时的 DPI 和布局。
+fn selected_region(app: &AppHandle, id: u64, rect: Rect) -> Result<(Rect, scroll::Screen), String> {
     let state = app.state::<CaptureState>();
     let guard = state.session.lock().map_err(err)?;
     let session = guard
@@ -444,25 +443,42 @@ fn primary_region(app: &AppHandle, id: u64, rect: Rect) -> Result<(Rect, (u32, u
         .frame
         .displays
         .iter()
-        .find(|d| d.primary)
-        .ok_or("主屏不可用。")?;
-    let current = app.primary_monitor().map_err(err)?.ok_or("主屏不可用。")?;
-    if (
-        current.position().x,
-        current.position().y,
-        current.size().width,
-        current.size().height,
-    ) != (display.x, display.y, display.width, display.height)
-    {
-        return Err("显示器布局已变化，请重新截图。".into());
+        .find(|d| {
+            crate::desktop_capture::within_display(
+                rect,
+                (session.frame.origin_x, session.frame.origin_y),
+                d,
+            )
+            .is_some()
+        })
+        .ok_or("请选择单个显示器内的区域；跨屏录制与滚动截图暂不支持。")?;
+    let current = scroll::session::screen_at(app, display.x, display.y)?;
+    // xcap 将 DPI 保存为 f32，Tauri 为 f64；统一到 f32 后比较，避免 110% 等比例误报。
+    let mut frozen_layout: Vec<_> = session
+        .frame
+        .displays
+        .iter()
+        .map(|d| {
+            (
+                d.x,
+                d.y,
+                d.width,
+                d.height,
+                u64::from((d.scale as f32).to_bits()),
+            )
+        })
+        .collect();
+    frozen_layout.sort_unstable();
+    if current.layout != frozen_layout {
+        return Err("显示器布局或 DPI 已变化，请重新截图。".into());
     }
     let local = crate::desktop_capture::within_display(
         rect,
         (session.frame.origin_x, session.frame.origin_y),
         display,
     )
-    .ok_or("录屏与滚动截图目前仅支持主屏内选区，请在主屏重新框选。")?;
-    Ok((local, (display.width, display.height)))
+    .ok_or("选区已超出显示器。")?;
+    Ok((local, current))
 }
 
 #[tauri::command]

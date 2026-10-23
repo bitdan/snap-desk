@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "camelCase")]
 pub enum CaptureSource {
     PrimaryMonitor,
+    SelectedMonitor,
+    SelectedWindow,
 }
 
 #[derive(Clone, Copy, Deserialize, Serialize)]
@@ -102,7 +104,7 @@ impl InputEffects {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RecorderConfig {
     pub source: CaptureSource,
-    /// 相对主屏的物理像素；与截图 Rect 使用相同坐标系。
+    /// IPC 使用虚拟桌面选区；准备完成后转换为来源局部物理像素。
     pub region: Rect,
     pub fps: u32,
     #[serde(default)]
@@ -195,7 +197,7 @@ impl RecorderConfig {
             || r.x.checked_add(r.width).is_none_or(|v| v > size.0)
             || r.y.checked_add(r.height).is_none_or(|v| v > size.1)
         {
-            return Err("录屏选区需在主屏内，至少 2×2，最多 1600 万像素。".into());
+            return Err("录屏选区需在来源范围内，至少 2×2，最多 1600 万像素。".into());
         }
         Ok(())
     }
@@ -217,6 +219,23 @@ pub struct RecorderCapabilities {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn source_contract_keeps_legacy_and_accepts_only_known_sources() {
+        for source in ["primaryMonitor", "selectedMonitor", "selectedWindow"] {
+            let mut json = serde_json::to_value(RecorderConfig::for_region(Rect {
+                x: 10,
+                y: 20,
+                width: 300,
+                height: 200,
+            }))
+            .unwrap();
+            json["source"] = serde_json::json!(source);
+            let config: RecorderConfig = serde_json::from_value(json).unwrap();
+            assert!(config.validate((1920, 1080)).is_ok());
+            assert_eq!(serde_json::to_value(config).unwrap()["source"], source);
+        }
+        assert!(serde_json::from_str::<CaptureSource>(r#""arbitraryWindowHandle""#).is_err());
+    }
     #[test]
     fn input_effects_default_compatibility_and_validation() {
         let config = RecorderConfig::for_region(Rect {
@@ -352,9 +371,15 @@ mod tests {
             RecordingQuality::Balanced
         ));
         config.system_audio = true;
-        assert_eq!(config.validate((1920, 1080)).is_ok(), cfg!(target_os = "windows"));
+        assert_eq!(
+            config.validate((1920, 1080)).is_ok(),
+            cfg!(target_os = "windows")
+        );
         config.microphone = true;
-        assert_eq!(config.validate((1920, 1080)).is_ok(), cfg!(target_os = "windows"));
+        assert_eq!(
+            config.validate((1920, 1080)).is_ok(),
+            cfg!(target_os = "windows")
+        );
         config.format = OutputFormat::Gif;
         config.fps = 10;
         assert!(config.validate((1920, 1080)).unwrap_err().contains("GIF"));

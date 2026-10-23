@@ -484,7 +484,11 @@ pub async fn recording_capabilities(window: WebviewWindow) -> Result<RecorderCap
                 .err()
                 .or_else(|| (!available).then(|| "没有可用的录制编码器。".into())),
             sources: if available {
-                vec![CaptureSource::PrimaryMonitor]
+                vec![
+                    CaptureSource::PrimaryMonitor,
+                    CaptureSource::SelectedMonitor,
+                    CaptureSource::SelectedWindow,
+                ]
             } else {
                 vec![]
             },
@@ -510,10 +514,13 @@ pub async fn start_recording(
     id: u64,
     rect: Rect,
     config: Option<RecorderConfig>,
+    target: Option<usize>,
 ) -> Result<(), String> {
     require_window(&window, "capture")?;
     tauri::async_runtime::spawn_blocking(move || {
         let _preparing = WorkerGuard::acquire(&app)?;
+        #[cfg(windows)]
+        let _dpi = crate::desktop_capture::PhysicalDpi::enter()?;
         progress(&app, "preparing", None);
         let state = app.state::<CaptureState>();
         let _operation = Operation::acquire(&state.operation)?;
@@ -539,10 +546,69 @@ pub async fn start_recording(
             return Err("录屏配置与确认选区不一致。".into());
         }
         config.validate(size)?;
-        let (rect, primary_size) = super::primary_region(&app, id, rect)?;
-        config.region.x = rect.x;
-        config.region.y = rect.y;
-        config.validate(primary_size)?;
+        // 跨屏窗口取最大可见交集用于控制条布局；不能把此交集作为视频裁剪范围。
+        let placement_rect = if matches!(config.source, CaptureSource::SelectedWindow) {
+            let guard = state.session.lock().map_err(err)?;
+            let session = guard
+                .as_ref()
+                .filter(|s| s.frame.id == id)
+                .ok_or("截图已过期。")?;
+            crate::desktop_capture::display_intersection(
+                rect,
+                (session.frame.origin_x, session.frame.origin_y),
+                &session.frame.displays,
+            )
+            .ok_or("窗口没有可见的显示器区域，请重新选择。")?
+        } else {
+            rect
+        };
+        let (mut rect, screen) = super::selected_region(&app, id, placement_rect)?;
+        let placement = rect;
+        let mut source_size = (screen.width, screen.height);
+        let source = if matches!(config.source, CaptureSource::SelectedWindow) {
+            let guard = state.session.lock().map_err(err)?;
+            let session = guard
+                .as_ref()
+                .filter(|s| s.frame.id == id)
+                .ok_or("截图已过期。")?;
+            let candidate = target
+                .and_then(|i| session.frame.targets.get(i))
+                .filter(|t| t.kind == "window")
+                .ok_or("请先点击吸附一个窗口，再选择窗口录制。")?;
+            let native = session
+                .desktop
+                .windows
+                .get(candidate.window_index)
+                .ok_or("窗口已失效。")?;
+            if native.is_minimized().map_err(err)? {
+                return Err("窗口已最小化，请还原后重新选择。".into());
+            }
+            // 窗口录制使用整个原生来源，不把桌面裁剪坐标误用于窗口表面。
+            source_size = (native.width().map_err(err)?, native.height().map_err(err)?);
+            rect = Rect {
+                x: 0,
+                y: 0,
+                width: source_size.0,
+                height: source_size.1,
+            };
+            capture::NativeSource::Window {
+                id: native.id().map_err(err)?,
+                pid: native.pid().map_err(err)?,
+            }
+        } else {
+            if matches!(config.source, CaptureSource::PrimaryMonitor) {
+                let primary = app.primary_monitor().map_err(err)?.ok_or("主屏不可用。")?;
+                if (primary.position().x, primary.position().y) != (screen.x, screen.y) {
+                    return Err("旧版主屏录制配置不能用于副屏，请重新选择录制来源。".into());
+                }
+            }
+            capture::NativeSource::Monitor {
+                x: screen.x,
+                y: screen.y,
+            }
+        };
+        config.region = rect;
+        config.validate(source_size)?;
         capture::supported()?;
         // 准备时固定本次目录；临时录制文件和最终文件同盘，停止时无需跨盘移动。
         let root = output::prepare(&app)?;
@@ -557,8 +623,8 @@ pub async fn start_recording(
             config.system_audio || config.microphone,
         )?;
         config.encoding = selected_encoding;
-        let screen = super::scroll::screen(&app)?;
-        chrome::place_recording(&app, &screen, rect)?;
+        // 窗口本地原点与控制条位置无关，控制条仍以用户确认的屏幕选区放置。
+        chrome::place_recording(&app, &screen, placement)?;
         window.hide().map_err(err)?;
         let recording = app.state::<RecordingState>();
         *recording.0.lock().map_err(err)? = Some(Session {
@@ -597,7 +663,7 @@ pub async fn start_recording(
             .name("screen-recording".into())
             .spawn(move || {
                 let _worker = worker_guard;
-                let prepared = capture::prepare(&config, primary_size).and_then(|backend| {
+                let prepared = capture::prepare(&config, source_size, source).and_then(|backend| {
                     let audio = if config.system_audio || config.microphone {
                         let audio_app = worker_app.clone();
                         // 初始化在确认选区阶段完成；只有 Recording 阶段才 Start 设备。
@@ -735,6 +801,7 @@ fn collect(
             let mut listener: Option<input::Listener> = None;
             let mut effects_generation = None;
             let mut compositor = compositor::Compositor::new(config.input_effects, config.region);
+            compositor.set_origin((screen.x, screen.y));
             let mut base: Option<frame::BgraImage> = None;
             let mut base_dirty = false;
             let collected = (|| -> Result<(), String> {
@@ -767,7 +834,8 @@ fn collect(
                         return Err("录屏编码线程已提前结束。".into());
                     }
                     if check_screen.elapsed() >= Duration::from_millis(500) {
-                        if super::scroll::screen(&app)? != screen {
+                        backend.check_source()?;
+                        if super::scroll::session::screen_at(&app, screen.x, screen.y)? != screen {
                             return Err("显示器位置、尺寸或 DPI 改变，请重新录屏。".into());
                         }
                         check_screen = Instant::now();
@@ -779,6 +847,7 @@ fn collect(
                                 listener = Some(input::Listener::start(config.input_effects)?);
                             }
                             let frame = measured_capture(&state, id, backend.as_mut())?;
+                            compositor.set_origin(backend.desktop_origin()?);
                             let events = listener.as_ref().unwrap().drain()?;
                             // 先取完源事件，再取 QPC，避免给未来事件分配更早的视频时间戳。
                             let now = capture::now();

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { defaultInputEffects, newerRecording, recordingAudioStatus, recordingRecoveryStatus, recordingBitrate, recordingStats, recordingStageTimes, recordingCopyStats, recordingActive, recordingConfig, recordingStatus, recordingTime, type RecordingView } from '../src/lib/recording'
+import { recordingRegion, defaultInputEffects, newerRecording, recordingAudioStatus, recordingRecoveryStatus, recordingBitrate, recordingStats, recordingStageTimes, recordingCopyStats, recordingActive, recordingConfig, recordingStatus, recordingTime, type RecordingView } from '../src/lib/recording'
 
 const emptyStats = { capturePolls: 0, capturedFrames: 0, captureMillis: 0, captureCopyBytes: 0, compositionCopyBytes: 0, nv12OutputBytes: 0, throttledSamples: 0, composedFrames: 0, compositionMillis: 0, queuedFrames: 0, queueDroppedFrames: 0, staleQueuedFrames: 0, rejectedCaptureFrames: 0, rejectedComposedFrames: 0, recentFps: 0 }
 const view: RecordingView = { id: 7, revision: 3, phase: 'paused', seconds: 23, frames: 180, droppedFrames: 2, targetFps: 30, systemAudio: false, microphone: false, encodingMillis: 360, targetBitrate: 8_087_040, encoderKind: 'system', encoderFallback: null, countdownRemaining: 0, message: '', path: null, stats: emptyStats }
@@ -136,5 +136,30 @@ describe('录屏会话状态', () => {
     expect(recordingActive(ready)).toBe(true)
     expect(newerRecording(ready, running)).toBe(running)
     expect(newerRecording(running, ready)).toBe(running)
+  })
+})
+
+
+describe('多屏录制来源坐标', () => {
+  const displays = [
+    { x: -1920, y: -200, width: 1920, height: 1080 },
+    { x: 0, y: 0, width: 2560, height: 1440 },
+  ]
+  const origin = { x: -1920, y: -200 }
+  it('副屏全屏使用原始物理尺寸，不应用主屏 DPI', () => {
+    expect(recordingRegion({ x: 100, y: 40, width: 400, height: 300 }, 'display', displays, origin))
+      .toEqual({ x: 0, y: 0, width: 1920, height: 1080 })
+    expect(recordingRegion({ x: 2000, y: 300, width: 400, height: 300 }, 'display', displays, origin))
+      .toEqual({ x: 1920, y: 200, width: 2560, height: 1440 })
+  })
+  it('保留区域选区，拒绝跨屏及桌面空洞，窗口可跨屏', () => {
+    const region = { x: 1800, y: 300, width: 400, height: 300 }
+    expect(() => recordingRegion(region, 'region', displays, origin)).toThrow('单个显示器')
+    expect(() => recordingRegion(region, 'display', displays, origin)).toThrow('单个显示器')
+    expect(() => recordingRegion({ x: 2200, y: 0, width: 20, height: 20 }, 'region', displays, origin)).toThrow()
+    expect(recordingRegion(region, 'window', displays, origin)).toEqual(region)
+    const small = { x: 20, y: 40, width: 400, height: 300 }
+    expect(recordingRegion(small, 'region', displays, origin)).toEqual(small)
+    expect(recordingRegion(small, 'region', displays, origin)).not.toBe(small)
   })
 })

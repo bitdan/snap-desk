@@ -81,3 +81,15 @@ describe('录屏 IPC 契约', () => {
     expect(invoke).toHaveBeenLastCalledWith('recording_capabilities', undefined)
   })
 })
+
+
+it('窗口录制只传当前帧候选编号，不暴露原生句柄', async () => {
+  const rect = { x: 20, y: 30, width: 600, height: 400 }
+  const config = recordingConfig(rect)
+  config.source = 'selectedWindow'
+  await api.startRecording(43, rect, config, 2)
+  expect(invoke).toHaveBeenLastCalledWith('start_recording', { id: 43, rect, config, target: 2 })
+  config.source = 'selectedMonitor'
+  await api.startRecording(44, rect, config)
+  expect(invoke).toHaveBeenLastCalledWith('start_recording', { id: 44, rect, config })
+})

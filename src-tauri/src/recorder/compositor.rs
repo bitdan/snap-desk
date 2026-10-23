@@ -35,6 +35,7 @@ pub struct Compositor {
     visuals: VecDeque<(i64, Visual)>,
     last_point: Option<(i32, i32, bool, i64)>,
     dirty: bool,
+    origin: (i32, i32),
 }
 impl Compositor {
     pub fn new(config: InputEffects, region: Rect) -> Self {
@@ -44,7 +45,13 @@ impl Compositor {
             visuals: VecDeque::new(),
             last_point: None,
             dirty: false,
+            origin: (0, 0),
         }
+    }
+
+    /// 输入事件为有符号桌面坐标，先减去显示器原点，再减去来源内选区。
+    pub fn set_origin(&mut self, origin: (i32, i32)) {
+        self.origin = origin;
     }
 
     /// 暂停/恢复代次改变时清空提示和轨迹，避免跨暂停连线或重放快捷键。
@@ -54,11 +61,11 @@ impl Compositor {
         self.dirty = false;
     }
 
-    /// 当前仅主屏，Windows 主屏原点为 (0,0)；减去选区物理坐标后检查边界。
+    /// 使用 i64 运算，避免副屏负原点与无符号选区相减溢出。
     fn local(&self, x: i32, y: i32) -> Option<(i32, i32)> {
         let (x, y) = (
-            i64::from(x) - i64::from(self.region.x),
-            i64::from(y) - i64::from(self.region.y),
+            i64::from(x) - i64::from(self.origin.0) - i64::from(self.region.x),
+            i64::from(y) - i64::from(self.origin.1) - i64::from(self.region.y),
         );
         (x >= 0 && y >= 0 && x < i64::from(self.region.width) && y < i64::from(self.region.height))
             .then_some((x as i32, y as i32))
@@ -394,6 +401,29 @@ fn draw_label(image: &mut BgraImage, label: &str, row: i32, config: InputEffects
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn desktop_origin_tracks_negative_monitors_and_moving_windows() {
+        let mut compositor = Compositor::new(
+            InputEffects::default(),
+            Rect {
+                x: 100,
+                y: 40,
+                width: 300,
+                height: 200,
+            },
+        );
+        compositor.set_origin((-1920, -200));
+        assert_eq!(compositor.local(-1820, -160), Some((0, 0)));
+        assert_eq!(compositor.local(-1521, 39), Some((299, 199)));
+        assert_eq!(compositor.local(-1821, -160), None);
+        assert_eq!(compositor.local(-1520, 39), None);
+        // 窗口移动后使用最新原点，不在旧位置继续绘制输入特效。
+        compositor.set_origin((500, 300));
+        assert_eq!(compositor.local(-1820, -160), None);
+        assert_eq!(compositor.local(600, 340), Some((0, 0)));
+        compositor.clear();
+        assert_eq!(compositor.local(610, 350), Some((10, 10)));
+    }
     #[test]
     fn effects_are_bounded_and_buttons_have_distinct_pixels() {
         let config = InputEffects {

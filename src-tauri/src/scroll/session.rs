@@ -22,26 +22,43 @@ use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
 
 #[derive(Clone, PartialEq)]
 pub(in crate::capture) struct Screen {
-    pub(super) name: Option<String>,
-    pub(super) x: i32,
-    pub(super) y: i32,
-    pub(super) width: u32,
-    pub(super) height: u32,
-    pub(super) scale: u64,
+    pub(in crate::capture) name: Option<String>,
+    pub(in crate::capture) x: i32,
+    pub(in crate::capture) y: i32,
+    pub(in crate::capture) width: u32,
+    pub(in crate::capture) height: u32,
+    pub(in crate::capture) scale: u64,
+    pub(in crate::capture) layout: Vec<(i32, i32, u32, u32, u64)>,
 }
 
-pub(in crate::capture) fn screen(app: &AppHandle) -> Result<Screen, String> {
-    let monitor = app
-        .primary_monitor()
-        .map_err(err)?
-        .ok_or("主显示器不可用。")?;
+/// 通过物理桌面原点重查来源，不因主屏切换而悄悄换到另一块屏幕。
+pub(in crate::capture) fn screen_at(app: &AppHandle, x: i32, y: i32) -> Result<Screen, String> {
+    let monitors = app.available_monitors().map_err(err)?;
+    let mut layout: Vec<_> = monitors
+        .iter()
+        .map(|m| {
+            (
+                m.position().x,
+                m.position().y,
+                m.size().width,
+                m.size().height,
+                u64::from((m.scale_factor() as f32).to_bits()),
+            )
+        })
+        .collect();
+    layout.sort_unstable();
+    let monitor = monitors
+        .into_iter()
+        .find(|m| (m.position().x, m.position().y) == (x, y))
+        .ok_or("来源显示器已移除或布局改变。")?;
     Ok(Screen {
         name: monitor.name().cloned(),
-        x: monitor.position().x,
-        y: monitor.position().y,
+        x,
+        y,
         width: monitor.size().width,
         height: monitor.size().height,
         scale: monitor.scale_factor().to_bits(),
+        layout,
     })
 }
 
@@ -249,11 +266,20 @@ fn sample_pair(
             .ok_or("滚动截图会话已结束。")?
     };
     let revision = snapshot.revision;
-    if screen(app)? != snapshot.screen {
-        return Err("主显示器位置、尺寸或 DPI 发生变化，已结束采集，仅输出已确认部分。".into());
+    if screen_at(app, snapshot.screen.x, snapshot.screen.y)? != snapshot.screen {
+        return Err("显示器布局、尺寸或 DPI 发生变化，已结束采集，仅输出已确认部分。".into());
     }
     let _preview_guard = chrome::hide_for_sample(app, &snapshot.obscuring_windows)?;
-    let settled = capture::sample_pair(state, snapshot.rect, snapshot.source_size, finishing)?;
+    let settled = capture::sample_pair(
+        state,
+        snapshot.rect,
+        snapshot.source_size,
+        &snapshot.screen,
+        finishing,
+    )?;
+    if screen_at(app, snapshot.screen.x, snapshot.screen.y)? != snapshot.screen {
+        return Err("显示器布局已变化，仅输出变化前已确认的部分。".into());
+    }
     let result = if let Some(second) = settled {
         let second = Arc::new(second);
         if !stability::stable(snapshot.stitch.last(), &second) {
@@ -310,6 +336,10 @@ fn sample_pair(
     } else {
         None
     };
+    // 拼接计算不持锁；计算期间改变屏幕布局时，候选快照也不得提交。
+    if screen_at(app, snapshot.screen.x, snapshot.screen.y)? != snapshot.screen {
+        return Err("显示器布局已变化，仅输出变化前已确认的部分。".into());
+    }
     {
         let mut guard = state.scroll.lock().map_err(err)?;
         let current = guard
@@ -497,7 +527,8 @@ pub async fn start_scroll(
             return Err("滚动截图会话已存在。".into());
         }
         let seed = crop(&app, id, rect, &[])?;
-        let (rect, source_size) = super::super::primary_region(&app, id, rect)?;
+        let (rect, screen) = super::super::selected_region(&app, id, rect)?;
+        let source_size = (screen.width, screen.height);
         // 先校验选区容量，非法选区不创建持久化目录。
         let stitch = Stitch::with_mode(seed, mode.unwrap_or_default())?;
         let mut archive = if save_frames {
@@ -523,7 +554,6 @@ pub async fn start_scroll(
                 archive = None;
             }
         }
-        let screen = screen(&app)?;
         let obscuring_windows = chrome::place(&app, &screen, rect)?;
         let mut session = ScrollSession {
             id,
