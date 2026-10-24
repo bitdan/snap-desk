@@ -331,6 +331,12 @@ pub fn control(app: &AppHandle, id: Option<u64>, action: RecordingAction) -> Res
         .ok_or("录屏会话已过期。")?;
     // 已完成/取消的同会话停止动作幂等；旧 ID 不能触及新会话。
     if !active(s.view.phase) {
+        if matches!(action, RecordingAction::Cancel) {
+            // 完成后的关闭只收起回放，不删除已保存的录像；旧会话 ID 仍在上方校验。
+            drop(guard);
+            chrome::hide_recording(app);
+            return Ok(());
+        }
         return if matches!(action, RecordingAction::Stop | RecordingAction::Cancel) {
             Ok(())
         } else {
@@ -516,6 +522,7 @@ pub async fn start_recording(
     rect: Rect,
     config: Option<RecorderConfig>,
     target: Option<usize>,
+    annotations: Option<Vec<crate::annotations::Annotation>>,
 ) -> Result<(), String> {
     require_window(&window, "capture")?;
     tauri::async_runtime::spawn_blocking(move || {
@@ -547,6 +554,13 @@ pub async fn start_recording(
             return Err("录屏配置与确认选区不一致。".into());
         }
         config.validate(size)?;
+        let annotations = annotations.unwrap_or_default();
+        crate::annotations::validate(&annotations, size.0, size.1)?;
+        // 标注仍使用虚拟桌面截图坐标；视频输出原点单独保存，不能使用显示器局部坐标。
+        let mut annotation_origin = crate::annotations::Point {
+            x: rect.x as f64,
+            y: rect.y as f64,
+        };
         // 跨屏窗口取最大可见交集用于控制条布局；不能把此交集作为视频裁剪范围。
         let placement_rect = if matches!(config.source, CaptureSource::SelectedWindow) {
             let guard = state.session.lock().map_err(err)?;
@@ -584,6 +598,10 @@ pub async fn start_recording(
             if native.is_minimized().map_err(err)? {
                 return Err("窗口已最小化，请还原后重新选择。".into());
             }
+            annotation_origin = crate::annotations::Point {
+                x: candidate.rect.x as f64,
+                y: candidate.rect.y as f64,
+            };
             // 窗口录制使用整个原生来源，不把桌面裁剪坐标误用于窗口表面。
             source_size = (native.width().map_err(err)?, native.height().map_err(err)?);
             rect = Rect {
@@ -610,6 +628,8 @@ pub async fn start_recording(
         };
         config.region = rect;
         config.validate(source_size)?;
+        let annotation_layer =
+            frame::AnnotationLayer::new(&annotations, rect.width, rect.height, annotation_origin)?;
         capture::supported()?;
         // 准备时固定本次目录；临时录制文件和最终文件同盘，停止时无需跨盘移动。
         let root = output::prepare(&app)?;
@@ -696,7 +716,16 @@ pub async fn start_recording(
                 match prepared {
                     Ok((backend, audio)) => {
                         if ready_tx.send(Ok(())).is_ok() && go_rx.recv().unwrap_or(false) {
-                            collect(worker_app, id, config, screen, root, backend, audio);
+                            collect(
+                                worker_app,
+                                id,
+                                config,
+                                screen,
+                                root,
+                                backend,
+                                audio,
+                                annotation_layer,
+                            );
                         }
                     }
                     Err(e) => {
@@ -774,6 +803,7 @@ fn collect(
     root: PathBuf,
     mut backend: Box<dyn capture::CaptureBackend>,
     audio: Option<audio::Worker>,
+    annotation_layer: Option<frame::AnnotationLayer>,
 ) {
     let state = app.state::<RecordingState>();
     let (sender, receiver) = mpsc::sync_channel::<QueuedFrame>(2);
@@ -791,6 +821,7 @@ fn collect(
                 receiver,
                 &writer_abort,
                 audio,
+                annotation_layer,
             )
         });
     let result = match writer {
@@ -1072,6 +1103,7 @@ fn collect(
         }
     };
     let mut message = String::new();
+    let mut completed = false;
     if let Ok(mut guard) = state.0.lock() {
         if let Some(s) = guard.as_mut().filter(|s| s.view.id == id) {
             s.freeze();
@@ -1106,6 +1138,7 @@ fn collect(
             };
             log::log!(level, "event=recording.finished module=recording op=rec-{id} result={outcome} duration_ms={} captured={} encoded={} dropped={} encoding_ms={}",
                 (s.view.seconds * 1000.0) as u64, s.view.stats.captured_frames, s.view.frames, s.view.dropped_frames, s.view.encoding_millis);
+            completed = phase == Phase::Completed;
             message = text.clone();
             s.view.phase = phase;
             s.view.message = text;
@@ -1114,11 +1147,17 @@ fn collect(
         }
     }
     chrome::hide_recording(&app);
+    // 控制条原地切换为回放/裁剪窗口，成功后无需到主界面寻找录像。
+    if completed {
+        if let Err(error) = chrome::show_recording_preview(&app) {
+            super::report_error(&app, format!("无法显示录屏回放：{error}"));
+        }
+    }
     app.state::<CaptureState>()
         .active
         .store(false, Ordering::SeqCst);
     let _ = app.emit_to("main", "capture-result", &message);
-    // 导出、取消或失败后保持主界面隐藏，由用户从托盘主动打开。
+    // 主界面保持隐藏；成功由录屏窗口接管编辑，取消或失败沿用现有提示。
 }
 
 /// Finalize、sync_all 成功才发布；保存失败保留视频与恢复记录，明确取消才清理。
@@ -1130,6 +1169,7 @@ fn write_video(
     receiver: mpsc::Receiver<QueuedFrame>,
     abort: &AtomicBool,
     mut audio: Option<audio::Worker>,
+    annotation_layer: Option<frame::AnnotationLayer>,
 ) -> Result<String, String> {
     let mut recovery = recovery::Pending::new(app, id, &root, config.format)?;
     let pending = recovery.path();
@@ -1185,7 +1225,12 @@ fn write_video(
             // 在锁内确认归属即视为提交；原生 WriteSample 不持有状态锁，按钮可及时响应。
         }
         let encoding_started = Instant::now();
-        encoder.push(&frame.image, frame.pts)?;
+        // 标注层只绘制一次；每帧在编码前混合，确保准备阶段的标注真正进入成品。
+        let mut image = frame.image;
+        if let Some(layer) = &annotation_layer {
+            layer.apply(&mut image)?;
+        }
+        encoder.push(&image, frame.pts)?;
         progress(app, "encoding", Some(&pending));
         let encoding_millis = encoding_started.elapsed().as_secs_f64() * 1000.0;
         let mut guard = state.0.lock().map_err(err)?;
@@ -1232,9 +1277,9 @@ fn write_video(
         return Err("编码器未生成视频。".into());
     }
     drop(file);
-    let mut guard = state.0.lock().map_err(err)?;
-    let s = guard
-        .as_mut()
+    let guard = state.0.lock().map_err(err)?;
+    guard
+        .as_ref()
         .filter(|s| s.view.id == id && !s.cancel)
         .ok_or("已取消录屏。")?;
     // 最后确认取消；发布和取消共用状态锁，失败时 Pending 保留完整视频。
@@ -1244,7 +1289,7 @@ fn write_video(
     recovery.published(&output);
     result::remember(app, &output);
     progress(app, "completed", Some(&output));
-    s.view.phase = Phase::Completed;
+    // 终态与成品路径由 collect 收尾时一起发布，避免回放读到 Completed 却没有路径。
     Ok(output.to_string_lossy().into_owned())
 }
 

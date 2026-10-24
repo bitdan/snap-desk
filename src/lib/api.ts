@@ -131,7 +131,7 @@ export const api = {
   startScroll: (id: number, rect: Rect, saveFrames: boolean, mode: ScrollMode = 'auto', background: ScrollBackground = 'white') => invoke<ScrollView>('start_scroll', { id, rect, saveFrames, mode, background }),
   controlScroll: (id: number, cancel = false, confirmedOnly = false) => invoke<void>('control_scroll', { id, cancel, confirmedOnly }),
   currentScroll: () => invoke<ScrollView | null>('current_scroll'),
-  startRecording: (id: number, rect: Rect, config?: RecorderConfig, target?: number) => invoke<void>('start_recording', { id, rect, config, ...(target === undefined ? {} : { target }) }),
+  startRecording: (id: number, rect: Rect, config?: RecorderConfig, target?: number, annotations?: Annotation[]) => invoke<void>('start_recording', { id, rect, config, ...(target === undefined ? {} : { target }), ...(annotations?.length ? { annotations } : {}) }),
   recordingCapabilities: () => invoke<RecorderCapabilities>('recording_capabilities'),
   currentRecordingDirectory: () => invoke<RecordingDirectory>('current_recording_directory'),
   chooseRecordingDirectory: (reset = false) => invoke<RecordingDirectory | null>('choose_recording_directory', { reset }),

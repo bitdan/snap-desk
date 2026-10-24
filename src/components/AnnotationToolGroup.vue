@@ -1,0 +1,44 @@
+<script setup lang="ts">
+import { computed, ref, watch } from 'vue'
+import { ChevronDown } from 'lucide-vue-next'
+import { DropdownMenuRoot, DropdownMenuTrigger, DropdownMenuPortal, DropdownMenuContent, DropdownMenuItem } from 'reka-ui'
+import { annotationTools } from '@/lib/annotation-tools'
+import type { AnnotationTool } from '@/lib/use-annotations'
+
+const props = defineProps<{ name: string; tools: AnnotationTool[]; selected: AnnotationTool; active: boolean; disabled: boolean }>()
+const emit = defineEmits<{ select: [tool: AnnotationTool] }>()
+const open = ref(false)
+const recent = ref(props.tools[0]!)
+// 每组记住最后使用的工具；二次点击主按钮可以直接继续使用。
+watch(() => props.selected, tool => { if (props.tools.includes(tool)) recent.value = tool }, { immediate: true })
+watch(() => props.disabled, disabled => { if (disabled) open.value = false })
+const current = computed(() => annotationTools.find(item => item.tool === recent.value)!)
+const items = computed(() => props.tools.map(tool => annotationTools.find(item => item.tool === tool)!))
+</script>
+
+<template>
+  <div class="tool-group">
+    <button :disabled="disabled" :title="current.name" :aria-label="current.name" :aria-pressed="active && tools.includes(selected)" @click="emit('select', recent)"><component :is="current.icon" :size="18" /></button>
+    <DropdownMenuRoot v-if="tools.length > 1" v-model:open="open">
+      <DropdownMenuTrigger :disabled="disabled" class="group-trigger" :title="name" :aria-label="`选择${name}工具`"><ChevronDown :size="12" /></DropdownMenuTrigger>
+      <DropdownMenuPortal>
+        <!-- Portal 避开工具行的滚动裁剪；菜单自行处理焦点、方向键、Esc 和屏幕边缘避让。 -->
+        <DropdownMenuContent class="annotation-group-menu" side="bottom" align="start" :side-offset="8" :collision-padding="8" :aria-label="name" @pointerdown.stop @pointermove.stop @contextmenu.stop.prevent @keydown.stop>
+          <DropdownMenuItem v-for="item in items" :key="item.tool" class="annotation-group-item" :disabled="disabled" @select="emit('select', item.tool)">
+            <component :is="item.icon" :size="16" /><span>{{ item.name }}</span><span v-if="active && selected === item.tool" class="chosen">✓</span>
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenuPortal>
+    </DropdownMenuRoot>
+  </div>
+</template>
+
+<style scoped>
+.tool-group { display: inline-flex; align-items: center; }
+.tool-group .group-trigger { min-width: 24px; width: 24px; padding: 2px; }
+.annotation-group-menu { z-index: 20; min-width: 156px; max-height: var(--reka-dropdown-menu-content-available-height); overflow-y: auto; padding: 4px; border: 1px solid #e1e4e8; border-radius: 6px; background: white; color: #24292f; box-shadow: 0 4px 16px #0002; font: 13px 'Segoe UI', 'Microsoft YaHei', sans-serif; }
+.annotation-group-item { display: flex; align-items: center; gap: 8px; min-height: 32px; padding: 4px 8px; border-radius: 4px; cursor: pointer; outline: none; }
+.annotation-group-item[data-highlighted] { background: #eff6ff; color: #2563eb; }
+.annotation-group-item[data-disabled] { opacity: .45; pointer-events: none; }
+.chosen { margin-left: auto; color: #2563eb; }
+</style>

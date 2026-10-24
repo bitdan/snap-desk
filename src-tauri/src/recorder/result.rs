@@ -40,7 +40,9 @@ pub fn latest_recording_result(
     app: AppHandle,
     window: WebviewWindow,
 ) -> Result<Option<RecordingResult>, String> {
-    crate::capture::require_window(&window, "main")?;
+    if !matches!(window.label(), "main" | "recording-controls") {
+        return Err("当前窗口无权访问录屏结果。".into());
+    }
     let state = app.state::<ResultState>();
     let result = state.0.lock().map_err(|e| e.to_string())?.clone();
     Ok(result)

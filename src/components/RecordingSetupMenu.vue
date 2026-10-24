@@ -4,7 +4,7 @@ import { ChevronRight, X } from 'lucide-vue-next'
 import RecordingInputSettings from './RecordingInputSettings.vue'
 import { recordingBitrate, type RecordingFormat, type RecordingFps, type EncodingPreference, type InputEffects, type RecordingQuality } from '@/lib/recording'
 
-const props = defineProps<{ busy: boolean; error: string; formats: RecordingFormat[]; systemAudioAvailable: boolean; microphoneAvailable: boolean; windowAvailable: boolean }>()
+const props = defineProps<{ busy: boolean; error: string; formats: RecordingFormat[]; systemAudioAvailable: boolean; microphoneAvailable: boolean; windowAvailable: boolean; embedded?: boolean }>()
 const source = defineModel<'region' | 'display' | 'window'>('source', { required: true })
 const emit = defineEmits<{ confirm: []; close: [] }>()
 const format = defineModel<RecordingFormat>('format', { required: true })
@@ -41,7 +41,7 @@ function confirm() {
   } catch (e) { active.value = 'quality'; invalid.value = String(e) }
 }
 function trapFocus(event: KeyboardEvent) {
-  if (event.key !== 'Tab') return
+  if (props.embedded || event.key !== 'Tab') return
   const items = [...(root.value?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled)') ?? [])].filter(el => el.getClientRects().length)
   const first = items[0], last = items.at(-1)
   if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus() }
@@ -52,7 +52,7 @@ onMounted(() => root.value?.querySelector<HTMLButtonElement>('[role=tab]')?.focu
 </script>
 
 <template>
-  <section ref="root" class="recording-menu" role="dialog" aria-modal="true" aria-label="录屏选项" @keydown="trapFocus" @pointerdown.stop @pointermove.stop @contextmenu.stop.prevent>
+  <section ref="root" class="recording-menu" :class="{ embedded }" :role="embedded ? 'region' : 'dialog'" :aria-modal="embedded ? undefined : true" aria-label="录屏选项" @keydown="trapFocus" @pointerdown.stop @pointermove.stop @contextmenu.stop.prevent>
     <header><strong>录屏选项</strong><button title="关闭录屏选项" aria-label="关闭录屏选项" :disabled="busy" @click="emit('close')"><X :size="16" /></button></header>
     <div class="menu-body">
       <nav role="tablist" aria-label="录屏设置分类" aria-orientation="vertical">
@@ -97,6 +97,7 @@ onMounted(() => root.value?.querySelector<HTMLButtonElement>('[role=tab]')?.focu
 </template>
 
 <style scoped>
+.recording-menu.embedded { position: static; width: 100%; max-height: min(360px, 50vh); border: 0; border-top: 1px solid #e1e4e8; border-radius: 0; box-shadow: none; }
 .recording-menu { position: fixed; width: min(390px, calc(100vw - 16px)); max-height: calc(100vh - 16px); display: flex; flex-direction: column; overflow: auto; border: 1px solid #e4e4e7; border-radius: 9px; background: white; color: #27272a; font-size: 12px; box-shadow: 0 8px 32px #0003; }
 header, footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 12px; flex-shrink: 0; }
 header { border-bottom: 1px solid #eee; } header button { display: flex; padding: 4px; border-radius: 4px; }

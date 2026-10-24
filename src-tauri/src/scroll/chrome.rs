@@ -401,6 +401,36 @@ pub(crate) fn hide_recording(app: &AppHandle) {
     }
 }
 
+/// 录制结束后复用控制窗口展示预览和时间裁剪；尺寸按所在屏幕工作区的物理像素限位。
+pub(crate) fn show_recording_preview(app: &AppHandle) -> Result<(), String> {
+    let controls = window(app, "recording-controls").ok_or("录屏控制窗口不可用。")?;
+    let monitor = controls
+        .current_monitor()
+        .map_err(err)?
+        .or(app.primary_monitor().map_err(err)?)
+        .ok_or("无法获取录屏回放所在显示器。")?;
+    let area = monitor.work_area();
+    let scale = monitor.scale_factor();
+    let width = ((920.0 * scale) as u32)
+        .min(area.size.width.saturating_sub(16))
+        .max(1);
+    let height = ((720.0 * scale) as u32)
+        .min(area.size.height.saturating_sub(16))
+        .max(1);
+    controls
+        .set_size(PhysicalSize::new(width, height))
+        .map_err(err)?;
+    controls
+        .set_position(PhysicalPosition::new(
+            area.position.x + (area.size.width - width) as i32 / 2,
+            area.position.y + (area.size.height - height) as i32 / 2,
+        ))
+        .map_err(err)?;
+    show_window(&controls)?;
+    controls.set_focus().map_err(err)?;
+    Ok(())
+}
+
 pub(super) fn show(app: &AppHandle) -> Result<(), String> {
     for label in LABELS {
         if let Some(w) = window(app, label) {

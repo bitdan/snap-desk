@@ -173,7 +173,7 @@ pub fn run() {
         .manage(pins::PinState::default())
         .register_asynchronous_uri_scheme_protocol("recording", |context, request, responder| {
             let app = context.app_handle().clone();
-            let main = context.webview_label() == "main";
+            let main = matches!(context.webview_label(), "main" | "recording-controls");
             tauri::async_runtime::spawn_blocking(move || {
                 responder.respond(capture::recording::editing::preview(&app, main, request));
             });

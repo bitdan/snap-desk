@@ -8,6 +8,75 @@ pub struct BgraImage {
     pub data: Vec<u8>,
 }
 
+/// 准备阶段的标注以输出像素绘成透明层；无标注时不增加每帧处理开销。
+pub struct AnnotationLayer(image::RgbaImage);
+impl AnnotationLayer {
+    pub fn new(
+        shapes: &[crate::annotations::Annotation],
+        width: u32,
+        height: u32,
+        origin: crate::annotations::Point,
+    ) -> Result<Option<Self>, String> {
+        if shapes.is_empty() {
+            return Ok(None);
+        }
+        let mut layer = image::RgbaImage::new(width, height);
+        crate::annotations::render(&mut layer, shapes, origin)?;
+        Ok(Some(Self(layer)))
+    }
+
+    /// 标注为 RGBA，采集帧为 BGRA；按通道交换后做 alpha 混合，保留视频不透明语义。
+    pub fn apply(&self, image: &mut BgraImage) -> Result<(), String> {
+        if image.dimensions() != self.0.dimensions() {
+            return Err("录屏尺寸已变化，请重新选择标注范围。".into());
+        }
+        for (target, source) in image.data.chunks_exact_mut(4).zip(self.0.pixels()) {
+            let alpha = u32::from(source[3]);
+            if alpha == 0 {
+                continue;
+            }
+            for (channel, source_channel) in [(0, 2), (1, 1), (2, 0)] {
+                target[channel] = ((u32::from(source[source_channel]) * alpha
+                    + u32::from(target[channel]) * (255 - alpha)
+                    + 127)
+                    / 255) as u8;
+            }
+            target[3] = 255;
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod annotation_layer_tests {
+    use super::*;
+
+    #[test]
+    fn mixes_rgba_layer_into_bgra_without_changing_transparent_pixels() {
+        let mut layer = image::RgbaImage::new(2, 1);
+        layer.put_pixel(0, 0, image::Rgba([200, 100, 50, 128]));
+        let mut frame = BgraImage {
+            width: 2,
+            height: 1,
+            data: vec![20, 40, 80, 255, 1, 2, 3, 255],
+        };
+        AnnotationLayer(layer).apply(&mut frame).unwrap();
+        assert_eq!(frame.data, vec![35, 70, 140, 255, 1, 2, 3, 255]);
+    }
+
+    #[test]
+    fn empty_annotations_skip_layer_allocation_and_size_changes_are_rejected() {
+        assert!(
+            AnnotationLayer::new(&[], 2, 2, crate::annotations::Point { x: 0.0, y: 0.0 })
+                .unwrap()
+                .is_none()
+        );
+        assert!(AnnotationLayer(image::RgbaImage::new(2, 2))
+            .apply(&mut BgraImage::new(3, 2))
+            .is_err());
+    }
+}
+
 impl BgraImage {
     pub fn new(width: u32, height: u32) -> Self {
         Self {

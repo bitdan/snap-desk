@@ -21,6 +21,15 @@ use tauri_plugin_dialog::DialogExt;
 #[path = "editing_windows.rs"]
 mod windows;
 
+/// 主界面和录屏回放复用同一受限编辑能力，其他窗口不能访问媒体文件。
+fn require_editor_window(window: &WebviewWindow) -> Result<(), String> {
+    if matches!(window.label(), "main" | "recording-controls") {
+        Ok(())
+    } else {
+        Err("当前窗口无权编辑录屏。".into())
+    }
+}
+
 fn error(e: impl std::fmt::Display) -> String {
     e.to_string()
 }
@@ -89,7 +98,7 @@ pub async fn prepare_recording_editor(
     window: WebviewWindow,
     id: u64,
 ) -> Result<EditorView, String> {
-    crate::capture::require_window(&window, "main")?;
+    require_editor_window(&window)?;
     let path = super::result::source_path(&app, id)?;
     let token = {
         let state = app.state::<EditState>();
@@ -154,7 +163,7 @@ pub fn cancel_recording_trim(
     window: WebviewWindow,
     token: u64,
 ) -> Result<(), String> {
-    crate::capture::require_window(&window, "main")?;
+    require_editor_window(&window)?;
     let state = app.state::<EditState>();
     let editor = state.0.lock().map_err(error)?;
     if let Some((id, cancel)) = &editor.active {
@@ -276,7 +285,7 @@ pub async fn trim_recording(
     token: u64,
     range: TrimRange,
 ) -> Result<Option<TrimExport>, String> {
-    crate::capture::require_window(&window, "main")?;
+    require_editor_window(&window)?;
     let (source, cancel) = {
         let state = app.state::<EditState>();
         let mut editor = state.0.lock().map_err(error)?;
@@ -496,7 +505,7 @@ fn response(status: StatusCode, data: Vec<u8>) -> Response<Vec<u8>> {
         .body(data)
         .expect("fixed protocol headers")
 }
-/// 只读协议仅对 main WebView 的已打开编辑器生效，URL 中没有文件路径或目录通配权限。
+/// 只读协议仅对主界面/录屏回放 WebView 的已打开编辑器生效，URL 中没有文件路径或目录通配权限。
 pub fn preview(app: &AppHandle, main: bool, request: Request<Vec<u8>>) -> Response<Vec<u8>> {
     if !main {
         return response(StatusCode::FORBIDDEN, vec![]);

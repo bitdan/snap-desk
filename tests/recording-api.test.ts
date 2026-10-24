@@ -8,6 +8,13 @@ vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn() }))
 import { api } from '../src/lib/api'
 
 describe('录屏 IPC 契约', () => {
+  it('准备阶段的标注连同截图坐标提交，保留窗口来源参数', async () => {
+    const rect = { x: 100, y: 50, width: 600, height: 400 }
+    const annotations = [{ kind: 'rectangle' as const, start: { x: 110, y: 60 }, end: { x: 150, y: 90 }, color: '#ff0000', width: 2, opacity: 1 }]
+    const config = recordingConfig(rect)
+    await api.startRecording(42, rect, config, 3, annotations)
+    expect(invoke).toHaveBeenLastCalledWith('start_recording', { id: 42, rect, config, target: 3, annotations })
+  })
   it('主窗口录屏选区有独立入口，不走普通截图命令', async () => {
     await api.selectRecordingArea()
     expect(invoke).toHaveBeenLastCalledWith('select_recording_area', undefined)
