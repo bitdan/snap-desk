@@ -2,6 +2,15 @@ import { describe, expect, it } from 'vitest'
 import { recordingWindowOptions } from '../src/lib/recording'
 
 describe('应用窗口录制来源', () => {
+  it('应用图标随候选下标传递，缺少图标仍保留来源', () => {
+    const rect = { x: 0, y: 0, width: 600, height: 400 }
+    const options = recordingWindowOptions([
+      { rect, kind: 'window', windowIndex: 0, title: '微信', icon: 'png' },
+      { rect, kind: 'window', windowIndex: 1, title: '终端', icon: null },
+    ])
+    expect(options[0]).toMatchObject({ index: 0, label: '微信', icon: 'png' })
+    expect(options[1]).toEqual({ index: 1, label: '终端' })
+  })
   it('保留暂时无屏幕坐标的最小化或隐藏应用，候选编号不压缩', () => {
     const options = recordingWindowOptions([
       { rect: { x: 0, y: 0, width: 0, height: 0 }, kind: 'window', windowIndex: 3, appName: 'Weixin', title: '微信', recordingOnly: true },

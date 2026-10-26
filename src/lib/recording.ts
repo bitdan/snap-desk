@@ -9,7 +9,7 @@ export function recordingWindowOptions(targets: CaptureTarget[]) {
   return targets.flatMap((target, index) => {
     if (target.kind !== 'window') return []
     const title = target.title?.trim(), app = target.appName?.trim()
-    return [{ index, label: app && title && app !== title ? `${app} · ${title}` : title || app || t('窗口 {0}', { 0: target.windowIndex + 1 }) }]
+    return [{ index, label: app && title && app !== title ? `${app} · ${title}` : title || app || t('窗口 {0}', { 0: target.windowIndex + 1 }), ...(target.icon ? { icon: target.icon } : {}) }]
   })
 }
 

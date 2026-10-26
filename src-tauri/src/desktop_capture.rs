@@ -40,6 +40,8 @@ pub struct Target {
     pub app_name: String,
     /// 最小化、托盘隐藏或屏幕外的应用仅参与录屏来源列表，不参与截图吸附。
     pub recording_only: bool,
+    /// 受限的应用图标 PNG Base64，只用于来源菜单。
+    pub icon: Option<String>,
 }
 
 pub struct Desktop {
@@ -236,6 +238,7 @@ pub fn capture(primary_only: bool, include_cursor: bool, snap: bool) -> Result<D
                 kind: "window",
                 window_index: index,
                 recording_only,
+                icon: window.icon(),
                 title: window
                     .title()
                     .unwrap_or_default()

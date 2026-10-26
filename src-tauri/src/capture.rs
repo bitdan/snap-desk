@@ -481,6 +481,16 @@ pub async fn capture_native_window(
     .map_err(err)?
 }
 
+/// 只记录固定阶段和数值会话，不把应用名、标题或原始异常写入日志。
+fn window_select_error(id: u64, code: &'static str, error: impl std::fmt::Display) -> String {
+    log::error!(
+        "event=recording.window_select_failed module=recording code={} op=cap-{}",
+        code,
+        id
+    );
+    format!("{code}：{error}")
+}
+
 /// 选择应用录屏来源：置前应用后重新冻结桌面，仍使用原会话内的候选编号。
 #[tauri::command]
 pub async fn select_recording_window(
@@ -490,7 +500,7 @@ pub async fn select_recording_window(
     target: usize,
 ) -> Result<Frame, String> {
     require_window(&window, "capture")?;
-    tauri::async_runtime::spawn_blocking(move || {
+    let result = tauri::async_runtime::spawn_blocking(move || {
         #[cfg(windows)]
         let _dpi = crate::desktop_capture::PhysicalDpi::enter()?;
         let state = app.state::<CaptureState>();
@@ -515,10 +525,22 @@ pub async fn select_recording_window(
             (native.clone(), session.desktop.include_cursor)
         };
         hide_overlay(&app, &window)?;
+        let mut stage = "WINDOW_SELECT_ACTIVATE";
         let result = (|| {
-            crate::desktop_capture::activate_window(&native)?;
+            // 窗口操作放回接收用户输入的原生主线程，线程池只负责截图和编码。
+            let selected = native.clone();
+            let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+            window
+                .run_on_main_thread(move || {
+                    let _ = sender.send(crate::desktop_capture::activate_window(&selected));
+                })
+                .map_err(err)?;
+            receiver
+                .recv_timeout(Duration::from_secs(3))
+                .map_err(|_| "应用窗口恢复超时，请重试。".to_string())??;
             // 等待原蒙层消失和窗口恢复动画结束；冻结的是置前后的真实桌面。
             std::thread::sleep(Duration::from_millis(220));
+            stage = "WINDOW_SELECT_CAPTURE";
             let mut fresh = crate::desktop_capture::capture(false, include_cursor, false)?;
             let layout = serde_json::to_string(&fresh.displays).map_err(err)?;
             let mut guard = state.session.lock().map_err(err)?;
@@ -526,11 +548,13 @@ pub async fn select_recording_window(
                 .as_mut()
                 .filter(|s| s.frame.id == id)
                 .ok_or("截图已过期。")?;
+            stage = "WINDOW_SELECT_LAYOUT";
             if layout != session.frame.layout_key
                 || fresh.image.dimensions() != session.image.dimensions()
             {
                 return Err("显示器布局已变化，请重新选择录屏范围。".into());
             }
+            stage = "WINDOW_SELECT_BOUNDS";
             let rect = crate::desktop_capture::clipped(
                 native.x().map_err(err)?,
                 native.y().map_err(err)?,
@@ -540,6 +564,7 @@ pub async fn select_recording_window(
                 fresh.image.dimensions(),
             )
             .ok_or("应用窗口已移出屏幕。")?;
+            stage = "WINDOW_SELECT_PREVIEW";
             let preview = preview_png(&fresh.image)?;
             // 不替换候选数组，避免前端保存的下标指向另一个应用。
             session.frame.targets[target].rect = rect;
@@ -548,14 +573,28 @@ pub async fn select_recording_window(
             session.preview = preview;
             session.image = std::mem::take(&mut fresh.image);
             Ok(session.frame.clone())
-        })();
+        })()
+        .map_err(|e: String| window_select_error(id, stage, e));
         // 成功失败均恢复选择工具；底下的目标应用保持置前，不重新激活其他应用。
-        window.show().map_err(err)?;
-        window.set_focus().map_err(err)?;
-        result
+        let restored = window
+            .show()
+            .and_then(|_| window.set_focus())
+            .map_err(|e| window_select_error(id, "WINDOW_SELECT_RESTORE", e));
+        match (result, restored) {
+            (Err(error), _) => Err(error),
+            (Ok(_), Err(error)) => Err(error),
+            (Ok(frame), Ok(())) => Ok(frame),
+        }
     })
     .await
-    .map_err(err)?
+    .map_err(|e| window_select_error(id, "WINDOW_SELECT_WORKER", e))?;
+    result.map_err(|error: String| {
+        if error.starts_with("WINDOW_SELECT_") {
+            error
+        } else {
+            window_select_error(id, "WINDOW_SELECT_SESSION", error)
+        }
+    })
 }
 
 /// 将虚拟桌面物理选区绑定到唯一显示器；拒绝跨屏，并核对冻结时的 DPI 和布局。

@@ -20,7 +20,7 @@ export type { Settings } from './settings'
 export interface QrResult { id: number; items: { text: string; url: string | null }[] }
 export interface ResourceStatus { directory: string; ocrReady: boolean; modelsReady: boolean; runtimeReady: boolean; runtimeDownloadMib: number; fontReady: boolean }
 export interface ResourceProgress { name: string; received: number; total: number }
-export interface CaptureTarget { rect: Rect; kind: 'window' | 'element'; windowIndex: number; title?: string; appName?: string; recordingOnly?: boolean }
+export interface CaptureTarget { rect: Rect; kind: 'window' | 'element'; windowIndex: number; title?: string; appName?: string; recordingOnly?: boolean; icon?: string | null }
 export interface CaptureDisplay { x: number; y: number; width: number; height: number; primary: boolean; scale: number }
 export interface CaptureFrame { originX: number; originY: number; displays: CaptureDisplay[]; targets: CaptureTarget[]; layoutKey: string; id: number; width: number; height: number; previewRevision: number; recording: boolean; snapEnabled?: boolean }
 export interface PinView { zoom: number; opacity: number; locked: boolean; topmost: boolean; toolbarExpanded: boolean }

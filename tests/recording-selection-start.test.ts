@@ -37,11 +37,22 @@ function fixture() {
   }
   api.selectRecordingWindow.mockImplementation(async () => ({ ...context.frame.value, previewRevision: 1 }))
   const start = new Function(...Object.keys(context), `${code}; return startRecording`)(...Object.values(context)) as () => Promise<void>
-  const choose = new Function(...Object.keys(context), `${chooseCode}; return chooseRecordingSource`)(...Object.values(context)) as (event: Event) => Promise<void>
+  const choose = new Function(...Object.keys(context), `${chooseCode}; return chooseRecordingSource`)(...Object.values(context)) as (event: Event | string) => Promise<void>
   return { context, calls, start, choose }
 }
 
 describe('选区工具栏准备录制', () => {
+  it('图标菜单直接提交候选值，失败时保留原选择，不依赖已卸载的 DOM', async () => {
+    const { context: c, choose } = fixture()
+    c.frame.value.targets = [{ kind: 'window', rect: { x: 20, y: 30, width: 800, height: 600 } }]
+    c.api.selectRecordingWindow.mockRejectedValueOnce(new Error('WINDOW_SELECT_ACTIVATE'))
+    await choose('window:0')
+    expect(c.recordingSource.value).toBe('region')
+    expect(c.error.value).toContain('WINDOW_SELECT_ACTIVATE')
+    expect(c.busy.value).toBe(false)
+    await choose('window:0')
+    expect(c.recordingSource.value).toBe('window')
+  })
   it('从应用列表直接选择窗口并通过会话候选下标启动原生窗口来源', async () => {
     const { context: c, start, choose } = fixture()
     c.frame.value.targets = [{ kind: 'element' }, { kind: 'window', rect: { x: 20, y: 30, width: 800, height: 600 } }]

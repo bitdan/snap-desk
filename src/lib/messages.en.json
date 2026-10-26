@@ -235,6 +235,8 @@
   "准备录制": "Prepare recording",
   "确认范围，进入录制控制条": "Confirm region and open recording controls",
   "确认范围": "Confirm region",
+  "自动码率": "Auto bitrate",
+  "自动编码": "Auto encoder",
   "应用窗口": "Application windows",
   "没有可录制的应用窗口": "No application windows available to record",
   "请先选择要录制的应用窗口。": "Select an application window to record first.",

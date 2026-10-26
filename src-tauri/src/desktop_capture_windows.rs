@@ -1,10 +1,11 @@
 //! Win32 元素边界与光标合成；所有系统资源在失败路径上也由 Drop 释放。
 use super::{clipped, Target};
+use base64::Engine;
 use image::RgbaImage;
 use windows::{
     core::{BOOL, PWSTR},
     Win32::{
-        Foundation::{CloseHandle, HWND, LPARAM, RECT},
+        Foundation::{CloseHandle, HWND, LPARAM, RECT, WPARAM},
         Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS},
         Graphics::Gdi::*,
         System::Threading::{
@@ -22,8 +23,12 @@ pub struct AppWindow {
     pid: u32,
     title: String,
     app_name: String,
+    icon: Option<String>,
 }
 impl AppWindow {
+    pub fn icon(&self) -> Option<String> {
+        self.icon.clone()
+    }
     fn hwnd(&self) -> HWND {
         HWND(self.id as usize as *mut _)
     }
@@ -123,6 +128,7 @@ fn process_name(pid: u32) -> String {
 struct WindowList {
     windows: Vec<AppWindow>,
     names: std::collections::HashMap<u32, String>,
+    icons: std::collections::HashMap<u32, Option<String>>,
 }
 unsafe extern "system" fn application_window(hwnd: HWND, context: LPARAM) -> BOOL {
     // EnumWindows 同步调用；context 仅借用本次枚举栈上的列表，不跨线程保留。
@@ -183,6 +189,11 @@ unsafe extern "system" fn application_window(hwnd: HWND, context: LPARAM) -> BOO
         pid,
         title,
         app_name: name,
+        icon: state
+            .icons
+            .entry(pid)
+            .or_insert_with(|| application_icon(hwnd).ok())
+            .clone(),
     });
     BOOL(1)
 }
@@ -192,6 +203,7 @@ pub fn application_windows() -> Result<Vec<AppWindow>, String> {
     let mut state = WindowList {
         windows: Vec::new(),
         names: Default::default(),
+        icons: Default::default(),
     };
     let result = unsafe {
         EnumWindows(
@@ -340,6 +352,7 @@ unsafe extern "system" fn child(hwnd: HWND, context: LPARAM) -> BOOL {
                 title: String::new(),
                 app_name: String::new(),
                 recording_only: false,
+                icon: None,
             });
         }
     }
@@ -390,6 +403,107 @@ impl Drop for Surface {
     }
 }
 struct IconInfo(ICONINFO);
+struct OwnedIcon(HICON);
+impl Drop for OwnedIcon {
+    fn drop(&mut self) {
+        let _ = unsafe { DestroyIcon(self.0) };
+    }
+}
+
+/// 窗口提供图标时优先使用；查询最多等待 20 ms，失败回退到窗口类图标。
+/// 复制图标由本次调用负责释放，绝不销毁其他应用拥有的原始 HICON。
+fn application_icon(hwnd: HWND) -> Result<String, String> {
+    unsafe {
+        let mut value = 0;
+        let _ = SendMessageTimeoutW(
+            hwnd,
+            WM_GETICON,
+            WPARAM(2),
+            LPARAM(0),
+            SMTO_ABORTIFHUNG,
+            20,
+            Some(&mut value),
+        );
+        if value == 0 {
+            value = GetClassLongPtrW(hwnd, GCLP_HICONSM);
+        }
+        if value == 0 {
+            value = GetClassLongPtrW(hwnd, GCLP_HICON);
+        }
+        if value == 0 {
+            return Err("应用没有可用图标。".into());
+        }
+        let icon = OwnedIcon(CopyIcon(HICON(value as *mut _)).map_err(|e| e.to_string())?);
+        let dc = CreateCompatibleDC(None);
+        if dc.0.is_null() {
+            return Err("无法创建图标画布。".into());
+        }
+        let mut surface = Surface {
+            dc,
+            bitmap: HBITMAP::default(),
+            old: HGDIOBJ::default(),
+        };
+        let header = BITMAPINFO {
+            bmiHeader: BITMAPINFOHEADER {
+                biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+                biWidth: 24,
+                biHeight: -24,
+                biPlanes: 1,
+                biBitCount: 32,
+                biCompression: BI_RGB.0,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut bits = std::ptr::null_mut();
+        surface.bitmap = CreateDIBSection(Some(dc), &header, DIB_RGB_COLORS, &mut bits, None, 0)
+            .map_err(|e| e.to_string())?;
+        surface.old = SelectObject(dc, surface.bitmap.into());
+        if surface.old.0.is_null() || surface.old.0 as isize == -1 || bits.is_null() {
+            surface.old = HGDIOBJ::default();
+            return Err("无法选择图标位图。".into());
+        }
+        // 现代图标在透明黑底绘制，才能正确还原预乘 alpha，避免深色菜单出现白边。
+        for pixel in
+            std::slice::from_raw_parts_mut(bits as *mut u8, 24 * 24 * 4).chunks_exact_mut(4)
+        {
+            pixel.copy_from_slice(&[0, 0, 0, 0]);
+        }
+        DrawIconEx(dc, 0, 0, icon.0, 24, 24, 0, None, DI_NORMAL).map_err(|e| e.to_string())?;
+        let _ = GdiFlush();
+        let has_alpha = std::slice::from_raw_parts(bits as *const u8, 24 * 24 * 4)
+            .chunks_exact(4)
+            .any(|p| p[3] != 0);
+        if !has_alpha {
+            // 旧式遮罩图标没有 alpha；改在白底重绘，避免以黑方块作为背景。
+            for pixel in
+                std::slice::from_raw_parts_mut(bits as *mut u8, 24 * 24 * 4).chunks_exact_mut(4)
+            {
+                pixel.copy_from_slice(&[255, 255, 255, 255]);
+            }
+            DrawIconEx(dc, 0, 0, icon.0, 24, 24, 0, None, DI_NORMAL).map_err(|e| e.to_string())?;
+            let _ = GdiFlush();
+        }
+        let buffer = std::slice::from_raw_parts(bits as *const u8, 24 * 24 * 4);
+        let mut image = RgbaImage::new(24, 24);
+        for (out, src) in image.pixels_mut().zip(buffer.chunks_exact(4)) {
+            let alpha = if has_alpha { src[3] } else { 255 };
+            let channel = |value: u8| {
+                if alpha == 0 {
+                    0
+                } else {
+                    (u32::from(value) * 255 / u32::from(alpha)).min(255) as u8
+                }
+            };
+            *out = image::Rgba([channel(src[2]), channel(src[1]), channel(src[0]), alpha]);
+        }
+        let mut png = std::io::Cursor::new(Vec::new());
+        image
+            .write_to(&mut png, image::ImageFormat::Png)
+            .map_err(|e| e.to_string())?;
+        Ok(base64::engine::general_purpose::STANDARD.encode(png.into_inner()))
+    }
+}
 impl Drop for IconInfo {
     fn drop(&mut self) {
         unsafe {

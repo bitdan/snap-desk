@@ -20,6 +20,7 @@ import { magnifierSample } from '@/lib/magnifier'
 import { newerScroll } from '@/lib/scroll-capture'
 import { defaultInputEffects, recordingBitrate, recordingConfig, recordingRegion, recordingWindowOptions, type RecordingSelection, type RecordingFormat, type RecordingFps, type EncodingPreference, type RecordingQuality, type RecorderCapabilities } from '@/lib/recording'
 import RecordingSetupMenu from './RecordingSetupMenu.vue'
+import RecordingSourceSelect from './RecordingSourceSelect.vue'
 import { targetAt, fromPixels, snapPoint, displayBounds } from '@/lib/capture-targets'
 import { readRecentSelection, restoreRecentSelection, writeRecentSelection } from '@/lib/recent-selection'
 
@@ -104,7 +105,7 @@ function openRecordingMenu() {
 /** F3 与截图中的录屏按钮使用同一模式；调整范围后保留录屏偏好。 */
 function enterRecordingMode() {
   if (busy.value || editor.pending || editor.interacting) return
-  annotating.value = false; error.value = ''; recordingMode.value = true
+  annotating.value = false; error.value = ''; recordingMode.value = true; recordingSetup.value = true
   void nextTick(() => recordingConfirmTrigger.value?.focus())
 }
 function leaveRecordingMode() {
@@ -124,9 +125,9 @@ const recordingSource = ref<RecordingSelection>('region')
 const recordingWindows = computed(() => recordingWindowOptions(frame.value?.targets ?? []))
 const recordingSourceChoice = computed(() => recordingSource.value === 'window' ? `window:${selectedTarget.value}` : recordingSource.value)
 /** 直接选原生应用窗口并更新可视选区，不依赖先按 Alt 吸附。 */
-async function chooseRecordingSource(event: Event) {
+async function chooseRecordingSource(event: Event | string) {
   if (!frame.value || busy.value || marked.value || editor.interacting) return
-  const value = (event.target as HTMLSelectElement).value
+  const value = typeof event === 'string' ? event : (event.target as HTMLSelectElement).value
   if (value.startsWith('window:')) {
     const index = Number(value.slice(7)), target = frame.value.targets[index]
     if (!Number.isInteger(index) || target?.kind !== 'window') return
@@ -146,7 +147,7 @@ async function chooseRecordingSource(event: Event) {
       if (!disposed && frame.value?.id === id) error.value = String(e)
     } finally {
       busy.value = false
-      ;(event.target as HTMLSelectElement).value = recordingSourceChoice.value
+      if (typeof event !== 'string') (event.target as HTMLSelectElement).value = recordingSourceChoice.value
     }
   } else if (value === 'display' || value === 'region') {
     selectedTarget.value = null
@@ -356,7 +357,7 @@ function selectAll() { selectedTarget.value = null; if (!busy.value && !marked.v
 function receive(value: CaptureFrame) {
   if (disposed || value.id <= closedThroughId || (frame.value && value.id < frame.value.id)) return
   liveRecordingId.value = null
-  busy.value = false; reselect(); windowsOnly.value = false; scroll.value = null; recordingSetup.value = false; imageReady.value = false; recordingMode.value = !!value.recording; frame.value = value
+  busy.value = false; reselect(); windowsOnly.value = false; scroll.value = null; recordingSetup.value = !!value.recording; imageReady.value = false; recordingMode.value = !!value.recording; frame.value = value
 }
 async function loaded() {
   if (!frame.value) return
@@ -391,12 +392,10 @@ function key(e: KeyboardEvent) {
   if (liveRecordingId.value !== null) return
   if (qrResult.value || ocrResult.value !== null) return
   if (scroll.value) return
-  if (recordingSetup.value) {
-    if (e.key === 'Escape' && !busy.value) { e.preventDefault(); recordingSetup.value = false; return }
-    if ((e.target as HTMLElement).closest('.recording-inline-options')) return
-  }
+  // 行内设置默认可见，不作为模态层消费 Esc；真正的下拉菜单自行关闭当前层。
   // 先退出窗口，再判断输入框和标注快捷键，避免 Esc 只取消文字或笔画。
   if (handleEscape(e, () => { void cancel() })) return
+  if ((e.target as HTMLElement).closest('.recording-inline-options')) return
   if ((e.target as HTMLElement).closest('input, textarea, select')) return
   if (e.key === 'Alt') windowsOnly.value = true
   const command = e.ctrlKey || e.metaKey
@@ -509,7 +508,7 @@ onUnmounted(() => { releaseFrame(); disposed = true; offClosed?.(); off?.(); off
         <button class="recording-grip" :disabled="busy" :title='t("拖动工具栏；双击恢复位置")' :aria-label='t("拖动录屏工具栏")' @pointerdown="floatToolbar" @dblclick="resetToolbarPosition"><GripVertical :size="16" /></button>
         <button :disabled="busy" :title='t("返回截图")' :aria-label='t("返回截图")' @click="leaveRecordingMode"><ArrowLeft :size="16" /></button>
         <span class="ready-time">00:00</span>
-        <select class="recording-source" :value="recordingSourceChoice" :disabled="busy || marked || editor.interacting" :aria-label='t("录制范围")' @change="chooseRecordingSource"><option value="region">{{ t("选区") }}</option><option value="display">{{ t("显示器") }}</option><optgroup :label="t('应用窗口')"><option v-for="item in recordingWindows" :key="item.index" :value="`window:${item.index}`">{{ item.label }}</option><option v-if="!recordingWindows.length" disabled>{{ t('没有可录制的应用窗口') }}</option></optgroup></select>
+        <RecordingSourceSelect :value="recordingSourceChoice" :windows="recordingWindows" :disabled="busy || marked || editor.interacting" @select="chooseRecordingSource" />
         <select v-model="recordingFormat" :disabled="busy || !recordingCapabilities?.available" :aria-label='t("录屏格式")'><option v-for="format in recordingCapabilities?.formats ?? []" :key="format" :value="format">{{ format.toUpperCase() }}</option></select>
         <select v-model="recordingFps" :disabled="busy" :aria-label='t("录屏帧率")'><option v-for="fps in (recordingFormat === 'gif' ? [10, 20] : [30, 60])" :key="fps" :value="fps">{{ fps }} FPS</option></select>
         <span class="ready-divider" />
@@ -539,7 +538,7 @@ onUnmounted(() => { releaseFrame(); disposed = true; offClosed?.(); off?.(); off
         <QrResultCard :capture-result="qrResult" @close="qrResult = null" @opened="cancel" />
       </div>
     </div>
-    <div v-if="error && !recordingSetup" class="overlay-error" :style="{ left: `${activeDisplay.x + activeDisplay.width / 2}px`, bottom: 'auto', top: `${activeDisplay.y + 16}px`, maxWidth: `${activeDisplay.width - 32}px` }" role="alert" @pointerdown.stop>{{ te(error) }}</div>
+    <div v-if="error" class="overlay-error" :style="{ left: `${activeDisplay.x + activeDisplay.width / 2}px`, bottom: 'auto', top: `${activeDisplay.y + 16}px`, maxWidth: `${activeDisplay.width - 32}px` }" role="alert" @pointerdown.stop>{{ te(error) }}</div>
   </div>
 </template>
 

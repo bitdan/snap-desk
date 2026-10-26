@@ -1,5 +1,6 @@
 //! 经审计的导出值白名单。新增事件/错误码需同时检查生产处字段，再显式加入此表。
 pub const EVENTS: &[&str] = &[
+    "recording.window_select_failed",
     "recording.failed",
     "scroll.failed",
     "app.edge_restore_failed",
@@ -55,6 +56,14 @@ pub const EVENTS: &[&str] = &[
     "vue.component_error",
 ];
 pub const CODES: &[&str] = &[
+    "WINDOW_SELECT_ACTIVATE",
+    "WINDOW_SELECT_SESSION",
+    "WINDOW_SELECT_WORKER",
+    "WINDOW_SELECT_CAPTURE",
+    "WINDOW_SELECT_LAYOUT",
+    "WINDOW_SELECT_BOUNDS",
+    "WINDOW_SELECT_PREVIEW",
+    "WINDOW_SELECT_RESTORE",
     "RECORDING_PIPELINE_FAILED",
     "SCROLL_OUTPUT_FAILED",
     "ARCHIVE_CREATE_FAILED",
