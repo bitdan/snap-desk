@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { handleEscape } from '@/lib/escape'
 import { t, te } from '@/lib/i18n'
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { Pin, PinOff, Lock, Unlock, Minus, Plus, Copy, Save, EyeOff, X, ChevronDown, ChevronUp, Move, Undo2, Redo2, Trash2 } from 'lucide-vue-next'
@@ -170,6 +171,12 @@ async function opacity(event: Event) {
 }
 function key(event: KeyboardEvent) {
   if (contextMenu.value || recognitionMode.value) return
+  if (handleEscape(event, () => {
+    if (busy.value || editor.pending) return
+    // 草稿从未保存；先放弃草稿解除交互锁，再走既有隐藏贴图接口。
+    editor.abort(); void action('hide')
+  })) return
+  if (event.defaultPrevented || event.isComposing || event.keyCode === 229) return
   if (annotating.value && editor.key(event)) return
   if ((event.target as HTMLElement).closest('input, textarea, select')) return
   if (event.repeat) return

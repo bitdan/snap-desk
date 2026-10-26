@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { handleEscape } from '@/lib/escape'
 import { t, te } from '@/lib/i18n'
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { Pause, Play, Square, X } from 'lucide-vue-next'
@@ -73,7 +74,17 @@ async function control(action: RecordingAction) {
   finally { busy.value = false }
 }
 let offPreview: (() => void) | undefined
+/** 录屏不能按普通窗口直接隐藏：Esc 结束并保留成品，回放时仅收起回放。 */
+function key(event: KeyboardEvent) {
+  handleEscape(event, () => {
+    if (busy.value || !view.value) return
+    if (replay.value) void closePreview()
+    else if (['recording', 'paused'].includes(view.value.phase)) void control('stop')
+    else if (view.value.phase === 'ready') void control('cancel')
+  })
+}
 onMounted(async () => {
+  window.addEventListener('keydown', key)
   try {
     const off = await onRecordingPreviewClosed(id => {
       // 本地按钮已负责卸载；忽略它对应的异步通知，避免重新框选失败恢复后被迟到事件关闭。
@@ -86,7 +97,7 @@ onMounted(async () => {
   } catch (e) { if (!disposed) error.value = String(e) }
   if (!disposed) void poll()
 })
-onUnmounted(() => { disposed = true; clearTimeout(timer); offPreview?.() })
+onUnmounted(() => { disposed = true; window.removeEventListener('keydown', key); clearTimeout(timer); offPreview?.() })
 </script>
 
 <template>

@@ -7,6 +7,11 @@ import ts from 'typescript'
 import { useAnnotations } from '../src/lib/use-annotations'
 import { annotationTools } from '../src/lib/annotation-tools'
 
+// 本测试只验证工具栏布局；自定义图标用占位组件，避免 SSR 编译产物缺少客户端 render。
+vi.mock('../src/components/ArrowTextIcon.vue', async () => {
+  const { defineComponent, h } = await import('vue')
+  return { default: defineComponent({ setup: () => () => h('svg') }) }
+})
 vi.mock('../src/components/AnnotationToolGroup.vue', async () => {
   const { defineComponent, h } = await import('vue')
   return { default: defineComponent({ props: ['name'], setup: props => () => h('tool-group', { name: props.name }) }) }

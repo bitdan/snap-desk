@@ -3,11 +3,11 @@ import { commit, emptyHistory, hitTest, moveShape, resizeShape, shapeBounds, und
 import { prepareRaster } from './annotation-raster'
 import { clamp, type Point, type Rect, type Handle } from './selection'
 
-export type AnnotationTool = 'edit' | 'eraser' | Annotation['kind']
+export type AnnotationTool = 'edit' | 'eraser' | 'arrow-text' | Annotation['kind']
 /** 截图/贴图共用编辑状态。一次拖动只提交一次历史，保存失败不改历史也不丢失原图形。 */
 export function useAnnotations(bounds: () => Rect, imageUrl: () => string, disabled: () => boolean, persist?: (shapes: Annotation[]) => Promise<void>, rasterizer: typeof prepareRaster = prepareRaster) {
   const state = reactive({ history: emptyHistory(), tool: 'edit' as AnnotationTool, selected: -1,
-    draft: null as Annotation | null, pending: false, interacting: false, textEditing: false, textFrame: null as Rect | null, textAutoHeight: true, error: '',
+    draft: null as Annotation | null, arrowDraft: null as Annotation | null, pending: false, interacting: false, textEditing: false, textFrame: null as Rect | null, textAutoHeight: true, error: '',
     color: '#ef4444', width: 3, opacity: 1, magnification: 2, text: '', fontSize: 24, fontFamily: 'sans' as NonNullable<Annotation['fontFamily']> })
   let gesture: { start: Point; shape: Annotation; mode: 'draw' | 'move' | Handle | 'start' | 'end' } | null = null
   let generation = 0
@@ -46,7 +46,7 @@ export function useAnnotations(bounds: () => Rect, imageUrl: () => string, disab
     else { state.width = 3; state.opacity = 1 }
   }
   function reset(shapes: Annotation[] = []) { generation++; state.history = emptyHistory(shapes); state.selected = -1; abort(); state.error = '' }
-  function abort() { gesture = null; state.draft = null; state.interacting = false; state.textEditing = false; state.textFrame = null; state.textAutoHeight = true }
+  function abort() { gesture = null; state.draft = null; state.arrowDraft = null; state.interacting = false; state.textEditing = false; state.textFrame = null; state.textAutoHeight = true }
   /** 克隆已有文字作为草稿，取消或保存失败均不会修改原图层。 */
   function editText(index: number) {
     const shape = state.history.present[index]
@@ -97,9 +97,10 @@ export function useAnnotations(bounds: () => Rect, imageUrl: () => string, disab
       const shape = state.history.present[state.selected]
       gesture = { start: p, shape, mode: handle ?? 'move' }; state.draft = shape; state.interacting = true; return
     }
-    if (state.history.present.length >= 100) { state.error = '最多支持 100 个标注。'; return }
+    // 箭头文字复用两个已有图层，预留容量以保证原生保存时不超过标注上限。
+    if (state.history.present.length + (state.tool === 'arrow-text' ? 2 : 1) > 100) { state.error = '最多支持 100 个标注。'; return }
     state.selected = -1
-    const shape: Annotation = { kind: state.tool, start: p, end: p, color: state.color, width: state.width, opacity: state.opacity }
+    const shape: Annotation = { kind: state.tool === 'arrow-text' ? 'arrow' : state.tool, start: p, end: p, color: state.color, width: state.width, opacity: state.opacity }
     if (shape.kind === 'magnify') shape.magnification = state.magnification
     if (shape.kind === 'number') {
       const b = bounds(), size = Math.min(36, b.width, b.height), value = nextNumber(state.history.present)
@@ -148,6 +149,17 @@ export function useAnnotations(bounds: () => Rect, imageUrl: () => string, disab
     const dx = Math.abs(shape.end.x - shape.start.x), dy = Math.abs(shape.end.y - shape.start.y)
     if (editing && ['rectangle', 'ellipse', 'text', 'number', 'mosaic', 'blur', 'spotlight', 'magnify'].includes(shape.kind) && (dx < 1 || dy < 1)) { abort(); return }
     if (!editing && shape.kind !== 'text' && shape.kind !== 'erase' && (shape.points ? shape.points.length < 2 : ['line', 'arrow'].includes(shape.kind) ? Math.hypot(dx, dy) < 1 : dx < 1 || dy < 1)) { abort(); return }
+    if (!editing && state.tool === 'arrow-text' && shape.kind === 'arrow') {
+      // 松开箭头后转为文字输入；两层仍是草稿，输入完成才统一保存和记录撤销。
+      const b = bounds(), width = Math.min(180, b.width), lineHeight = Math.ceil(state.fontSize * 1.3 + 4)
+      const x = clamp((shape.start.x + shape.end.x) / 2 - width / 2, b.x, b.x + b.width - width)
+      const y = clamp((shape.start.y + shape.end.y) / 2 - lineHeight / 2, b.y, b.y + Math.max(0, b.height - lineHeight))
+      state.arrowDraft = shape
+      state.draft = { kind: 'text', start: { x, y }, end: { x, y }, color: shape.color, width: shape.width, opacity: shape.opacity, text: '', fontSize: state.fontSize, fontFamily: state.fontFamily }
+      state.textFrame = { x, y, width, height: Math.min(180, b.y + b.height - y) }
+      state.textEditing = true; gesture = null
+      return
+    }
     const version = generation
     state.pending = true
     try {
@@ -161,7 +173,11 @@ export function useAnnotations(bounds: () => Rect, imageUrl: () => string, disab
   /** 输入完成才栅格化并提交一次历史；失败保留输入框，允许修改后重试。 */
   async function finishText() {
     if (!state.textEditing || !state.draft || locked()) return
-    if (!state.draft.text?.trim()) { abort(); return }
+    if (!state.draft.text?.trim()) {
+      // 不输入文字仍可完成普通箭头；保存失败保留草稿，允许重试。
+      if (!state.arrowDraft || await apply(commit(state.history, [...state.history.present, state.arrowDraft]))) abort()
+      return
+    }
     if ([...state.draft.text].length > 500) { state.error = '文字最多 500 个字符。'; return }
     const version = generation
     state.pending = true; state.error = ''
@@ -170,7 +186,13 @@ export function useAnnotations(bounds: () => Rect, imageUrl: () => string, disab
     catch (e) { if (version === generation) state.error = String(e); return }
     finally { state.pending = false }
     if (version !== generation) return
-    const next = state.selected >= 0 ? state.history.present.map((s, i) => i === state.selected ? shape : s) : [...state.history.present, shape]
+    if (state.arrowDraft) {
+      // 字形宽度由实际输入决定，保存时仍以箭头中点居中，并限制在原图选区内。
+      const box = shapeBounds(shape), b = bounds(), arrow = state.arrowDraft
+      const x = clamp((arrow.start.x + arrow.end.x) / 2 - box.width / 2, b.x, b.x + b.width - box.width)
+      shape = { ...shape, start: { x, y: box.y }, end: { x: x + box.width, y: box.y + box.height } }
+    }
+    const next = state.selected >= 0 ? state.history.present.map((s, i) => i === state.selected ? shape : s) : [...state.history.present, ...(state.arrowDraft ? [state.arrowDraft] : []), shape]
     if (await apply(commit(state.history, next))) abort()
   }
   async function style(patch: Partial<Pick<Annotation, 'color' | 'width' | 'opacity' | 'text' | 'fontSize' | 'fontFamily' | 'magnification'>>) {

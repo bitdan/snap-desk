@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { handleEscape } from '@/lib/escape'
 import { t, te } from '@/lib/i18n'
 import { computed, defineAsyncComponent, onMounted, onUnmounted, ref } from 'vue'
 import { Camera, Keyboard, Info, Scan, PanelLeftClose, Pin, Video, Folder, CircleHelp, Settings as SettingsIcon, FileText, Check } from 'lucide-vue-next'
@@ -9,7 +10,6 @@ import OnboardingGuide from '@/components/OnboardingGuide.vue'
 import ShortcutInput from '@/components/ShortcutInput.vue'
 import ShortcutCompatibility from '@/components/ShortcutCompatibility.vue'
 import RecoveryCenter from '@/components/RecoveryCenter.vue'
-import type { RecoveryStatus } from '@/lib/recovery-center'
 const RecordingPanel = defineAsyncComponent(() => import('@/components/RecordingPanel.vue'))
 const ClipboardHistory = defineAsyncComponent(() => import('@/components/clipboard/ClipboardHistory.vue'))
 const PinManager = defineAsyncComponent(() => import('@/components/PinManager.vue'))
@@ -28,8 +28,6 @@ const groups = [
   { name: '支持', items: [{ name: '恢复与清理', icon: Folder }, { name: '日志', icon: FileText }, { name: '帮助', icon: CircleHelp }, { name: '关于', icon: Info }] },
 ]
 const status = ref<AppStatus | null>(null)
-const recovery = ref<RecoveryStatus | null>(null)
-const recoveryError = ref('')
 const pending = ref(false)
 const saving = ref(false)
 const editingShortcut = ref(false)
@@ -161,8 +159,10 @@ async function completeOnboarding() {
   } catch (e) { error.value = String(e) }
   finally { completingOnboarding.value = false }
 }
-onMounted(initialize)
-onUnmounted(() => { disposed = true; disposers.splice(0).forEach(off => off()) })
+// 表单输入框同样使用 Esc 收起；弹窗、快捷键录入等内层交互可先消费该事件。
+function key(event: KeyboardEvent) { handleEscape(event, () => { if (desktop) void hide() }) }
+onMounted(() => { window.addEventListener('keydown', key); void initialize() })
+onUnmounted(() => { disposed = true; window.removeEventListener('keydown', key); disposers.splice(0).forEach(off => off()) })
 </script>
 
 <template>
@@ -178,8 +178,6 @@ onUnmounted(() => { disposed = true; disposers.splice(0).forEach(off => off()) }
         <div v-if="!desktop" class="notice">{{ t('当前为网页预览。请通过桌面应用启动以使用屏幕截图和全局快捷键。') }}</div>
         <div v-if="error || status?.shortcutError" class="notice error" role="alert">{{ te(error || status?.shortcutError) }}<Button v-if="initializationFailed" variant="outline" :disabled="initializing" @click="initialize">{{ t('重新连接') }}</Button></div>
         <div v-if="status?.configWarning" class="notice" role="alert">{{ te(status.configWarning) }}</div>
-        <div v-if="page !== '恢复与清理' && recoveryError" class="notice flex flex-wrap items-center justify-between gap-2" role="alert"><span>{{ t("恢复检查失败，文件保持原样。") }}</span><Button variant="outline" @click="page = '恢复与清理'">{{ t("查看并重试") }}</Button></div>
-        <div v-if="page !== '恢复与清理' && recovery && (recovery.previousStartedAt || recovery.warning || recovery.items.length || recovery.unreadableRecords)" class="notice flex flex-wrap items-center justify-between gap-2" role="status"><span>{{ recovery.previousStartedAt ? t("上次运行未记录正常退出。") : recovery.warning ? te(recovery.warning) : recovery.unreadableRecords ? t("部分恢复记录无法读取。") : '' }} {{ t("待恢复 / 可清理：") }}{{ recovery.items.length }} {{ t("项") }}</span><Button variant="outline" @click="page = '恢复与清理'">{{ t("检查文件") }}</Button></div>
         <div v-if="remaining > 0" class="notice flex items-center justify-between" role="status"><span>{{ remaining }} {{ t('秒后截图，可切换到目标窗口；再次按截图快捷键可取消。') }}</span><Button variant="outline" @click="cancelPending">{{ t('取消截图') }}</Button></div>
 
         <OnboardingGuide v-if="onboarding && status" :settings="status.settings" :busy="completingOnboarding" @complete="completeOnboarding" @navigate="page = $event" />
@@ -240,7 +238,8 @@ onUnmounted(() => { disposed = true; disposers.splice(0).forEach(off => off()) }
         </template>
         <ShortcutCompatibility v-show="page === '快捷键'" :disabled="locked" @testing="testingShortcuts = $event" />
         <!-- 常驻以完成启动检查；切换页面不会重复查询或把旧截图会话带回。 -->
-        <RecoveryCenter v-show="page === '恢复与清理'" @status="recovery = $event" @failure="recoveryError = $event" />
+        <!-- 恢复状态和检查失败提示仅在对应页面展示，避免占用其他工具页顶部。 -->
+        <RecoveryCenter v-show="page === '恢复与清理'" />
       </div>
     </main>
   </div>

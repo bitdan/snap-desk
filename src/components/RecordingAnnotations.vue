@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { handleEscape } from '@/lib/escape'
 import { computed, onMounted, onUnmounted, ref, watch, type CSSProperties } from 'vue'
 import { listen } from '@tauri-apps/api/event'
 import { Check, Pause, Play, Square } from 'lucide-vue-next'
@@ -114,8 +115,12 @@ async function control(action: RecordingAction) {
   finally { busy.value = false }
 }
 function key(event: KeyboardEvent) {
+  if (handleEscape(event, () => {
+    if (busy.value || editor.pending) return
+    editor.abort(); void finish()
+  })) return
+  if (event.defaultPrevented || event.isComposing || event.keyCode === 229) return
   if (editor.key(event)) return
-  if (event.key === 'Escape' && !event.isComposing) { event.preventDefault(); void finish() }
 }
 onMounted(async () => {
   window.addEventListener('keydown', key)

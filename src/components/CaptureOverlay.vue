@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { handleEscape } from '@/lib/escape'
 import { t, te } from '@/lib/i18n'
 import { convertFileSrc } from '@tauri-apps/api/core'
 import ScrollCaptureIcon from './ScrollCaptureIcon.vue'
@@ -353,6 +354,7 @@ async function finish(action: 'copy' | 'save' | 'pin') {
   finally { busy.value = false }
 }
 function key(e: KeyboardEvent) {
+  if (e.defaultPrevented || e.isComposing || e.keyCode === 229) return
   if (liveRecordingId.value !== null) return
   if (qrResult.value || ocrResult.value !== null) return
   if (scroll.value) return
@@ -360,6 +362,8 @@ function key(e: KeyboardEvent) {
     if (e.key === 'Escape' && !busy.value) { e.preventDefault(); recordingSetup.value = false; return }
     if ((e.target as HTMLElement).closest('.recording-menu')) return
   }
+  // 先退出窗口，再判断输入框和标注快捷键，避免 Esc 只取消文字或笔画。
+  if (handleEscape(e, () => { if (recordingMode.value) leaveRecordingMode(); else void cancel() })) return
   if ((e.target as HTMLElement).closest('input, textarea, select')) return
   if (e.key === 'Alt') windowsOnly.value = true
   const command = e.ctrlKey || e.metaKey

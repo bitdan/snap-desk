@@ -34,6 +34,16 @@ describe('工具栏位置与顺序', () => {
     expect(moveTool(moved, 'text', 'eraser').at(-1)).toBe('text')
     expect(new Set(moved)).toEqual(new Set(order))
   })
+  it('新增工具紧随箭头，并迁移旧版已经保存到末尾的箭头文字', () => {
+    const old = ['text', 'arrow', 'pen', 'arrow-text']
+    vi.stubGlobal('localStorage', { getItem: (key: string) => key.endsWith('.v1') ? JSON.stringify(old) : null })
+    expect(readToolOrder().slice(0, 4)).toEqual(['text', 'arrow', 'arrow-text', 'pen'])
+    const restored = normalizeToolOrder(['pen', 'arrow', 'text'])
+    expect(restored.slice(0, 4)).toEqual(['pen', 'arrow', 'arrow-text', 'text'])
+    // 新版保存后的主动排序不再次强制调整。
+    vi.stubGlobal('localStorage', { getItem: () => JSON.stringify(old) })
+    expect(readToolOrder().slice(0, 4)).toEqual(old)
+  })
   it('本地存储不可用或 JSON 损坏时回退默认顺序', () => {
     vi.stubGlobal('localStorage', { getItem: () => '{broken' })
     expect(readToolOrder()).toEqual(normalizeToolOrder(null))

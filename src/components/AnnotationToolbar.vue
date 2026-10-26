@@ -111,7 +111,7 @@ onUnmounted(() => {
 })
 
 const locked = computed(() => props.disabled || props.editor.pending || props.editor.interacting)
-const textMode = computed(() => props.editor.tool === 'text' || props.editor.history.present[props.editor.selected]?.kind === 'text')
+const textMode = computed(() => ['text', 'arrow-text'].includes(props.editor.tool) || props.editor.history.present[props.editor.selected]?.kind === 'text')
 const filterMode = computed(() => ['mosaic', 'blur', 'erase'].includes(props.editor.history.present[props.editor.selected]?.kind ?? props.editor.tool))
 const numberMode = computed(() => (props.editor.history.present[props.editor.selected]?.kind ?? props.editor.tool) === 'number')
 const spotlightMode = computed(() => (props.editor.history.present[props.editor.selected]?.kind ?? props.editor.tool) === 'spotlight')

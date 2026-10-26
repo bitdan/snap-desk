@@ -30,14 +30,16 @@ async function finishText() {
   if (props.editor.textEditing) { await nextTick(); textInput.value?.focus() }
 }
 function textKey(event: KeyboardEvent) {
+  // Esc 交给所属窗口统一退出；其他编辑按键留在输入框，输入法取消组词也不向外传播。
+  if (event.key === 'Escape' && !event.isComposing && event.keyCode !== 229) return
+  event.stopPropagation()
   if (event.isComposing || event.keyCode === 229) return
-  if (event.key === 'Escape') { event.preventDefault(); if (!props.editor.pending) props.editor.abort() }
-  else if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void finishText() }
+  if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void finishText() }
 }
 const shapes = computed(() => {
   const e = props.editor
   if (!e.draft) return e.history.present
-  return e.selected >= 0 ? e.history.present.map((s, i) => i === e.selected ? e.draft! : s) : [...e.history.present, e.draft]
+  return e.selected >= 0 ? e.history.present.map((s, i) => i === e.selected ? e.draft! : s) : [...e.history.present, ...(e.arrowDraft ? [e.arrowDraft] : []), e.draft]
 })
 // 擦除仅作用于之前的图层，之后新增的标注仍可覆盖擦除区域。
 const erasures = computed(() => shapes.value.map((shape, index) => ({ shape, index })).filter(item => item.shape.kind === 'erase'))
@@ -107,9 +109,9 @@ async function up() {
       </AnnotationStack>
     </g>
     <foreignObject v-if="enabled && editor.textEditing && editor.draft" :x="textBox.x" :y="textBox.y" :width="textBox.width" :height="textHeight"
-      @pointerdown.stop @pointermove.stop @pointerup.stop @pointercancel.stop @contextmenu.stop @keydown.stop="textKey">
-      <textarea ref="textInput" v-model="editor.draft.text" class="inline-text" :aria-label='t("标注文字")' :placeholder='t("输入文字")' maxlength="500" :readonly="editor.pending"
-        :title='t("Enter 完成，Shift+Enter 换行，Esc 取消")' :style="{ color: editor.draft.color, fontSize: `${editor.draft.fontSize ?? 24}px`, fontFamily: ({ sans: 'sans-serif', serif: 'serif', mono: 'monospace' })[editor.draft.fontFamily ?? 'sans'] }" />
+      @pointerdown.stop @pointermove.stop @pointerup.stop @pointercancel.stop @contextmenu.stop @keydown="textKey">
+      <textarea ref="textInput" v-model="editor.draft.text" class="inline-text" :class="{ 'arrow-text': editor.arrowDraft }" :aria-label='t("标注文字")' :placeholder='t("输入文字")' maxlength="500" :readonly="editor.pending"
+        :title='t("Enter 完成，Shift+Enter 换行，Esc 退出")' :style="{ color: editor.draft.color, fontSize: `${editor.draft.fontSize ?? 24}px`, fontFamily: ({ sans: 'sans-serif', serif: 'serif', mono: 'monospace' })[editor.draft.fontFamily ?? 'sans'] }" />
     </foreignObject>
     <!-- 输入框外的三个手柄分别调整宽度、高度和两者，不锁定长宽比。 -->
     <g v-if="enabled && editor.textEditing && !editor.pending" class="annotation-selection">
@@ -133,4 +135,5 @@ async function up() {
 .text-resize.horizontal { cursor: ew-resize; }
 .text-resize.vertical { cursor: ns-resize; }
 .inline-text { display: block; box-sizing: border-box; width: 100%; height: 100%; margin: 0; padding: 2px; border: 0; outline: 1px dashed #8b5cf6; outline-offset: -1px; border-radius: 0; background: #ffffffdd; line-height: 1.3; resize: none; cursor: text; white-space: pre-wrap; overflow-wrap: anywhere; }
+.inline-text.arrow-text { text-align: center; }
 </style>

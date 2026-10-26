@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { handleEscape } from '@/lib/escape'
 import { t, te } from '@/lib/i18n'
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { Save, X, AlertCircle } from 'lucide-vue-next'
@@ -39,7 +40,9 @@ async function finish(cancel: boolean) {
   try { await api.controlScroll(view.value.id, cancel, !!recovering.value) }
   catch (e) { error.value = String(e); busy.value = false }
 }
+function key(event: KeyboardEvent) { handleEscape(event, () => { void finish(true) }) }
 onMounted(async () => {
+  window.addEventListener('keydown', key)
   try {
     offClosed = await onCaptureClosed(id => {
       closedThroughId = Math.max(closedThroughId, id)
@@ -56,7 +59,7 @@ onMounted(async () => {
     if (!disposed && updates === revision && current) receive(current)
   } catch (e) { error.value = String(e) }
 })
-onUnmounted(() => { disposed = true; off?.(); offClosed?.() })
+onUnmounted(() => { disposed = true; window.removeEventListener('keydown', key); off?.(); offClosed?.() })
 </script>
 
 <template>
