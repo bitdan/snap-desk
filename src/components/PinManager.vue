@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t, te } from '@/lib/i18n'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import Button from '@/components/ui/button/Button.vue'
 import { api, desktop, onPinsChanged, type PinSummary, type PinManageAction } from '@/lib/api'
@@ -53,31 +54,31 @@ onUnmounted(() => { disposed = true; off?.() })
 </script>
 
 <template>
-  <div v-if="error" class="notice error" role="alert">{{ error }}</div>
+  <div v-if="error" class="notice error" role="alert">{{ te(error) }}</div>
   <div class="pin-manager-actions">
-    <Button :disabled="!desktop || busy" title="直接贴出剪贴板中的图片，快捷键可在设置中修改" @click="run(api.pinClipboard)">剪贴板图片贴图</Button>
-    <Button variant="outline" :disabled="!desktop || busy" @click="run(api.pinFile)">打开图片贴图</Button>
+    <Button :disabled="!desktop || busy" :title='t("直接贴出剪贴板中的图片，快捷键可在设置中修改")' @click="run(api.pinClipboard)">{{ t("剪贴板图片贴图") }}</Button>
+    <Button variant="outline" :disabled="!desktop || busy" @click="run(api.pinFile)">{{ t("打开图片贴图") }}</Button>
   </div>
   <div class="pin-manager-actions group-actions">
-    <label>分组 <select v-model="groupFilter" :disabled="busy" aria-label="筛选贴图分组"><option :value="null">全部贴图</option><option value="">未分组</option><option v-for="group in groups" :key="group" :value="group">{{ group }}</option></select></label>
-    <Button variant="outline" :disabled="!desktop || busy || !visiblePins.length" @click="manage('show')">{{ groupFilter === null ? '全部' : '本组' }}显示</Button>
-    <Button variant="outline" :disabled="!desktop || busy || !visiblePins.length" @click="manage('hide')">{{ groupFilter === null ? '全部' : '本组' }}隐藏</Button>
-    <Button variant="outline" :disabled="!desktop || busy || !visiblePins.length" @click="manage('close')">{{ groupFilter === null ? '全部' : '本组' }}关闭</Button>
+    <label>{{ t("分组") }} <select v-model="groupFilter" :disabled="busy" :aria-label='t("筛选贴图分组")'><option :value="null">{{ t("全部贴图") }}</option><option value="">{{ t("未分组") }}</option><option v-for="group in groups" :key="group" :value="group">{{ group }}</option></select></label>
+    <Button variant="outline" :disabled="!desktop || busy || !visiblePins.length" @click="manage('show')">{{ groupFilter === null ? t("全部") : t("本组") }}{{ t("显示") }}</Button>
+    <Button variant="outline" :disabled="!desktop || busy || !visiblePins.length" @click="manage('hide')">{{ groupFilter === null ? t("全部") : t("本组") }}{{ t("隐藏") }}</Button>
+    <Button variant="outline" :disabled="!desktop || busy || !visiblePins.length" @click="manage('close')">{{ groupFilter === null ? t("全部") : t("本组") }}{{ t("关闭") }}</Button>
   </div>
-  <section class="settings-card" aria-label="当前贴图">
-    <p v-if="!visiblePins.length" class="pin-empty">{{ pins.length ? '当前分组没有贴图。' : '还没有贴图。可从截图工具栏或上方入口创建。' }}</p>
+  <section class="settings-card" :aria-label='t("当前贴图")'>
+    <p v-if="!visiblePins.length" class="pin-empty">{{ pins.length ? t("当前分组没有贴图。") : t("还没有贴图。可从截图工具栏或上方入口创建。") }}</p>
     <div v-for="pin in visiblePins" :key="pin.label" class="setting-row">
-      <label class="pin-choice"><input v-model="selected" type="checkbox" :value="pin.label" :disabled="busy" :aria-label="`选择 ${pin.label}`" /><span>{{ pin.label }}<small>{{ pin.width }} × {{ pin.height }} px · {{ pin.visible ? '显示中' : '已隐藏' }} · {{ pin.group || '未分组' }}</small></span></label>
-      <div class="pin-manager-actions"><Button variant="outline" :disabled="busy" @click="manage(pin.visible ? 'hide' : 'show', pin.label)">{{ pin.visible ? '隐藏' : '显示' }}</Button><Button variant="ghost" :disabled="busy" @click="manage('close', pin.label)">关闭</Button></div>
+      <label class="pin-choice"><input v-model="selected" type="checkbox" :value="pin.label" :disabled="busy" :aria-label="t('选择 {0}', { 0: pin.label })" /><span>{{ pin.label }}<small>{{ pin.width }} × {{ pin.height }} px · {{ pin.visible ? t("显示中") : t("已隐藏") }} · {{ pin.group || t("未分组") }}</small></span></label>
+      <div class="pin-manager-actions"><Button variant="outline" :disabled="busy" @click="manage(pin.visible ? 'hide' : 'show', pin.label)">{{ pin.visible ? t("隐藏") : t("显示") }}</Button><Button variant="ghost" :disabled="busy" @click="manage('close', pin.label)">{{ t("关闭") }}</Button></div>
     </div>
   </section>
   <form v-if="pins.length" class="pin-manager-actions group-actions assignment" @submit.prevent="assignGroup">
-    <span>已选 {{ selected.length }} 张</span>
-    <input v-model="groupName" list="pin-groups" :disabled="busy" placeholder="分组名称，留空移出分组" aria-label="目标分组" />
+    <span>{{ t("已选") }} {{ selected.length }} {{ t("张") }}</span>
+    <input v-model="groupName" list="pin-groups" :disabled="busy" :placeholder='t("分组名称，留空移出分组")' :aria-label='t("目标分组")' />
     <datalist id="pin-groups"><option v-for="group in groups" :key="group" :value="group" /></datalist>
-    <Button type="submit" variant="outline" :disabled="!desktop || busy || !selected.length">应用分组</Button>
+    <Button type="submit" variant="outline" :disabled="!desktop || busy || !selected.length">{{ t("应用分组") }}</Button>
   </form>
-  <p class="scope-note">退出会清空贴图，请先保存需要保留的内容。</p>
+  <p class="scope-note">{{ t("退出会清空贴图，请先保存需要保留的内容。") }}</p>
 </template>
 
 <style scoped>

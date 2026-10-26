@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t, te } from '@/lib/i18n'
 import { computed, ref, nextTick, onUnmounted } from 'vue'
 import { Eraser, Undo2, Redo2, Trash2, GripVertical, RotateCcw, ChevronUp, ChevronDown } from 'lucide-vue-next'
 import AnnotationToolGroup from './AnnotationToolGroup.vue'
@@ -120,45 +121,45 @@ function value(event: Event) { return (event.target as HTMLInputElement).value }
 
 <template>
   <div class="annotation-tools" @pointerdown.stop @contextmenu.stop.prevent>
-    <div v-for="row in (collapsible && expanded ? ['main', 'expanded'] : ['main'])" :key="row" class="annotation-tool-row" :class="{ 'expanded-tools': row === 'expanded' }" role="toolbar" :aria-label="row === 'main' ? '标注工具' : '全部标注工具'">
+    <div v-for="row in (collapsible && expanded ? ['main', 'expanded'] : ['main'])" :key="row" class="annotation-tool-row" :class="{ 'expanded-tools': row === 'expanded' }" role="toolbar" :aria-label="row === 'main' ? t('标注工具') : t('全部标注工具')">
       <template v-if="row === 'main'">
-        <button class="tool-grip" :disabled="locked" title="拖动工具栏；双击恢复位置" aria-label="拖动工具栏，双击或 Enter 恢复位置" @pointerdown.stop="emit('float', $event)" @dblclick="emit('resetPosition')" @keydown.enter.stop.prevent="emit('resetPosition')"><GripVertical :size="16" /></button>
+        <button class="tool-grip" :disabled="locked" :title='t("拖动工具栏；双击恢复位置")' :aria-label='t("拖动工具栏，双击或 Enter 恢复位置")' @pointerdown.stop="emit('float', $event)" @dblclick="emit('resetPosition')" @keydown.enter.stop.prevent="emit('resetPosition')"><GripVertical :size="16" /></button>
         <slot name="leading" />
         <template v-if="collapsible">
           <AnnotationToolGroup v-for="group in annotationToolGroups" :key="group.name" :name="group.name" :tools="group.tools" :selected="editor.tool" :active="active" :disabled="locked" @select="emit('tool', $event)" />
         </template>
       </template>
       <template v-if="!collapsible || row === 'expanded'">
-        <button v-for="item in tools" :key="item.tool" :disabled="locked" :class="{ 'sorting-source': sortingTool === item.tool, 'sorting-target': sortingTarget === item.tool && sortingTarget !== sortingTool }" :title="`${item.name}（拖动排序，Alt+←/→调整顺序）`" :data-annotation-tool="item.tool" @pointerdown="startOrder($event, item.tool)" @pointermove="moveOrder" @pointerup="finishOrder" @pointercancel="cancelOrder" @lostpointercapture="cancelOrder" @dragstart.prevent @keydown="orderKey($event, item.tool)" :aria-label="item.name" :aria-pressed="active && editor.tool === item.tool" @click="choose($event, item.tool)"><component :is="item.icon" :size="18" /></button>
-        <button :disabled="locked" title="恢复默认工具顺序" aria-label="恢复默认工具顺序" @click="saveOrder(normalizeToolOrder(null))"><RotateCcw :size="16" /></button>
+        <button v-for="item in tools" :key="item.tool" :disabled="locked" :class="{ 'sorting-source': sortingTool === item.tool, 'sorting-target': sortingTarget === item.tool && sortingTarget !== sortingTool }" :title="t('{0}（拖动排序，Alt+←/→调整顺序）', { 0: t(item.name) })" :data-annotation-tool="item.tool" @pointerdown="startOrder($event, item.tool)" @pointermove="moveOrder" @pointerup="finishOrder" @pointercancel="cancelOrder" @lostpointercapture="cancelOrder" @dragstart.prevent @keydown="orderKey($event, item.tool)" :aria-label="t(item.name)" :aria-pressed="active && editor.tool === item.tool" @click="choose($event, item.tool)"><component :is="item.icon" :size="18" /></button>
+        <button :disabled="locked" :title='t("恢复默认工具顺序")' :aria-label='t("恢复默认工具顺序")' @click="saveOrder(normalizeToolOrder(null))"><RotateCcw :size="16" /></button>
       </template>
       <template v-if="row === 'main'">
-        <button v-if="collapsible" :disabled="locked" :title="expanded ? '折叠相似工具' : '展开全部工具（可拖动排序）'" :aria-label="expanded ? '折叠工具栏' : '展开工具栏'" :aria-expanded="expanded" @click="toggleExpanded"><component :is="expanded ? ChevronUp : ChevronDown" :size="16" /></button>
+        <button v-if="collapsible" :disabled="locked" :title="expanded ? t('折叠相似工具') : t('展开全部工具（可拖动排序）')" :aria-label="expanded ? t('折叠工具栏') : t('展开工具栏')" :aria-expanded="expanded" @click="toggleExpanded"><component :is="expanded ? ChevronUp : ChevronDown" :size="16" /></button>
         <span class="tool-divider" />
-        <button :disabled="locked || !editor.history.past.length" title="撤销 Ctrl/⌘+Z" aria-label="撤销" @click="editor.travel('undo')"><Undo2 :size="16" /></button>
-        <button :disabled="locked || !editor.history.future.length" title="重做 Ctrl/⌘+Shift+Z" aria-label="重做" @click="editor.travel('redo')"><Redo2 :size="16" /></button>
-        <button v-if="fullTools || editor.selected >= 0" :disabled="locked || editor.selected < 0" title="删除选中标注 Delete" aria-label="删除选中标注" @click="editor.remove"><Trash2 :size="16" /></button>
-        <button v-if="fullTools || editor.history.present.length > 0" :disabled="locked || !editor.history.present.length" title="清空标注，可撤销恢复" aria-label="清空标注" @click="editor.clear"><Eraser :size="16" /><span>清空</span></button>
+        <button :disabled="locked || !editor.history.past.length" :title='t("撤销 Ctrl/⌘+Z")' :aria-label='t("撤销")' @click="editor.travel('undo')"><Undo2 :size="16" /></button>
+        <button :disabled="locked || !editor.history.future.length" :title='t("重做 Ctrl/⌘+Shift+Z")' :aria-label='t("重做")' @click="editor.travel('redo')"><Redo2 :size="16" /></button>
+        <button v-if="fullTools || editor.selected >= 0" :disabled="locked || editor.selected < 0" :title='t("删除选中标注 Delete")' :aria-label='t("删除选中标注")' @click="editor.remove"><Trash2 :size="16" /></button>
+        <button v-if="fullTools || editor.history.present.length > 0" :disabled="locked || !editor.history.present.length" :title='t("清空标注，可撤销恢复")' :aria-label='t("清空标注")' @click="editor.clear"><Eraser :size="16" /><span>{{ t("清空") }}</span></button>
         <span class="tool-divider" />
         <slot name="actions" />
       </template>
     </div>
-    <div v-if="active && (editor.tool !== 'edit' || editor.selected >= 0)" class="annotation-tool-row annotation-options" aria-label="标注样式">
-      <label>颜色 <input type="color" :value="editor.color" :disabled="locked || filterMode" @change="editor.style({ color: value($event) })" /></label>
-      <label v-if="!numberMode && !spotlightMode">{{ magnifyMode ? '边框' : editor.tool === 'erase' ? '直径' : '粗细' }} <input type="number" min="1" max="64" :value="editor.width" :disabled="locked" @change="editor.style({ width: Math.min(64, Math.max(1, Number(value($event)) || 3)) })" /></label>
-      <label v-if="magnifyMode">倍率 <select :value="editor.magnification" :disabled="locked" @change="editor.style({ magnification: Number(value($event)) })"><option :value="2">2×</option><option :value="3">3×</option><option :value="4">4×</option></select></label>
-      <label>不透明度 <select :value="editor.opacity" :disabled="locked || filterMode" @change="editor.style({ opacity: Number(value($event)) })"><option :value="1">100%</option><option :value="0.7">70%</option><option :value="0.35">35%</option><option :value="0.15">15%</option></select></label>
+    <div v-if="active && (editor.tool !== 'edit' || editor.selected >= 0)" class="annotation-tool-row annotation-options" :aria-label='t("标注样式")'>
+      <label>{{ t("颜色") }} <input type="color" :value="editor.color" :disabled="locked || filterMode" @change="editor.style({ color: value($event) })" /></label>
+      <label v-if="!numberMode && !spotlightMode">{{ magnifyMode ? t("边框") : editor.tool === 'erase' ? t("直径") : t("粗细") }} <input type="number" min="1" max="64" :value="editor.width" :disabled="locked" @change="editor.style({ width: Math.min(64, Math.max(1, Number(value($event)) || 3)) })" /></label>
+      <label v-if="magnifyMode">{{ t("倍率") }} <select :value="editor.magnification" :disabled="locked" @change="editor.style({ magnification: Number(value($event)) })"><option :value="2">2×</option><option :value="3">3×</option><option :value="4">4×</option></select></label>
+      <label>{{ t("不透明度") }} <select :value="editor.opacity" :disabled="locked || filterMode" @change="editor.style({ opacity: Number(value($event)) })"><option :value="1">100%</option><option :value="0.7">70%</option><option :value="0.35">35%</option><option :value="0.15">15%</option></select></label>
       <template v-if="textMode">
-      <input v-if="editor.selected >= 0" class="annotation-text" aria-label="修改标注文字" placeholder="修改选中文字" maxlength="500" :value="editor.text" :disabled="locked" @change="editor.style({ text: value($event) })" />
-      <span v-else class="annotation-hint">点击图片输入文字；Enter 完成，Shift+Enter 换行，Esc 取消</span>
-      <label>字号 <input type="number" min="8" max="128" :value="editor.fontSize" :disabled="locked" @change="editor.style({ fontSize: Math.min(128, Math.max(8, Number(value($event)) || 24)) })" /></label>
-      <select aria-label="字体" :value="editor.fontFamily" :disabled="locked" @change="editor.style({ fontFamily: value($event) as 'sans' | 'serif' | 'mono' })"><option value="sans">无衬线</option><option value="serif">衬线</option><option value="mono">等宽</option></select>
+      <input v-if="editor.selected >= 0" class="annotation-text" :aria-label='t("修改标注文字")' :placeholder='t("修改选中文字")' maxlength="500" :value="editor.text" :disabled="locked" @change="editor.style({ text: value($event) })" />
+      <span v-else class="annotation-hint">{{ t("点击图片输入文字；Enter 完成，Shift+Enter 换行，Esc 取消") }}</span>
+      <label>{{ t("字号") }} <input type="number" min="8" max="128" :value="editor.fontSize" :disabled="locked" @change="editor.style({ fontSize: Math.min(128, Math.max(8, Number(value($event)) || 24)) })" /></label>
+      <select :aria-label='t("字体")' :value="editor.fontFamily" :disabled="locked" @change="editor.style({ fontFamily: value($event) as 'sans' | 'serif' | 'mono' })"><option value="sans">{{ t("无衬线") }}</option><option value="serif">{{ t("衬线") }}</option><option value="mono">{{ t("等宽") }}</option></select>
       </template>
-      <span v-else class="annotation-hint">{{ editor.tool === 'erase' ? '拖动擦除已有标注并露出底图；可撤销' : spotlightMode ? '拖框保留亮区，框外覆盖遮罩' : magnifyMode ? '拖框放大中心底图；移动后重新取样' : numberMode ? '点击连续放置序号；选择 / 编辑可移动和缩放' : editor.tool === 'polyline' ? '逐点点击，Enter 完成' : '选择箭头指针可二次编辑' }}</span>
+      <span v-else class="annotation-hint">{{ editor.tool === 'erase' ? t("拖动擦除已有标注并露出底图；可撤销") : spotlightMode ? t("拖框保留亮区，框外覆盖遮罩") : magnifyMode ? t("拖框放大中心底图；移动后重新取样") : numberMode ? t("点击连续放置序号；选择 / 编辑可移动和缩放") : editor.tool === 'polyline' ? t("逐点点击，Enter 完成") : t("选择箭头指针可二次编辑") }}</span>
     </div>
     <slot v-else name="options" />
-    <p v-if="orderError" class="annotation-error" role="status">{{ orderError }}</p>
-    <p v-if="editor.error" class="annotation-error" role="alert" :title="editor.error">{{ editor.error }}</p>
+    <p v-if="orderError" class="annotation-error" role="status">{{ te(orderError) }}</p>
+    <p v-if="editor.error" class="annotation-error" role="alert" :title="te(editor.error)">{{ te(editor.error) }}</p>
   </div>
 </template>
 

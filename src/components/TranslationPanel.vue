@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t, te } from '@/lib/i18n'
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { api } from '@/lib/api'
 import { targetLanguages, type AiSettings } from '@/lib/ai'
@@ -70,16 +71,16 @@ function key(event: KeyboardEvent) {
 
 <template>
   <section class="recognition-result translation-result" @keydown.stop="key">
-    <header class="result-header"><h2><Languages :size="17" />文字翻译</h2><Button class="result-close" variant="ghost" title="关闭（Esc）" aria-label="关闭翻译" @click="emit('close')"><X :size="16" /></Button></header>
+    <header class="result-header"><h2><Languages :size="17" />{{ t("文字翻译") }}</h2><Button class="result-close" variant="ghost" :title='t("关闭（Esc）")' :aria-label='t("关闭翻译")' @click="emit('close')"><X :size="16" /></Button></header>
     <div class="result-body">
-      <div class="result-context"><span v-if="loading" role="status">正在读取翻译配置…</span><template v-else-if="config"><span class="result-badge">{{ local ? '本地离线' : '在线翻译' }}</span><span>{{ local ? '文字与图片不上传' : '仅发送文字，不上传图片' }}</span></template><Button v-else variant="outline" @click="loadConfig">重新读取配置</Button></div>
+      <div class="result-context"><span v-if="loading" role="status">{{ t("正在读取翻译配置…") }}</span><template v-else-if="config"><span class="result-badge">{{ local ? t("本地离线") : t("在线翻译") }}</span><span>{{ local ? t("文字与图片不上传") : t("仅发送文字，不上传图片") }}</span></template><Button v-else variant="outline" @click="loadConfig">{{ t("重新读取配置") }}</Button></div>
       <div class="result-columns">
-        <div class="result-editor"><div class="editor-heading"><label for="translation-source">{{ sourceLabel }}<span v-if="local" class="editor-subtitle">原文</span></label><span>可编辑 · {{ count }} 字符</span></div><textarea id="translation-source" ref="input" v-model="source" :disabled="busy" aria-label="原文，可编辑" placeholder="输入或修正需要翻译的文字" spellcheck="false" @input="translated = ''; target = ''; message = ''; error = ''" /></div>
-        <div class="result-editor translated-editor" :aria-busy="busy"><div class="editor-heading"><label for="translation-output">{{ targetLabel }}<span class="editor-subtitle">译文</span></label><span v-if="busy" class="result-progress" role="status"><LoaderCircle :size="13" class="result-spinner" />翻译中</span><span v-else-if="translated" class="result-success" role="status"><Check :size="13" />已完成</span></div><textarea id="translation-output" :value="translated" readonly aria-label="译文" :placeholder="busy ? '正在翻译，请稍候…' : '点击下方翻译，译文将在这里显示'" /></div>
+        <div class="result-editor"><div class="editor-heading"><label for="translation-source">{{ t(sourceLabel) }}<span v-if="local" class="editor-subtitle">{{ t("原文") }}</span></label><span>{{ t("可编辑 ·") }} {{ count }} {{ t("字符") }}</span></div><textarea id="translation-source" ref="input" v-model="source" :disabled="busy" :aria-label='t("原文，可编辑")' :placeholder='t("输入或修正需要翻译的文字")' spellcheck="false" @input="translated = ''; target = ''; message = ''; error = ''" /></div>
+        <div class="result-editor translated-editor" :aria-busy="busy"><div class="editor-heading"><label for="translation-output">{{ t(targetLabel) }}<span class="editor-subtitle">{{ t("译文") }}</span></label><span v-if="busy" class="result-progress" role="status"><LoaderCircle :size="13" class="result-spinner" />{{ t("翻译中") }}</span><span v-else-if="translated" class="result-success" role="status"><Check :size="13" />{{ t("已完成") }}</span></div><textarea id="translation-output" :value="translated" readonly :aria-label='t("译文")' :placeholder="busy ? t('正在翻译，请稍候…') : t('点击下方翻译，译文将在这里显示')" /></div>
       </div>
-      <template v-if="config && !local"><p class="result-destination">{{ config.endpoint }} · {{ config.model }}</p><label class="result-consent"><input v-model="consent" type="checkbox" :disabled="busy" />同意将原文发送给上述服务（可能计费）</label></template>
-      <p v-if="error" class="result-error" role="alert">{{ error }}</p>
+      <template v-if="config && !local"><p class="result-destination">{{ config.endpoint }} · {{ config.model }}</p><label class="result-consent"><input v-model="consent" type="checkbox" :disabled="busy" />{{ t("同意将原文发送给上述服务（可能计费）") }}</label></template>
+      <p v-if="error" class="result-error" role="alert">{{ te(error) }}</p>
     </div>
-    <footer class="result-footer"><Button variant="ghost" :disabled="copying" @click="emit('back')"><ArrowLeft :size="15" />返回识别</Button><span v-if="message" class="result-success" role="status"><Check :size="14" />{{ message }}</span><div class="result-actions"><Button v-if="busy" variant="outline" @click="cancel">取消翻译</Button><Button variant="outline" :disabled="!translated || copying" @click="copy"><Copy :size="15" />复制译文</Button><Button :disabled="busy || copying || !canTranslate || !source.trim()" @click="translate"><LoaderCircle v-if="busy" :size="15" class="result-spinner" /><Languages v-else :size="15" />{{ busy ? '翻译中…' : translated ? '重新翻译' : '翻译' }}</Button></div></footer>
+    <footer class="result-footer"><Button variant="ghost" :disabled="copying" @click="emit('back')"><ArrowLeft :size="15" />{{ t("返回识别") }}</Button><span v-if="message" class="result-success" role="status"><Check :size="14" />{{ t(message) }}</span><div class="result-actions"><Button v-if="busy" variant="outline" @click="cancel">{{ t("取消翻译") }}</Button><Button variant="outline" :disabled="!translated || copying" @click="copy"><Copy :size="15" />{{ t("复制译文") }}</Button><Button :disabled="busy || copying || !canTranslate || !source.trim()" @click="translate"><LoaderCircle v-if="busy" :size="15" class="result-spinner" /><Languages v-else :size="15" />{{ busy ? t("翻译中…") : translated ? t("重新翻译") : t("翻译") }}</Button></div></footer>
   </section>
 </template>

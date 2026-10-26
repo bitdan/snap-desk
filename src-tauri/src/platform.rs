@@ -1,3 +1,4 @@
+#[cfg(not(windows))]
 use image::RgbaImage;
 
 /// 使用系统 URL 处理器打开固定地址，不接受前端传入路径或命令。
@@ -49,7 +50,8 @@ pub fn open_directory(path: &std::path::Path) -> Result<(), String> {
     Ok(())
 }
 
-// Keep OS capture details behind one boundary; overlay, crop and export never depend on xcap.
+/// 非 Windows 平台的主屏捕获回退；Windows 使用 desktop_capture 的多屏实现。
+#[cfg(not(windows))]
 pub fn capture_primary() -> Result<RgbaImage, String> {
     #[cfg(target_os = "linux")]
     if std::env::var("XDG_SESSION_TYPE").unwrap_or_default() == "wayland"
@@ -67,6 +69,7 @@ pub fn capture_primary() -> Result<RgbaImage, String> {
     Err("未找到主显示器，请检查显示器连接。".into())
 }
 
+#[cfg(not(windows))]
 fn capture_error(error: impl std::fmt::Display) -> String {
     #[cfg(target_os = "macos")]
     return format!("截图失败：{error}。请在系统设置 → 隐私与安全性 → 屏幕录制中授权后重启应用。");

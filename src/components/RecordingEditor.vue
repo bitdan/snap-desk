@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t, te } from '@/lib/i18n'
 import { computed, nextTick, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { convertFileSrc } from '@tauri-apps/api/core'
 import { api } from '@/lib/api'
@@ -97,32 +98,32 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section class="recording-editor" aria-label="录屏预览与裁剪">
-    <header><strong>预览与裁剪</strong><button ref="closeButton" @click="emit('close')">关闭预览</button></header>
-    <p v-if="loading" role="status">正在读取录屏时长…</p>
-    <p v-if="error" class="editor-error" role="alert">{{ error }}</p>
-    <button v-if="!info && !loading" @click="load">重新读取</button>
+  <section class="recording-editor" :aria-label='t("录屏预览与裁剪")'>
+    <header><strong>{{ t("预览与裁剪") }}</strong><button ref="closeButton" @click="emit('close')">{{ t("关闭预览") }}</button></header>
+    <p v-if="loading" role="status">{{ t("正在读取录屏时长…") }}</p>
+    <p v-if="error" class="editor-error" role="alert">{{ te(error) }}</p>
+    <button v-if="!info && !loading" @click="load">{{ t("重新读取") }}</button>
     <template v-if="info">
-      <div class="editor-actions"><span>{{ info.format.toUpperCase() }} · 原片 {{ recordingClipTime(info.durationMs) }}</span><button v-if="exported?.previewAvailable" :disabled="busy" @click="stopPreview(); outputPreview = !outputPreview">{{ outputPreview ? '返回原片预览' : '预览裁剪结果' }}</button></div>
+      <div class="editor-actions"><span>{{ info.format.toUpperCase() }} {{ t("· 原片") }} {{ recordingClipTime(info.durationMs) }}</span><button v-if="exported?.previewAvailable" :disabled="busy" @click="stopPreview(); outputPreview = !outputPreview">{{ outputPreview ? t("返回原片预览") : t("预览裁剪结果") }}</button></div>
       <template v-if="previewAvailable">
-        <video v-if="info.format === 'mp4'" ref="video" :src="previewUrl" controls preload="metadata" playsinline :aria-label="outputPreview ? '裁剪结果预览' : '原录屏预览'" @loadedmetadata="loaded" @timeupdate="timeUpdate" @error="ready = false; previewError = '无法在应用内播放此视频，可关闭预览后使用系统播放器。'" />
-        <img v-else :src="previewUrl" :alt="outputPreview ? '裁剪后的 GIF 动画' : '原 GIF 动画'" @error="previewError = 'GIF 预览加载失败，可使用系统播放器；原文件仍可另存裁剪。'" />
+        <video v-if="info.format === 'mp4'" ref="video" :src="previewUrl" controls preload="metadata" playsinline :aria-label="outputPreview ? t('裁剪结果预览') : t('原录屏预览')" @loadedmetadata="loaded" @timeupdate="timeUpdate" @error="ready = false; previewError = '无法在应用内播放此视频，可关闭预览后使用系统播放器。'" />
+        <img v-else :src="previewUrl" :alt="outputPreview ? t('裁剪后的 GIF 动画') : t('原 GIF 动画')" @error="previewError = 'GIF 预览加载失败，可使用系统播放器；原文件仍可另存裁剪。'" />
       </template>
-      <p v-else>GIF 超过应用内预览大小限制，仍可选择时间并另存片段。</p>
-      <p v-if="previewError" class="editor-error" role="alert">{{ previewError }}</p>
-      <p v-if="info.format === 'gif'" class="editor-note">GIF 播放整段动画，裁剪时间精确到 0.01 秒。</p>
+      <p v-else>{{ t("GIF 超过应用内预览大小限制，仍可选择时间并另存片段。") }}</p>
+      <p v-if="previewError" class="editor-error" role="alert">{{ te(previewError) }}</p>
+      <p v-if="info.format === 'gif'" class="editor-note">{{ t("GIF 播放整段动画，裁剪时间精确到 0.01 秒。") }}</p>
       <div class="editor-range">
-        <label>开始（秒）<input :value="start" type="number" min="0" :max="info.durationMs / 1000" :step="info.format === 'gif' ? 0.01 : 0.001" :disabled="busy || outputPreview" @input="setTime($event, 'start')" /></label>
-        <label>结束（秒）<input :value="end" type="number" min="0" :max="info.durationMs / 1000" :step="info.format === 'gif' ? 0.01 : 0.001" :disabled="busy || outputPreview" @input="setTime($event, 'end')" /></label>
+        <label>{{ t("开始（秒）") }}<input :value="start" type="number" min="0" :max="info.durationMs / 1000" :step="info.format === 'gif' ? 0.01 : 0.001" :disabled="busy || outputPreview" @input="setTime($event, 'start')" /></label>
+        <label>{{ t("结束（秒）") }}<input :value="end" type="number" min="0" :max="info.durationMs / 1000" :step="info.format === 'gif' ? 0.01 : 0.001" :disabled="busy || outputPreview" @input="setTime($event, 'end')" /></label>
       </div>
-      <p v-if="rangeError" class="editor-error" role="alert">{{ rangeError }}</p>
-      <p v-else-if="range">所选片段 {{ recordingClipTime(range.endMs - range.startMs) }}</p>
+      <p v-if="rangeError" class="editor-error" role="alert">{{ te(rangeError) }}</p>
+      <p v-else-if="range">{{ t("所选片段") }} {{ recordingClipTime(range.endMs - range.startMs) }}</p>
       <div v-if="info.format === 'mp4'" class="editor-actions">
-        <span>当前 {{ recordingClipTime(currentMs) }}</span><button :disabled="!ready || outputPreview || busy" @click="mark('start')">当前设为开始</button><button :disabled="!ready || outputPreview || busy" @click="mark('end')">当前设为结束</button><button :disabled="!ready || outputPreview || !range || busy" @click="playSelection">播放所选片段</button>
+        <span>{{ t("当前") }} {{ recordingClipTime(currentMs) }}</span><button :disabled="!ready || outputPreview || busy" @click="mark('start')">{{ t("当前设为开始") }}</button><button :disabled="!ready || outputPreview || busy" @click="mark('end')">{{ t("当前设为结束") }}</button><button :disabled="!ready || outputPreview || !range || busy" @click="playSelection">{{ t("播放所选片段") }}</button>
       </div>
-      <div class="editor-actions"><button :disabled="!range || busy || disabled || outputPreview" @click="save">{{ busy ? '正在裁剪并另存…' : '另存所选片段' }}</button><button v-if="busy" :disabled="cancelling" @click="cancel">{{ cancelling ? '正在取消…' : '取消裁剪' }}</button></div>
-      <p v-if="disabled" role="status">请先结束当前录制，再另存裁剪片段。</p>
-      <p v-if="message" class="editor-success" role="status">{{ message }}</p>
+      <div class="editor-actions"><button :disabled="!range || busy || disabled || outputPreview" @click="save">{{ busy ? t("正在裁剪并另存…") : t("另存所选片段") }}</button><button v-if="busy" :disabled="cancelling" @click="cancel">{{ cancelling ? t("正在取消…") : t("取消裁剪") }}</button></div>
+      <p v-if="disabled" role="status">{{ t("请先结束当前录制，再另存裁剪片段。") }}</p>
+      <p v-if="message" class="editor-success" role="status">{{ t(message) }}</p>
       <p v-if="exported" class="export-path">{{ exported.path }}</p>
     </template>
   </section>

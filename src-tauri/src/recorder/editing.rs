@@ -318,7 +318,10 @@ pub async fn trim_recording(
             .dialog()
             .file()
             .set_parent(&window)
-            .set_title("另存裁剪片段（不覆盖已有文件）")
+            .set_title(crate::native_i18n::text(
+                &app,
+                "另存裁剪片段（不覆盖已有文件）",
+            ))
             .add_filter(source.format.to_uppercase(), &[source.format.as_str()])
             .set_directory(source.file.path.parent().ok_or("原录屏目录无效。")?)
             .set_file_name(format!("{stem}-trimmed.{}", source.format))

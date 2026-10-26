@@ -19,13 +19,6 @@ export interface OcrResult {
   elapsedMs: number
   warnings: string[]
 }
-export interface TextSegment {
-  id: string
-  sourceText: string
-  lineIds: string[]
-  sourceLanguage: string | null
-}
-
 /** 默认本地 OCR + 离线翻译；在线服务需要显式选择和文本上传确认。 */
 export interface AiSettings { provider: 'local-ctranslate2' | 'online-llm'; endpoint: string; model: string; targetLanguage: string; timeoutSeconds: number; localIdleSeconds: number }
 export const targetLanguages = [

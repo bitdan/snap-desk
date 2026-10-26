@@ -409,8 +409,11 @@ pub async fn pin_file(app: AppHandle, window: WebviewWindow) -> Result<bool, Str
                     let path = app
                         .dialog()
                         .file()
-                        .set_title("打开图片贴图")
-                        .add_filter("图片（PNG / JPEG / WebP）", &["png", "jpg", "jpeg", "webp"])
+                        .set_title(crate::native_i18n::text(&app, "打开图片贴图"))
+                        .add_filter(
+                            crate::native_i18n::text(&app, "图片（PNG / JPEG / WebP）"),
+                            &["png", "jpg", "jpeg", "webp"],
+                        )
                         .blocking_pick_file();
                     path.map(|path| crate::pin_content::read_image(&path.into_path().map_err(err)?))
                         .transpose()

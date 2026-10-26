@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t, te } from '@/lib/i18n'
 import { onMounted, ref, watch } from 'vue'
 import { ChevronRight, X } from 'lucide-vue-next'
 import RecordingInputSettings from './RecordingInputSettings.vue'
@@ -52,47 +53,47 @@ onMounted(() => root.value?.querySelector<HTMLButtonElement>('[role=tab]')?.focu
 </script>
 
 <template>
-  <section ref="root" class="recording-menu" :class="{ embedded }" :role="embedded ? 'region' : 'dialog'" :aria-modal="embedded ? undefined : true" aria-label="录屏选项" @keydown="trapFocus" @pointerdown.stop @pointermove.stop @contextmenu.stop.prevent>
-    <header><strong>录屏选项</strong><button title="关闭录屏选项" aria-label="关闭录屏选项" :disabled="busy" @click="emit('close')"><X :size="16" /></button></header>
+  <section ref="root" class="recording-menu" :class="{ embedded }" :role="embedded ? 'region' : 'dialog'" :aria-modal="embedded ? undefined : true" :aria-label='t("录屏选项")' @keydown="trapFocus" @pointerdown.stop @pointermove.stop @contextmenu.stop.prevent>
+    <header><strong>{{ t("录屏选项") }}</strong><button :title='t("关闭录屏选项")' :aria-label='t("关闭录屏选项")' :disabled="busy" @click="emit('close')"><X :size="16" /></button></header>
     <div class="menu-body">
-      <nav role="tablist" aria-label="录屏设置分类" aria-orientation="vertical">
-        <button v-for="(group, index) in groups" :id="`recording-tab-${group.id}`" :key="group.id" role="tab" :aria-selected="active === group.id" :aria-controls="`recording-option-${group.id}`" :disabled="busy" @mouseenter="select(group.id)" @click="select(group.id)" @keydown="navigate($event, index)">{{ group.label }}<ChevronRight :size="13" /></button>
+      <nav role="tablist" :aria-label='t("录屏设置分类")' aria-orientation="vertical">
+        <button v-for="(group, index) in groups" :id="`recording-tab-${group.id}`" :key="group.id" role="tab" :aria-selected="active === group.id" :aria-controls="`recording-option-${group.id}`" :disabled="busy" @mouseenter="select(group.id)" @click="select(group.id)" @keydown="navigate($event, index)">{{ t(group.label) }}<ChevronRight :size="13" /></button>
       </nav>
       <div class="menu-panels">
         <section v-show="active === 'source'" id="recording-option-source" role="tabpanel" aria-labelledby="recording-tab-source">
-          <label><input v-model="source" type="radio" value="region" :disabled="busy" />所选屏幕区域</label>
-          <label><input v-model="source" type="radio" value="display" :disabled="busy" />选区所在的整个显示器</label>
-          <label><input v-model="source" type="radio" value="window" :disabled="busy || !windowAvailable" />吸附的窗口</label>
-          <small>{{ windowAvailable ? '窗口最小化、关闭或尺寸变化时结束录制。' : '使用 Alt 点击吸附窗口后，可选择窗口录制。' }}</small>
+          <label><input v-model="source" type="radio" value="region" :disabled="busy" />{{ t("所选屏幕区域") }}</label>
+          <label><input v-model="source" type="radio" value="display" :disabled="busy" />{{ t("选区所在的整个显示器") }}</label>
+          <label><input v-model="source" type="radio" value="window" :disabled="busy || !windowAvailable" />{{ t("吸附的窗口") }}</label>
+          <small>{{ windowAvailable ? t("窗口最小化、关闭或尺寸变化时结束录制。") : t("使用 Alt 点击吸附窗口后，可选择窗口录制。") }}</small>
         </section>
         <section v-show="active === 'format'" id="recording-option-format" role="tabpanel" aria-labelledby="recording-tab-format">
-          <label v-for="value in formats" :key="value"><input v-model="format" type="radio" :value="value" :disabled="busy" />{{ value === 'gif' ? 'GIF 动图' : 'MP4 视频' }}</label>
-          <small>GIF 循环播放，适合短片段演示</small>
+          <label v-for="value in formats" :key="value"><input v-model="format" type="radio" :value="value" :disabled="busy" />{{ value === 'gif' ? t("GIF 动图") : t("MP4 视频") }}</label>
+          <small>{{ t("GIF 循环播放，适合短片段演示") }}</small>
         </section>
         <section v-show="active === 'quality' && format === 'mp4'" id="recording-option-quality" role="tabpanel" aria-labelledby="recording-tab-quality">
-          <label v-for="[value, label] in [['economy', '节省空间'], ['balanced', '均衡'], ['high', '高清']]" :key="value"><input v-model="quality" type="radio" name="recording-quality" :value="value" :disabled="busy || mbps !== ''" />{{ label }}</label>
-          <label class="bitrate">码率（Mbps）<input ref="bitrateInput" v-model="mbps" type="number" min="1" max="80" step="any" placeholder="自动" :disabled="busy" title="1–80 Mbps；清空后恢复自动码率" /></label>
-          <small>留空使用画质预设</small>
+          <label v-for="[value, label] in [['economy', '节省空间'], ['balanced', '均衡'], ['high', '高清']]" :key="value"><input v-model="quality" type="radio" name="recording-quality" :value="value" :disabled="busy || mbps !== ''" />{{ t(label) }}</label>
+          <label class="bitrate">{{ t("码率（Mbps）") }}<input ref="bitrateInput" v-model="mbps" type="number" min="1" max="80" step="any" :placeholder='t("自动")' :disabled="busy" :title='t("1–80 Mbps；清空后恢复自动码率")' /></label>
+          <small>{{ t("留空使用画质预设") }}</small>
         </section>
         <section v-show="active === 'fps'" id="recording-option-fps" role="tabpanel" aria-labelledby="recording-tab-fps"><label v-for="value in (format === 'gif' ? [10, 20] : [30, 60])" :key="value"><input v-model="fps" type="radio" name="recording-fps" :value="value" :disabled="busy" />{{ value }} FPS</label></section>
-        <section v-show="active === 'encoding' && format === 'mp4'" id="recording-option-encoding" role="tabpanel" aria-labelledby="recording-tab-encoding"><label><input v-model="encoding" type="radio" value="auto" :disabled="busy" />自动</label><label><input v-model="encoding" type="radio" value="software" :disabled="busy" />软件兼容</label><small>自动模式优先尝试硬件编码</small></section>
-        <section v-show="active === 'countdown'" id="recording-option-countdown" role="tabpanel" aria-labelledby="recording-tab-countdown"><label v-for="value in [0, 3, 5]" :key="value"><input v-model="countdown" type="radio" :value="value" :disabled="busy" />{{ value ? `${value} 秒` : '立即开始' }}</label></section>
-        <section v-show="active === 'cursor'" id="recording-option-cursor" role="tabpanel" aria-labelledby="recording-tab-cursor"><label><input v-model="cursor" type="checkbox" :disabled="busy" />录制鼠标指针</label></section>
+        <section v-show="active === 'encoding' && format === 'mp4'" id="recording-option-encoding" role="tabpanel" aria-labelledby="recording-tab-encoding"><label><input v-model="encoding" type="radio" value="auto" :disabled="busy" />{{ t("自动") }}</label><label><input v-model="encoding" type="radio" value="software" :disabled="busy" />{{ t("软件兼容") }}</label><small>{{ t("自动模式优先尝试硬件编码") }}</small></section>
+        <section v-show="active === 'countdown'" id="recording-option-countdown" role="tabpanel" aria-labelledby="recording-tab-countdown"><label v-for="value in [0, 3, 5]" :key="value"><input v-model="countdown" type="radio" :value="value" :disabled="busy" />{{ value ? t("{0} 秒", { 0: value }) : t("立即开始") }}</label></section>
+        <section v-show="active === 'cursor'" id="recording-option-cursor" role="tabpanel" aria-labelledby="recording-tab-cursor"><label><input v-model="cursor" type="checkbox" :disabled="busy" />{{ t("录制鼠标指针") }}</label></section>
         <section v-show="active === 'audio'" id="recording-option-audio" role="tabpanel" aria-labelledby="recording-tab-audio">
           <template v-if="format === 'mp4'">
-            <label><input v-model="systemAudio" type="checkbox" :disabled="busy || !systemAudioAvailable" />系统声音</label>
-            <label><input v-model="microphone" type="checkbox" :disabled="busy || !microphoneAvailable" />麦克风</label>
-            <small v-if="systemAudioAvailable || microphoneAvailable">使用默认设备；仅在录制中采集声音，暂停时停止采集。</small>
-            <small v-else>当前系统的音频录制不可用。</small>
+            <label><input v-model="systemAudio" type="checkbox" :disabled="busy || !systemAudioAvailable" />{{ t("系统声音") }}</label>
+            <label><input v-model="microphone" type="checkbox" :disabled="busy || !microphoneAvailable" />{{ t("麦克风") }}</label>
+            <small v-if="systemAudioAvailable || microphoneAvailable">{{ t("使用默认设备；仅在录制中采集声音，暂停时停止采集。") }}</small>
+            <small v-else>{{ t("当前系统的音频录制不可用。") }}</small>
           </template>
-          <small v-else>GIF 不支持声音。</small>
+          <small v-else>{{ t("GIF 不支持声音。") }}</small>
         </section>
         <section v-show="active === 'effects'" id="recording-option-effects" role="tabpanel" aria-labelledby="recording-tab-effects"><RecordingInputSettings v-model="effects" :disabled="busy" /></section>
-        <small v-if="format === 'gif' && ['quality', 'encoding'].includes(active)">GIF 使用软件调色板编码，无需设置视频码率。</small>
+        <small v-if="format === 'gif' && ['quality', 'encoding'].includes(active)">{{ t("GIF 使用软件调色板编码，无需设置视频码率。") }}</small>
       </div>
     </div>
-    <p v-if="error || invalid" class="menu-error" role="alert">{{ error || invalid }}</p>
-    <footer><small>{{ format.toUpperCase() }} · {{ format === 'mp4' && (systemAudio || microphone) ? '有声' : '无声' }} · {{ fps }} FPS</small><button class="confirm" :disabled="busy" title="确认选区后，在控制条开始录制" @click="confirm">{{ busy ? '准备中…' : '确认选区' }}</button></footer>
+    <p v-if="error || invalid" class="menu-error" role="alert">{{ te(error || invalid) }}</p>
+    <footer><small>{{ format.toUpperCase() }} · {{ format === 'mp4' && (systemAudio || microphone) ? t("有声") : t("无声") }} · {{ fps }} FPS</small><button class="confirm" :disabled="busy" :title='t("确认选区后，在控制条开始录制")' @click="confirm">{{ busy ? t("准备中…") : t("确认选区") }}</button></footer>
   </section>
 </template>
 

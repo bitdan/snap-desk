@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t, te } from '@/lib/i18n'
 import ScrollCaptureIcon from './ScrollCaptureIcon.vue'
 import QrResultCard from './QrResultCard.vue'
 import OcrResultCard from './OcrResultCard.vue'
@@ -421,11 +422,11 @@ onUnmounted(() => { releaseFrame(); disposed = true; offClosed?.(); off?.(); off
 <template>
   <div v-if="scroll" />
   <div v-else class="capture-overlay" @pointerdown="down($event)" @pointermove.capture="drag" @pointerleave="pointer = null" @pointerup="up" @pointercancel="abortGesture(); pointer = null" @contextmenu.prevent="cancel">
-    <img v-if="frame" :key="frame.id" ref="screenImage" class="screen-image" :src="frame.dataUrl" alt="当前屏幕截图" draggable="false" @load="loaded" @error="imageFailed" />
+    <img v-if="frame" :key="frame.id" ref="screenImage" class="screen-image" :src="frame.dataUrl" :alt='t("当前屏幕截图")' draggable="false" @load="loaded" @error="imageFailed" />
     <!-- 截图和录屏共用选区入口：开始框选前保持原图，仅在形成选区后遮暗外围。 -->
-    <div v-if="!selection" class="capture-tip" :style="{ left: `${activeDisplay.x + activeDisplay.width / 2}px`, top: `${activeDisplay.y + 64}px`, maxWidth: `${activeDisplay.width - 32}px`, whiteSpace: 'normal' }">{{ recordingMode ? '拖动选择录屏范围' : frame?.targets.length ? '点击吸附 · 拖动框选 · Alt 选窗口 · Shift 自由框选' : '拖动框选屏幕' }} <span>{{ recordingMode ? 'Esc 返回截图 · Ctrl / ⌘ + A 全屏 · R 最近选区' : 'C 取色 · Esc 取消 · Ctrl / ⌘ + A 全屏 · R 最近选区' }}</span></div>
+    <div v-if="!selection" class="capture-tip" :style="{ left: `${activeDisplay.x + activeDisplay.width / 2}px`, top: `${activeDisplay.y + 64}px`, maxWidth: `${activeDisplay.width - 32}px`, whiteSpace: 'normal' }">{{ recordingMode ? t("拖动选择录屏范围") : frame?.targets.length ? t("点击吸附 · 拖动框选 · Alt 选窗口 · Shift 自由框选") : t("拖动框选屏幕") }} <span>{{ recordingMode ? t("Esc 返回截图 · Ctrl / ⌘ + A 全屏 · R 最近选区") : t("C 取色 · Esc 取消 · Ctrl / ⌘ + A 全屏 · R 最近选区") }}</span></div>
     <div v-if="frame" class="capture-modebar" :style="{ left: `${activeDisplay.x + 16}px`, top: `${activeDisplay.y + 16}px` }" @pointerdown.stop @contextmenu.stop.prevent>
-      <button :disabled="!recentRect || busy || marked || editor.pending || editor.interacting" :title="recentRect ? '恢复上次成功复制、保存或贴图的选区（R）' : '暂无最近选区，或当前屏幕分辨率已变化'" @click="restoreSelection"><Scan :size="15" />最近选区 R</button>
+      <button :disabled="!recentRect || busy || marked || editor.pending || editor.interacting" :title="recentRect ? t('恢复上次成功复制、保存或贴图的选区（R）') : t('暂无最近选区，或当前屏幕分辨率已变化')" @click="restoreSelection"><Scan :size="15" />{{ t("最近选区 R") }}</button>
     </div>
     <div v-if="hoverTarget !== null" class="snap-target" :style="hoverStyle" />
     <div v-if="selection" class="selection" :style="{ ...boxStyle, boxShadow: valid ? undefined : 'none', cursor: marked ? 'default' : 'move' }" @pointerdown.stop="selectionDown">
@@ -435,58 +436,58 @@ onUnmounted(() => { releaseFrame(); disposed = true; offClosed?.(); off?.(); off
     <AnnotationSurface v-if="frame && pixels" :editor="editor" :width="frame.width" :height="frame.height" :bounds="pixels" :enabled="annotating && !busy" />
     <div v-if="valid && !gesture" ref="toolbar" class="capture-toolbar annotation-toolbar" :style="[toolbarStyle, floatingToolbarStyle]" @pointerdown.stop @contextmenu.stop.prevent>
       <AnnotationToolbar collapsible :editor="editor" :disabled="busy" :active="annotating" @tool="chooseTool" @float="floatToolbar" @reset-position="resetToolbarPosition">
-        <template #leading><button :disabled="busy || editor.pending || editor.interacting || marked" :aria-pressed="!annotating" title="调整选区" aria-label="调整选区" @click="annotating = false"><Move :size="16" /></button></template>
+        <template #leading><button :disabled="busy || editor.pending || editor.interacting || marked" :aria-pressed="!annotating" :title='t("调整选区")' :aria-label='t("调整选区")' @click="annotating = false"><Move :size="16" /></button></template>
         <template #actions>
-          <button v-if="!recordingMode && selectedTarget !== null && frame?.targets[selectedTarget]?.kind === 'window'" :disabled="busy || marked || editor.pending || editor.interacting" title="原生窗口截图" aria-label="原生窗口截图" @click="captureNative"><AppWindow :size="16" /></button>
-          <button :disabled="busy || editor.pending || editor.interacting" title="清空标注并重新框选" aria-label="清空标注并重新框选" @click="reselect"><RotateCcw :size="16" /></button>
-          <button :disabled="busy || editor.pending || editor.interacting || marked" title="选择整个屏幕 Ctrl/⌘+A" aria-label="选择整个屏幕" @click="selectAll"><Monitor :size="16" /></button>
-          <button v-if="!recordingMode" :disabled="busy || editor.pending || editor.interacting || marked" title="开始滚动截图，手动上下左右滚动后停顿拼接" aria-label="开始滚动截图" @click="startScroll"><ScrollCaptureIcon :size="16" /></button>
-          <button ref="recordingTrigger" :disabled="busy || editor.pending || editor.interacting || !recordingCapabilities?.available" :title="recordingCapabilities?.reason ?? (recordingCapabilityError || (recordingCapabilities ? '切换到录屏' : '正在检查录屏能力…'))" aria-label="展开录屏工具栏" :aria-expanded="recordingMode" @click="recordingMode ? leaveRecordingMode() : enterRecordingMode()"><Video :size="16" /></button>
+          <button v-if="!recordingMode && selectedTarget !== null && frame?.targets[selectedTarget]?.kind === 'window'" :disabled="busy || marked || editor.pending || editor.interacting" :title='t("原生窗口截图")' :aria-label='t("原生窗口截图")' @click="captureNative"><AppWindow :size="16" /></button>
+          <button :disabled="busy || editor.pending || editor.interacting" :title='t("清空标注并重新框选")' :aria-label='t("清空标注并重新框选")' @click="reselect"><RotateCcw :size="16" /></button>
+          <button :disabled="busy || editor.pending || editor.interacting || marked" :title='t("选择整个屏幕 Ctrl/⌘+A")' :aria-label='t("选择整个屏幕")' @click="selectAll"><Monitor :size="16" /></button>
+          <button v-if="!recordingMode" :disabled="busy || editor.pending || editor.interacting || marked" :title='t("开始滚动截图，手动上下左右滚动后停顿拼接")' :aria-label='t("开始滚动截图")' @click="startScroll"><ScrollCaptureIcon :size="16" /></button>
+          <button ref="recordingTrigger" :disabled="busy || editor.pending || editor.interacting || !recordingCapabilities?.available" :title="recordingCapabilities?.reason ?? (recordingCapabilityError || (recordingCapabilities ? t('切换到录屏') : t('正在检查录屏能力…')))" :aria-label='t("展开录屏工具栏")' :aria-expanded="recordingMode" @click="recordingMode ? leaveRecordingMode() : enterRecordingMode()"><Video :size="16" /></button>
         <template v-if="!recordingMode">
-        <button :disabled="busy || editor.pending || editor.interacting" title="贴图 Ctrl/⌘+P" aria-label="贴图" @click="finish('pin')"><Pin :size="16" /></button>
-        <button ref="ocrTrigger" :disabled="busy || editor.pending || editor.interacting" title="识别文字" aria-label="识别文字" aria-haspopup="dialog" :aria-expanded="ocrResult !== null && !translationMode" @click="recognizeText(false)"><ScanText :size="16" /></button>
-        <button ref="translationTrigger" :disabled="busy || editor.pending || editor.interacting" title="截图翻译" aria-label="截图翻译" aria-haspopup="dialog" :aria-expanded="ocrResult !== null && translationMode" @click="recognizeText(true)"><Languages :size="16" /></button>
-        <button :disabled="busy || editor.pending || editor.interacting" title="识别二维码" aria-label="识别二维码" aria-haspopup="dialog" :aria-expanded="!!qrResult" @click="recognizeQr"><QrCode :size="16" /></button>
-        <button :disabled="busy || editor.pending || editor.interacting" title="保存图片 Ctrl/⌘+S" aria-label="保存图片" @click="finish('save')"><Save :size="16" /></button>
-        <button class="copy-button" :disabled="busy || editor.pending || editor.interacting" :title="busy ? '处理中…' : '复制图片 Enter'" :aria-label="busy ? '处理中' : '复制图片'" :aria-busy="busy" @click="finish('copy')"><Copy :size="16" /></button>
+        <button :disabled="busy || editor.pending || editor.interacting" :title='t("贴图 Ctrl/⌘+P")' :aria-label='t("贴图")' @click="finish('pin')"><Pin :size="16" /></button>
+        <button ref="ocrTrigger" :disabled="busy || editor.pending || editor.interacting" :title='t("识别文字")' :aria-label='t("识别文字")' aria-haspopup="dialog" :aria-expanded="ocrResult !== null && !translationMode" @click="recognizeText(false)"><ScanText :size="16" /></button>
+        <button ref="translationTrigger" :disabled="busy || editor.pending || editor.interacting" :title='t("截图翻译")' :aria-label='t("截图翻译")' aria-haspopup="dialog" :aria-expanded="ocrResult !== null && translationMode" @click="recognizeText(true)"><Languages :size="16" /></button>
+        <button :disabled="busy || editor.pending || editor.interacting" :title='t("识别二维码")' :aria-label='t("识别二维码")' aria-haspopup="dialog" :aria-expanded="!!qrResult" @click="recognizeQr"><QrCode :size="16" /></button>
+        <button :disabled="busy || editor.pending || editor.interacting" :title='t("保存图片 Ctrl/⌘+S")' :aria-label='t("保存图片")' @click="finish('save')"><Save :size="16" /></button>
+        <button class="copy-button" :disabled="busy || editor.pending || editor.interacting" :title="busy ? t('处理中…') : t('复制图片 Enter')" :aria-label="busy ? t('处理中') : t('复制图片')" :aria-busy="busy" @click="finish('copy')"><Copy :size="16" /></button>
         </template>
-        <button :disabled="busy || editor.pending" :title="recordingMode ? '取消录屏' : '取消截图'" aria-label="取消截图" @click="cancel"><X :size="16" /></button>
+        <button :disabled="busy || editor.pending" :title="recordingMode ? t('取消录屏') : t('取消截图')" :aria-label='t("取消截图")' @click="cancel"><X :size="16" /></button>
         </template>
       </AnnotationToolbar>
-      <div v-if="recordingMode" class="recording-ready-row" role="toolbar" aria-label="录屏准备工具栏">
-        <button class="recording-grip" :disabled="busy" title="拖动工具栏；双击恢复位置" aria-label="拖动录屏工具栏" @pointerdown="floatToolbar" @dblclick="resetToolbarPosition"><GripVertical :size="16" /></button>
-        <button :disabled="busy" title="返回截图" aria-label="返回截图" @click="leaveRecordingMode"><ArrowLeft :size="16" /></button>
+      <div v-if="recordingMode" class="recording-ready-row" role="toolbar" :aria-label='t("录屏准备工具栏")'>
+        <button class="recording-grip" :disabled="busy" :title='t("拖动工具栏；双击恢复位置")' :aria-label='t("拖动录屏工具栏")' @pointerdown="floatToolbar" @dblclick="resetToolbarPosition"><GripVertical :size="16" /></button>
+        <button :disabled="busy" :title='t("返回截图")' :aria-label='t("返回截图")' @click="leaveRecordingMode"><ArrowLeft :size="16" /></button>
         <span class="ready-time">00:00</span>
-        <select v-model="recordingSource" :disabled="busy" aria-label="录制范围"><option value="region">选区</option><option value="display">显示器</option><option value="window" :disabled="selectedTarget === null || frame?.targets[selectedTarget]?.kind !== 'window'">窗口</option></select>
-        <select v-model="recordingFormat" :disabled="busy || !recordingCapabilities?.available" aria-label="录屏格式"><option v-for="format in recordingCapabilities?.formats ?? []" :key="format" :value="format">{{ format.toUpperCase() }}</option></select>
-        <select v-model="recordingFps" :disabled="busy" aria-label="录屏帧率"><option v-for="fps in (recordingFormat === 'gif' ? [10, 20] : [30, 60])" :key="fps" :value="fps">{{ fps }} FPS</option></select>
+        <select v-model="recordingSource" :disabled="busy" :aria-label='t("录制范围")'><option value="region">{{ t("选区") }}</option><option value="display">{{ t("显示器") }}</option><option value="window" :disabled="selectedTarget === null || frame?.targets[selectedTarget]?.kind !== 'window'">{{ t("窗口") }}</option></select>
+        <select v-model="recordingFormat" :disabled="busy || !recordingCapabilities?.available" :aria-label='t("录屏格式")'><option v-for="format in recordingCapabilities?.formats ?? []" :key="format" :value="format">{{ format.toUpperCase() }}</option></select>
+        <select v-model="recordingFps" :disabled="busy" :aria-label='t("录屏帧率")'><option v-for="fps in (recordingFormat === 'gif' ? [10, 20] : [30, 60])" :key="fps" :value="fps">{{ fps }} FPS</option></select>
         <span class="ready-divider" />
-        <button :disabled="busy" :aria-pressed="captureCursor" title="录制鼠标指针" aria-label="录制鼠标指针" @click="captureCursor = !captureCursor"><MousePointer2 :size="16" /></button>
+        <button :disabled="busy" :aria-pressed="captureCursor" :title='t("录制鼠标指针")' :aria-label='t("录制鼠标指针")' @click="captureCursor = !captureCursor"><MousePointer2 :size="16" /></button>
         <template v-if="recordingFormat === 'mp4'">
-          <button :disabled="busy || !recordingCapabilities?.systemAudio" :aria-pressed="recordingSystemAudio" :title="recordingCapabilities?.systemAudio ? '录制系统声音' : '系统声音录制不可用'" aria-label="录制系统声音" @click="recordingSystemAudio = !recordingSystemAudio"><Volume2 :size="16" /></button>
-          <button :disabled="busy || !recordingCapabilities?.microphone" :aria-pressed="recordingMicrophone" :title="recordingCapabilities?.microphone ? '录制麦克风' : '麦克风录制不可用'" aria-label="录制麦克风" @click="recordingMicrophone = !recordingMicrophone"><Mic :size="16" /></button>
+          <button :disabled="busy || !recordingCapabilities?.systemAudio" :aria-pressed="recordingSystemAudio" :title="recordingCapabilities?.systemAudio ? t('录制系统声音') : t('系统声音录制不可用')" :aria-label='t("录制系统声音")' @click="recordingSystemAudio = !recordingSystemAudio"><Volume2 :size="16" /></button>
+          <button :disabled="busy || !recordingCapabilities?.microphone" :aria-pressed="recordingMicrophone" :title="recordingCapabilities?.microphone ? t('录制麦克风') : t('麦克风录制不可用')" :aria-label='t("录制麦克风")' @click="recordingMicrophone = !recordingMicrophone"><Mic :size="16" /></button>
         </template>
-        <button ref="recordingSettingsTrigger" :disabled="busy" title="更多录屏设置" aria-label="更多录屏设置" :aria-expanded="recordingSetup" aria-controls="recording-inline-options" @click="openRecordingMenu"><Settings2 :size="16" /><ChevronDown :size="12" /></button>
+        <button ref="recordingSettingsTrigger" :disabled="busy" :title='t("更多录屏设置")' :aria-label='t("更多录屏设置")' :aria-expanded="recordingSetup" aria-controls="recording-inline-options" @click="openRecordingMenu"><Settings2 :size="16" /><ChevronDown :size="12" /></button>
         <span class="ready-divider" />
-        <button :disabled="busy" title="重新选择录屏范围" aria-label="重新选择录屏范围" @click="reselect"><RotateCcw :size="16" /></button>
-        <button ref="recordingConfirmTrigger" class="recording-confirm" :disabled="busy || editor.pending || editor.interacting || !recordingCapabilities?.available" :title="recordingCapabilities?.reason ?? (recordingCapabilityError || (recordingCapabilities ? '确认范围，进入录制控制条' : '正在检查录屏能力…'))" @click="startRecording"><Circle :size="14" />{{ busy ? '准备中…' : '准备录制' }}</button>
-        <button :disabled="busy" title="取消录屏" aria-label="取消录屏" @click="cancel"><X :size="16" /></button>
+        <button :disabled="busy" :title='t("重新选择录屏范围")' :aria-label='t("重新选择录屏范围")' @click="reselect"><RotateCcw :size="16" /></button>
+        <button ref="recordingConfirmTrigger" class="recording-confirm" :disabled="busy || editor.pending || editor.interacting || !recordingCapabilities?.available" :title="recordingCapabilities?.reason ?? (recordingCapabilityError || (recordingCapabilities ? t('确认范围，进入录制控制条') : t('正在检查录屏能力…')))" @click="startRecording"><Circle :size="14" />{{ busy ? t("准备中…") : t("准备录制") }}</button>
+        <button :disabled="busy" :title='t("取消录屏")' :aria-label='t("取消录屏")' @click="cancel"><X :size="16" /></button>
       </div>
       <RecordingSetupMenu v-if="recordingMode && recordingSetup" id="recording-inline-options" embedded v-model:source="recordingSource" :window-available="selectedTarget !== null && frame?.targets[selectedTarget]?.kind === 'window'" v-model:format="recordingFormat" :formats="recordingCapabilities?.formats ?? []" v-model:fps="recordingFps" v-model:encoding="recordingEncoding" v-model:quality="recordingQuality" v-model:mbps="recordingMbps" v-model:countdown="recordingCountdown" v-model:cursor="captureCursor" v-model:effects="recordingEffects" v-model:system-audio="recordingSystemAudio" v-model:microphone="recordingMicrophone" :system-audio-available="!!recordingCapabilities?.systemAudio" :microphone-available="!!recordingCapabilities?.microphone" :busy="busy" :error="error" @confirm="startRecording" @close="recordingSetup = false" />
     </div>
     <CaptureMagnifier v-if="showMagnifier && screenImage && pointer && frame" :image="screenImage" :point="pointer" :viewport="viewport" :image-size="frame" :format="colorFormat" :relative="relativeCoordinates" :origin="pixels" :copied="colorCopied" :bounds="pointerDisplay" />
     <div v-if="ocrResult !== null" class="qr-shade" @pointerdown.stop @pointermove.stop @pointerup.stop @contextmenu.stop.prevent>
-      <div :class="['qr-dialog', 'ocr-dialog', { 'translation-dialog': translationMode }]" :style="dialogStyle" role="dialog" aria-modal="true" :aria-label="translationMode ? '文字翻译' : '文字识别结果'">
+      <div :class="['qr-dialog', 'ocr-dialog', { 'translation-dialog': translationMode }]" :style="dialogStyle" role="dialog" aria-modal="true" :aria-label="translationMode ? t('文字翻译') : t('文字识别结果')">
         <ImageTranslation v-if="translationMode && frame && pixels" :key="ocrResult.requestId" :recognition="ocrResult" :source-text="ocrDraft" :image="{ dataUrl: frame.dataUrl, width: frame.width, height: frame.height, crop: pixels }" @back="translationMode = false" @close="closeOcr" />
         <OcrResultCard v-else v-model:text="ocrDraft" @translate="translationMode = true" @close="closeOcr" />
       </div>
     </div>
     <div v-if="qrResult" class="qr-shade" @pointerdown.stop @pointermove.stop @pointerup.stop @contextmenu.stop.prevent>
-      <div class="qr-dialog" :style="dialogStyle" role="dialog" aria-modal="true" aria-label="二维码识别结果">
+      <div class="qr-dialog" :style="dialogStyle" role="dialog" aria-modal="true" :aria-label='t("二维码识别结果")'>
         <QrResultCard :capture-result="qrResult" @close="qrResult = null" @opened="cancel" />
       </div>
     </div>
-    <div v-if="error && !recordingSetup" class="overlay-error" :style="{ left: `${activeDisplay.x + activeDisplay.width / 2}px`, bottom: 'auto', top: `${activeDisplay.y + 16}px`, maxWidth: `${activeDisplay.width - 32}px` }" role="alert" @pointerdown.stop>{{ error }}</div>
+    <div v-if="error && !recordingSetup" class="overlay-error" :style="{ left: `${activeDisplay.x + activeDisplay.width / 2}px`, bottom: 'auto', top: `${activeDisplay.y + 16}px`, maxWidth: `${activeDisplay.width - 32}px` }" role="alert" @pointerdown.stop>{{ te(error) }}</div>
   </div>
 </template>
 

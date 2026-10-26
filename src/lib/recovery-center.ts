@@ -1,3 +1,5 @@
+import { localizedDate, t } from './i18n'
+
 /** 后台拥有来源路径；所有恢复/清理命令只接收记录 ID。 */
 export interface RecoveryItem {
   id: string
@@ -19,18 +21,18 @@ export interface RecoveryStatus {
 }
 export type RecoveryArtifactAction = 'recover' | 'openDirectory' | 'discard'
 export function recoveryBytes(bytes: number | null): string {
-  if (bytes === null) return '体积未知'
+  if (bytes === null) return t('体积未知')
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1_048_576) return `${(bytes / 1024).toFixed(1)} KiB`
   return `${(bytes / 1_048_576).toFixed(1)} MiB`
 }
 export function recoveryTime(milliseconds: number | null): string {
-  return milliseconds === null ? '时间未知' : new Date(milliseconds).toLocaleString()
+  return milliseconds === null ? t('时间未知') : localizedDate(milliseconds)
 }
 export function recoverySummary(items: RecoveryItem[]): string {
   const known = items.reduce((sum, item) => sum + (item.bytes ?? 0), 0)
   const unknown = items.filter(item => item.bytes === null).length
-  return `${items.length} 项 · ${recoveryBytes(known)}${unknown ? `，${unknown} 项体积未知` : ''}`
+  return t('{0} 项 · {1}{2}', { 0: items.length, 1: recoveryBytes(known), 2: unknown ? t('，{0} 项体积未知', { 0: unknown }) : '' })
 }
 export function recoveryItemStatus(item: RecoveryItem): string {
   if (item.stage === 'unsafe') return '目录内容与登记不一致，需手动检查；自动清理会拒绝操作'

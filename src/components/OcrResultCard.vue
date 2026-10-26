@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t, te } from '@/lib/i18n'
 import { computed, nextTick, onMounted, ref } from 'vue'
 import { Check, Copy, Languages, ScanText, X } from 'lucide-vue-next'
 import Button from './ui/button/Button.vue'
@@ -33,14 +34,14 @@ function key(event: KeyboardEvent) {
 
 <template>
   <section class="recognition-result" @keydown.stop="key">
-    <header class="result-header"><h2><ScanText :size="17" />文字识别</h2><Button class="result-close" variant="ghost" :disabled="busy" title="关闭（Esc）" aria-label="关闭文字识别" @click="emit('close')"><X :size="16" /></Button></header>
+    <header class="result-header"><h2><ScanText :size="17" />{{ t("文字识别") }}</h2><Button class="result-close" variant="ghost" :disabled="busy" :title='t("关闭（Esc）")' :aria-label='t("关闭文字识别")' @click="emit('close')"><X :size="16" /></Button></header>
     <div class="result-body">
       <div class="result-editor">
-        <div class="editor-heading"><label for="ocr-result-text">识别结果</label><span>可编辑 · {{ count }} 字符</span></div>
-        <textarea id="ocr-result-text" ref="input" v-model="text" aria-label="识别文字，可编辑" :disabled="busy" placeholder="未识别到文字，可输入文字或重新框选。" spellcheck="false" @input="message = ''; error = ''" />
+        <div class="editor-heading"><label for="ocr-result-text">{{ t("识别结果") }}</label><span>{{ t("可编辑 ·") }} {{ count }} {{ t("字符") }}</span></div>
+        <textarea id="ocr-result-text" ref="input" v-model="text" :aria-label='t("识别文字，可编辑")' :disabled="busy" :placeholder='t("未识别到文字，可输入文字或重新框选。")' spellcheck="false" @input="message = ''; error = ''" />
       </div>
-      <p v-if="error" class="result-error" role="alert">{{ error }}</p>
+      <p v-if="error" class="result-error" role="alert">{{ te(error) }}</p>
     </div>
-    <footer class="result-footer"><span v-if="message" class="result-success" role="status"><Check :size="14" />{{ message }}</span><div class="result-actions"><Button variant="outline" :disabled="busy || !text.trim()" @click="emit('translate')"><Languages :size="15" />翻译文字</Button><Button :disabled="busy || !text.trim()" @click="copy"><Copy :size="15" />复制文字</Button></div></footer>
+    <footer class="result-footer"><span v-if="message" class="result-success" role="status"><Check :size="14" />{{ t(message) }}</span><div class="result-actions"><Button variant="outline" :disabled="busy || !text.trim()" @click="emit('translate')"><Languages :size="15" />{{ t("翻译文字") }}</Button><Button :disabled="busy || !text.trim()" @click="copy"><Copy :size="15" />{{ t("复制文字") }}</Button></div></footer>
   </section>
 </template>

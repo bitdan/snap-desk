@@ -171,8 +171,8 @@ pub fn save(app: &AppHandle, image: &RgbaImage) -> Result<bool, String> {
     let mut dialog = app
         .dialog()
         .file()
-        .set_title("保存图片")
-        .add_filter(label, extensions)
+        .set_title(crate::native_i18n::text(&app, "保存图片"))
+        .add_filter(crate::native_i18n::text(app, label), extensions)
         .set_file_name(filename(
             &settings,
             timestamp,

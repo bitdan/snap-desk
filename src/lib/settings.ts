@@ -1,3 +1,4 @@
+import { t } from './i18n'
 import type { Appearance } from './appearance'
 import { defaultAiSettings, type AiSettings } from './ai'
 import { defaultClipboardSettings, type ClipboardSettings } from './clipboard'
@@ -31,7 +32,7 @@ export function defaultSettings(): Settings {
 
 export function exportFilenamePreview(value: ExportSettings): string {
   const dimensions = value.includeDimensions ? '-1920x1080' : ''
-  return `${value.filenamePrefix}-时间戳${dimensions}.${value.format === 'jpeg' ? 'jpg' : value.format}`
+  return t('{0}-时间戳{1}.{2}', { 0: value.filenamePrefix, 1: dimensions, 2: value.format === 'jpeg' ? 'jpg' : value.format })
 }
 
 /** 与 Rust 同时校验；number 输入清空后可能为字符串，不能把无效值传给 IPC。 */

@@ -350,6 +350,23 @@ fn notify_settings(app: &AppHandle, value: &Settings) {
             log::error!("event=app.shortcut_menu_failed module=app code=SHORTCUT_MENU_FAILED");
         }
     }
+    // notify_settings 的调用方已持有设置锁，直接传语言快照避免重入死锁。
+    if let Some(menu) = app.try_state::<ShortcutMenu>() {
+        if menu
+            .0
+            .set_text(crate::native_i18n::for_language(
+                &value.appearance.language,
+                "启用全局快捷键",
+            ))
+            .is_err()
+        {
+            log::warn!("event=app.tray_language_failed module=app");
+        }
+    }
+    if let Some(tray) = app.try_state::<crate::native_i18n::TrayLabels>() {
+        tray.update(&value.appearance.language);
+    }
+    let _ = app.emit("appearance-changed", &value.appearance);
     let _ = app.emit_to("main", "settings-changed", value);
 }
 

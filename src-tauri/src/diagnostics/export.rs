@@ -15,7 +15,7 @@ pub fn save(app: &AppHandle, window: &WebviewWindow) -> Result<bool, String> {
         .dialog()
         .file()
         .set_parent(window)
-        .set_title("导出本地诊断包")
+        .set_title(crate::native_i18n::text(&app, "导出本地诊断包"))
         .set_file_name(name)
         .add_filter("ZIP", &["zip"])
         .blocking_save_file()

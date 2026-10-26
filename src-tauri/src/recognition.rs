@@ -58,16 +58,6 @@ pub struct OcrResult {
     pub warnings: Vec<String>,
 }
 
-/// 后续翻译按段落 ID 回填，line_ids 保留到原始检测框的映射。
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TextSegment {
-    pub id: String,
-    pub source_text: String,
-    pub line_ids: Vec<String>,
-    pub source_language: Option<String>,
-}
-
 #[cfg(test)]
 mod tests {
     #[test]

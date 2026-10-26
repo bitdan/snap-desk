@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t } from '@/lib/i18n'
 import AnnotationStack from './AnnotationStack'
 import { computed, nextTick, ref, useId, watch } from 'vue'
 import { shapePath, shapeBounds, isRaster } from '@/lib/annotations'
@@ -107,8 +108,8 @@ async function up() {
     </g>
     <foreignObject v-if="enabled && editor.textEditing && editor.draft" :x="textBox.x" :y="textBox.y" :width="textBox.width" :height="textHeight"
       @pointerdown.stop @pointermove.stop @pointerup.stop @pointercancel.stop @contextmenu.stop @keydown.stop="textKey">
-      <textarea ref="textInput" v-model="editor.draft.text" class="inline-text" aria-label="标注文字" placeholder="输入文字" maxlength="500" :readonly="editor.pending"
-        title="Enter 完成，Shift+Enter 换行，Esc 取消" :style="{ color: editor.draft.color, fontSize: `${editor.draft.fontSize ?? 24}px`, fontFamily: ({ sans: 'sans-serif', serif: 'serif', mono: 'monospace' })[editor.draft.fontFamily ?? 'sans'] }" />
+      <textarea ref="textInput" v-model="editor.draft.text" class="inline-text" :aria-label='t("标注文字")' :placeholder='t("输入文字")' maxlength="500" :readonly="editor.pending"
+        :title='t("Enter 完成，Shift+Enter 换行，Esc 取消")' :style="{ color: editor.draft.color, fontSize: `${editor.draft.fontSize ?? 24}px`, fontFamily: ({ sans: 'sans-serif', serif: 'serif', mono: 'monospace' })[editor.draft.fontFamily ?? 'sans'] }" />
     </foreignObject>
     <!-- 输入框外的三个手柄分别调整宽度、高度和两者，不锁定长宽比。 -->
     <g v-if="enabled && editor.textEditing && !editor.pending" class="annotation-selection">

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t } from '@/lib/i18n'
 import { computed, onUnmounted, ref, watch } from 'vue'
 import { MAGNIFIER_SIZE, MAGNIFIER_ZOOM, magnifierPosition, magnifierSample } from '@/lib/magnifier'
 import type { Point, Size, Rect } from '@/lib/selection'
@@ -47,11 +48,11 @@ onUnmounted(() => cancelAnimationFrame(animation))
       <span class="magnifier-cross horizontal" /><span class="magnifier-cross vertical" />
       <span class="magnifier-pixel" :style="{ background: color?.hex }" />
     </div>
-    <div class="magnifier-coordinate">{{ relative ? '相对 ' : '' }}({{ coordinate.x }}, {{ coordinate.y }})</div>
+    <div class="magnifier-coordinate">{{ relative ? t("相对 ") : '' }}({{ coordinate.x }}, {{ coordinate.y }})</div>
     <div class="magnifier-color"><template v-if="color"><i :style="{ background: color.hex }" />{{ color[format] }}</template></div>
-    <div class="magnifier-hint">Shift: 切换颜色格式</div>
-    <div class="magnifier-hint" :class="{ copied }">{{ copied ? '已复制，可继续截图' : 'C: 复制颜色值' }}</div>
-    <div class="magnifier-hint">P: 切换全局/相对坐标</div>
+    <div class="magnifier-hint">{{ t("Shift: 切换颜色格式") }}</div>
+    <div class="magnifier-hint" :class="{ copied }">{{ copied ? t("已复制，可继续截图") : t("C: 复制颜色值") }}</div>
+    <div class="magnifier-hint">{{ t("P: 切换全局/相对坐标") }}</div>
   </div>
 </template>
 

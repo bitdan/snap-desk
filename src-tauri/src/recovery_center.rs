@@ -398,7 +398,8 @@ impl Workspace {
         let record = record_path(app, &value.id)?;
         let mut active = ACTIVE.lock().map_err(error)?;
         store(&record, &value)?;
-        directory.keep();
+        // 登记成功后保留目录，交由恢复记录管理；路径已在 value 中，无需再次保存。
+        let _ = directory.keep();
         active.insert(value.id.clone());
         Ok(Self { value, record })
     }
@@ -809,8 +810,8 @@ pub async fn recovery_artifact_action(
                     let Some(path) = app
                         .dialog()
                         .file()
-                        .set_title("另存恢复文件")
-                        .add_filter("恢复文件", &[ext])
+                        .set_title(crate::native_i18n::text(&app, "另存恢复文件"))
+                        .add_filter(crate::native_i18n::text(&app, "恢复文件"), &[ext])
                         .set_file_name(format!("SnapDesk-Recovered-{}.{ext}", now()))
                         .blocking_save_file()
                     else {

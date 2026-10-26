@@ -1,3 +1,4 @@
+import { t } from './i18n'
 import type { Rect } from './selection'
 
 export type RecordingSource = 'primaryMonitor' | 'selectedMonitor' | 'selectedWindow'
@@ -16,12 +17,12 @@ export interface RecoverableRecording { id: string; path: string; finalized: boo
 
 /** 未封装的数据没有可播放保证；清理已导出记录也不会删除最终输出。 */
 export function recordingRecoveryStatus(item: RecoverableRecording): string {
-  if (item.exported) return `导出记录：${item.exported}；可清理源文件残留`
+  if (item.exported) return t('导出记录：{0}；可清理源文件残留', { 0: item.exported })
   if (!item.sourceExists) return '源文件已不存在，可清理恢复记录'
   return item.finalized ? '封装已完成，可重新导出' : '封装未完成或未确认，不能直接播放；仅保留原始数据供检查'
 }
 export function recordingAudioStatus(view: Pick<RecordingView, 'systemAudio' | 'microphone'>): string {
-  return [view.systemAudio && '系统声音', view.microphone && '麦克风'].filter(Boolean).join(' + ') || '无声'
+  return [view.systemAudio && '系统声音', view.microphone && '麦克风'].filter((value): value is string => !!value).map(value => t(value)).join(' + ') || t('无声')
 }
 
 /** 与 Rust RecorderConfig / RecorderCapabilities 保持一致；声音不发送隐式默认开启值。 */

@@ -403,7 +403,10 @@ pub async fn clipboard_export(
             .value
             .export
             .remember_directory;
-        let mut dialog = app.dialog().file().set_title("导出剪贴板素材");
+        let mut dialog = app
+            .dialog()
+            .file()
+            .set_title(crate::native_i18n::text(&app, "导出剪贴板素材"));
         if remember {
             if let Some(dir) = crate::image_io::current_directory(&app)? {
                 dialog = dialog.set_directory(dir);
@@ -467,7 +470,7 @@ pub async fn clipboard_export(
                 "png"
             };
             let Some(path) = dialog
-                .add_filter("导出文件", &[ext])
+                .add_filter(crate::native_i18n::text(&app, "导出文件"), &[ext])
                 .set_file_name(format!("SnapDesk-{}.{}", super::service::now(), ext))
                 .blocking_save_file()
             else {

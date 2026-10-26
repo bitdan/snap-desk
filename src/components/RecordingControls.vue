@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t, te } from '@/lib/i18n'
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { Pause, Play, Square, X } from 'lucide-vue-next'
 import { api } from '@/lib/api'
@@ -64,27 +65,27 @@ onUnmounted(() => { disposed = true; clearTimeout(timer) })
 </script>
 
 <template>
-  <main v-if="replay" class="recording-replay" aria-label="录屏回放与编辑">
+  <main v-if="replay" class="recording-replay" :aria-label='t("录屏回放与编辑")'>
     <RecordingEditor v-if="result" :key="result.id" :result-id="result.id" :disabled="busy" @close="closePreview" />
     <template v-else>
-      <header><strong>录屏回放与编辑</strong><button :disabled="busy" @click="closePreview">关闭</button></header>
-      <p v-if="loadingPreview" role="status">正在加载录屏…</p>
-      <button v-else @click="loadPreview">重新读取录屏</button>
+      <header><strong>{{ t("录屏回放与编辑") }}</strong><button :disabled="busy" @click="closePreview">{{ t("关闭") }}</button></header>
+      <p v-if="loadingPreview" role="status">{{ t("正在加载录屏…") }}</p>
+      <button v-else @click="loadPreview">{{ t("重新读取录屏") }}</button>
     </template>
-    <p v-if="error" class="preview-error" role="alert">{{ error }}</p>
+    <p v-if="error" class="preview-error" role="alert">{{ te(error) }}</p>
   </main>
-  <main v-else class="recording-controls" aria-label="录屏控制条">
+  <main v-else class="recording-controls" :aria-label='t("录屏控制条")'>
     <span class="dot" :class="{ paused: view?.phase !== 'recording' }" />
     <span class="time" role="timer">{{ recordingTime(view?.seconds ?? 0) }}</span>
-    <span class="status" role="status">{{ view ? recordingStatus(view) : '连接中…' }}</span>
-    <span v-if="view?.phase !== 'countdown'" class="fps" :title="`近两秒 ${view?.stats.recentFps.toFixed(1) ?? '0.0'} FPS；编码提交 ${view?.frames ?? 0} 帧，队列满 ${view?.stats.queueDroppedFrames ?? 0} 帧，旧代次 ${view?.stats.staleQueuedFrames ?? 0} 帧；静态画面低 FPS 不等同丢帧`">{{ view?.targetFps ?? 30 }} FPS</span>
-    <button v-if="view?.phase === 'ready'" class="start" :disabled="busy" title="开始录制" aria-label="开始录制" @click="control('start')"><Play :size="15" />开始</button>
-    <button v-else-if="view?.phase === 'countdown'" disabled><Play :size="15" />等待开始</button>
-    <button v-else-if="view?.phase === 'paused'" :disabled="busy" title="继续录制" aria-label="继续录制" @click="control('resume')"><Play :size="17" /></button>
-    <button v-else :disabled="busy || view?.phase !== 'recording'" title="暂停录制" aria-label="暂停录制" @click="control('pause')"><Pause :size="17" /></button>
-    <button :disabled="busy || !view || !['recording', 'paused'].includes(view.phase)" title="结束录制并编辑" aria-label="结束录制并编辑" @click="control('stop')"><Square :size="17" /></button>
-    <button :disabled="busy || !recordingActive(view)" title="取消并丢弃本次录屏" aria-label="取消并丢弃本次录屏" @click="control('cancel')"><X :size="17" /></button>
-    <span v-if="error" class="error" role="alert" :title="error">{{ error }}</span>
+    <span class="status" role="status">{{ view ? t(recordingStatus(view)) : t("连接中…") }}</span>
+    <span v-if="view?.phase !== 'countdown'" class="fps" :title="t('近两秒 {0} FPS；编码提交 {1} 帧，队列满 {2} 帧，旧代次 {3} 帧；静态画面低 FPS 不等同丢帧', { 0: view?.stats.recentFps.toFixed(1) ?? '0.0', 1: view?.frames ?? 0, 2: view?.stats.queueDroppedFrames ?? 0, 3: view?.stats.staleQueuedFrames ?? 0 })">{{ view?.targetFps ?? 30 }} FPS</span>
+    <button v-if="view?.phase === 'ready'" class="start" :disabled="busy" :title='t("开始录制")' :aria-label='t("开始录制")' @click="control('start')"><Play :size="15" />{{ t("开始") }}</button>
+    <button v-else-if="view?.phase === 'countdown'" disabled><Play :size="15" />{{ t("等待开始") }}</button>
+    <button v-else-if="view?.phase === 'paused'" :disabled="busy" :title='t("继续录制")' :aria-label='t("继续录制")' @click="control('resume')"><Play :size="17" /></button>
+    <button v-else :disabled="busy || view?.phase !== 'recording'" :title='t("暂停录制")' :aria-label='t("暂停录制")' @click="control('pause')"><Pause :size="17" /></button>
+    <button :disabled="busy || !view || !['recording', 'paused'].includes(view.phase)" :title='t("结束录制并编辑")' :aria-label='t("结束录制并编辑")' @click="control('stop')"><Square :size="17" /></button>
+    <button :disabled="busy || !recordingActive(view)" :title='t("取消并丢弃本次录屏")' :aria-label='t("取消并丢弃本次录屏")' @click="control('cancel')"><X :size="17" /></button>
+    <span v-if="error" class="error" role="alert" :title="te(error)">{{ te(error) }}</span>
   </main>
 </template>
 

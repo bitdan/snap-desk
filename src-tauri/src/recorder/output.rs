@@ -146,7 +146,7 @@ pub async fn choose_recording_directory(
         let mut dialog = app
             .dialog()
             .file()
-            .set_title("选择录屏保存文件夹")
+            .set_title(crate::native_i18n::text(&app, "选择录屏保存文件夹"))
             .set_parent(&window);
         if let Ok((path, _)) = resolve(&app) {
             if path.is_dir() {

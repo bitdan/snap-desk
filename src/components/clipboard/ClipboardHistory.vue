@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t, te } from '@/lib/i18n'
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { DialogRoot, DialogPortal, DialogOverlay, DialogContent, DialogTitle, DialogDescription, DialogTrigger } from 'reka-ui'
 import { api, desktop, onClipboardChanged, onClipboardError, onClipboardState, onClipboardOpen } from '@/lib/api'
@@ -138,55 +139,55 @@ onUnmounted(() => { disposed = true; revision++; clearTimeout(refreshTimer); dis
   <DialogRoot :open="exportOpen" @update:open="updateExportOpen">
   <section class="clipboard-history" @keydown="navigate">
     <header class="history-header">
-      <span class="history-count">{{ status?.count ?? 0 }} 条 · {{ ((status?.byteSize ?? 0) / 1048576).toFixed(1) }} MiB</span>
-      <div class="history-header-actions"><Button variant="ghost" :disabled="busy || loading || !desktop" @click="refresh()">刷新</Button><Button variant="ghost" :disabled="busy || !status?.count" @click="confirm = 'clear'; includeFavorites = false">清空</Button></div>
-      <label class="history-recording"><span>{{ status?.enabled ? '正在记录' : '已暂停' }}</span><input type="checkbox" role="switch" aria-label="记录剪贴板历史" :checked="status?.enabled ?? false" :disabled="busy || !desktop || !status?.supported" @click.prevent="configure(!status?.enabled)" /><span class="recording-track" aria-hidden="true"></span></label>
+      <span class="history-count">{{ status?.count ?? 0 }} {{ t("条 ·") }} {{ ((status?.byteSize ?? 0) / 1048576).toFixed(1) }} MiB</span>
+      <div class="history-header-actions"><Button variant="ghost" :disabled="busy || loading || !desktop" @click="refresh()">{{ t("刷新") }}</Button><Button variant="ghost" :disabled="busy || !status?.count" @click="confirm = 'clear'; includeFavorites = false">{{ t("清空") }}</Button></div>
+      <label class="history-recording"><span>{{ status?.enabled ? t("正在记录") : t("已暂停") }}</span><input type="checkbox" role="switch" :aria-label='t("记录剪贴板历史")' :checked="status?.enabled ?? false" :disabled="busy || !desktop || !status?.supported" @click.prevent="configure(!status?.enabled)" /><span class="recording-track" aria-hidden="true"></span></label>
     </header>
-    <p v-if="status && !status.supported" class="notice">当前平台尚未支持自动监听；现有手动贴图不受影响。</p>
-    <p v-if="error || status?.error" class="notice error" role="alert">{{ error || status?.error }}</p>
-    <p v-if="message" role="status">{{ message }}</p>
+    <p v-if="status && !status.supported" class="notice">{{ t("当前平台尚未支持自动监听；现有手动贴图不受影响。") }}</p>
+    <p v-if="error || status?.error" class="notice error" role="alert">{{ te(error || status?.error) }}</p>
+    <p v-if="message" role="status">{{ t(message) }}</p>
     <form class="history-search" role="search" @submit.prevent="applyFilter">
-      <Search :size="16" aria-hidden="true" /><input ref="searchInput" v-model="keyword" aria-label="搜索文本或文件路径" placeholder="搜索文本或文件路径（Ctrl+F）" maxlength="200" /><button v-if="keyword" type="button" aria-label="清除搜索" @click="keyword = ''; focusSearch()"><X :size="16" /></button>
+      <Search :size="16" aria-hidden="true" /><input ref="searchInput" v-model="keyword" :aria-label='t("搜索文本或文件路径")' :placeholder='t("搜索文本或文件路径（Ctrl+F）")' maxlength="200" /><button v-if="keyword" type="button" :aria-label='t("清除搜索")' @click="keyword = ''; focusSearch()"><X :size="16" /></button>
     </form>
-    <nav class="history-categories" aria-label="历史分类">
-      <button v-for="tab in categories" :key="tab.value" :class="{ active: category === tab.value }" :aria-pressed="category === tab.value" :disabled="busy || !desktop" @click="category = tab.value"><component :is="tab.icon" :size="16" aria-hidden="true" />{{ tab.label }}</button>
+    <nav class="history-categories" :aria-label='t("历史分类")'>
+      <button v-for="tab in categories" :key="tab.value" :class="{ active: category === tab.value }" :aria-pressed="category === tab.value" :disabled="busy || !desktop" @click="category = tab.value"><component :is="tab.icon" :size="16" aria-hidden="true" />{{ t(tab.label) }}</button>
     </nav>
-    <div v-if="confirm" class="notice" role="alertdialog" aria-label="确认删除历史">
-      <p>{{ confirm === 'clear' ? '清空历史记录？默认保留收藏。' : `删除选中的 ${selected.length} 条记录（包含选中的收藏）？` }} 此操作不可撤销。</p>
-      <label v-if="confirm === 'clear'"><input v-model="includeFavorites" type="checkbox" />同时删除收藏</label>
-      <Button :disabled="busy" @click="remove">确认删除</Button><Button variant="outline" :disabled="busy" @click="confirm = null">取消</Button>
+    <div v-if="confirm" class="notice" role="alertdialog" :aria-label='t("确认删除历史")'>
+      <p>{{ confirm === 'clear' ? t("清空历史记录？默认保留收藏。") : t("删除选中的 {0} 条记录（包含选中的收藏）？", { 0: selected.length }) }} {{ t("此操作不可撤销。") }}</p>
+      <label v-if="confirm === 'clear'"><input v-model="includeFavorites" type="checkbox" />{{ t("同时删除收藏") }}</label>
+      <Button :disabled="busy" @click="remove">{{ t("确认删除") }}</Button><Button variant="outline" :disabled="busy" @click="confirm = null">{{ t("取消") }}</Button>
     </div>
     <DialogPortal>
     <DialogOverlay class="history-export-overlay" />
     <DialogContent class="history-export-dialog" @keydown.stop @escape-key-down="guardExportDismiss" @interact-outside="guardExportDismiss">
-      <DialogTitle class="history-export-title">导出 {{ selected.length }} 个素材</DialogTitle>
-      <DialogDescription class="history-export-description">按选择顺序导出，图片使用原图。</DialogDescription>
+      <DialogTitle class="history-export-title">{{ t("导出") }} {{ selected.length }} {{ t("个素材") }}</DialogTitle>
+      <DialogDescription class="history-export-description">{{ t("按选择顺序导出，图片使用原图。") }}</DialogDescription>
       <fieldset :disabled="busy">
-      <div class="history-tools"><select v-model="options.mode" aria-label="导出方式"><option value="pdf">多页 PDF</option><option value="longPng">纵向长图 PNG</option><option value="separate">分别导出 PNG / TXT</option></select><select v-if="options.mode === 'pdf'" v-model="options.pageSize" aria-label="页面大小"><option value="A4">A4</option><option value="original">图片原始比例</option></select><label v-if="options.mode === 'pdf'">边距 mm<input v-model.number="options.marginMm" type="number" min="0" max="30" /></label><label v-if="options.mode === 'longPng'">间距 px<input v-model.number="options.gapPx" type="number" min="0" max="200" /></label><select v-if="options.mode === 'longPng'" v-model="options.background" aria-label="背景"><option value="white">白底</option><option value="transparent">透明背景</option></select></div>
+      <div class="history-tools"><select v-model="options.mode" :aria-label='t("导出方式")'><option value="pdf">{{ t("多页 PDF") }}</option><option value="longPng">{{ t("纵向长图 PNG") }}</option><option value="separate">{{ t("分别导出 PNG / TXT") }}</option></select><select v-if="options.mode === 'pdf'" v-model="options.pageSize" :aria-label='t("页面大小")'><option value="A4">A4</option><option value="original">{{ t("图片原始比例") }}</option></select><label v-if="options.mode === 'pdf'">{{ t("边距 mm") }}<input v-model.number="options.marginMm" type="number" min="0" max="30" /></label><label v-if="options.mode === 'longPng'">{{ t("间距 px") }}<input v-model.number="options.gapPx" type="number" min="0" max="200" /></label><select v-if="options.mode === 'longPng'" v-model="options.background" :aria-label='t("背景")'><option value="white">{{ t("白底") }}</option><option value="transparent">{{ t("透明背景") }}</option></select></div>
       </fieldset>
-      <p v-if="error" class="notice error" role="alert">{{ error }}</p>
-      <p v-else-if="message" role="status">{{ message }}</p>
-      <div class="history-export-actions"><Button :disabled="busy || !selected.length" @click="exportItems">{{ busy ? '正在导出…' : '选择位置并导出' }}</Button><Button variant="outline" :disabled="busy" @click="exportOpen = false">关闭</Button></div>
+      <p v-if="error" class="notice error" role="alert">{{ te(error) }}</p>
+      <p v-else-if="message" role="status">{{ t(message) }}</p>
+      <div class="history-export-actions"><Button :disabled="busy || !selected.length" @click="exportItems">{{ busy ? t("正在导出…") : t("选择位置并导出") }}</Button><Button variant="outline" :disabled="busy" @click="exportOpen = false">{{ t("关闭") }}</Button></div>
     </DialogContent>
     </DialogPortal>
     <div class="history-browser">
-    <div ref="list" class="history-list" role="region" aria-label="历史记录列表" :aria-busy="loading">
+    <div ref="list" class="history-list" role="region" :aria-label='t("历史记录列表")' :aria-busy="loading">
       <ClipboardItem v-for="item in items" :key="item.id" :item="item" :selected="selected.includes(item.id)" :busy="busy" @select="selectItem(item)" @restore="run(() => api.clipboardRestore(item.id), '已复制。')" @delete="selected = [item.id]; selectedItems = { [item.id]: item }; confirm = 'delete'" @pin="run(() => api.clipboardPin(item.id))" @favorite="run(async () => { await api.clipboardFavorite(item.id, !item.favorite); await refresh() })" />
-      <p v-if="!items.length" class="history-empty">{{ loading ? '正在加载…' : keyword || category ? '没有匹配的记录，试试其他关键词或分类。' : status?.enabled ? '暂无记录，复制文字或图片后会显示在这里。' : '暂无记录，开启右上方开关后开始记录。' }}</p>
-      <Button v-if="cursor" variant="outline" :disabled="loading" @click="refresh(true)">{{ loading ? '加载中…' : '加载更多' }}</Button>
+      <p v-if="!items.length" class="history-empty">{{ loading ? t("正在加载…") : keyword || category ? t("没有匹配的记录，试试其他关键词或分类。") : status?.enabled ? t("暂无记录，复制文字或图片后会显示在这里。") : t("暂无记录，开启右上方开关后开始记录。") }}</p>
+      <Button v-if="cursor" variant="outline" :disabled="loading" @click="refresh(true)">{{ loading ? t("加载中…") : t("加载更多") }}</Button>
     </div>
     <!-- 侧栏独立于列表滚动并始终预留宽度，选择条目不会挤动列表或影响双击。 -->
-    <aside class="history-action-rail" aria-label="所选条目操作">
+    <aside class="history-action-rail" :aria-label='t("所选条目操作")'>
       <template v-if="selected.length">
-        <span class="history-selected-count" role="status" :title="`已选 ${selected.length} / 100 条`">已选<br />{{ selected.length }}</span>
-        <DialogTrigger as-child><Button class="history-action" :disabled="busy || !canExport" :title="canExport ? '组合导出' : '组合导出仅支持文本和图片，文件引用请复制后粘贴'" aria-label="组合导出所选条目" @click="error = ''; message = ''"><Download :size="18" /></Button></DialogTrigger>
-        <Button class="history-action" variant="outline" :disabled="busy || !selected.some(id => selectedItems[id]?.kind === 'image')" title="图片贴图" aria-label="将所选图片贴图" @click="pinSelected"><Pin :size="18" /></Button>
-        <Button class="history-action history-delete" variant="outline" :disabled="busy" title="删除所选" aria-label="删除所选条目" @click="confirm = 'delete'"><Trash2 :size="18" /></Button>
-        <Button class="history-action" variant="ghost" :disabled="busy" title="取消选择" aria-label="取消选择" @click="selected = []; selectedItems = {}"><X :size="18" /></Button>
+        <span class="history-selected-count" role="status" :title="t('已选 {0} / 100 条', { 0: selected.length })">{{ t("已选") }}<br />{{ selected.length }}</span>
+        <DialogTrigger as-child><Button class="history-action" :disabled="busy || !canExport" :title="canExport ? t('组合导出') : t('组合导出仅支持文本和图片，文件引用请复制后粘贴')" :aria-label='t("组合导出所选条目")' @click="error = ''; message = ''"><Download :size="18" /></Button></DialogTrigger>
+        <Button class="history-action" variant="outline" :disabled="busy || !selected.some(id => selectedItems[id]?.kind === 'image')" :title='t("图片贴图")' :aria-label='t("将所选图片贴图")' @click="pinSelected"><Pin :size="18" /></Button>
+        <Button class="history-action history-delete" variant="outline" :disabled="busy" :title='t("删除所选")' :aria-label='t("删除所选条目")' @click="confirm = 'delete'"><Trash2 :size="18" /></Button>
+        <Button class="history-action" variant="ghost" :disabled="busy" :title='t("取消选择")' :aria-label='t("取消选择")' @click="selected = []; selectedItems = {}"><X :size="18" /></Button>
       </template>
     </aside>
     </div>
-    <footer class="history-footer"><span>单击选择 · ↑↓ 浏览 · Enter / 双击复制</span><p v-if="category === 'file'">文件仅保存路径引用，不备份内容；原文件移动或删除后无法恢复。复制后可到资源管理器粘贴。</p><p>历史仅存本机，未加密、不上传，可能包含密码等私人内容。暂停不影响已有记录。</p></footer>
+    <footer class="history-footer"><span>{{ t("单击选择 · ↑↓ 浏览 · Enter / 双击复制") }}</span><p v-if="category === 'file'">{{ t("文件仅保存路径引用，不备份内容；原文件移动或删除后无法恢复。复制后可到资源管理器粘贴。") }}</p><p>{{ t("历史仅存本机，未加密、不上传，可能包含密码等私人内容。暂停不影响已有记录。") }}</p></footer>
   </section>
   </DialogRoot>
 </template>

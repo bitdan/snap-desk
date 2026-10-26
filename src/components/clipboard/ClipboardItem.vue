@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t, te, localizedDate } from '@/lib/i18n'
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { ContextMenuRoot, ContextMenuTrigger, ContextMenuPortal, ContextMenuContent, ContextMenuItem, ContextMenuSeparator } from 'reka-ui'
 import { Copy, Star, Pin, Trash2, File, FileText, FileImage, FileArchive, FileCode, FileSpreadsheet, FileVideo, FileAudio, AppWindow, Folder } from 'lucide-vue-next'
@@ -55,28 +56,28 @@ onUnmounted(() => { disposed = true; observer?.disconnect() })
 <template>
   <ContextMenuRoot>
     <ContextMenuTrigger as-child :disabled="busy">
-      <article ref="root" class="history-item" :class="{ 'is-selected': selected }" tabindex="0" :aria-label="`${item.kind === 'image' ? '图片' : item.preview.slice(0, 80)}，回车复制，空格选择，右键操作`" @keydown="key" @click.self="select">
-        <input type="checkbox" :checked="selected" :disabled="busy" :aria-label="`选择条目 ${item.id}`" @change="$emit('select')" />
-        <button class="history-content" :disabled="busy" :aria-pressed="selected" :aria-label="`选择条目 ${item.id}，双击复制`" @click="select" @dblclick="emit('restore')">
-          <img v-if="thumbnail" :src="thumbnail" alt="历史图片缩略图" />
-          <span v-else-if="item.kind === 'image'">{{ error || `图片 ${item.width} × ${item.height}` }}</span>
+      <article ref="root" class="history-item" :class="{ 'is-selected': selected }" tabindex="0" :aria-label="t('{0}，回车复制，空格选择，右键操作', { 0: item.kind === 'image' ? t('图片') : item.preview.slice(0, 80) })" @keydown="key" @click.self="select">
+        <input type="checkbox" :checked="selected" :disabled="busy" :aria-label="t('选择条目 {0}', { 0: item.id })" @change="$emit('select')" />
+        <button class="history-content" :disabled="busy" :aria-pressed="selected" :aria-label="t('选择条目 {0}，双击复制', { 0: item.id })" @click="select" @dblclick="emit('restore')">
+          <img v-if="thumbnail" :src="thumbnail" :alt='t("历史图片缩略图")' />
+          <span v-else-if="item.kind === 'image'">{{ te(error) || t("图片 {0} × {1}", { 0: item.width, 1: item.height }) }}</span>
           <span v-else-if="item.kind === 'file'" class="history-files">
             <span v-for="(file, index) in visibleFiles" :key="index" class="history-file-row" :title="file.path"><component :is="file.icon" :size="18" :style="{ color: file.color }" aria-hidden="true" /><span class="history-file-name">{{ file.name }}</span></span>
-            <span v-if="(item.filePaths?.length ?? 0) > visibleFiles.length" class="history-file-more">另有 {{ item.filePaths!.length - visibleFiles.length }} 项</span>
+            <span v-if="(item.filePaths?.length ?? 0) > visibleFiles.length" class="history-file-more">{{ t("另有") }} {{ item.filePaths!.length - visibleFiles.length }} {{ t("项") }}</span>
           </span>
           <span v-else class="history-text">{{ item.preview }}</span>
-          <span class="history-meta"><span>{{ new Date(item.lastSeenAt).toLocaleString() }} · {{ item.seenCount }} 次</span><span>{{ item.favorite ? '★ ' : '' }}{{ item.kind === 'image' ? `${item.width} × ${item.height}` : item.kind === 'file' ? `${item.filePaths?.length ?? 0} 项 · 文件引用` : `${item.byteSize} B` }}</span></span>
+          <span class="history-meta"><span>{{ localizedDate(item.lastSeenAt) }} · {{ item.seenCount }} {{ t("次") }}</span><span>{{ item.favorite ? '★ ' : '' }}{{ item.kind === 'image' ? `${item.width} × ${item.height}` : item.kind === 'file' ? t("{0} 项 · 文件引用", { 0: item.filePaths?.length ?? 0 }) : `${item.byteSize} B` }}</span></span>
         </button>
       </article>
     </ContextMenuTrigger>
     <!-- 复用菜单组件处理定位、边缘避让、点击外部关闭及键盘导航。 -->
     <ContextMenuPortal>
-      <ContextMenuContent class="history-context-menu" :collision-padding="8" aria-label="历史条目操作">
-        <ContextMenuItem :disabled="busy" @select="$emit('restore')"><Copy :size="15" />复制</ContextMenuItem>
-        <ContextMenuItem v-if="item.kind === 'image'" :disabled="busy" @select="$emit('pin')"><Pin :size="15" />悬浮贴图</ContextMenuItem>
+      <ContextMenuContent class="history-context-menu" :collision-padding="8" :aria-label='t("历史条目操作")'>
+        <ContextMenuItem :disabled="busy" @select="$emit('restore')"><Copy :size="15" />{{ t("复制") }}</ContextMenuItem>
+        <ContextMenuItem v-if="item.kind === 'image'" :disabled="busy" @select="$emit('pin')"><Pin :size="15" />{{ t("悬浮贴图") }}</ContextMenuItem>
         <ContextMenuSeparator class="history-menu-separator" />
-        <ContextMenuItem :disabled="busy" @select="$emit('favorite')"><Star :size="15" />{{ item.favorite ? '取消收藏' : '收藏' }}</ContextMenuItem>
-        <ContextMenuItem :disabled="busy" @select="$emit('delete')"><Trash2 :size="15" />删除</ContextMenuItem>
+        <ContextMenuItem :disabled="busy" @select="$emit('favorite')"><Star :size="15" />{{ item.favorite ? t("取消收藏") : t("收藏") }}</ContextMenuItem>
+        <ContextMenuItem :disabled="busy" @select="$emit('delete')"><Trash2 :size="15" />{{ t("删除") }}</ContextMenuItem>
       </ContextMenuContent>
     </ContextMenuPortal>
   </ContextMenuRoot>

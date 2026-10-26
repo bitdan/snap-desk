@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t, te } from '@/lib/i18n'
 import { computed, nextTick, onMounted, ref } from 'vue'
 import ImageTranslation from './ImageTranslation.vue'
 import { api, type PinFrame, type QrResult } from '@/lib/api'
@@ -69,41 +70,41 @@ onMounted(() => { void nextTick(() => panel.value?.focus()); void recognize() })
 
 <template>
   <div class="pin-recognition-shade" @pointerdown.stop @wheel.stop @contextmenu.stop.prevent>
-    <section v-if="translating && ocr" class="pin-recognition" role="dialog" aria-modal="true" aria-label="图片翻译">
+    <section v-if="translating && ocr" class="pin-recognition" role="dialog" aria-modal="true" :aria-label='t("图片翻译")'>
       <ImageTranslation :recognition="ocr" :image="frame" @close="emit('close')" @back="backToRecognition" />
     </section>
-    <section v-else ref="panel" class="pin-recognition" role="dialog" aria-modal="true" :aria-label="mode !== 'qr' ? '图片文字识别' : '图片二维码识别'" tabindex="-1" @keydown.stop="key">
-      <header><strong>{{ mode !== 'qr' ? '图片文字识别' : '图片二维码识别' }}</strong><button :disabled="busy" @click="emit('close')">关闭</button></header>
-      <p v-if="busy" role="status">正在处理…</p>
-      <p v-if="error" role="alert" class="recognition-error">{{ error }}</p>
-      <p v-if="message" role="status">{{ message }}</p>
+    <section v-else ref="panel" class="pin-recognition" role="dialog" aria-modal="true" :aria-label="mode !== 'qr' ? t('图片文字识别') : t('图片二维码识别')" tabindex="-1" @keydown.stop="key">
+      <header><strong>{{ mode !== 'qr' ? t("图片文字识别") : t("图片二维码识别") }}</strong><button :disabled="busy" @click="emit('close')">{{ t("关闭") }}</button></header>
+      <p v-if="busy" role="status">{{ t("正在处理…") }}</p>
+      <p v-if="error" role="alert" class="recognition-error">{{ te(error) }}</p>
+      <p v-if="message" role="status">{{ t(message) }}</p>
       <template v-if="mode !== 'qr' && ocr">
-        <p v-if="!lines.length">未识别到文字。</p>
-        <p v-for="warning in ocr.warnings" :key="warning">{{ warning }}</p>
+        <p v-if="!lines.length">{{ t("未识别到文字。") }}</p>
+        <p v-for="warning in ocr.warnings" :key="warning">{{ t(warning) }}</p>
         <div class="image-preview">
-          <img :src="frame.dataUrl" alt="识别原图（不含标注）" draggable="false" @error="error = '原图预览加载失败，仍可通过下方文字列表选择和复制。'" />
+          <img :src="frame.dataUrl" :alt='t("识别原图（不含标注）")' draggable="false" @error="error = '原图预览加载失败，仍可通过下方文字列表选择和复制。'" />
           <svg :viewBox="`0 0 ${frame.width} ${frame.height}`" preserveAspectRatio="none" aria-hidden="true">
             <polygon v-for="line in polygons" :key="line.id" :points="line.points" :class="{ selected: selected.includes(line.id) }" @click="!busy && toggle(line.id)"><title>{{ line.text }}</title></polygon>
           </svg>
         </div>
-        <div v-if="lines.length" class="line-list" aria-label="选择识别文字行">
+        <div v-if="lines.length" class="line-list" :aria-label='t("选择识别文字行")'>
           <label v-for="line in lines" :key="line.id"><input v-model="selected" type="checkbox" :value="line.id" :disabled="busy" />{{ line.text }}</label>
         </div>
-        <textarea ref="textArea" :value="text" readonly aria-label="所选文字，可选择部分复制" placeholder="请选择文字行" />
-        <footer><button :disabled="busy || !lines.length" @click="selected = lines.map(line => line.id)">全选</button><button :disabled="busy || !selected.length" @click="selected = []">清空选择</button><button :disabled="busy || !text.trim()" @click="copy">复制文字 / 所选片段</button></footer>
+        <textarea ref="textArea" :value="text" readonly :aria-label='t("所选文字，可选择部分复制")' :placeholder='t("请选择文字行")' />
+        <footer><button :disabled="busy || !lines.length" @click="selected = lines.map(line => line.id)">{{ t("全选") }}</button><button :disabled="busy || !selected.length" @click="selected = []">{{ t("清空选择") }}</button><button :disabled="busy || !text.trim()" @click="copy">{{ t("复制文字 / 所选片段") }}</button></footer>
       </template>
       <template v-if="mode === 'qr' && qr">
-        <p v-if="!qr.items.length">未发现二维码，请使用包含完整二维码及周围白边的图片。</p>
+        <p v-if="!qr.items.length">{{ t("未发现二维码，请使用包含完整二维码及周围白边的图片。") }}</p>
         <div v-for="(item, index) in qr.items" :key="index" class="qr-item">
           <p class="qr-text" dir="auto">{{ item.text }}</p>
-          <footer><button :disabled="busy" @click="qrAction(index, 'copy')">复制内容</button><button v-if="item.url" :disabled="busy" @click="pendingLink = index">打开链接…</button></footer>
-          <div v-if="pendingLink === index" role="group" aria-label="确认打开链接">
-            <p>将在浏览器打开：<span class="qr-text">{{ item.url }}</span></p>
-            <footer><button :disabled="busy" @click="pendingLink = null">取消</button><button :disabled="busy" @click="qrAction(index, 'open')">确认打开</button></footer>
+          <footer><button :disabled="busy" @click="qrAction(index, 'copy')">{{ t("复制内容") }}</button><button v-if="item.url" :disabled="busy" @click="pendingLink = index">{{ t("打开链接…") }}</button></footer>
+          <div v-if="pendingLink === index" role="group" :aria-label='t("确认打开链接")'>
+            <p>{{ t("将在浏览器打开：") }}<span class="qr-text">{{ item.url }}</span></p>
+            <footer><button :disabled="busy" @click="pendingLink = null">{{ t("取消") }}</button><button :disabled="busy" @click="qrAction(index, 'open')">{{ t("确认打开") }}</button></footer>
           </div>
         </div>
       </template>
-      <footer><button :disabled="busy" @click="recognize">重新识别</button><button v-if="ocr && mode !== 'qr'" :disabled="busy || !ocr.fullText.trim()" @click="translating = true">翻译图片</button></footer>
+      <footer><button :disabled="busy" @click="recognize">{{ t("重新识别") }}</button><button v-if="ocr && mode !== 'qr'" :disabled="busy || !ocr.fullText.trim()" @click="translating = true">{{ t("翻译图片") }}</button></footer>
     </section>
   </div>
 </template>

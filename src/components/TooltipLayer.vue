@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { nextTick, onMounted, onUnmounted, ref } from 'vue'
+import { appearance } from '@/lib/appearance'
+import { nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 // 提示挂在 body，避免被工具栏缩放或 overflow 裁剪。
 const text = ref('')
 const tooltip = ref<HTMLElement | null>(null)
@@ -9,6 +10,7 @@ let original = ''
 let timer: ReturnType<typeof setTimeout> | undefined
 function hide() {
   clearTimeout(timer); text.value = ''
+  // 语言切换时 Vue 会更新 title；不能用旧提示覆盖新属性。
   if (target && !target.hasAttribute('title')) target.setAttribute('title', original)
   target = null
 }
@@ -30,6 +32,7 @@ function show(event: Event) {
     position.value = { left: `${Math.max(8, Math.min(innerWidth - bounds.width - 8, rect.left + (rect.width - bounds.width) / 2))}px`, top: `${Math.max(4, Math.min(innerHeight - bounds.height - 4, top))}px` }
   }, 180)
 }
+watch(() => appearance.value.language, hide, { flush: 'post' })
 function leave(event: Event) {
   const next = (event as MouseEvent).relatedTarget
   if (target && (!(next instanceof Node) || !target.contains(next))) hide()

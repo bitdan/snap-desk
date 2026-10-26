@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t, te } from '@/lib/i18n'
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { api } from '@/lib/api'
 import { targetLanguages, type AiSettings, type OcrResult } from '@/lib/ai'
@@ -122,44 +123,44 @@ onUnmounted(() => { disposed = true; observer?.disconnect(); void cancel() })
 </script>
 
 <template>
-  <section ref="panel" class="image-translation" tabindex="-1" aria-label="图片翻译" @keydown.stop="key">
-    <header><strong>图片翻译</strong><button @click="emit('close')">关闭</button></header>
+  <section ref="panel" class="image-translation" tabindex="-1" :aria-label='t("图片翻译")' @keydown.stop="key">
+    <header><strong>{{ t("图片翻译") }}</strong><button @click="emit('close')">{{ t("关闭") }}</button></header>
     <div class="translation-actions">
-      <span v-if="loading" role="status">正在读取配置…</span>
-      <template v-else-if="config"><span>{{ local ? '本地离线 · 图片与文字不上传' : '在线翻译 · 仅发送文字' }} → {{ target }}</span><span>{{ completed }} / {{ plan.units.length }}</span></template>
-      <button :disabled="loading || busy" @click="loadConfig">重新读取配置</button>
+      <span v-if="loading" role="status">{{ t("正在读取配置…") }}</span>
+      <template v-else-if="config"><span>{{ local ? t("本地离线 · 图片与文字不上传") : t("在线翻译 · 仅发送文字") }} → {{ t(target) }}</span><span>{{ completed }} / {{ plan.units.length }}</span></template>
+      <button :disabled="loading || busy" @click="loadConfig">{{ t("重新读取配置") }}</button>
     </div>
     <template v-if="config && !local">
       <p class="destination">{{ config.endpoint }} · {{ config.model }}</p>
-      <label class="consent"><input v-model="consent" type="checkbox" :disabled="busy" />同意将本次识别文字发送至上述服务（{{ plan.units.length }} 个文本片段，可能计费）</label>
+      <label class="consent"><input v-model="consent" type="checkbox" :disabled="busy" />{{ t("同意将本次识别文字发送至上述服务（") }}{{ plan.units.length }} {{ t("个文本片段，可能计费）") }}</label>
     </template>
-    <p v-if="fallbackReason" role="status">{{ fallbackReason }}</p>
-    <p v-if="plan.error || error" class="translation-error" role="alert">{{ plan.error || error }}</p>
-    <p v-if="message" class="translation-success" role="status">{{ message }}</p>
+    <p v-if="fallbackReason" role="status">{{ t(fallbackReason) }}</p>
+    <p v-if="plan.error || error" class="translation-error" role="alert">{{ te(plan.error || error) }}</p>
+    <p v-if="message" class="translation-success" role="status">{{ t(message) }}</p>
     <div class="translation-actions">
-      <button v-if="busy" @click="cancel">取消翻译</button>
-      <button :disabled="!canTranslate || completed === plan.units.length" @click="translate">{{ completed ? '继续翻译未完成部分' : '翻译图片' }}</button>
-      <button :disabled="!allText || copying" @click="copy(allText)">复制已有译文</button>
-      <label v-if="!fallbackReason"><input v-model="compare" type="checkbox" />文本对照视图</label>
-      <button v-if="hidden.length && !comparison" @click="hidden = []">恢复已关闭译文</button>
+      <button v-if="busy" @click="cancel">{{ t("取消翻译") }}</button>
+      <button :disabled="!canTranslate || completed === plan.units.length" @click="translate">{{ completed ? t("继续翻译未完成部分") : t("翻译图片") }}</button>
+      <button :disabled="!allText || copying" @click="copy(allText)">{{ t("复制已有译文") }}</button>
+      <label v-if="!fallbackReason"><input v-model="compare" type="checkbox" />{{ t("文本对照视图") }}</label>
+      <button v-if="hidden.length && !comparison" @click="hidden = []">{{ t("恢复已关闭译文") }}</button>
     </div>
     <div ref="imageArea" class="translation-image">
-      <svg :viewBox="`0 0 ${crop.width} ${crop.height}`" :style="{ aspectRatio: `${crop.width} / ${crop.height}` }" role="img" aria-label="原始图片，译文不会写入原图">
+      <svg :viewBox="`0 0 ${crop.width} ${crop.height}`" :style="{ aspectRatio: `${crop.width} / ${crop.height}` }" role="img" :aria-label='t("原始图片，译文不会写入原图")'>
         <image :href="image.dataUrl" :x="-crop.x" :y="-crop.y" :width="image.width" :height="image.height" preserveAspectRatio="none" />
       </svg>
       <template v-if="!comparison">
-        <section v-for="unit in visible" :key="unit.id" class="translation-overlay" :style="overlayStyle(unit)" :aria-label="`译文：${unit.source}`">
-          <div class="overlay-actions"><button class="move-translation" :aria-label="`移动译文：${unit.source}，可用方向键`" @pointerdown="startMove($event, unit)" @pointermove="moving" @pointerup="drag = null" @pointercancel="drag = null" @lostpointercapture="drag = null" @keydown="moveKey($event, unit)">移动</button><button :disabled="copying" @click="copy(results[unit.id])">复制</button><button @click="hidden.push(unit.id)">关闭</button></div>
+        <section v-for="unit in visible" :key="unit.id" class="translation-overlay" :style="overlayStyle(unit)" :aria-label="t('译文：{0}', { 0: unit.source })">
+          <div class="overlay-actions"><button class="move-translation" :aria-label="t('移动译文：{0}，可用方向键', { 0: unit.source })" @pointerdown="startMove($event, unit)" @pointermove="moving" @pointerup="drag = null" @pointercancel="drag = null" @lostpointercapture="drag = null" @keydown="moveKey($event, unit)">{{ t("移动") }}</button><button :disabled="copying" @click="copy(results[unit.id])">{{ t("复制") }}</button><button @click="hidden.push(unit.id)">{{ t("关闭") }}</button></div>
           <p class="overlay-source">{{ unit.source }}</p><p class="overlay-text" dir="auto">{{ results[unit.id] }}</p>
         </section>
       </template>
     </div>
-    <div v-if="comparison" class="comparison-list" aria-label="原文译文对照">
-      <article v-for="unit in plan.units" :key="unit.id"><div><strong>原文</strong><p dir="auto">{{ unit.source }}</p></div><div><strong>译文</strong><p dir="auto">{{ results[unit.id] || '尚未翻译' }}</p><button v-if="results[unit.id]" :disabled="copying" @click="copy(results[unit.id])">复制译文</button></div></article>
+    <div v-if="comparison" class="comparison-list" :aria-label='t("原文译文对照")'>
+      <article v-for="unit in plan.units" :key="unit.id"><div><strong>{{ t("原文") }}</strong><p dir="auto">{{ unit.source }}</p></div><div><strong>{{ t("译文") }}</strong><p dir="auto">{{ results[unit.id] || t("尚未翻译") }}</p><button v-if="results[unit.id]" :disabled="copying" @click="copy(results[unit.id])">{{ t("复制译文") }}</button></div></article>
     </div>
-    <label class="original-text">原始识别文字<textarea :value="recognition.fullText" readonly aria-label="原始识别文字" /></label>
-    <p v-for="warning in recognition.warnings" :key="warning">{{ warning }}</p>
-    <footer><button @click="emit('back')">返回识别</button></footer>
+    <label class="original-text">{{ t("原始识别文字") }}<textarea :value="recognition.fullText" readonly :aria-label='t("原始识别文字")' /></label>
+    <p v-for="warning in recognition.warnings" :key="warning">{{ t(warning) }}</p>
+    <footer><button @click="emit('back')">{{ t("返回识别") }}</button></footer>
   </section>
 </template>
 

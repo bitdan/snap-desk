@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t, te } from '@/lib/i18n'
 import { computed, onMounted, ref, watch } from 'vue'
 import { api } from '@/lib/api'
 import { defaultAiSettings, targetLanguages, validateAiSettings } from '@/lib/ai'
@@ -55,37 +56,37 @@ async function modelAction(modelId: string, action: 'download' | 'import' | 'del
 
 <template>
   <section class="ai-settings">
-    <h3>文字识别</h3>
+    <h3>{{ t("文字识别") }}</h3>
     <ResourceSettings kind="ocr" />
-    <p class="hint">识别结束后空闲 5 分钟自动释放模型，下次识别时重新加载。</p>
-    <h3>文本翻译</h3>
+    <p class="hint">{{ t("识别结束后空闲 5 分钟自动释放模型，下次识别时重新加载。") }}</p>
+    <h3>{{ t("文本翻译") }}</h3>
     <fieldset :disabled="busy || !ready">
-      <label>翻译引擎<select v-model="draft.provider"><option value="local-ctranslate2">本地离线 · CTranslate2 / OPUS-MT</option><option value="online-llm">在线文本服务</option></select></label>
+      <label>{{ t("翻译引擎") }}<select v-model="draft.provider"><option value="local-ctranslate2">{{ t("本地离线 · CTranslate2 / OPUS-MT") }}</option><option value="online-llm">{{ t("在线文本服务") }}</option></select></label>
       <template v-if="local">
-        <p :class="{ 'status-ok': localStatus?.runtimeReady }" role="status"><Check v-if="localStatus?.runtimeReady" :size="14" />{{ !localStatus ? '引擎状态未读取' : localStatus.runtimeReady ? '本地引擎已安装' : '缺少翻译引擎，请安装带引擎的版本。' }}</p>
+        <p :class="{ 'status-ok': localStatus?.runtimeReady }" role="status"><Check v-if="localStatus?.runtimeReady" :size="14" />{{ !localStatus ? t("引擎状态未读取") : localStatus.runtimeReady ? t("本地引擎已安装") : t("缺少翻译引擎，请安装带引擎的版本。") }}</p>
         <div v-for="pack in localStatus?.models" :key="pack.modelId" class="model-row">
-          <span>{{ pack.modelId.includes('en-zh') ? '英语 → 简体中文' : '中文 → 英语' }}</span><span :class="{ 'status-ok': pack.ready }" role="status"><Check v-if="pack.ready" :size="14" />{{ pack.ready ? '已校验' : '未安装或校验失败' }}</span>
-          <Button variant="outline" :disabled="!pack.downloadable" @click="modelAction(pack.modelId, 'download')">下载{{ pack.downloadBytes ? `（${Math.ceil(pack.downloadBytes / 1048576)} MiB）` : '' }}</Button>
-          <Button variant="outline" @click="modelAction(pack.modelId, 'import')">导入语言包</Button>
-          <Button v-if="pack.revision" variant="ghost" @click="modelAction(pack.modelId, 'delete')">卸载</Button>
+          <span>{{ pack.modelId.includes('en-zh') ? t("英语 → 简体中文") : t("中文 → 英语") }}</span><span :class="{ 'status-ok': pack.ready }" role="status"><Check v-if="pack.ready" :size="14" />{{ pack.ready ? t("已校验") : t("未安装或校验失败") }}</span>
+          <Button variant="outline" :disabled="!pack.downloadable" @click="modelAction(pack.modelId, 'download')">{{ t("下载") }}{{ pack.downloadBytes ? `（${Math.ceil(pack.downloadBytes / 1048576)} MiB）` : '' }}</Button>
+          <Button variant="outline" @click="modelAction(pack.modelId, 'import')">{{ t("导入语言包") }}</Button>
+          <Button v-if="pack.revision" variant="ghost" @click="modelAction(pack.modelId, 'delete')">{{ t("卸载") }}</Button>
         </div>
-        <p class="hint">仅导入可信来源的语言包；文件校验不代表来源可信。</p>
-        <label>闲置回收（秒）<input v-model.number="draft.localIdleSeconds" type="number" min="0" max="3600" step="1" /></label>
-        <p class="hint">0 表示保持缓存，或设为 30～3600 秒；自动回收后下次翻译会重新加载。</p>
+        <p class="hint">{{ t("仅导入可信来源的语言包；文件校验不代表来源可信。") }}</p>
+        <label>{{ t("闲置回收（秒）") }}<input v-model.number="draft.localIdleSeconds" type="number" min="0" max="3600" step="1" /></label>
+        <p class="hint">{{ t("0 表示保持缓存，或设为 30～3600 秒；自动回收后下次翻译会重新加载。") }}</p>
       </template>
       <template v-else>
-      <p>每次翻译前确认发送原文，可能产生服务费用。</p>
-      <label>完整接口地址<input v-model.trim="draft.endpoint" type="url" placeholder="https://服务域名/v1/chat/completions" autocomplete="off" /></label>
-      <label>模型名称<input v-model.trim="draft.model" placeholder="填写服务支持的模型 ID" /></label>
+      <p>{{ t("每次翻译前确认发送原文，可能产生服务费用。") }}</p>
+      <label>{{ t("完整接口地址") }}<input v-model.trim="draft.endpoint" type="url" :placeholder='t("https://服务域名/v1/chat/completions")' autocomplete="off" /></label>
+      <label>{{ t("模型名称") }}<input v-model.trim="draft.model" :placeholder='t("填写服务支持的模型 ID")' /></label>
       </template>
-      <label>目标语言<select v-model="draft.targetLanguage"><option v-for="item in languages" :key="item.value" :value="item.value">{{ item.label }}</option></select></label>
-      <label>超时（秒）<input v-model.number="draft.timeoutSeconds" type="number" min="5" max="120" /></label>
-      <label v-if="!local">API Key<input v-model="secret" type="password" autocomplete="new-password" placeholder="留空保留密钥；输入后点击保存" /></label>
-      <p v-if="!local" :class="{ 'status-ok': configured }" role="status"><Check v-if="configured" :size="14" />密钥{{ configured ? '已配置' : '未配置' }}（系统凭证库，更换地址需重设）</p>
-      <div class="actions"><Button @click="save">保存</Button><Button variant="outline" :disabled="!local && !configured" @click="credentialAction('test')">测试已保存配置</Button><Button v-if="!local" variant="ghost" :disabled="!configured" @click="credentialAction('delete')">删除已保存密钥</Button></div>
+      <label>{{ t("目标语言") }}<select v-model="draft.targetLanguage"><option v-for="item in languages" :key="item.value" :value="item.value">{{ t(item.label) }}</option></select></label>
+      <label>{{ t("超时（秒）") }}<input v-model.number="draft.timeoutSeconds" type="number" min="5" max="120" /></label>
+      <label v-if="!local">API Key<input v-model="secret" type="password" autocomplete="new-password" :placeholder='t("留空保留密钥；输入后点击保存")' /></label>
+      <p v-if="!local" :class="{ 'status-ok': configured }" role="status"><Check v-if="configured" :size="14" />{{ t("密钥") }}{{ configured ? t("已配置") : t("未配置") }}{{ t("（系统凭证库，更换地址需重设）") }}</p>
+      <div class="actions"><Button @click="save">{{ t("保存") }}</Button><Button variant="outline" :disabled="!local && !configured" @click="credentialAction('test')">{{ t("测试已保存配置") }}</Button><Button v-if="!local" variant="ghost" :disabled="!configured" @click="credentialAction('delete')">{{ t("删除已保存密钥") }}</Button></div>
     </fieldset>
-    <p v-if="!local" class="hint">连接测试会发送固定文本 Hello，可能产生少量费用。翻译失败不会自动切换服务。</p>
-    <p v-if="message" role="status">{{ message }}</p><p v-if="error" class="error" role="alert">{{ error }}</p>
+    <p v-if="!local" class="hint">{{ t("连接测试会发送固定文本 Hello，可能产生少量费用。翻译失败不会自动切换服务。") }}</p>
+    <p v-if="message" role="status">{{ t(message) }}</p><p v-if="error" class="error" role="alert">{{ te(error) }}</p>
   </section>
 </template>
 

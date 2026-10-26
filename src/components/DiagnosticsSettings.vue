@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t, te } from '@/lib/i18n'
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { Check } from 'lucide-vue-next'
 import Button from './ui/button/Button.vue'
@@ -66,36 +67,36 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
 <template>
   <section class="diagnostics" aria-labelledby="diagnostics-heading">
     <div class="diagnostics-toolbar">
-      <h2 id="diagnostics-heading">运行状态</h2>
-      <span role="status" :class="status && !status.error ? 'status-ok' : 'text-xs text-zinc-500'"><Check v-if="status && !status.error" :size="14" />{{ status?.error ? '日志不可用' : status ? (remaining > 0 ? `DEBUG · 剩余 ${Math.ceil(remaining / 60)} 分钟` : 'INFO') : '状态未读取' }}</span>
-      <Button variant="ghost" :disabled="!desktop || busy" @click="run(refresh)">{{ busy ? '处理中…' : '刷新' }}</Button>
+      <h2 id="diagnostics-heading">{{ t("运行状态") }}</h2>
+      <span role="status" :class="status && !status.error ? 'status-ok' : 'text-xs text-zinc-500'"><Check v-if="status && !status.error" :size="14" />{{ status?.error ? t("日志不可用") : status ? (remaining > 0 ? t("DEBUG · 剩余 {0} 分钟", { 0: Math.ceil(remaining / 60) }) : 'INFO') : t("状态未读取") }}</span>
+      <Button variant="ghost" :disabled="!desktop || busy" @click="run(refresh)">{{ busy ? t("处理中…") : t("刷新") }}</Button>
     </div>
-    <p class="text-xs text-zinc-500">日志仅保存在本机，导出分享前请检查内容。</p>
-    <p v-if="status && !status.error" class="mt-2 text-xs text-zinc-500">日志共 {{ (status.totalBytes / 1024 / 1024).toFixed(2) }} MB · {{ status.archives }} 份归档 · 最近 500 条有效记录中 {{ status.recentErrors }} 条错误</p>
-    <p v-if="status?.error || error" class="notice error" role="alert">{{ error || status?.error }}</p>
-    <p v-if="message" class="notice" role="status">{{ message }}</p>
+    <p class="text-xs text-zinc-500">{{ t("日志仅保存在本机，导出分享前请检查内容。") }}</p>
+    <p v-if="status && !status.error" class="mt-2 text-xs text-zinc-500">{{ t("日志共") }} {{ (status.totalBytes / 1024 / 1024).toFixed(2) }} MB · {{ status.archives }} {{ t("份归档 · 最近 500 条有效记录中") }} {{ status.recentErrors }} {{ t("条错误") }}</p>
+    <p v-if="status?.error || error" class="notice error" role="alert">{{ te(error || status?.error) }}</p>
+    <p v-if="message" class="notice" role="status">{{ t(message) }}</p>
     <div class="diagnostics-toolbar mt-3">
-      <label>级别 <select v-model="level" :disabled="!desktop || busy" @change="run(readLogs)"><option value="">全部</option><option v-for="value in ['ERROR', 'WARN', 'INFO', 'DEBUG']" :key="value">{{ value }}</option></select></label>
-      <label>模块 <select v-model="module" :disabled="!desktop || busy" @change="run(readLogs)"><option value="">全部</option><option v-for="item in modules" :key="item.value" :value="item.value">{{ item.label }}</option></select></label>
-      <input v-model="search" class="diagnostics-search" type="search" aria-label="搜索已读取日志" placeholder="搜索事件名、错误码" />
+      <label>{{ t("级别") }} <select v-model="level" :disabled="!desktop || busy" @change="run(readLogs)"><option value="">{{ t("全部") }}</option><option v-for="value in ['ERROR', 'WARN', 'INFO', 'DEBUG']" :key="value">{{ value }}</option></select></label>
+      <label>{{ t("模块") }} <select v-model="module" :disabled="!desktop || busy" @change="run(readLogs)"><option value="">{{ t("全部") }}</option><option v-for="item in modules" :key="item.value" :value="item.value">{{ t(item.label) }}</option></select></label>
+      <input v-model="search" class="diagnostics-search" type="search" :aria-label='t("搜索已读取日志")' :placeholder='t("搜索事件名、错误码")' />
     </div>
-    <div class="diagnostics-list" role="region" aria-label="最近日志（最新在前）" :aria-busy="busy" tabindex="0">
-      <p v-if="!visible.length" class="p-3 text-xs text-zinc-500">{{ busy ? '正在读取…' : recent ? '当前条件下没有日志。' : '尚未读取日志。' }}</p>
+    <div class="diagnostics-list" role="region" :aria-label='t("最近日志（最新在前）")' :aria-busy="busy" tabindex="0">
+      <p v-if="!visible.length" class="p-3 text-xs text-zinc-500">{{ busy ? t("正在读取…") : recent ? t("当前条件下没有日志。") : t("尚未读取日志。") }}</p>
       <div v-for="(entry, index) in visible" :key="index" class="diagnostics-entry">
         <span class="text-zinc-500">{{ entry.timestamp }}</span>
         <strong :class="{ 'text-red-700': entry.level === 'ERROR', 'text-amber-700': entry.level === 'WARN' }">{{ entry.level }}</strong>
         <span>{{ entry.module }}</span><code>{{ entry.message }}</code>
       </div>
     </div>
-    <p v-if="recent" class="mt-2 text-xs text-zinc-500">显示 {{ visible.length }} / {{ recent.entries.length }} 条 · 扫描 {{ (recent.scannedBytes / 1024).toFixed(0) }} KB · 省略 {{ recent.omittedLines }} 条非白名单记录{{ recent.truncated ? ' · 已达读取或条数上限，非完整历史' : '' }}</p>
+    <p v-if="recent" class="mt-2 text-xs text-zinc-500">{{ t("显示") }} {{ visible.length }} / {{ recent.entries.length }} {{ t("条 · 扫描") }} {{ (recent.scannedBytes / 1024).toFixed(0) }} {{ t("KB · 省略") }} {{ recent.omittedLines }} {{ t("条非白名单记录") }}{{ recent.truncated ? t(" · 已达读取或条数上限，非完整历史") : '' }}</p>
     <div class="diagnostics-toolbar mt-3">
-      <Button variant="outline" :disabled="!desktop || busy" @click="run(() => api.openAppDirectory('logs'))">打开日志目录</Button>
-      <Button variant="ghost" :disabled="!desktop || busy || !status?.directory" @click="run(async () => { await api.copyAppDirectory('logs'); message = '日志路径已复制。' })">复制路径</Button>
-      <Button variant="outline" :disabled="!desktop || busy || !status?.exportSupported || !!status.error" @click="run(exportLogs)">导出诊断包</Button>
-      <Button variant="outline" :disabled="!desktop || busy || !status || !!status.error || !status.archives" @click="run(clearArchives)">清理历史归档</Button>
-      <Button variant="ghost" :disabled="!desktop || busy || !status" :aria-pressed="remaining > 0" @click="run(toggleDebug)">{{ remaining > 0 ? '关闭详细日志' : '临时开启 DEBUG（30 分钟）' }}</Button>
+      <Button variant="outline" :disabled="!desktop || busy" @click="run(() => api.openAppDirectory('logs'))">{{ t("打开日志目录") }}</Button>
+      <Button variant="ghost" :disabled="!desktop || busy || !status?.directory" @click="run(async () => { await api.copyAppDirectory('logs'); message = '日志路径已复制。' })">{{ t("复制路径") }}</Button>
+      <Button variant="outline" :disabled="!desktop || busy || !status?.exportSupported || !!status.error" @click="run(exportLogs)">{{ t("导出诊断包") }}</Button>
+      <Button variant="outline" :disabled="!desktop || busy || !status || !!status.error || !status.archives" @click="run(clearArchives)">{{ t("清理历史归档") }}</Button>
+      <Button variant="ghost" :disabled="!desktop || busy || !status" :aria-pressed="remaining > 0" @click="run(toggleDebug)">{{ remaining > 0 ? t("关闭详细日志") : t("临时开启 DEBUG（30 分钟）") }}</Button>
     </div>
-    <p v-if="status && !status.exportSupported" class="mt-2 text-xs text-zinc-500">当前平台暂不支持 ZIP 导出；可打开日志目录查看文件。</p>
+    <p v-if="status && !status.exportSupported" class="mt-2 text-xs text-zinc-500">{{ t("当前平台暂不支持 ZIP 导出；可打开日志目录查看文件。") }}</p>
   </section>
 </template>
 

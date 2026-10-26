@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t } from '@/lib/i18n'
 import { computed, ref, watch } from 'vue'
 import { ChevronDown } from 'lucide-vue-next'
 import { DropdownMenuRoot, DropdownMenuTrigger, DropdownMenuPortal, DropdownMenuContent, DropdownMenuItem } from 'reka-ui'
@@ -18,14 +19,14 @@ const items = computed(() => props.tools.map(tool => annotationTools.find(item =
 
 <template>
   <div class="tool-group">
-    <button :disabled="disabled" :title="current.name" :aria-label="current.name" :aria-pressed="active && tools.includes(selected)" @click="emit('select', recent)"><component :is="current.icon" :size="18" /></button>
+    <button :disabled="disabled" :title="t(current.name)" :aria-label="t(current.name)" :aria-pressed="active && tools.includes(selected)" @click="emit('select', recent)"><component :is="current.icon" :size="18" /></button>
     <DropdownMenuRoot v-if="tools.length > 1" v-model:open="open">
-      <DropdownMenuTrigger :disabled="disabled" class="group-trigger" :title="name" :aria-label="`选择${name}工具`"><ChevronDown :size="12" /></DropdownMenuTrigger>
+      <DropdownMenuTrigger :disabled="disabled" class="group-trigger" :title="t(name)" :aria-label="t('选择{0}工具', { 0: t(name) })"><ChevronDown :size="12" /></DropdownMenuTrigger>
       <DropdownMenuPortal>
         <!-- Portal 避开工具行的滚动裁剪；菜单自行处理焦点、方向键、Esc 和屏幕边缘避让。 -->
-        <DropdownMenuContent class="annotation-group-menu" side="bottom" align="start" :side-offset="8" :collision-padding="8" :aria-label="name" @pointerdown.stop @pointermove.stop @contextmenu.stop.prevent @keydown.stop>
+        <DropdownMenuContent class="annotation-group-menu" side="bottom" align="start" :side-offset="8" :collision-padding="8" :aria-label="t(name)" @pointerdown.stop @pointermove.stop @contextmenu.stop.prevent @keydown.stop>
           <DropdownMenuItem v-for="item in items" :key="item.tool" class="annotation-group-item" :disabled="disabled" @select="emit('select', item.tool)">
-            <component :is="item.icon" :size="16" /><span>{{ item.name }}</span><span v-if="active && selected === item.tool" class="chosen">✓</span>
+            <component :is="item.icon" :size="16" /><span>{{ t(item.name) }}</span><span v-if="active && selected === item.tool" class="chosen">✓</span>
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenuPortal>

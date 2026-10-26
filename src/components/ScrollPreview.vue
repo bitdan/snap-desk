@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t, te } from '@/lib/i18n'
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { Save, X, AlertCircle } from 'lucide-vue-next'
 import { isTauri } from '@tauri-apps/api/core'
@@ -61,25 +62,25 @@ onUnmounted(() => { disposed = true; off?.(); offClosed?.() })
 <template>
   <main class="live-preview" :class="{ controls }">
     <template v-if="!controls">
-      <header><strong>滚动截图</strong><span v-if="view" :title="`已拼接 ${view.frames} 帧`">{{ view.width }} × {{ view.height }}</span></header>
+      <header><strong>{{ t("滚动截图") }}</strong><span v-if="view" :title="t('已拼接 {0} 帧', { 0: view.frames })">{{ view.width }} × {{ view.height }}</span></header>
       <div class="canvas">
         <div v-if="view?.preview" class="image" :style="{ aspectRatio: `${view.width} / ${view.height}`, '--image-ratio': view.width / view.height }">
-          <img :src="view.preview" alt="正在拼接的滚动截图" />
-          <div class="current-frame" :style="marker" title="当前采集画面" aria-label="当前采集画面的位置" />
+          <img :src="view.preview" :alt='t("正在拼接的滚动截图")' />
+          <div class="current-frame" :style="marker" :title='t("当前采集画面")' :aria-label='t("当前采集画面的位置")' />
         </div>
-        <span v-else>准备采集…</span>
+        <span v-else>{{ t("准备采集…") }}</span>
       </div>
-      <p v-if="view" class="coverage">覆盖 {{ scrollCoverageLabel(view) }}%<span v-if="view.hasHoles"> · 棋盘格标出未采集区域（细小空洞会放大显示），请按蛇形路径补齐</span></p>
-      <p class="preview-hint" :class="{ error, recovering }" :role="error ? 'alert' : recovering ? 'status' : undefined" :title="hint">{{ hint }}<span v-if="recovering && !error">也可保存已确认部分或取消。</span></p>
+      <p v-if="view" class="coverage">{{ t("覆盖") }} {{ scrollCoverageLabel(view) }}%<span v-if="view.hasHoles"> {{ t("· 棋盘格标出未采集区域（细小空洞会放大显示），请按蛇形路径补齐") }}</span></p>
+      <p class="preview-hint" :class="{ error, recovering }" :role="error ? 'alert' : recovering ? 'status' : undefined" :title="te(hint)">{{ te(hint) }}<span v-if="recovering && !error">{{ t("也可保存已确认部分或取消。") }}</span></p>
     </template>
     <footer v-else>
-      <div class="progress" :title="hint">
-        <span class="status"><i :class="{ stopped: busy || !view?.collecting }" />{{ status }}</span>
-        <small v-if="view" aria-live="polite">{{ view.message || `${view.frames} 帧 · ${view.height} px` }}</small>
+      <div class="progress" :title="te(hint)">
+        <span class="status"><i :class="{ stopped: busy || !view?.collecting }" />{{ t(status) }}</span>
+        <small v-if="view" aria-live="polite">{{ te(view.message) || t("{0} 帧 · {1} px", { 0: view.frames, 1: view.height }) }}</small>
       </div>
-      <span v-if="error" class="error-indicator" role="alert" :title="error" :aria-label="error"><AlertCircle :size="16" /></span>
-      <button class="save" :disabled="busy || !view" :title="recovering ? '仅保存并复制当前已确认画布，不追加未匹配画面' : '结束采集，保存并复制滚动截图'" @click="finish(false)"><Save :size="15" />{{ recovering ? '保存已确认部分' : '完成' }}</button>
-      <button class="cancel" :disabled="busy || !view" title="取消滚动截图，不导出当前画布" aria-label="取消滚动截图" @click="finish(true)"><X :size="17" /><span v-if="recovering">取消</span></button>
+      <span v-if="error" class="error-indicator" role="alert" :title="te(error)" :aria-label="te(error)"><AlertCircle :size="16" /></span>
+      <button class="save" :disabled="busy || !view" :title="recovering ? t('仅保存并复制当前已确认画布，不追加未匹配画面') : t('结束采集，保存并复制滚动截图')" @click="finish(false)"><Save :size="15" />{{ recovering ? t("保存已确认部分") : t("完成") }}</button>
+      <button class="cancel" :disabled="busy || !view" :title='t("取消滚动截图，不导出当前画布")' :aria-label='t("取消滚动截图")' @click="finish(true)"><X :size="17" /><span v-if="recovering">{{ t("取消") }}</span></button>
     </footer>
   </main>
 </template>

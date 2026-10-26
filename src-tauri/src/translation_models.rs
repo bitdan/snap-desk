@@ -375,7 +375,10 @@ pub async fn translation_model_action(
                 if let Some(folder) = app
                     .dialog()
                     .file()
-                    .set_title("选择可信的离线语言包目录（含 pack.json）")
+                    .set_title(crate::native_i18n::text(
+                        &app,
+                        "选择可信的离线语言包目录（含 pack.json）",
+                    ))
                     .blocking_pick_folder()
                 {
                     let source = folder.into_path().map_err(|e| e.to_string())?;

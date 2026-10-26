@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t, te } from '@/lib/i18n'
 import { onMounted, onUnmounted, ref, watch } from 'vue'
 import RecordingEditor from './RecordingEditor.vue'
 import Button from './ui/button/Button.vue'
@@ -111,63 +112,63 @@ onUnmounted(() => { disposed = true; clearTimeout(timer) })
 
 <template>
   <section>
-    <div v-if="error" class="notice error" role="alert">{{ error }}</div>
-    <p v-if="recoveredPath" class="notice break-all" role="status">已重新导出：{{ recoveredPath }}</p>
+    <div v-if="error" class="notice error" role="alert">{{ te(error) }}</div>
+    <p v-if="recoveredPath" class="notice break-all" role="status">{{ t("已重新导出：") }}{{ recoveredPath }}</p>
     <div v-if="result" class="settings-card mb-3">
-      <div class="setting-row"><strong>最近完成的录屏</strong><span class="text-sm text-zinc-500">本次运行</span></div>
+      <div class="setting-row"><strong>{{ t("最近完成的录屏") }}</strong><span class="text-sm text-zinc-500">{{ t("本次运行") }}</span></div>
       <p class="py-2 break-all font-medium">{{ result.filename }}</p>
       <p class="break-all text-xs text-zinc-500">{{ result.path }}</p>
       <div class="flex flex-wrap gap-2 py-4">
-        <Button v-if="!editorOpen" :disabled="resultBusy || recordingActive(view)" @click="editorOpen = true">预览与裁剪</Button>
-        <Button variant="outline" :disabled="resultBusy || recordingActive(view)" title="使用系统默认播放器打开 MP4 / GIF" @click="resultAction('preview')">预览（系统播放器）</Button>
-        <Button variant="outline" :disabled="resultBusy" @click="resultAction('openDirectory')">打开目录</Button>
-        <Button variant="ghost" :disabled="resultBusy" @click="resultAction('copyPath')">复制路径</Button>
+        <Button v-if="!editorOpen" :disabled="resultBusy || recordingActive(view)" @click="editorOpen = true">{{ t("预览与裁剪") }}</Button>
+        <Button variant="outline" :disabled="resultBusy || recordingActive(view)" :title='t("使用系统默认播放器打开 MP4 / GIF")' @click="resultAction('preview')">{{ t("预览（系统播放器）") }}</Button>
+        <Button variant="outline" :disabled="resultBusy" @click="resultAction('openDirectory')">{{ t("打开目录") }}</Button>
+        <Button variant="ghost" :disabled="resultBusy" @click="resultAction('copyPath')">{{ t("复制路径") }}</Button>
       </div>
       <RecordingEditor v-if="editorOpen" :key="result.id" :result-id="result.id" :disabled="recordingActive(view)" @close="editorOpen = false" />
-      <p v-if="resultMessage" class="text-sm pb-3" role="status">{{ resultMessage }}</p>
+      <p v-if="resultMessage" class="text-sm pb-3" role="status">{{ t(resultMessage) }}</p>
     </div>
     <div class="mb-3">
-      <div class="setting-row"><strong>可恢复录制 / 清理残留（{{ recoveries.length }}）</strong><Button variant="outline" :disabled="busy" @click="loadRecoveries">刷新</Button></div>
-      <p class="py-2 text-sm">{{ recoveries.length ? '仅已封装文件可重新导出；未封装数据不会自动修复或删除。' : '暂无待恢复录制。' }}</p>
+      <div class="setting-row"><strong>{{ t("可恢复录制 / 清理残留（") }}{{ recoveries.length }}）</strong><Button variant="outline" :disabled="busy" @click="loadRecoveries">{{ t("刷新") }}</Button></div>
+      <p class="py-2 text-sm">{{ recoveries.length ? t("仅已封装文件可重新导出；未封装数据不会自动修复或删除。") : t("暂无待恢复录制。") }}</p>
       <div v-for="item in recoveries" :key="item.id" class="setting-row gap-3">
-        <span class="min-w-0 flex-1 break-all">{{ item.path }}<small>{{ recordingRecoveryStatus(item) }}</small></span>
+        <span class="min-w-0 flex-1 break-all">{{ item.path }}<small>{{ t(recordingRecoveryStatus(item)) }}</small></span>
         <div class="flex flex-wrap gap-2">
-          <Button v-if="item.finalized && item.sourceExists" :disabled="busy || changingDirectory || recordingActive(view)" @click="retryExport(item.id)">{{ item.exported ? '检查导出' : '重试导出' }}</Button>
-          <Button variant="ghost" :disabled="busy || changingDirectory || recordingActive(view)" @click="discardId = item.id">清理残留</Button>
+          <Button v-if="item.finalized && item.sourceExists" :disabled="busy || changingDirectory || recordingActive(view)" @click="retryExport(item.id)">{{ item.exported ? t("检查导出") : t("重试导出") }}</Button>
+          <Button variant="ghost" :disabled="busy || changingDirectory || recordingActive(view)" @click="discardId = item.id">{{ t("清理残留") }}</Button>
         </div>
       </div>
-      <div v-if="discardId" class="notice" role="alertdialog" aria-label="确认清理录制残留">
-        <p>永久删除这条录制的源文件和恢复记录？未封装数据也会删除；已导出文件保留。</p>
-        <Button :disabled="busy || changingDirectory || recordingActive(view)" @click="discardRecovery(discardId)">确认删除源文件</Button>
-        <Button variant="outline" :disabled="busy" @click="discardId = null">保留</Button>
+      <div v-if="discardId" class="notice" role="alertdialog" :aria-label='t("确认清理录制残留")'>
+        <p>{{ t("永久删除这条录制的源文件和恢复记录？未封装数据也会删除；已导出文件保留。") }}</p>
+        <Button :disabled="busy || changingDirectory || recordingActive(view)" @click="discardRecovery(discardId)">{{ t("确认删除源文件") }}</Button>
+        <Button variant="outline" :disabled="busy" @click="discardId = null">{{ t("保留") }}</Button>
       </div>
     </div>
     <div class="settings-card">
-      <div class="setting-row"><span>输出</span><strong>MP4 可选声音 / GIF 无声 · 可录制光标</strong></div>
-      <div v-if="view" class="setting-row"><span>本次音频来源</span><span>{{ recordingAudioStatus(view) }}</span></div>
-      <p v-if="view?.systemAudio" class="text-xs text-zinc-500">系统无播放或设备静音时，音轨对应区间为静音。</p>
+      <div class="setting-row"><span>{{ t("输出") }}</span><strong>{{ t("MP4 可选声音 / GIF 无声 · 可录制光标") }}</strong></div>
+      <div v-if="view" class="setting-row"><span>{{ t("本次音频来源") }}</span><span>{{ t(recordingAudioStatus(view)) }}</span></div>
+      <p v-if="view?.systemAudio" class="text-xs text-zinc-500">{{ t("系统无播放或设备静音时，音轨对应区间为静音。") }}</p>
       <div class="setting-row gap-3">
-        <span class="min-w-0 flex-1">保存位置<small class="break-all">{{ directory?.path ?? (desktop ? '目录尚未读取' : '请在桌面应用中选择') }}</small></span>
+        <span class="min-w-0 flex-1">{{ t("保存位置") }}<small class="break-all">{{ directory?.path ?? (desktop ? t("目录尚未读取") : t("请在桌面应用中选择")) }}</small></span>
         <div class="flex shrink-0 gap-2">
-          <Button variant="outline" :disabled="!desktop || busy || changingDirectory || recordingActive(view)" @click="chooseDirectory()">选择文件夹</Button>
-          <Button variant="outline" :disabled="!desktop || busy || changingDirectory || recordingActive(view) || directory?.isDefault" @click="chooseDirectory(true)">恢复默认</Button>
+          <Button variant="outline" :disabled="!desktop || busy || changingDirectory || recordingActive(view)" @click="chooseDirectory()">{{ t("选择文件夹") }}</Button>
+          <Button variant="outline" :disabled="!desktop || busy || changingDirectory || recordingActive(view) || directory?.isDefault" @click="chooseDirectory(true)">{{ t("恢复默认") }}</Button>
         </div>
       </div>
-      <div class="setting-row"><span>录制时长</span><span>不设时长上限</span></div>
-      <p v-if="!capabilities?.available" class="py-3 text-sm" role="status">{{ capabilities?.reason ?? (desktop ? '正在检查录屏能力…' : '请在桌面应用中使用录屏。') }}</p>
-      <div v-if="view" class="setting-row"><span>{{ recordingStatus(view) }}</span><span>{{ recordingTime(view.seconds) }} · 编码提交 {{ view.frames }} 帧</span></div>
-      <div v-if="view" class="setting-row" title="成功提交编码帧的媒体时间窗口，不含暂停；恢复后重置近两秒窗口。静态画面可自然降至 0 FPS，并非丢帧。"><span>有效帧率</span><span>{{ recordingStats(view) }}</span></div>
-      <div v-if="view && view.targetBitrate > 0" class="setting-row"><span>目标码率</span><span>{{ (view.targetBitrate / 1_000_000).toFixed(1) }} Mbps</span></div>
-      <div v-if="view" class="setting-row"><span>编码方式</span><span>{{ encoderLabels[view.encoderKind] }}</span></div>
-      <p v-if="view?.encoderFallback" class="notice break-all" role="status">{{ view.encoderFallback }}</p>
-      <p v-if="view && view.phase !== 'completed'" class="py-3 text-sm break-all" role="status">{{ view.message }}</p>
+      <div class="setting-row"><span>{{ t("录制时长") }}</span><span>{{ t("不设时长上限") }}</span></div>
+      <p v-if="!capabilities?.available" class="py-3 text-sm" role="status">{{ te(capabilities?.reason) || (desktop ? t("正在检查录屏能力…") : t("请在桌面应用中使用录屏。")) }}</p>
+      <div v-if="view" class="setting-row"><span>{{ t(recordingStatus(view)) }}</span><span>{{ recordingTime(view.seconds) }} {{ t("· 编码提交") }} {{ view.frames }} {{ t("帧") }}</span></div>
+      <div v-if="view" class="setting-row" :title='t("成功提交编码帧的媒体时间窗口，不含暂停；恢复后重置近两秒窗口。静态画面可自然降至 0 FPS，并非丢帧。")'><span>{{ t("有效帧率") }}</span><span>{{ t(recordingStats(view)) }}</span></div>
+      <div v-if="view && view.targetBitrate > 0" class="setting-row"><span>{{ t("目标码率") }}</span><span>{{ (view.targetBitrate / 1_000_000).toFixed(1) }} Mbps</span></div>
+      <div v-if="view" class="setting-row"><span>{{ t("编码方式") }}</span><span>{{ t(encoderLabels[view.encoderKind]) }}</span></div>
+      <p v-if="view?.encoderFallback" class="notice break-all" role="status">{{ te(view.encoderFallback) }}</p>
+      <p v-if="view && view.phase !== 'completed'" class="py-3 text-sm break-all" role="status">{{ te(view.message) }}</p>
       <div class="flex gap-2 py-4">
-        <Button v-if="!recordingActive(view)" :disabled="!desktop || busy || changingDirectory || !capabilities?.available" @click="select">选择录制范围</Button>
-        <Button v-if="view?.phase === 'ready'" :disabled="busy" @click="control('start')">开始录制</Button>
-        <Button v-if="view?.phase === 'recording'" :disabled="busy" @click="control('pause')">暂停</Button>
-        <Button v-if="view?.phase === 'paused'" :disabled="busy" @click="control('resume')">恢复</Button>
-        <Button v-if="view && ['recording', 'paused'].includes(view.phase)" :disabled="busy" @click="control('stop')">停止并导出</Button>
-        <Button v-if="recordingActive(view)" variant="outline" :disabled="busy" @click="control('cancel')">取消并清理</Button>
+        <Button v-if="!recordingActive(view)" :disabled="!desktop || busy || changingDirectory || !capabilities?.available" @click="select">{{ t("选择录制范围") }}</Button>
+        <Button v-if="view?.phase === 'ready'" :disabled="busy" @click="control('start')">{{ t("开始录制") }}</Button>
+        <Button v-if="view?.phase === 'recording'" :disabled="busy" @click="control('pause')">{{ t("暂停") }}</Button>
+        <Button v-if="view?.phase === 'paused'" :disabled="busy" @click="control('resume')">{{ t("恢复") }}</Button>
+        <Button v-if="view && ['recording', 'paused'].includes(view.phase)" :disabled="busy" @click="control('stop')">{{ t("停止并导出") }}</Button>
+        <Button v-if="recordingActive(view)" variant="outline" :disabled="busy" @click="control('cancel')">{{ t("取消并清理") }}</Button>
       </div>
     </div>
   </section>

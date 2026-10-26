@@ -21,6 +21,7 @@ mod resources;
 #[cfg(windows)]
 mod ocr_runtime;
 mod settings;
+mod native_i18n;
 mod shortcut_probe;
 mod recovery_center;
 mod storage;
@@ -256,11 +257,41 @@ pub fn run() {
             })?;
             clipboard::initialize(app.handle());
             resource_lifecycle::initialize(app.handle());
-            let capture = MenuItem::with_id(app, "capture", "开始截图", true, None::<&str>)?;
-            let pin = MenuItem::with_id(app, "pin", "贴图（选区 / 剪贴板）", true, None::<&str>)?;
-            let recording = MenuItem::with_id(app, "recording", "录屏", true, None::<&str>)?;
-            let history = MenuItem::with_id(app, "history", "剪贴板历史", true, None::<&str>)?;
-            let open = MenuItem::with_id(app, "open", "打开 Snap Desk", true, None::<&str>)?;
+            let capture = MenuItem::with_id(
+                app,
+                "capture",
+                native_i18n::text(app.handle(), "开始截图"),
+                true,
+                None::<&str>,
+            )?;
+            let pin = MenuItem::with_id(
+                app,
+                "pin",
+                native_i18n::text(app.handle(), "贴图（选区 / 剪贴板）"),
+                true,
+                None::<&str>,
+            )?;
+            let recording = MenuItem::with_id(
+                app,
+                "recording",
+                native_i18n::text(app.handle(), "录屏"),
+                true,
+                None::<&str>,
+            )?;
+            let history = MenuItem::with_id(
+                app,
+                "history",
+                native_i18n::text(app.handle(), "剪贴板历史"),
+                true,
+                None::<&str>,
+            )?;
+            let open = MenuItem::with_id(
+                app,
+                "open",
+                native_i18n::text(app.handle(), "打开 Snap Desk"),
+                true,
+                None::<&str>,
+            )?;
             let enabled = app
                 .state::<settings::SettingsState>()
                 .0
@@ -271,12 +302,18 @@ pub fn run() {
             let shortcuts = CheckMenuItem::with_id(
                 app,
                 "shortcuts",
-                "启用全局快捷键",
+                native_i18n::text(app.handle(), "启用全局快捷键"),
                 true,
                 enabled,
                 None::<&str>,
             )?;
-            let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
+            let quit = MenuItem::with_id(
+                app,
+                "quit",
+                native_i18n::text(app.handle(), "退出"),
+                true,
+                None::<&str>,
+            )?;
             let menu = Menu::with_items(
                 app,
                 &[
@@ -284,11 +321,11 @@ pub fn run() {
                 ],
             )?;
             app.manage(settings::ShortcutMenu(shortcuts));
-            TrayIconBuilder::new()
+            let tray = TrayIconBuilder::new()
                 .icon(tauri::image::Image::from_bytes(include_bytes!(
                     "../icons/32x32.png"
                 ))?)
-                .tooltip("Snap Desk · 截图工具")
+                .tooltip(native_i18n::text(app.handle(), "Snap Desk · 截图工具"))
                 .menu(&menu)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "capture" => {
@@ -319,6 +356,17 @@ pub fn run() {
                     _ => {}
                 })
                 .build(app)?;
+            app.manage(native_i18n::TrayLabels {
+                items: vec![
+                    ("开始截图", capture),
+                    ("贴图（选区 / 剪贴板）", pin),
+                    ("录屏", recording),
+                    ("剪贴板历史", history),
+                    ("打开 Snap Desk", open),
+                    ("退出", quit),
+                ],
+                icon: tray,
+            });
             // 配置中的主窗口禁用自动创建：Tauri 自动创建窗口早于本 setup，
             // 页面可能提前调用 app_status，读取尚未 manage 的 SettingsState 而 panic。
             // 等设置、快捷键和托盘全部就绪后，再沿用原窗口配置加载主界面。

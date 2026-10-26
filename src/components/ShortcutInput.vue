@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t, te } from '@/lib/i18n'
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { api } from '@/lib/api'
 import { captureShortcut } from '@/lib/settings'
@@ -69,10 +70,10 @@ onBeforeUnmount(() => { window.removeEventListener('blur', cancel); disposed = t
 
 <template>
   <div class="max-w-72 text-right">
-    <button ref="button" type="button" :disabled="disabled && !editing && !busy" :aria-label="`${label}快捷键，点击修改`" :aria-pressed="editing" class="min-w-40 rounded-lg border px-3 py-2 text-sm focus:outline-blue-500" :class="editing ? 'border-blue-500 bg-blue-50' : 'border-zinc-200 bg-white'" @click="begin" @keydown="keydown" @keyup="keyup" @blur="finish()">
-      {{ busy ? '正在切换…' : editing ? preview : modelValue || '已禁用 · 点击设置' }}
+    <button ref="button" type="button" :disabled="disabled && !editing && !busy" :aria-label="t('{0}快捷键，点击修改', { 0: t(label) })" :aria-pressed="editing" class="min-w-40 rounded-lg border px-3 py-2 text-sm focus:outline-blue-500" :class="editing ? 'border-blue-500 bg-blue-50' : 'border-zinc-200 bg-white'" @click="begin" @keydown="keydown" @keyup="keyup" @blur="finish()">
+      {{ busy ? t("正在切换…") : editing ? preview : modelValue || t("已禁用 · 点击设置") }}
     </button>
-    <p v-if="editing" class="mt-1 text-xs text-zinc-500">Esc 取消 · Backspace / Delete 禁用</p>
-    <p v-if="error" class="mt-1 text-xs text-red-600" role="alert">{{ error }}</p>
+    <p v-if="editing" class="mt-1 text-xs text-zinc-500">{{ t("Esc 取消 · Backspace / Delete 禁用") }}</p>
+    <p v-if="error" class="mt-1 text-xs text-red-600" role="alert">{{ te(error) }}</p>
   </div>
 </template>

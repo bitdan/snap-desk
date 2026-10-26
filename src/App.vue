@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { t } from '@/lib/i18n'
+import { t, te } from '@/lib/i18n'
 import { computed, defineAsyncComponent, onMounted, onUnmounted, ref } from 'vue'
 import { Camera, Keyboard, Info, Scan, PanelLeftClose, Pin, Video, Folder, CircleHelp, Settings as SettingsIcon, FileText, Check } from 'lucide-vue-next'
 const DiagnosticsSettings = defineAsyncComponent(() => import('@/components/DiagnosticsSettings.vue'))
@@ -169,22 +169,22 @@ onUnmounted(() => { disposed = true; disposers.splice(0).forEach(off => off()) }
   <div class="app-shell">
     <aside class="sidebar">
       <div class="brand"><span class="brand-icon"><Scan :size="23" /></span><div>Snap Desk</div></div>
-      <nav v-for="group in groups" :key="group.name" :aria-label="group.name"><div class="nav-caption">{{ t(group.name) }}</div><button v-for="item in group.items" :key="item.name" :class="['nav-item', { active: page === item.name }]" @click="page = item.name"><component :is="item.icon" :size="18" />{{ t(item.name) }}</button></nav>
+      <nav v-for="group in groups" :key="group.name" :aria-label="t(group.name)"><div class="nav-caption">{{ t(group.name) }}</div><button v-for="item in group.items" :key="item.name" :class="['nav-item', { active: page === item.name }]" @click="page = item.name"><component :is="item.icon" :size="18" />{{ t(item.name) }}</button></nav>
       <div class="sidebar-bottom"><span class="version-dot" /> {{ status ? `v${status.version}` : t('版本待读取') }}</div>
     </aside>
     <main class="workspace">
       <header class="topbar"><span>{{ t(page) }}</span><div class="flex items-center gap-2"><Button variant="ghost" :disabled="locked" :aria-pressed="status?.settings.shortcutsEnabled" :title="t(status?.settings.shortcutsEnabled ? '禁用全部全局快捷键' : '启用全部全局快捷键')" @click="toggleShortcuts"><Check v-if="status?.settings.shortcutsEnabled && !status.shortcutError" :size="15" class="status-check" /><Keyboard v-else :size="15" />{{ t('快捷键') }} {{ !status ? t('未读取') : status.shortcutError ? t('注册异常') : status.settings.shortcutsEnabled ? t('已启用') : t('已禁用') }}</Button><Button variant="ghost" :title="t('隐藏主窗口，保留托盘运行')" :disabled="!desktop" @click="hide"><PanelLeftClose :size="15" />{{ t('收起') }}</Button></div></header>
       <div class="page-content" :class="{ 'clipboard-page': page === '剪贴板', 'logs-page': page === '日志' }">
         <div v-if="!desktop" class="notice">{{ t('当前为网页预览。请通过桌面应用启动以使用屏幕截图和全局快捷键。') }}</div>
-        <div v-if="error || status?.shortcutError" class="notice error" role="alert">{{ error || status?.shortcutError }}<Button v-if="initializationFailed" variant="outline" :disabled="initializing" @click="initialize">{{ t('重新连接') }}</Button></div>
-        <div v-if="status?.configWarning" class="notice" role="alert">{{ status.configWarning }}</div>
-        <div v-if="page !== '恢复与清理' && recoveryError" class="notice flex flex-wrap items-center justify-between gap-2" role="alert"><span>恢复检查失败，文件保持原样。</span><Button variant="outline" @click="page = '恢复与清理'">查看并重试</Button></div>
-        <div v-if="page !== '恢复与清理' && recovery && (recovery.previousStartedAt || recovery.warning || recovery.items.length || recovery.unreadableRecords)" class="notice flex flex-wrap items-center justify-between gap-2" role="status"><span>{{ recovery.previousStartedAt ? '上次运行未记录正常退出。' : recovery.warning ? recovery.warning : recovery.unreadableRecords ? '部分恢复记录无法读取。' : '' }} 待恢复 / 可清理：{{ recovery.items.length }} 项</span><Button variant="outline" @click="page = '恢复与清理'">检查文件</Button></div>
+        <div v-if="error || status?.shortcutError" class="notice error" role="alert">{{ te(error || status?.shortcutError) }}<Button v-if="initializationFailed" variant="outline" :disabled="initializing" @click="initialize">{{ t('重新连接') }}</Button></div>
+        <div v-if="status?.configWarning" class="notice" role="alert">{{ te(status.configWarning) }}</div>
+        <div v-if="page !== '恢复与清理' && recoveryError" class="notice flex flex-wrap items-center justify-between gap-2" role="alert"><span>{{ t("恢复检查失败，文件保持原样。") }}</span><Button variant="outline" @click="page = '恢复与清理'">{{ t("查看并重试") }}</Button></div>
+        <div v-if="page !== '恢复与清理' && recovery && (recovery.previousStartedAt || recovery.warning || recovery.items.length || recovery.unreadableRecords)" class="notice flex flex-wrap items-center justify-between gap-2" role="status"><span>{{ recovery.previousStartedAt ? t("上次运行未记录正常退出。") : recovery.warning ? te(recovery.warning) : recovery.unreadableRecords ? t("部分恢复记录无法读取。") : '' }} {{ t("待恢复 / 可清理：") }}{{ recovery.items.length }} {{ t("项") }}</span><Button variant="outline" @click="page = '恢复与清理'">{{ t("检查文件") }}</Button></div>
         <div v-if="remaining > 0" class="notice flex items-center justify-between" role="status"><span>{{ remaining }} {{ t('秒后截图，可切换到目标窗口；再次按截图快捷键可取消。') }}</span><Button variant="outline" @click="cancelPending">{{ t('取消截图') }}</Button></div>
 
         <OnboardingGuide v-if="onboarding && status" :settings="status.settings" :busy="completingOnboarding" @complete="completeOnboarding" @navigate="page = $event" />
         <template v-if="page === '截图'">
-          <section class="capture-panel" aria-label="截图操作">
+          <section class="capture-panel" :aria-label='t("截图操作")'>
             <div class="capture-controls">
               <kbd>{{ status?.settings.shortcutsEnabled === false ? t('快捷键已禁用') : shortcut }}</kbd>
               <label for="quick-delay">{{ t('延时') }}</label>
@@ -201,7 +201,7 @@ onUnmounted(() => { disposed = true; disposers.splice(0).forEach(off => off()) }
             <div class="setting-row"><label for="export-format">{{ t('保存格式') }}</label><select id="export-format" v-model="draft.export.format" :disabled="locked" class="rounded-lg border border-zinc-200 bg-white px-3 py-2"><option value="png">{{ t('PNG · 无损透明') }}</option><option value="jpeg">{{ t('JPEG · 白底') }}</option><option value="webp">{{ t('WebP · 无损透明') }}</option></select></div>
             <div v-if="draft.export.format === 'jpeg'" class="setting-row"><label for="jpeg-quality">{{ t('JPEG 质量') }}</label><input id="jpeg-quality" v-model.number="draft.export.jpegQuality" type="number" min="1" max="100" step="1" required :disabled="locked" class="w-24 rounded-lg border border-zinc-200 px-3 py-2" /></div>
             <div class="setting-row"><label for="filename-prefix">{{ t('文件名前缀') }}</label><input id="filename-prefix" v-model="draft.export.filenamePrefix" required :disabled="locked" class="w-48 rounded-lg border border-zinc-200 px-3 py-2 text-sm" /></div>
-            <div class="setting-row"><label for="filename-dimensions">{{ t('文件名包含图片尺寸') }}<small class="break-all">示例：{{ exportFilenamePreview(draft.export) }}</small></label><input id="filename-dimensions" v-model="draft.export.includeDimensions" type="checkbox" :disabled="locked" /></div>
+            <div class="setting-row"><label for="filename-dimensions">{{ t('文件名包含图片尺寸') }}<small class="break-all">{{ t("示例：") }}{{ t(exportFilenamePreview(draft.export)) }}</small></label><input id="filename-dimensions" v-model="draft.export.includeDimensions" type="checkbox" :disabled="locked" /></div>
             <div class="setting-row"><label for="remember-directory">{{ t('记住上次保存目录') }}</label><input id="remember-directory" v-model="draft.export.rememberDirectory" type="checkbox" :disabled="locked" /></div>
             <div class="flex gap-2 py-3"><Button type="submit" :disabled="locked">{{ saving ? t('正在保存…') : t('保存设置') }}</Button><Button type="button" variant="outline" :disabled="locked" @click="saveCapture(true)">{{ t('恢复默认') }}</Button><span v-if="savedSection === '截图'" class="status-ok self-center" role="status"><Check :size="14" />{{ t('已保存') }}</span></div>
           </form>
@@ -236,7 +236,7 @@ onUnmounted(() => { disposed = true; disposers.splice(0).forEach(off => off()) }
         </template>
 
         <template v-else-if="page !== '恢复与清理'">
-          <section class="settings-card about"><span class="brand-icon"><Scan :size="30" /></span><h2>Snap Desk <span class="pill">{{ status?.version ?? t('桌面版本待读取') }}</span></h2><p>{{ t('截图、标注、贴图、滚动截图与录屏，本地处理。') }}</p><p>{{ t('Windows 截图、录屏与滚动截图支持多屏选区；录屏需 Windows 10 2004 或更新版本。') }}</p><div class="flex items-center gap-3"><a href="https://github.com/bitdan/snap-desk" target="_blank" rel="noopener noreferrer" class="github-link" aria-label="在浏览器打开 GitHub 项目主页" title="GitHub" @click="desktop && ($event.preventDefault(), openProject())"><svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden="true"><path d="M12 .75a11.25 11.25 0 0 0-3.56 21.92c.56.1.77-.24.77-.54v-2.1c-3.13.68-3.79-1.33-3.79-1.33-.51-1.3-1.25-1.65-1.25-1.65-1.02-.7.08-.69.08-.69 1.13.08 1.73 1.16 1.73 1.16 1 1.72 2.63 1.22 3.27.93.1-.73.39-1.22.71-1.5-2.5-.28-5.13-1.25-5.13-5.56 0-1.23.44-2.23 1.16-3.01-.12-.28-.5-1.43.11-2.98 0 0 .95-.3 3.1 1.15a10.8 10.8 0 0 1 5.64 0c2.15-1.46 3.1-1.15 3.1-1.15.61 1.55.23 2.7.11 2.98.72.78 1.16 1.78 1.16 3.01 0 4.32-2.63 5.28-5.14 5.56.4.35.76 1.03.76 2.09v3.09c0 .3.21.65.77.54A11.25 11.25 0 0 0 12 .75Z" /></svg></a><span class="text-xs text-zinc-500">GPL-3.0-only</span></div></section>
+          <section class="settings-card about"><span class="brand-icon"><Scan :size="30" /></span><h2>Snap Desk <span class="pill">{{ status?.version ?? t('桌面版本待读取') }}</span></h2><p>{{ t('截图、标注、贴图、滚动截图与录屏，本地处理。') }}</p><p>{{ t('Windows 截图、录屏与滚动截图支持多屏选区；录屏需 Windows 10 2004 或更新版本。') }}</p><div class="flex items-center gap-3"><a href="https://github.com/bitdan/snap-desk" target="_blank" rel="noopener noreferrer" class="github-link" :aria-label='t("在浏览器打开 GitHub 项目主页")' title="GitHub" @click="desktop && ($event.preventDefault(), openProject())"><svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden="true"><path d="M12 .75a11.25 11.25 0 0 0-3.56 21.92c.56.1.77-.24.77-.54v-2.1c-3.13.68-3.79-1.33-3.79-1.33-.51-1.3-1.25-1.65-1.25-1.65-1.02-.7.08-.69.08-.69 1.13.08 1.73 1.16 1.73 1.16 1 1.72 2.63 1.22 3.27.93.1-.73.39-1.22.71-1.5-2.5-.28-5.13-1.25-5.13-5.56 0-1.23.44-2.23 1.16-3.01-.12-.28-.5-1.43.11-2.98 0 0 .95-.3 3.1 1.15a10.8 10.8 0 0 1 5.64 0c2.15-1.46 3.1-1.15 3.1-1.15.61 1.55.23 2.7.11 2.98.72.78 1.16 1.78 1.16 3.01 0 4.32-2.63 5.28-5.14 5.56.4.35.76 1.03.76 2.09v3.09c0 .3.21.65.77.54A11.25 11.25 0 0 0 12 .75Z" /></svg></a><span class="text-xs text-zinc-500">GPL-3.0-only</span></div></section>
         </template>
         <ShortcutCompatibility v-show="page === '快捷键'" :disabled="locked" @testing="testingShortcuts = $event" />
         <!-- 常驻以完成启动检查；切换页面不会重复查询或把旧截图会话带回。 -->

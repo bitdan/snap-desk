@@ -1,59 +1,61 @@
 import { appearance } from './appearance'
+import messages from './messages.en.json'
+import nativeMessages from './messages.native.en.json'
+import errorSlots from './message-error-slots.json'
 
-/** 中文作为稳定消息键；未翻译的功能和系统错误保留原文，绝不改写用户内容。 */
-export const english: Record<string, string> = {
-  '秒后截图': 'seconds to capture',
-  '秒后截图，可切换到目标窗口；再次按截图快捷键可取消。': 'seconds to capture. Switch to the target window; press the capture shortcut again to cancel.',
-  '工具': 'Tools', '设置': 'Settings', '支持': 'Support',
-  '截图': 'Capture', '录屏': 'Recording', '贴图': 'Pins', '剪贴板': 'Clipboard',
-  '通用': 'General', '快捷键': 'Shortcuts', '识别与翻译': 'OCR & translation',
-  '日志': 'Logs', '帮助': 'Help', '关于': 'About',
-  '外观与语言': 'Appearance & language', '主题': 'Theme', '跟随系统': 'System',
-  '浅色': 'Light', '深色': 'Dark', '语言': 'Language',
-  '保存设置': 'Save settings', '已保存': 'Saved', '恢复默认': 'Restore defaults',
-  '收起': 'Hide', '重新连接': 'Reconnect', '取消截图': 'Cancel capture',
-  '延时': 'Delay', '无延时': 'No delay', '3 秒': '3 seconds', '5 秒': '5 seconds',
-  '截图设置': 'Capture settings', '截图包含光标': 'Include cursor',
-  '窗口 / 元素吸附': 'Snap to windows / elements', '保存格式': 'Export format',
-  'PNG · 无损透明': 'PNG · lossless, transparent', 'JPEG · 白底': 'JPEG · white background',
-  'WebP · 无损透明': 'WebP · lossless, transparent', 'JPEG 质量': 'JPEG quality',
-  '文件名前缀': 'Filename prefix', '文件名包含图片尺寸': 'Include image dimensions',
-  '记住上次保存目录': 'Remember last save directory', '示例：': 'Example: ',
-  '重新打开新手引导': 'Open welcome guide', '禁用': 'Disable', '默认': 'Default',
-  '当前为网页预览。请通过桌面应用启动以使用屏幕截图和全局快捷键。': 'Web preview. Launch the desktop app to capture screens and use global shortcuts.',
-  '点击快捷键框后直接按键。F1～F12 可单独使用，字母和数字须搭配修饰键；清空即禁用。修改后点击保存生效。': 'Click a shortcut field and press keys. F1–F12 work alone; letters and numbers need modifiers. Clear to disable, then save.',
-  '截图、标注、贴图、滚动截图与录屏，本地处理。': 'Capture, annotate, pin, scroll capture and record locally.',
-  'Windows 截图、录屏与滚动截图支持多屏选区；录屏需 Windows 10 2004 或更新版本。': 'Windows capture, recording and scroll capture support regions on multiple monitors. Recording requires Windows 10 2004 or later.',
-  '未设置': 'Not set', '未读取': 'Not loaded', '版本待读取': 'Version pending',
-  '桌面版本待读取': 'Desktop version pending', '快捷键已禁用': 'Shortcuts disabled',
-  '注册异常': 'Registration failed', '已启用': 'Enabled', '已禁用': 'Disabled',
-  '禁用全部全局快捷键': 'Disable all global shortcuts', '启用全部全局快捷键': 'Enable all global shortcuts',
-  '隐藏主窗口，保留托盘运行': 'Hide window and keep running in the tray',
-  '正在准备…': 'Preparing…', '开始截图': 'Capture', '正在保存…': 'Saving…',
-  '保存快捷键': 'Save shortcuts', '示例已复制': 'Example copied', '复制示例配置': 'Copy example config',
-  '开始使用 Snap Desk': 'Welcome to Snap Desk', '先完成一次截图': 'Take your first screenshot',
-  '点击“开始截图”，拖动框选范围，然后在工具栏标注、复制或保存。Esc 可取消。': 'Click Capture, drag to select, then annotate, copy or save from the toolbar. Press Esc to cancel.',
-  '贴图将图片保留在桌面；滚动截图用于滚动内容；录屏先选范围再开始。': 'Pins keep images on your desktop. Scroll capture handles scrolling content. Select an area before recording.',
-  '收起窗口后仍在托盘运行，可从托盘退出。': 'The app keeps running in the tray when hidden. Exit from the tray menu.',
-  '熟悉全局快捷键': 'Global shortcuts', '全局快捷键总开关当前已关闭。': 'Global shortcuts are currently disabled.',
-  '修改快捷键': 'Edit shortcuts', '确认保存位置': 'Choose save locations',
-  '截图使用保存对话框，可记住上一次位置；录屏可选择固定目录。配置文件与图片、视频分别存放。': 'Screenshots use a save dialog and can remember the last folder. Recordings can use a fixed folder. Settings are stored separately from images and videos.',
-  '设置保存目录': 'Set save folders', '以后可从“帮助”重新打开引导，所有设置均可随时修改。': 'Reopen this guide from Help. You can change settings at any time.',
-  '跳过引导': 'Skip guide', '上一步': 'Back', '下一步': 'Next', '完成': 'Finish',
-  '区域截图': 'Capture area', '快速框选与标注': 'Select an area and annotate',
-  '剪贴板图片贴图': 'Pin clipboard image', '把剪贴板图片贴在桌面': 'Keep a clipboard image on the desktop',
-  '开始 / 停止录屏': 'Start / stop recording', '选择录制范围，录制中再次按下停止': 'Select an area; press again to stop recording',
-  '剪贴板历史': 'Clipboard history', '打开历史管理页面': 'Open clipboard history',
-  '开机自启': 'Launch at login', '刷新状态': 'Refresh status', '文件与存储': 'Files & storage',
-  '请通过剪贴板页面清理历史，勿手动删除数据库。': 'Clear history from the Clipboard page. Do not delete the database manually.',
-  '打开': 'Open', '复制路径': 'Copy path', '选择': 'Choose', '导出主配置': 'Export settings', '刷新目录': 'Refresh folders',
-  '处理中…': 'Working…', '状态未读取': 'Status unavailable', '已开启': 'On', '已关闭': 'Off',
-  '关闭': 'Turn off', '开启': 'Turn on', '目录路径已复制。': 'Folder path copied.',
-  '尚未记录可用位置，请先保存一张截图。': 'No folder recorded yet. Save a screenshot first.',
-  '主配置已导出，不包含图片、视频或目录偏好文件。': 'Settings exported. Images, videos and directory preferences are not included.',
-  '应用日志目录': 'Log folder', '应用配置目录': 'Settings folder', '截图保存目录': 'Screenshot folder',
-  '录屏保存目录': 'Recording folder', '滚动截图结果目录': 'Scroll capture folder', '剪贴板历史目录': 'Clipboard history folder',
+/** 中文消息键只用于界面；业务数据不送入词典。前后端共享原生消息表。 */
+export const english: Record<string, string> = { ...nativeMessages, ...messages }
+
+// 模板消息兼容原生/纯逻辑层返回的中文状态；只在明确的界面消息位置调用。
+// 参数当作原始内容插入，不递归翻译，避免改写文件路径、识别文字和服务错误详情。
+const templates = Object.entries(english).filter(([key]) => /\{\d+\}/.test(key)).map(([key, value]) => {
+  const names: string[] = []
+  const escaped = key.split(/(\{\d+\})/).map(part => {
+    if (/^\{\d+\}$/.test(part)) { names.push(part.slice(1, -1)); return '([\\s\\S]*?)' }
+    return part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  }).join('')
+  return { pattern: new RegExp(`^${escaped}$`), names, value, errors: (errorSlots as Record<string, number[]>)[key] ?? [] }
+})
+
+/** 中文是稳定消息键；切换语言只影响显示，不改变内部状态和业务数据。 */
+function translate(message: string | null | undefined, values?: Record<string, string | number | null | undefined>, errorDepth?: number): string {
+  const source = message ?? ''
+  let translated = source
+  if (appearance.value.language === 'en') {
+    translated = Object.hasOwn(english, source) ? english[source] : source
+    if (translated === source && !Object.hasOwn(english, source) && source.length <= 8192) {
+      for (const template of templates) {
+        const match = template.pattern.exec(source)
+        if (!match) continue
+        const captures = Object.fromEntries(template.names.map((name, index) => {
+          const value = match[index + 1]
+          // 只有明确标记的应用错误字段才递归翻译；路径、OCR 内容等参数始终原样插入。
+          return [name, errorDepth !== undefined && errorDepth < 4 && template.errors.includes(Number(name))
+            ? translateError(value, errorDepth + 1) : value]
+        }))
+        return template.value.replace(/\{(\d+)\}/g, (token, name: string) => captures[name] ?? token)
+      }
+    }
+  }
+  return values ? translated.replace(/\{(\d+)\}/g, (token, name: string) => Object.hasOwn(values, name) ? String(values[name] ?? '') : token) : translated
 }
-export function t(message: string): string {
-  return appearance.value.language === 'en' ? english[message] ?? message : message
+
+/** 已知文案和显式参数只用于显示；业务状态仍保留中文消息键。 */
+export function t(message: string | null | undefined, values?: Record<string, string | number | null | undefined>): string {
+  return translate(message, values)
+}
+
+function translateError(source: string, depth: number): string {
+  const prefix = /^(Error: )?([a-z][a-z0-9_]*[：:]\s*)?/.exec(source)![0]
+  return prefix + translate(source.slice(prefix.length), undefined, depth)
+}
+
+/** IPC 包装保留命令名，已知的内层应用错误翻译；未知系统/驱动详情保持原文。 */
+export function te(message: string | null | undefined): string {
+  return translateError(message ?? '', 0)
+}
+
+/** 时间跟随应用语言；原始时间戳始终保留在数据层。 */
+export function localizedDate(milliseconds: number): string {
+  return new Date(milliseconds).toLocaleString(appearance.value.language === 'en' ? 'en-US' : 'zh-CN')
 }

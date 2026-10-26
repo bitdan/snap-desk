@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t, te } from '@/lib/i18n'
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { Pin, PinOff, Lock, Unlock, Minus, Plus, Copy, Save, EyeOff, X, ChevronDown, ChevronUp, Move, Undo2, Redo2, Trash2 } from 'lucide-vue-next'
 import PinRecognition from './PinRecognition.vue'
@@ -205,68 +206,68 @@ function closeOnResize() {
 
 <template>
   <div class="pin-shell" :class="{ 'is-focused': focused, 'controls-visible': controlsHovered }" :style="shellStyle" @pointerleave="hideControls" @contextmenu.prevent>
-    <div class="pin-stage" :inert="!!recognitionMode" tabindex="0" aria-label="贴图，右键编辑标注" :style="stageStyle" @pointerenter="keepControlsVisible" @pointerleave="scheduleControlsHide" @pointerdown="drag" @wheel.prevent="wheel" @contextmenu.capture="openMenu">
+    <div class="pin-stage" :inert="!!recognitionMode" tabindex="0" :aria-label='t("贴图，右键编辑标注")' :style="stageStyle" @pointerenter="keepControlsVisible" @pointerleave="scheduleControlsHide" @pointerdown="drag" @wheel.prevent="wheel" @contextmenu.capture="openMenu">
       <div v-if="frame" class="pin-canvas">
         <div class="pin-image-content" :style="{ width: `${display.imageWidth}px`, height: `${display.imageHeight}px`, opacity: frame.view.opacity }">
-          <img :src="frame.dataUrl" alt="桌面贴图" draggable="false" @error="error = '贴图预览加载失败，可关闭后重新贴图。'" />
+          <img :src="frame.dataUrl" :alt='t("桌面贴图")' draggable="false" @error="error = '贴图预览加载失败，可关闭后重新贴图。'" />
           <AnnotationSurface :editor="editor" :width="frame.width" :height="frame.height" :bounds="bounds" :enabled="annotating && !busy && !frame.view.locked" />
         </div>
       </div>
     </div>
-    <section ref="toolbar" :inert="!!recognitionMode" :style="floatingToolbarStyle" class="pin-controls" :class="{ collapsed: !controls, floating: floatingToolbarStyle.position }" aria-label="贴图工具" @pointerenter="keepControlsVisible" @pointerleave="scheduleControlsHide" @contextmenu.stop.prevent>
+    <section ref="toolbar" :inert="!!recognitionMode" :style="floatingToolbarStyle" class="pin-controls" :class="{ collapsed: !controls, floating: floatingToolbarStyle.position }" :aria-label='t("贴图工具")' @pointerenter="keepControlsVisible" @pointerleave="scheduleControlsHide" @contextmenu.stop.prevent>
       <AnnotationToolbar v-if="frame && controls" :editor="editor" :disabled="busy || frame.view.locked" :active="annotating" @tool="startEditing" @float="floatToolbar" @reset-position="resetToolbarPosition">
-        <template #leading><button :disabled="!editable" :aria-pressed="!annotating" title="移动贴图" aria-label="移动贴图" @click="annotating = false; editor.selected = -1"><Move :size="16" /></button></template>
+        <template #leading><button :disabled="!editable" :aria-pressed="!annotating" :title='t("移动贴图")' :aria-label='t("移动贴图")' @click="annotating = false; editor.selected = -1"><Move :size="16" /></button></template>
         <template #actions>
-          <button :disabled="busy" :aria-pressed="frame.view.topmost" title="置顶开关" aria-label="置顶开关" @click="setView({ topmost: !frame.view.topmost })"><component :is="frame.view.topmost ? Pin : PinOff" :size="16" /></button>
-          <button :disabled="busy" :aria-pressed="frame.view.locked" :title="frame.view.locked ? '解锁' : '锁定'" :aria-label="frame.view.locked ? '解锁' : '锁定'" @click="setView({ locked: !frame.view.locked })"><component :is="frame.view.locked ? Lock : Unlock" :size="16" /></button>
+          <button :disabled="busy" :aria-pressed="frame.view.topmost" :title='t("置顶开关")' :aria-label='t("置顶开关")' @click="setView({ topmost: !frame.view.topmost })"><component :is="frame.view.topmost ? Pin : PinOff" :size="16" /></button>
+          <button :disabled="busy" :aria-pressed="frame.view.locked" :title="frame.view.locked ? t('解锁') : t('锁定')" :aria-label="frame.view.locked ? t('解锁') : t('锁定')" @click="setView({ locked: !frame.view.locked })"><component :is="frame.view.locked ? Lock : Unlock" :size="16" /></button>
           <span class="pin-divider" />
-          <button :disabled="!editable || frame.view.zoom <= minZoom" title="缩小" aria-label="缩小" @click="zoom(-1)"><Minus :size="16" /></button>
-          <button :disabled="!editable" title="恢复 100% 查看比例" @click="setView({ zoom: 1 })">{{ Math.round(frame.view.zoom * 100) }}%</button>
-          <button :disabled="!editable" title="放大" aria-label="放大" @click="zoom(1)"><Plus :size="16" /></button>
+          <button :disabled="!editable || frame.view.zoom <= minZoom" :title='t("缩小")' :aria-label='t("缩小")' @click="zoom(-1)"><Minus :size="16" /></button>
+          <button :disabled="!editable" :title='t("恢复 100% 查看比例")' @click="setView({ zoom: 1 })">{{ Math.round(frame.view.zoom * 100) }}%</button>
+          <button :disabled="!editable" :title='t("放大")' :aria-label='t("放大")' @click="zoom(1)"><Plus :size="16" /></button>
           <span class="pin-divider" />
-          <button :disabled="busy" title="复制 Ctrl/⌘+C" aria-label="复制" @click="action('copy')"><Copy :size="16" /></button>
-          <button :disabled="busy" title="保存图片 Ctrl/⌘+S" aria-label="保存图片" @click="action('save')"><Save :size="16" /></button>
-          <button :disabled="busy" title="隐藏 Esc" aria-label="隐藏" @click="action('hide')"><EyeOff :size="16" /></button>
-          <button :disabled="busy" title="关闭 Ctrl/⌘+W" aria-label="关闭" @click="action('close')"><X :size="16" /></button>
-          <button :disabled="busy" title="收起工具（Tab）" aria-label="收起工具" @click="toggleControls"><ChevronDown :size="16" /></button>
+          <button :disabled="busy" :title='t("复制 Ctrl/⌘+C")' :aria-label='t("复制")' @click="action('copy')"><Copy :size="16" /></button>
+          <button :disabled="busy" :title='t("保存图片 Ctrl/⌘+S")' :aria-label='t("保存图片")' @click="action('save')"><Save :size="16" /></button>
+          <button :disabled="busy" :title='t("隐藏 Esc")' :aria-label='t("隐藏")' @click="action('hide')"><EyeOff :size="16" /></button>
+          <button :disabled="busy" :title='t("关闭 Ctrl/⌘+W")' :aria-label='t("关闭")' @click="action('close')"><X :size="16" /></button>
+          <button :disabled="busy" :title='t("收起工具（Tab）")' :aria-label='t("收起工具")' @click="toggleControls"><ChevronDown :size="16" /></button>
         </template>
         <template #options><div class="pin-row pin-options">
-          <select aria-label="图片处理" :disabled="!editable" @change="chooseTransform"><option value="">图片处理</option><option v-for="item in transforms" :key="item.action" :value="item.action">{{ item.label }}</option></select>
-          <label v-if="frame.transparencySupported" class="pin-opacity">不透明度 <input type="range" min="20" max="100" step="5" :value="Math.round(frame.view.opacity * 100)" :disabled="busy" @change="opacity" /><span>{{ Math.round(frame.view.opacity * 100) }}%</span></label>
-          <button :disabled="busy || editor.pending || editor.interacting" @click="recognize('ocr', $event)">识别文字</button>
-          <button :disabled="busy || editor.pending || editor.interacting" @click="recognize('qr', $event)">识别二维码</button>
-          <button :disabled="busy || editor.pending || editor.interacting" @click="recognize('translate', $event)">翻译图片</button>
+          <select :aria-label='t("图片处理")' :disabled="!editable" @change="chooseTransform"><option value="">{{ t("图片处理") }}</option><option v-for="item in transforms" :key="item.action" :value="item.action">{{ t(item.label) }}</option></select>
+          <label v-if="frame.transparencySupported" class="pin-opacity">{{ t("不透明度") }} <input type="range" min="20" max="100" step="5" :value="Math.round(frame.view.opacity * 100)" :disabled="busy" @change="opacity" /><span>{{ Math.round(frame.view.opacity * 100) }}%</span></label>
+          <button :disabled="busy || editor.pending || editor.interacting" @click="recognize('ocr', $event)">{{ t("识别文字") }}</button>
+          <button :disabled="busy || editor.pending || editor.interacting" @click="recognize('qr', $event)">{{ t("识别二维码") }}</button>
+          <button :disabled="busy || editor.pending || editor.interacting" @click="recognize('translate', $event)">{{ t("翻译图片") }}</button>
           <span class="pin-dimensions">{{ frame.width }} × {{ frame.height }} px</span>
         </div></template>
       </AnnotationToolbar>
-      <div v-else-if="!frame" class="pin-row"><span>{{ busy ? '正在加载…' : '图片未加载' }}</span><button :disabled="busy" @click="load">重试</button><button :disabled="busy" @click="action('close')">关闭</button></div>
-      <button v-else class="pin-toggle" :disabled="busy" title="展开贴图工具（右键）" @click="toggleControls"><ChevronUp :size="16" />工具</button>
-      <p v-if="error" role="alert" class="pin-status pin-error" :title="error">{{ error }}</p>
-      <p v-else-if="message" role="status" class="pin-status" :title="message">{{ message }}</p>
-      <p v-else-if="controls && !annotating" class="pin-status">拖动移动 · 滚轮缩放 · 右键编辑 · Esc 隐藏</p>
+      <div v-else-if="!frame" class="pin-row"><span>{{ busy ? t("正在加载…") : t("图片未加载") }}</span><button :disabled="busy" @click="load">{{ t("重试") }}</button><button :disabled="busy" @click="action('close')">{{ t("关闭") }}</button></div>
+      <button v-else class="pin-toggle" :disabled="busy" :title='t("展开贴图工具（右键）")' @click="toggleControls"><ChevronUp :size="16" />{{ t("工具") }}</button>
+      <p v-if="error" role="alert" class="pin-status pin-error" :title="te(error)">{{ te(error) }}</p>
+      <p v-else-if="message" role="status" class="pin-status" :title="t(message)">{{ t(message) }}</p>
+      <p v-else-if="controls && !annotating" class="pin-status">{{ t("拖动移动 · 滚轮缩放 · 右键编辑 · Esc 隐藏") }}</p>
     </section>
     <PinRecognition v-if="frame && recognitionMode" :frame="frame" :mode="recognitionMode" @close="closeRecognition" />
-    <div v-if="contextMenu" ref="menuElement" class="pin-context-menu" role="menu" aria-label="贴图菜单" :style="{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }" @pointerdown.stop @contextmenu.stop.prevent @keydown.stop="menuKey">
-      <div class="context-annotation-tools" role="group" aria-label="标注工具">
-        <button v-for="item in annotationTools" :key="item.tool" role="menuitemradio" :aria-checked="annotating && editor.tool === item.tool" :disabled="!editable" @click="startEditing(item.tool)"><component :is="item.icon" :size="16" />{{ item.name }}</button>
+    <div v-if="contextMenu" ref="menuElement" class="pin-context-menu" role="menu" :aria-label='t("贴图菜单")' :style="{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }" @pointerdown.stop @contextmenu.stop.prevent @keydown.stop="menuKey">
+      <div class="context-annotation-tools" role="group" :aria-label='t("标注工具")'>
+        <button v-for="item in annotationTools" :key="item.tool" role="menuitemradio" :aria-checked="annotating && editor.tool === item.tool" :disabled="!editable" @click="startEditing(item.tool)"><component :is="item.icon" :size="16" />{{ t(item.name) }}</button>
       </div>
       <div role="separator" />
-      <button role="menuitem" :disabled="!editable || !editor.history.past.length" @click="closeMenu(true); editor.travel('undo')"><Undo2 :size="16" />撤销标注</button>
-      <button role="menuitem" :disabled="!editable || !editor.history.future.length" @click="closeMenu(true); editor.travel('redo')"><Redo2 :size="16" />重做标注</button>
-      <button role="menuitem" :disabled="!editable || editor.selected < 0" @click="closeMenu(true); editor.remove()"><Trash2 :size="16" />删除选中标注</button>
-      <button role="menuitem" :disabled="!editable || !editor.history.present.length" @click="closeMenu(true); editor.clear()"><Trash2 :size="16" />清空标注</button>
-      <button v-if="annotating" role="menuitem" @click="closeMenu(true); annotating = false">完成标注</button>
-      <button role="menuitem" @click="closeMenu(true); setView({ locked: !frame!.view.locked })"><component :is="frame?.view.locked ? Unlock : Lock" :size="16" />{{ frame?.view.locked ? '解锁贴图' : '锁定贴图' }}</button>
+      <button role="menuitem" :disabled="!editable || !editor.history.past.length" @click="closeMenu(true); editor.travel('undo')"><Undo2 :size="16" />{{ t("撤销标注") }}</button>
+      <button role="menuitem" :disabled="!editable || !editor.history.future.length" @click="closeMenu(true); editor.travel('redo')"><Redo2 :size="16" />{{ t("重做标注") }}</button>
+      <button role="menuitem" :disabled="!editable || editor.selected < 0" @click="closeMenu(true); editor.remove()"><Trash2 :size="16" />{{ t("删除选中标注") }}</button>
+      <button role="menuitem" :disabled="!editable || !editor.history.present.length" @click="closeMenu(true); editor.clear()"><Trash2 :size="16" />{{ t("清空标注") }}</button>
+      <button v-if="annotating" role="menuitem" @click="closeMenu(true); annotating = false">{{ t("完成标注") }}</button>
+      <button role="menuitem" @click="closeMenu(true); setView({ locked: !frame!.view.locked })"><component :is="frame?.view.locked ? Unlock : Lock" :size="16" />{{ frame?.view.locked ? t("解锁贴图") : t("锁定贴图") }}</button>
       <div role="separator" />
-      <button role="menuitem" @click="recognize('ocr', $event)">识别文字</button>
-      <button role="menuitem" @click="recognize('qr', $event)">识别二维码</button>
-      <button role="menuitem" @click="recognize('translate', $event)">翻译图片</button>
-      <button role="menuitem" @click="closeMenu(true); action('copy')"><Copy :size="16" />复制图片<span>Ctrl/⌘+C</span></button>
-      <button role="menuitem" @click="closeMenu(true); action('save')"><Save :size="16" />保存图片<span>Ctrl/⌘+S</span></button>
-      <button role="menuitem" @click="closeMenu(true); toggleControls()"><ChevronDown :size="16" />{{ controls ? '收起工具栏' : '展开工具栏' }}</button>
+      <button role="menuitem" @click="recognize('ocr', $event)">{{ t("识别文字") }}</button>
+      <button role="menuitem" @click="recognize('qr', $event)">{{ t("识别二维码") }}</button>
+      <button role="menuitem" @click="recognize('translate', $event)">{{ t("翻译图片") }}</button>
+      <button role="menuitem" @click="closeMenu(true); action('copy')"><Copy :size="16" />{{ t("复制图片") }}<span>Ctrl/⌘+C</span></button>
+      <button role="menuitem" @click="closeMenu(true); action('save')"><Save :size="16" />{{ t("保存图片") }}<span>Ctrl/⌘+S</span></button>
+      <button role="menuitem" @click="closeMenu(true); toggleControls()"><ChevronDown :size="16" />{{ controls ? t("收起工具栏") : t("展开工具栏") }}</button>
       <div role="separator" />
-      <button role="menuitem" @click="closeMenu(true); action('hide')"><EyeOff :size="16" />隐藏贴图</button>
-      <button role="menuitem" @click="closeMenu(true); action('close')"><X :size="16" />关闭贴图</button>
+      <button role="menuitem" @click="closeMenu(true); action('hide')"><EyeOff :size="16" />{{ t("隐藏贴图") }}</button>
+      <button role="menuitem" @click="closeMenu(true); action('close')"><X :size="16" />{{ t("关闭贴图") }}</button>
     </div>
   </div>
 </template>

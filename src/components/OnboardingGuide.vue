@@ -11,7 +11,7 @@ const step = ref(1)
 
 <template>
   <!-- 内嵌引导不遮挡操作，用户可以随时直接开始截图。 -->
-  <section class="settings-card mb-5 border-blue-200" aria-label="新手引导">
+  <section class="settings-card mb-5 border-blue-200" :aria-label='t("新手引导")'>
     <div class="flex items-center justify-between py-3"><h2 class="font-semibold">{{ t('开始使用 Snap Desk') }}</h2><span class="text-xs text-zinc-500">{{ step }} / 3</span></div>
     <div v-if="step === 1" class="space-y-2 text-sm"><h3 class="font-medium">{{ t('先完成一次截图') }}</h3><p>{{ t('点击“开始截图”，拖动框选范围，然后在工具栏标注、复制或保存。Esc 可取消。') }}</p><p>{{ t('贴图将图片保留在桌面；滚动截图用于滚动内容；录屏先选范围再开始。') }}</p><p class="text-xs text-zinc-500">{{ t('收起窗口后仍在托盘运行，可从托盘退出。') }}</p></div>
     <div v-else-if="step === 2" class="space-y-2 text-sm"><h3 class="font-medium">{{ t('熟悉全局快捷键') }}</h3><div v-for="action in shortcutActions" :key="action.key" class="flex justify-between"><span>{{ t(action.label) }}</span><kbd>{{ settings.shortcuts[action.key] || t('已禁用') }}</kbd></div><p v-if="!settings.shortcutsEnabled">{{ t('全局快捷键总开关当前已关闭。') }}</p><Button variant="outline" @click="emit('navigate', '快捷键')">{{ t('修改快捷键') }}</Button></div>

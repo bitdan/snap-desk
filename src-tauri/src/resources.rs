@@ -264,8 +264,8 @@ pub async fn choose_export_font(
         if let Some(path) = app
             .dialog()
             .file()
-            .set_title("选择静态 TTF 导出字体")
-            .add_filter("TrueType 字体", &["ttf"])
+            .set_title(crate::native_i18n::text(&app, "选择静态 TTF 导出字体"))
+            .add_filter(crate::native_i18n::text(&app, "TrueType 字体"), &["ttf"])
             .blocking_pick_file()
         {
             let bytes = read_font(&path.into_path().map_err(|e| e.to_string())?)?;

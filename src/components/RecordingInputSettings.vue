@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t } from '@/lib/i18n'
 import type { InputEffects } from '@/lib/recording'
 
 const model = defineModel<InputEffects>({ required: true })
@@ -20,12 +21,12 @@ function changeColor(field: 'leftColor' | 'rightColor' | 'doubleColor', event: E
 
 <template>
   <section class="input-effects">
-    <label title="仅显示快捷键、功能键与鼠标操作，不记录普通文字" v-for="[field, label] in toggles" :key="field"><input v-model="model[field]" type="checkbox" :disabled="disabled" /> {{ label }}</label>
+    <label :title='t("仅显示快捷键、功能键与鼠标操作，不记录普通文字")' v-for="[field, label] in toggles" :key="field"><input v-model="model[field]" type="checkbox" :disabled="disabled" /> {{ t(label) }}</label>
     <template v-if="toggles.some(([field]) => model[field])">
-      <label>效果尺寸 <input v-model.number="model.size" type="number" min="12" max="64" :disabled="disabled" /> 像素</label>
-      <label>持续时间 <input v-model.number="model.durationMs" type="number" min="200" max="2000" step="100" :disabled="disabled" /> 毫秒</label>
-      <label>按键位置 <select v-model="model.position" :disabled="disabled"><option value="topLeft">左上角</option><option value="bottomLeft">左下角</option><option value="bottomRight">右下角</option></select></label>
-      <label v-for="[field, label] in colors" :key="field">{{ label }} <input :value="hex(model[field])" type="color" :disabled="disabled" @input="changeColor(field, $event)" /></label>
+      <label>{{ t("效果尺寸") }} <input v-model.number="model.size" type="number" min="12" max="64" :disabled="disabled" /> {{ t("像素") }}</label>
+      <label>{{ t("持续时间") }} <input v-model.number="model.durationMs" type="number" min="200" max="2000" step="100" :disabled="disabled" /> {{ t("毫秒") }}</label>
+      <label>{{ t("按键位置") }} <select v-model="model.position" :disabled="disabled"><option value="topLeft">{{ t("左上角") }}</option><option value="bottomLeft">{{ t("左下角") }}</option><option value="bottomRight">{{ t("右下角") }}</option></select></label>
+      <label v-for="[field, label] in colors" :key="field">{{ t(label) }} <input :value="hex(model[field])" type="color" :disabled="disabled" @input="changeColor(field, $event)" /></label>
     </template>
   </section>
 </template>

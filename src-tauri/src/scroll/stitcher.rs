@@ -69,6 +69,8 @@ pub struct Stitch {
 }
 
 impl Stitch {
+    /// 测试使用自动方向的简便入口；实际会话通过 with_mode 显式传入方向设置。
+    #[cfg(test)]
     pub fn new(image: RgbaImage) -> Result<Self, String> {
         Self::with_mode(image, ScrollMode::Auto)
     }
@@ -164,6 +166,8 @@ impl Stitch {
         }
     }
 
+    /// 测试只关心匹配结果；实际恢复流程还需 consider_recoverable 返回的缓存许可。
+    #[cfg(test)]
     pub fn consider(&mut self, image: impl Into<Arc<RgbaImage>>) -> Result<Match, String> {
         self.consider_recoverable(image).map(|(result, _)| result)
     }

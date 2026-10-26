@@ -161,7 +161,7 @@ pub async fn export_settings(app: AppHandle, window: WebviewWindow) -> Result<bo
             .dialog()
             .file()
             .set_parent(&window)
-            .set_title("导出主配置")
+            .set_title(crate::native_i18n::text(&app, "导出主配置"))
             .set_file_name("snap-desk-settings.json")
             .add_filter("JSON", &["json"])
             .blocking_save_file()

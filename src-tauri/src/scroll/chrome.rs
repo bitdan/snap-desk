@@ -240,11 +240,14 @@ fn place_windows(
                 *label,
                 WebviewUrl::App("index.html?window=selection-edge".into()),
             )
-            .title(if recording {
-                "录屏选区"
-            } else {
-                "滚动截图选区"
-            })
+            .title(crate::native_i18n::text(
+                app,
+                if recording {
+                    "录屏选区"
+                } else {
+                    "滚动截图选区"
+                },
+            ))
             // 无边框不等于无最小尺寸：Windows 默认仍有最小跟踪宽高，
             // 不显式设置时，2px 边框会被撑成约 136px 宽、38px 高的色块。
             .min_inner_size(1.0, 1.0)

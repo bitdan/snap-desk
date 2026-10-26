@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t } from '@/lib/i18n'
 import { computed, onMounted, ref, watch } from 'vue'
 import { api, type QrResult } from '@/lib/api'
 import Button from './ui/button/Button.vue'
@@ -32,21 +33,21 @@ async function act(index: number, action: 'open' | 'copy') {
 </script>
 
 <template>
-  <section v-if="!dismissed" ref="card" tabindex="-1" class="qr-result" aria-label="二维码识别结果" @keydown.esc.stop="!busy && (dismissed = true, emit('close'))">
-    <header><strong>{{ result.items.length ? '发现二维码' : '未发现二维码' }}</strong><Button variant="ghost" :disabled="busy" @click="dismissed = true; emit('close')">关闭</Button></header>
-    <p v-if="!result.items.length">请完整框选二维码并保留周围白边，然后重试。</p>
+  <section v-if="!dismissed" ref="card" tabindex="-1" class="qr-result" :aria-label='t("二维码识别结果")' @keydown.esc.stop="!busy && (dismissed = true, emit('close'))">
+    <header><strong>{{ result.items.length ? t("发现二维码") : t("未发现二维码") }}</strong><Button variant="ghost" :disabled="busy" @click="dismissed = true; emit('close')">{{ t("关闭") }}</Button></header>
+    <p v-if="!result.items.length">{{ t("请完整框选二维码并保留周围白边，然后重试。") }}</p>
     <div class="qr-items">
       <div v-for="(item, index) in result.items" :key="index" class="qr-item">
         <p dir="auto">{{ item.text }}</p>
         <div class="qr-actions">
-          <Button v-if="item.url" :disabled="busy" @click="act(index, 'open')">打开</Button>
-          <Button variant="outline" :disabled="busy" @click="act(index, 'copy')">{{ item.url ? '复制链接' : '复制文本' }}</Button>
+          <Button v-if="item.url" :disabled="busy" @click="act(index, 'open')">{{ t("打开") }}</Button>
+          <Button variant="outline" :disabled="busy" @click="act(index, 'copy')">{{ item.url ? t("复制链接") : t("复制文本") }}</Button>
         </div>
       </div>
     </div>
-    <p v-if="message" role="status">{{ message }}</p>
+    <p v-if="message" role="status">{{ t(message) }}</p>
   </section>
-  <p v-else-if="message && !dismissed" class="notice error" role="alert">{{ message }}</p>
+  <p v-else-if="message && !dismissed" class="notice error" role="alert">{{ t(message) }}</p>
 </template>
 
 <style scoped>
