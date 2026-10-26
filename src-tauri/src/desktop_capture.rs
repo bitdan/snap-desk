@@ -6,7 +6,16 @@ use serde::Serialize;
 #[path = "desktop_capture_windows.rs"]
 mod windows;
 #[cfg(windows)]
-pub(crate) use windows::PhysicalDpi;
+pub use windows::AppWindow as NativeWindow;
+#[cfg(windows)]
+pub(crate) use windows::{activate_window, PhysicalDpi};
+#[cfg(not(windows))]
+pub type NativeWindow = xcap::Window;
+
+#[cfg(not(windows))]
+pub(crate) fn activate_window(_window: &NativeWindow) -> Result<(), String> {
+    Err("当前平台暂不支持应用窗口录制。".into())
+}
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -26,6 +35,11 @@ pub struct Target {
     pub rect: crate::capture::Rect,
     pub kind: &'static str,
     pub window_index: usize,
+    /// 仅用于录屏来源选择，在本机界面显示，不写入日志；子控件为空。
+    pub title: String,
+    pub app_name: String,
+    /// 最小化、托盘隐藏或屏幕外的应用仅参与录屏来源列表，不参与截图吸附。
+    pub recording_only: bool,
 }
 
 pub struct Desktop {
@@ -34,7 +48,7 @@ pub struct Desktop {
     pub y: i32,
     pub displays: Vec<Display>,
     pub targets: Vec<Target>,
-    pub windows: Vec<xcap::Window>,
+    pub windows: Vec<NativeWindow>,
     pub include_cursor: bool,
 }
 
@@ -195,32 +209,50 @@ pub fn capture(primary_only: bool, include_cursor: bool, snap: bool) -> Result<D
         windows: Vec::new(),
         include_cursor,
     };
-    if snap && !primary_only {
-        // 枚举失败仅停用吸附；自由框选仍然可用。候选不含窗口标题，避免额外暴露文档名。
-        for window in xcap::Window::all()
-            .unwrap_or_default()
-            .into_iter()
-            .take(256)
-        {
-            if window.is_minimized().unwrap_or(true) {
-                continue;
-            }
-            let Ok((wx, wy, ww, wh)) = window
-                .x()
-                .and_then(|wx| Ok((wx, window.y()?, window.width()?, window.height()?)))
-            else {
-                continue;
+    if !primary_only {
+        // 窗口候选同时服务录屏来源选择；截图关闭吸附时仍可切换到窗口录屏。
+        for window in windows::application_windows()?.into_iter().take(256) {
+            let visible = window.is_visible() && !window.is_minimized().unwrap_or(true);
+            let on_screen = if visible {
+                window
+                    .x()
+                    .and_then(|wx| Ok((wx, window.y()?, window.width()?, window.height()?)))
+                    .ok()
+                    .and_then(|(wx, wy, ww, wh)| clipped(wx, wy, ww, wh, (x, y), (width, height)))
+            } else {
+                None
             };
-            let Some(rect) = clipped(wx, wy, ww, wh, (x, y), (width, height)) else {
-                continue;
-            };
+            let recording_only = on_screen.is_none();
+            // 未恢复的窗口没有可吸附坐标，选择后由 select_recording_window 更新真实范围。
+            let rect = on_screen.unwrap_or(crate::capture::Rect {
+                x: 0,
+                y: 0,
+                width: 0,
+                height: 0,
+            });
             let index = desktop.windows.len();
             desktop.targets.push(Target {
                 rect,
                 kind: "window",
                 window_index: index,
+                recording_only,
+                title: window
+                    .title()
+                    .unwrap_or_default()
+                    .chars()
+                    .take(160)
+                    .collect(),
+                app_name: window
+                    .app_name()
+                    .unwrap_or_default()
+                    .chars()
+                    .take(80)
+                    .collect(),
             });
-            if let Ok(id) = window.id() {
+            if let Some(id) = (snap && !recording_only)
+                .then(|| window.id().ok())
+                .flatten()
+            {
                 let budget = 4096usize.saturating_sub(desktop.targets.len());
                 desktop.targets.extend(
                     windows::elements(id, index, rect, (x, y), (width, height))
@@ -252,7 +284,7 @@ pub fn capture(_primary_only: bool, include_cursor: bool, _snap: bool) -> Result
 
 /// 原生窗口抓取不接受任意窗口句柄，只允许当前会话已识别的窗口。
 pub fn native_window(
-    window: &xcap::Window,
+    window: &NativeWindow,
     include_cursor: bool,
 ) -> Result<(RgbaImage, i32, i32), String> {
     // PrintWindow 可能等待目标进程。超时后主会话恢复，后台线程持有自己的 GDI 资源直到返回；
@@ -286,7 +318,7 @@ pub fn native_window(
 }
 
 fn native_window_inner(
-    window: &xcap::Window,
+    window: &NativeWindow,
     include_cursor: bool,
 ) -> Result<(RgbaImage, i32, i32), String> {
     #[cfg(windows)]

@@ -5,7 +5,7 @@ import { listen } from '@tauri-apps/api/event'
 import { Check, Pause, Play, Square } from 'lucide-vue-next'
 import { api } from '@/lib/api'
 import { t, te } from '@/lib/i18n'
-import { recordingTime, type RecordingView, type RecordingAction } from '@/lib/recording'
+import { recordingTime, recordingSpaceAction, type RecordingView, type RecordingAction } from '@/lib/recording'
 import { prepareRecordingRaster, recordingToolbarRegion, type RecordingAnnotationView } from '@/lib/recording-annotations'
 import { useAnnotations, type AnnotationEditor, type AnnotationTool } from '@/lib/use-annotations'
 import { annotationToolbarPosition, useFloatingToolbar } from '@/lib/toolbar-layout'
@@ -110,16 +110,28 @@ async function control(action: RecordingAction) {
   if (!view.value || locked.value) return
   operation++
   busy.value = true; error.value = ''
-  try { await api.controlRecording(view.value.id, action) }
+  try {
+    const id = view.value.id
+    await api.controlRecording(id, action)
+    if (action === 'stop' || action === 'cancel') {
+      // 原生停止会同时隐藏交互窗口；本地清除整套工具栏，迟到轮询不能重新挂回。
+      closedThrough = Math.max(closedThrough, id); view.value = null; editor.reset(); emit('closed')
+    } else {
+      const next = await api.currentRecording()
+      if (!disposed && view.value?.id === next?.id) recording.value = next
+    }
+  }
   catch (e) { error.value = String(e) }
   finally { busy.value = false }
 }
 function key(event: KeyboardEvent) {
   if (handleEscape(event, () => {
     if (busy.value || editor.pending) return
-    editor.abort(); void finish()
+    editor.abort(); void control(recording.value?.phase === 'ready' || recording.value?.phase === 'countdown' ? 'cancel' : 'stop')
   })) return
   if (event.defaultPrevented || event.isComposing || event.keyCode === 229) return
+  const action = recordingSpaceAction(event, recording.value?.phase)
+  if (action) { event.preventDefault(); void control(action); return }
   if (editor.key(event)) return
 }
 onMounted(async () => {
@@ -144,8 +156,9 @@ onUnmounted(() => { disposed = true; clearTimeout(timer); off?.(); window.remove
     <AnnotationWorkspace :key="view.id" default-expanded :editor="editor" :width="view.width" :height="view.height" :bounds="bounds" :surface-visible="view.editing" :toolbar-visible="true" :enabled="view.editing && !busy" :active="true" :disabled="busy" :surface-style="stage" :outlined="view.editing" :toolbar-style="[defaultToolbarStyle, toolbarStyle, passiveToolbarStyle]" @toolbar-element="toolbar = $event" @activate="activate" @tool="chooseTool" @float="moveToolbar" @reset-position="resetToolbar">
         <template #leading><span class="recording-time">● {{ recordingTime(recording?.seconds ?? 0) }}</span></template>
         <template #actions>
-          <button :disabled="locked || !recording || !['recording', 'paused'].includes(recording.phase)" :title="t(recording?.phase === 'paused' ? '继续录制' : '暂停录制')" @click="control(recording?.phase === 'paused' ? 'resume' : 'pause')"><Play v-if="recording?.phase === 'paused'" :size="16" /><Pause v-else :size="16" /></button>
-          <button :disabled="locked" :title="t('结束录制并编辑')" @click="control('stop')"><Square :size="16" /></button>
+          <button v-if="recording?.phase === 'ready'" :disabled="locked" :title="t('开始录制')" @click="control('start')"><Play :size="16" />{{ t('开始录制') }}</button>
+          <button v-else :disabled="locked || !recording || !['recording', 'paused'].includes(recording.phase)" :title="t(recording?.phase === 'paused' ? '继续录制' : '暂停录制')" @click="control(recording?.phase === 'paused' ? 'resume' : 'pause')"><Play v-if="recording?.phase === 'paused'" :size="16" /><Pause v-else :size="16" /></button>
+          <button :disabled="locked || !recording || !['recording', 'paused'].includes(recording.phase)" :title="t('结束录制并编辑')" @click="control('stop')"><Square :size="16" /></button>
           <button :disabled="locked || !view.editing" @click="finish"><Check :size="16" />{{ t('继续操作桌面') }}</button>
         </template>
       <template #footer>

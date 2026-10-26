@@ -5,12 +5,12 @@ const contains = (rect: Rect, point: Point) => point.x >= rect.x && point.y >= r
 
 /** 先锁定最上层窗口，再找其最小原生控件，避免选中被遮挡窗口的子控件。 */
 export function targetAt(targets: CaptureTarget[], point: Point, windowsOnly = false): number | null {
-  const parent = targets.findIndex(target => target.kind === 'window' && contains(target.rect, point))
+  const parent = targets.findIndex(target => target.kind === 'window' && !target.recordingOnly && contains(target.rect, point))
   if (parent < 0) return null
   if (windowsOnly) return parent
   let chosen = parent
   targets.forEach((target, index) => {
-    if (target.windowIndex === targets[parent].windowIndex && contains(target.rect, point)
+    if (!target.recordingOnly && target.windowIndex === targets[parent].windowIndex && contains(target.rect, point)
       && target.rect.width * target.rect.height < targets[chosen].rect.width * targets[chosen].rect.height) chosen = index
   })
   return chosen

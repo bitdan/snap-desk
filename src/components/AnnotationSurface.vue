@@ -30,11 +30,10 @@ async function finishText() {
   if (props.editor.textEditing) { await nextTick(); textInput.value?.focus() }
 }
 function textKey(event: KeyboardEvent) {
-  // Esc 交给所属窗口统一退出；其他编辑按键留在输入框，输入法取消组词也不向外传播。
-  if (event.key === 'Escape' && !event.isComposing && event.keyCode !== 229) return
+  // 文字框优先消费 Esc，和 Enter 一样提交输入，不再触发窗口退出。
   event.stopPropagation()
   if (event.isComposing || event.keyCode === 229) return
-  if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void finishText() }
+  if (event.key === 'Escape' || (event.key === 'Enter' && !event.shiftKey)) { event.preventDefault(); if (!event.repeat) void finishText() }
 }
 const shapes = computed(() => {
   const e = props.editor
@@ -111,7 +110,7 @@ async function up() {
     <foreignObject v-if="enabled && editor.textEditing && editor.draft" :x="textBox.x" :y="textBox.y" :width="textBox.width" :height="textHeight"
       @pointerdown.stop @pointermove.stop @pointerup.stop @pointercancel.stop @contextmenu.stop @keydown="textKey">
       <textarea ref="textInput" v-model="editor.draft.text" class="inline-text" :class="{ 'arrow-text': editor.arrowDraft }" :aria-label='t("标注文字")' :placeholder='t("输入文字")' maxlength="500" :readonly="editor.pending"
-        :title='t("Enter 完成，Shift+Enter 换行，Esc 退出")' :style="{ color: editor.draft.color, fontSize: `${editor.draft.fontSize ?? 24}px`, fontFamily: ({ sans: 'sans-serif', serif: 'serif', mono: 'monospace' })[editor.draft.fontFamily ?? 'sans'] }" />
+        :title='t("Enter / Esc 完成，Shift+Enter 换行")' :style="{ color: editor.draft.color, fontSize: `${editor.draft.fontSize ?? 24}px`, fontFamily: ({ sans: 'sans-serif', serif: 'serif', mono: 'monospace' })[editor.draft.fontFamily ?? 'sans'] }" />
     </foreignObject>
     <!-- 输入框外的三个手柄分别调整宽度、高度和两者，不锁定长宽比。 -->
     <g v-if="enabled && editor.textEditing && !editor.pending" class="annotation-selection">

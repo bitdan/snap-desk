@@ -3,7 +3,7 @@ import { t } from '@/lib/i18n'
 import type { InputEffects } from '@/lib/recording'
 
 const model = defineModel<InputEffects>({ required: true })
-defineProps<{ disabled: boolean }>()
+defineProps<{ disabled: boolean; inline?: boolean }>()
 const toggles = [
   ['keyboard', '按键提示'], ['clicks', '点击光圈'],
   ['movement', '鼠标移动尾迹'], ['drag', '按住拖动轨迹'], ['wheel', '滚轮方向提示'],
@@ -20,7 +20,7 @@ function changeColor(field: 'leftColor' | 'rightColor' | 'doubleColor', event: E
 </script>
 
 <template>
-  <section class="input-effects">
+  <section class="input-effects" :class="{ inline }">
     <label :title='t("仅显示快捷键、功能键与鼠标操作，不记录普通文字")' v-for="[field, label] in toggles" :key="field"><input v-model="model[field]" type="checkbox" :disabled="disabled" /> {{ t(label) }}</label>
     <template v-if="toggles.some(([field]) => model[field])">
       <label>{{ t("效果尺寸") }} <input v-model.number="model.size" type="number" min="12" max="64" :disabled="disabled" /> {{ t("像素") }}</label>
@@ -33,6 +33,8 @@ function changeColor(field: 'leftColor' | 'rightColor' | 'doubleColor', event: E
 
 <style scoped>
 .input-effects { font-size: 12px; }
+.input-effects.inline { display: inline-flex; align-items: center; gap: 8px; }
+.input-effects.inline label { margin-top: 0; white-space: nowrap; }
 summary { cursor: pointer; font-weight: 600; }
 label { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
 input[type="number"] { width: 76px; }

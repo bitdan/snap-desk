@@ -525,6 +525,7 @@ pub fn run() {
             capture::start_capture,
             capture::current_capture,
             capture::capture_native_window,
+            capture::select_recording_window,
             capture::show_capture,
             capture::cancel_capture,
             capture::recognize_capture_qr,

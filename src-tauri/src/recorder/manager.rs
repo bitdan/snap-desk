@@ -12,15 +12,15 @@ mod config;
 #[cfg(test)]
 #[path = "countdown_tests.rs"]
 mod countdown_tests;
+pub mod editing;
 mod encoder;
 mod frame;
-pub mod live_annotations;
 mod gif;
 mod input;
+pub mod live_annotations;
 pub mod output;
 pub mod recovery;
 pub mod result;
-pub mod editing;
 mod stats;
 mod timeline;
 use super::scroll::chrome;
@@ -324,7 +324,10 @@ pub enum RecordingAction {
 pub fn dismiss_completed_preview(app: &AppHandle) {
     let state = app.state::<RecordingState>();
     let id = state.0.lock().ok().and_then(|guard| {
-        guard.as_ref().filter(|s| s.view.phase == Phase::Completed).map(|s| s.view.id)
+        guard
+            .as_ref()
+            .filter(|s| s.view.phase == Phase::Completed)
+            .map(|s| s.view.id)
     });
     if let Some(id) = id {
         let _ = control(app, Some(id), RecordingAction::Cancel);
@@ -617,17 +620,19 @@ pub async fn start_recording(
                 y: candidate.rect.y as f64,
             };
             // 窗口录制使用整个原生来源，不把桌面裁剪坐标误用于窗口表面。
-            source_size = (native.width().map_err(err)?, native.height().map_err(err)?);
+            let source = capture::NativeSource::Window {
+                id: native.id().map_err(err)?,
+                pid: native.pid().map_err(err)?,
+            };
+            // 编码器、区域复制和帧池均使用 WGC 的实际尺寸；DWM 仅负责桌面定位。
+            source_size = capture::source_dimensions(source)?;
             rect = Rect {
                 x: 0,
                 y: 0,
                 width: source_size.0,
                 height: source_size.1,
             };
-            capture::NativeSource::Window {
-                id: native.id().map_err(err)?,
-                pid: native.pid().map_err(err)?,
-            }
+            source
         } else {
             if matches!(config.source, CaptureSource::PrimaryMonitor) {
                 let primary = app.primary_monitor().map_err(err)?.ok_or("主屏不可用。")?;
@@ -688,7 +693,7 @@ pub async fn start_recording(
             stop: false,
             cancel: false,
         });
-        // WGC 必须在所属线程初始化/释放。握手成功后由原选区页接管并自动开始，不显示中间控制条。
+        // WGC 必须在所属线程初始化/释放。握手成功后由原选区页接管，等待明确开始。
         let (ready_tx, ready_rx) = mpsc::sync_channel(1);
         let (go_tx, go_rx) = mpsc::sync_channel(1);
         let worker_guard = WorkerGuard::acquire(&app)?;
@@ -698,7 +703,15 @@ pub async fn start_recording(
             .spawn(move || {
                 let _worker = worker_guard;
                 let prepared = capture::prepare(&config, source_size, source).and_then(|backend| {
-                    live_annotations::initialize(&worker_app, id, &screen, config.region, backend.desktop_origin()?, annotations, annotation_origin)?;
+                    live_annotations::initialize(
+                        &worker_app,
+                        id,
+                        &screen,
+                        config.region,
+                        backend.desktop_origin()?,
+                        annotations,
+                        annotation_origin,
+                    )?;
                     let audio = if config.system_audio || config.microphone {
                         let audio_app = worker_app.clone();
                         // 初始化在确认选区阶段完成；只有 Recording 阶段才 Start 设备。
@@ -730,15 +743,7 @@ pub async fn start_recording(
                 match prepared {
                     Ok((backend, audio)) => {
                         if ready_tx.send(Ok(())).is_ok() && go_rx.recv().unwrap_or(false) {
-                            collect(
-                                worker_app,
-                                id,
-                                config,
-                                screen,
-                                root,
-                                backend,
-                                audio,
-                            );
+                            collect(worker_app, id, config, screen, root, backend, audio);
                         }
                     }
                     Err(e) => {

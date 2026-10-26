@@ -39,6 +39,12 @@ function find(test: (n: Node) => boolean, current = root): Node | undefined {
 const initial = { id: 7, revision: 0, width: 640, height: 480, viewportWidth: 1920, viewportHeight: 1080, x: 100, y: 100, editing: true, shapes: [] }
 const workspace = () => find(n => n.type === 'workspace')
 const editor = () => workspace()!.props.editor as AnnotationEditor
+function press(key: string) {
+  const handler = vi.mocked(window.addEventListener).mock.calls.find(call => call[0] === 'keydown')![1] as (event: KeyboardEvent) => void
+  const event = { key, preventDefault: vi.fn(), target: { closest: () => null } } as unknown as KeyboardEvent
+  handler(event)
+  return event
+}
 async function flush() { await vi.advanceTimersByTimeAsync(0); await Vue.nextTick() }
 async function mount() {
   const Wrapper = { setup() { Vue.provide(Vue.ssrContextKey, { modules: new Set() }); return () => Vue.h(Overlay) } }
@@ -57,6 +63,46 @@ beforeEach(() => {
 afterEach(() => { renderer.render(null, root); vi.clearAllTimers(); vi.useRealTimers(); vi.unstubAllGlobals() })
 
 describe('共享标注页面的录制宿主', () => {
+  it('Ready 不自动开始，空格依次开始、暂停、继续', async () => {
+    api.currentRecording.mockResolvedValue({ id: 7, phase: 'ready', seconds: 0 })
+    await mount()
+    expect(api.controlRecording).not.toHaveBeenCalled()
+    expect(find(n => n.type === 'button' && n.children.some(c => c.text.includes('开始录制')))).toBeDefined()
+    for (const [phase, action] of [['recording', 'start'], ['paused', 'pause'], ['recording', 'resume']]) {
+      api.currentRecording.mockResolvedValue({ id: 7, phase, seconds: 0 })
+      const event = press(' '); await flush()
+      expect(event.preventDefault).toHaveBeenCalled()
+      expect(api.controlRecording).toHaveBeenLastCalledWith(7, action)
+    }
+  })
+  it('全局 Esc 停止录制并移除整个工具栏，迟到轮询不会重新显示', async () => {
+    await mount()
+    press('Escape'); await flush()
+    expect(api.controlRecording).toHaveBeenCalledWith(7, 'stop')
+    expect(workspace()).toBeUndefined()
+    await vi.advanceTimersByTimeAsync(250)
+    expect(workspace()).toBeUndefined()
+  })
+  it('输入框内空格仍用于输入，长按和组词不反复控制录制', async () => {
+    await mount()
+    const handler = vi.mocked(window.addEventListener).mock.calls.find(call => call[0] === 'keydown')![1] as (event: KeyboardEvent) => void
+    for (const patch of [{ target: { closest: () => ({}) } }, { repeat: true }, { isComposing: true }, { defaultPrevented: true }]) {
+      const event = { key: ' ', preventDefault: vi.fn(), target: { closest: () => null }, ...patch } as unknown as KeyboardEvent
+      handler(event)
+    }
+    await flush()
+    expect(api.controlRecording).not.toHaveBeenCalled()
+  })
+  it('待开始时 Esc 取消会话；停止失败则保留工具栏供重试', async () => {
+    api.currentRecording.mockResolvedValue({ id: 7, phase: 'ready', seconds: 0 })
+    api.controlRecording.mockRejectedValueOnce(new Error('退出失败'))
+    await mount()
+    press('Escape'); await flush()
+    expect(workspace()).toBeDefined()
+    expect(api.controlRecording).toHaveBeenCalledWith(7, 'cancel')
+    press('Escape'); await flush()
+    expect(workspace()).toBeUndefined()
+  })
   it('提交后保留撤销栈，迟到轮询不能恢复旧图形', async () => {
     await mount()
     expect(workspace()?.props.defaultExpanded).toBe('')

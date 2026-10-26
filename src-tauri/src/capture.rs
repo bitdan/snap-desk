@@ -68,6 +68,8 @@ pub struct Frame {
     preview_revision: u64,
     /// F3 进入录屏框选；随帧传递意图，窗口重新加载也不会丢失入口状态。
     recording: bool,
+    /// 窗口候选始终提供给录屏列表；此开关独立控制截图的鼠标吸附。
+    snap_enabled: bool,
     origin_x: i32,
     origin_y: i32,
     displays: Vec<crate::desktop_capture::Display>,
@@ -272,7 +274,8 @@ fn prepare(app: &AppHandle, recording: bool) -> Result<(), String> {
     let started = Instant::now();
     hide_overlay(app, &window)?;
     // 旧回放属于捕获排除窗口，先真正收起再截图；部分桌面截图路径会把可见的排除窗口画成黑矩形。
-    let replay_visible = app.get_webview_window("recording-controls")
+    let replay_visible = app
+        .get_webview_window("recording-controls")
         .is_some_and(|window| window.is_visible().unwrap_or(false));
     recording::dismiss_completed_preview(app);
     if replay_visible {
@@ -333,6 +336,7 @@ fn prepare(app: &AppHandle, recording: bool) -> Result<(), String> {
     let frame = Frame {
         id,
         recording,
+        snap_enabled: recording || snap,
         origin_x: desktop.x,
         origin_y: desktop.y,
         displays: desktop.displays.clone(),
@@ -469,6 +473,83 @@ pub async fn capture_native_window(
             Ok(session.frame.clone())
         })();
         // 无论成功失败均恢复窗口；相同 PNG 不会再次触发前端 load，不能依赖它解锁显示。
+        window.show().map_err(err)?;
+        window.set_focus().map_err(err)?;
+        result
+    })
+    .await
+    .map_err(err)?
+}
+
+/// 选择应用录屏来源：置前应用后重新冻结桌面，仍使用原会话内的候选编号。
+#[tauri::command]
+pub async fn select_recording_window(
+    app: AppHandle,
+    window: WebviewWindow,
+    id: u64,
+    target: usize,
+) -> Result<Frame, String> {
+    require_window(&window, "capture")?;
+    tauri::async_runtime::spawn_blocking(move || {
+        #[cfg(windows)]
+        let _dpi = crate::desktop_capture::PhysicalDpi::enter()?;
+        let state = app.state::<CaptureState>();
+        let _operation = Operation::acquire(&state.operation)?;
+        let (native, include_cursor) = {
+            let guard = state.session.lock().map_err(err)?;
+            let session = guard
+                .as_ref()
+                .filter(|s| s.frame.id == id)
+                .ok_or("截图已过期。")?;
+            let candidate = session
+                .frame
+                .targets
+                .get(target)
+                .filter(|t| t.kind == "window")
+                .ok_or("请选择已识别的应用窗口。")?;
+            let native = session
+                .desktop
+                .windows
+                .get(candidate.window_index)
+                .ok_or("应用窗口已失效。")?;
+            (native.clone(), session.desktop.include_cursor)
+        };
+        hide_overlay(&app, &window)?;
+        let result = (|| {
+            crate::desktop_capture::activate_window(&native)?;
+            // 等待原蒙层消失和窗口恢复动画结束；冻结的是置前后的真实桌面。
+            std::thread::sleep(Duration::from_millis(220));
+            let mut fresh = crate::desktop_capture::capture(false, include_cursor, false)?;
+            let layout = serde_json::to_string(&fresh.displays).map_err(err)?;
+            let mut guard = state.session.lock().map_err(err)?;
+            let session = guard
+                .as_mut()
+                .filter(|s| s.frame.id == id)
+                .ok_or("截图已过期。")?;
+            if layout != session.frame.layout_key
+                || fresh.image.dimensions() != session.image.dimensions()
+            {
+                return Err("显示器布局已变化，请重新选择录屏范围。".into());
+            }
+            let rect = crate::desktop_capture::clipped(
+                native.x().map_err(err)?,
+                native.y().map_err(err)?,
+                native.width().map_err(err)?,
+                native.height().map_err(err)?,
+                (fresh.x, fresh.y),
+                fresh.image.dimensions(),
+            )
+            .ok_or("应用窗口已移出屏幕。")?;
+            let preview = preview_png(&fresh.image)?;
+            // 不替换候选数组，避免前端保存的下标指向另一个应用。
+            session.frame.targets[target].rect = rect;
+            session.frame.targets[target].recording_only = false;
+            session.frame.preview_revision += 1;
+            session.preview = preview;
+            session.image = std::mem::take(&mut fresh.image);
+            Ok(session.frame.clone())
+        })();
+        // 成功失败均恢复选择工具；底下的目标应用保持置前，不重新激活其他应用。
         window.show().map_err(err)?;
         window.set_focus().map_err(err)?;
         result

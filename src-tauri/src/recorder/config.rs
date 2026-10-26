@@ -130,7 +130,7 @@ impl RecorderConfig {
         Self {
             source: CaptureSource::PrimaryMonitor,
             region,
-            fps: 30,
+            fps: 60,
             quality: RecordingQuality::Balanced,
             bitrate: None,
             encoding: EncodingPreference::Auto,

@@ -17,6 +17,11 @@ describe('桌面目标与混合 DPI 坐标', () => {
     expect(targetAt(targets, { x: 135, y: 135 }, true)).toBe(0)
     expect(targetAt(targets, { x: 900, y: 900 })).toBeNull()
   })
+  it('隐藏应用可列为录屏来源，但不能挡住可见窗口的截图吸附', () => {
+    const hidden: CaptureTarget = { ...targets[0], recordingOnly: true }
+    expect(targetAt([hidden, targets[2]], { x: 135, y: 135 }, true)).toBe(1)
+    expect(targetAt([hidden], { x: 135, y: 135 })).toBeNull()
+  })
   it('跨屏选区在 125% / 150% 视口比例下保持原像素，不按各屏重复缩放', () => {
     const image = { width: 4480, height: 1440 }
     const rect = { x: 1800, y: 60, width: 800, height: 900 }

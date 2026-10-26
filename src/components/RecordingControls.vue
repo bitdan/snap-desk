@@ -5,7 +5,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { Pause, Play, Square, X } from 'lucide-vue-next'
 import { api, onRecordingPreviewClosed } from '@/lib/api'
 import RecordingEditor from './RecordingEditor.vue'
-import { newerRecording, recordingActive, recordingStatus, recordingTime, type RecordingAction, type RecordingView, type RecordingResult } from '@/lib/recording'
+import { newerRecording, recordingActive, recordingStatus, recordingTime, recordingSpaceAction, type RecordingAction, type RecordingView, type RecordingResult } from '@/lib/recording'
 
 const view = ref<RecordingView | null>(null)
 const busy = ref(false)
@@ -76,12 +76,14 @@ async function control(action: RecordingAction) {
 let offPreview: (() => void) | undefined
 /** 录屏不能按普通窗口直接隐藏：Esc 结束并保留成品，回放时仅收起回放。 */
 function key(event: KeyboardEvent) {
-  handleEscape(event, () => {
+  if (handleEscape(event, () => {
     if (busy.value || !view.value) return
     if (replay.value) void closePreview()
     else if (['recording', 'paused'].includes(view.value.phase)) void control('stop')
-    else if (view.value.phase === 'ready') void control('cancel')
-  })
+    else if (['ready', 'countdown'].includes(view.value.phase)) void control('cancel')
+  })) return
+  const action = recordingSpaceAction(event, view.value?.phase)
+  if (action) { event.preventDefault(); void control(action) }
 }
 onMounted(async () => {
   window.addEventListener('keydown', key)

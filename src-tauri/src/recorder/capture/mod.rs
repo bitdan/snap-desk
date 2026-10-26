@@ -28,7 +28,12 @@ pub trait CaptureBackend {
 #[cfg(target_os = "windows")]
 mod windows;
 #[cfg(target_os = "windows")]
-pub use windows::{now, supported};
+pub use windows::{now, source_dimensions, supported};
+
+#[cfg(not(target_os = "windows"))]
+pub fn source_dimensions(_source: NativeSource) -> Result<(u32, u32), String> {
+    Err("UnsupportedPlatform：当前平台暂不支持窗口录制。".into())
+}
 
 pub fn prepare(
     config: &RecorderConfig,

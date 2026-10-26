@@ -1,117 +1,33 @@
 <script setup lang="ts">
-import { t, te } from '@/lib/i18n'
-import { onMounted, ref, watch } from 'vue'
-import { ChevronRight, X } from 'lucide-vue-next'
+import { t } from '@/lib/i18n'
 import RecordingInputSettings from './RecordingInputSettings.vue'
-import { recordingBitrate, type RecordingFormat, type RecordingFps, type EncodingPreference, type InputEffects, type RecordingQuality } from '@/lib/recording'
+import type { RecordingFormat, EncodingPreference, InputEffects, RecordingQuality } from '@/lib/recording'
 
-const props = defineProps<{ busy: boolean; error: string; formats: RecordingFormat[]; systemAudioAvailable: boolean; microphoneAvailable: boolean; windowAvailable: boolean; embedded?: boolean }>()
-const source = defineModel<'region' | 'display' | 'window'>('source', { required: true })
-const emit = defineEmits<{ confirm: []; close: [] }>()
-const format = defineModel<RecordingFormat>('format', { required: true })
-// 切换格式时选用兼容帧率；共享倒计时、光标和键鼠特效。
-watch(format, value => { fps.value = value === 'gif' ? 10 : 30 })
-const fps = defineModel<RecordingFps>('fps', { required: true })
+defineProps<{ busy: boolean; format: RecordingFormat }>()
 const encoding = defineModel<EncodingPreference>('encoding', { required: true })
 const quality = defineModel<RecordingQuality>('quality', { required: true })
 const mbps = defineModel<string | number>('mbps', { required: true })
 const countdown = defineModel<0 | 3 | 5>('countdown', { required: true })
-const cursor = defineModel<boolean>('cursor', { required: true })
-const systemAudio = defineModel<boolean>('systemAudio', { required: true })
-const microphone = defineModel<boolean>('microphone', { required: true })
 const effects = defineModel<InputEffects>('effects', { required: true })
-const groups = [{ id: 'source', label: '录制来源' }, { id: 'format', label: '输出格式' }, { id: 'quality', label: '画质与码率' }, { id: 'fps', label: '帧率' }, { id: 'encoding', label: '编码方式' }, { id: 'audio', label: '声音' }, { id: 'countdown', label: '倒计时' }, { id: 'cursor', label: '鼠标指针' }, { id: 'effects', label: '键鼠特效' }]
-const active = ref('source')
-const root = ref<HTMLElement | null>(null)
-const bitrateInput = ref<HTMLInputElement | null>(null)
-const invalid = ref('')
-function select(id: string) { if (!props.busy) active.value = id }
-function navigate(event: KeyboardEvent, index: number) {
-  if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return
-  event.preventDefault()
-  const next = event.key === 'Home' ? 0 : event.key === 'End' ? groups.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : -1) + groups.length) % groups.length
-  select(groups[next]!.id); root.value?.querySelectorAll<HTMLButtonElement>('[role=tab]')[next]?.focus()
-}
-function confirm() {
-  if (props.busy) return
-  invalid.value = ''
-  try {
-    if (format.value === 'mp4' && bitrateInput.value && !bitrateInput.value.validity.valid) throw new Error('码率需为 1–80 Mbps，留空使用自动码率。')
-    if (format.value === 'mp4') recordingBitrate(mbps.value)
-    emit('confirm')
-  } catch (e) { active.value = 'quality'; invalid.value = String(e) }
-}
-function trapFocus(event: KeyboardEvent) {
-  if (props.embedded || event.key !== 'Tab') return
-  const items = [...(root.value?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled)') ?? [])].filter(el => el.getClientRects().length)
-  const first = items[0], last = items.at(-1)
-  if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus() }
-  else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus() }
-}
-onMounted(() => { if (!props.formats.includes(format.value) && props.formats[0]) format.value = props.formats[0] })
-onMounted(() => root.value?.querySelector<HTMLButtonElement>('[role=tab]')?.focus())
 </script>
 
 <template>
-  <section ref="root" class="recording-menu" :class="{ embedded }" :role="embedded ? 'region' : 'dialog'" :aria-modal="embedded ? undefined : true" :aria-label='t("录屏选项")' @keydown="trapFocus" @pointerdown.stop @pointermove.stop @contextmenu.stop.prevent>
-    <header><strong>{{ t("录屏选项") }}</strong><button :title='t("关闭录屏选项")' :aria-label='t("关闭录屏选项")' :disabled="busy" @click="emit('close')"><X :size="16" /></button></header>
-    <div class="menu-body">
-      <nav role="tablist" :aria-label='t("录屏设置分类")' aria-orientation="vertical">
-        <button v-for="(group, index) in groups" :id="`recording-tab-${group.id}`" :key="group.id" role="tab" :aria-selected="active === group.id" :aria-controls="`recording-option-${group.id}`" :disabled="busy" @mouseenter="select(group.id)" @click="select(group.id)" @keydown="navigate($event, index)">{{ t(group.label) }}<ChevronRight :size="13" /></button>
-      </nav>
-      <div class="menu-panels">
-        <section v-show="active === 'source'" id="recording-option-source" role="tabpanel" aria-labelledby="recording-tab-source">
-          <label><input v-model="source" type="radio" value="region" :disabled="busy" />{{ t("所选屏幕区域") }}</label>
-          <label><input v-model="source" type="radio" value="display" :disabled="busy" />{{ t("选区所在的整个显示器") }}</label>
-          <label><input v-model="source" type="radio" value="window" :disabled="busy || !windowAvailable" />{{ t("吸附的窗口") }}</label>
-          <small>{{ windowAvailable ? t("窗口最小化、关闭或尺寸变化时结束录制。") : t("使用 Alt 点击吸附窗口后，可选择窗口录制。") }}</small>
-        </section>
-        <section v-show="active === 'format'" id="recording-option-format" role="tabpanel" aria-labelledby="recording-tab-format">
-          <label v-for="value in formats" :key="value"><input v-model="format" type="radio" :value="value" :disabled="busy" />{{ value === 'gif' ? t("GIF 动图") : t("MP4 视频") }}</label>
-          <small>{{ t("GIF 循环播放，适合短片段演示") }}</small>
-        </section>
-        <section v-show="active === 'quality' && format === 'mp4'" id="recording-option-quality" role="tabpanel" aria-labelledby="recording-tab-quality">
-          <label v-for="[value, label] in [['economy', '节省空间'], ['balanced', '均衡'], ['high', '高清']]" :key="value"><input v-model="quality" type="radio" name="recording-quality" :value="value" :disabled="busy || mbps !== ''" />{{ t(label) }}</label>
-          <label class="bitrate">{{ t("码率（Mbps）") }}<input ref="bitrateInput" v-model="mbps" type="number" min="1" max="80" step="any" :placeholder='t("自动")' :disabled="busy" :title='t("1–80 Mbps；清空后恢复自动码率")' /></label>
-          <small>{{ t("留空使用画质预设") }}</small>
-        </section>
-        <section v-show="active === 'fps'" id="recording-option-fps" role="tabpanel" aria-labelledby="recording-tab-fps"><label v-for="value in (format === 'gif' ? [10, 20] : [30, 60])" :key="value"><input v-model="fps" type="radio" name="recording-fps" :value="value" :disabled="busy" />{{ value }} FPS</label></section>
-        <section v-show="active === 'encoding' && format === 'mp4'" id="recording-option-encoding" role="tabpanel" aria-labelledby="recording-tab-encoding"><label><input v-model="encoding" type="radio" value="auto" :disabled="busy" />{{ t("自动") }}</label><label><input v-model="encoding" type="radio" value="software" :disabled="busy" />{{ t("软件兼容") }}</label><small>{{ t("自动模式优先尝试硬件编码") }}</small></section>
-        <section v-show="active === 'countdown'" id="recording-option-countdown" role="tabpanel" aria-labelledby="recording-tab-countdown"><label v-for="value in [0, 3, 5]" :key="value"><input v-model="countdown" type="radio" :value="value" :disabled="busy" />{{ value ? t("{0} 秒", { 0: value }) : t("立即开始") }}</label></section>
-        <section v-show="active === 'cursor'" id="recording-option-cursor" role="tabpanel" aria-labelledby="recording-tab-cursor"><label><input v-model="cursor" type="checkbox" :disabled="busy" />{{ t("录制鼠标指针") }}</label></section>
-        <section v-show="active === 'audio'" id="recording-option-audio" role="tabpanel" aria-labelledby="recording-tab-audio">
-          <template v-if="format === 'mp4'">
-            <label><input v-model="systemAudio" type="checkbox" :disabled="busy || !systemAudioAvailable" />{{ t("系统声音") }}</label>
-            <label><input v-model="microphone" type="checkbox" :disabled="busy || !microphoneAvailable" />{{ t("麦克风") }}</label>
-            <small v-if="systemAudioAvailable || microphoneAvailable">{{ t("使用默认设备；仅在录制中采集声音，暂停时停止采集。") }}</small>
-            <small v-else>{{ t("当前系统的音频录制不可用。") }}</small>
-          </template>
-          <small v-else>{{ t("GIF 不支持声音。") }}</small>
-        </section>
-        <section v-show="active === 'effects'" id="recording-option-effects" role="tabpanel" aria-labelledby="recording-tab-effects"><RecordingInputSettings v-model="effects" :disabled="busy" /></section>
-        <small v-if="format === 'gif' && ['quality', 'encoding'].includes(active)">{{ t("GIF 使用软件调色板编码，无需设置视频码率。") }}</small>
-      </div>
-    </div>
-    <p v-if="error || invalid" class="menu-error" role="alert">{{ te(error || invalid) }}</p>
-    <footer><small>{{ format.toUpperCase() }} · {{ format === 'mp4' && (systemAudio || microphone) ? t("有声") : t("无声") }} · {{ fps }} FPS</small><button class="confirm" :disabled="busy" :title='t("确认选区后，在控制条开始录制")' @click="confirm">{{ busy ? t("准备中…") : t("确认选区") }}</button></footer>
-  </section>
+  <!-- 更多选项直接加入录屏行，不再创建下方分类面板或第二个确认入口。 -->
+  <div class="recording-inline-options" role="group" :aria-label="t('录屏选项')" @pointerdown.stop @contextmenu.stop.prevent>
+    <template v-if="format === 'mp4'">
+      <label>{{ t('画质') }}<select v-model="quality" :disabled="busy || mbps !== ''"><option value="economy">{{ t('节省空间') }}</option><option value="balanced">{{ t('均衡') }}</option><option value="high">{{ t('高清') }}</option></select></label>
+      <label>{{ t('码率（Mbps）') }}<input v-model="mbps" type="number" min="1" max="80" step="any" :placeholder="t('自动')" :disabled="busy" /></label>
+      <label>{{ t('编码方式') }}<select v-model="encoding" :disabled="busy"><option value="auto">{{ t('自动') }}</option><option value="software">{{ t('软件兼容') }}</option></select></label>
+    </template>
+    <label>{{ t('倒计时') }}<select v-model="countdown" :disabled="busy"><option v-for="value in [0, 3, 5]" :key="value" :value="value">{{ value ? t('{0} 秒', { 0: value }) : t('无延时') }}</option></select></label>
+    <RecordingInputSettings v-model="effects" :disabled="busy" inline />
+  </div>
 </template>
 
 <style scoped>
-.recording-menu.embedded { position: static; width: 100%; max-height: min(360px, 50vh); border: 0; border-top: 1px solid #e1e4e8; border-radius: 0; box-shadow: none; }
-.recording-menu { position: fixed; width: min(390px, calc(100vw - 16px)); max-height: calc(100vh - 16px); display: flex; flex-direction: column; overflow: auto; border: 1px solid #e4e4e7; border-radius: 9px; background: white; color: #27272a; font-size: 12px; box-shadow: 0 8px 32px #0003; }
-header, footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 12px; flex-shrink: 0; }
-header { border-bottom: 1px solid #eee; } header button { display: flex; padding: 4px; border-radius: 4px; }
-.menu-body { display: grid; grid-template-columns: 120px minmax(0, 1fr); min-height: 230px; overflow-y: auto; }
-nav { padding: 6px; border-right: 1px solid #eee; }
-nav button { display: flex; justify-content: space-between; align-items: center; width: 100%; padding: 9px 6px; border-radius: 5px; }
-button[aria-selected=true], button:hover:not(:disabled) { background: #f1edff; color: #7c3aed; }
-.menu-panels { padding: 12px; max-height: min(330px, 55vh); overflow-y: auto; }
-.menu-panels label { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
-.menu-panels .bitrate { flex-wrap: wrap; margin-top: 16px; margin-bottom: 6px; }
-input[type=number] { width: 90px; border: 1px solid #d4d4d8; border-radius: 4px; padding: 5px; }
-small { color: #71717a; font-size: 11px; } footer { border-top: 1px solid #eee; }
-.confirm { background: #7c3aed; color: white; border-radius: 5px; padding: 7px 12px; }
-.menu-error { margin: 0; padding: 8px 12px; color: #be123c; background: #fff1f2; }
-button:disabled { opacity: .5; } :focus-visible { outline: 2px solid #a78bfa; outline-offset: 1px; }
+.recording-inline-options { display: inline-flex; align-items: center; gap: 8px; }
+label { display: inline-flex; align-items: center; gap: 4px; }
+select, input { height: 28px; padding: 2px 4px; border: 1px solid #e1e4e8; border-radius: 4px; background: white; color: #24292f; font: inherit; }
+input[type=number] { width: 70px; }
+:focus-visible { outline: 2px solid #2563eb; outline-offset: -2px; }
 </style>

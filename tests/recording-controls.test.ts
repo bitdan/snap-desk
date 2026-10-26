@@ -57,15 +57,25 @@ function editor() { return find(node => node.props['data-editor-id'] !== undefin
 
 beforeEach(() => {
   vi.useFakeTimers(); vi.resetAllMocks()
+  vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn() })
   api.currentRecording.mockResolvedValue(view('completed'))
   api.latestRecordingResult.mockResolvedValue({ id: 42, path: 'D:/video.mp4', filename: 'video.mp4' })
   api.controlRecording.mockResolvedValue(undefined)
   api.selectRecordingArea.mockResolvedValue(undefined)
   closed.subscribe.mockImplementation(async (callback: (id: number) => void) => { closed.callback = callback; return closed.off })
 })
-afterEach(() => { renderer.render(null, root); vi.clearAllTimers(); vi.useRealTimers() })
+afterEach(() => { renderer.render(null, root); vi.clearAllTimers(); vi.useRealTimers(); vi.unstubAllGlobals() })
 
 describe('录屏控制条直接进入回放编辑', () => {
+  it.each([['ready', 'start'], ['recording', 'pause'], ['paused', 'resume']] as const)('%s 状态支持空格控制', async (phase, action) => {
+    api.currentRecording.mockResolvedValue(view(phase))
+    await mount()
+    const handler = vi.mocked(window.addEventListener).mock.calls.find(call => call[0] === 'keydown')![1] as (event: KeyboardEvent) => void
+    const event = { key: ' ', preventDefault: vi.fn(), target: { closest: () => null } } as unknown as KeyboardEvent
+    handler(event); await flush()
+    expect(api.controlRecording).toHaveBeenCalledWith(7, action)
+    expect(event.preventDefault).toHaveBeenCalledOnce()
+  })
   it.each(['recording', 'paused', 'countdown'] as const)('%s 时后台控制页不再展开另一套界面或触发二次开始', async phase => {
     api.currentRecording.mockResolvedValue(view(phase))
     await mount()

@@ -124,6 +124,7 @@ pub const COMMANDS: &[&str] = &[
     "copy_shortcut_example",
     "current_capture",
     "capture_native_window",
+    "select_recording_window",
     "current_pin",
     "current_recording",
     "current_recording_annotations",

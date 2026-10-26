@@ -1,8 +1,17 @@
 import { t } from './i18n'
 import type { Rect } from './selection'
+import type { CaptureTarget } from './api'
 
 export type RecordingSource = 'primaryMonitor' | 'selectedMonitor' | 'selectedWindow'
 export type RecordingSelection = 'region' | 'display' | 'window'
+/** 使用会话内候选下标选择窗口，不向后端传递任意窗口句柄。 */
+export function recordingWindowOptions(targets: CaptureTarget[]) {
+  return targets.flatMap((target, index) => {
+    if (target.kind !== 'window') return []
+    const title = target.title?.trim(), app = target.appName?.trim()
+    return [{ index, label: app && title && app !== title ? `${app} · ${title}` : title || app || t('窗口 {0}', { 0: target.windowIndex + 1 }) }]
+  })
+}
 
 /** 输入/输出均是虚拟桌面图片坐标；负屏幕原点只参与平移，不按 DPI 缩放。 */
 export function recordingRegion(region: Rect, mode: RecordingSelection, displays: { x: number; y: number; width: number; height: number }[], origin: { x: number; y: number }): Rect {
@@ -60,7 +69,7 @@ export function recordingBitrate(value: string | number): number | null {
   if (!Number.isFinite(mbps) || mbps < 1 || mbps > 80) throw new Error('自定义录屏码率需为 1–80 Mbps。')
   return Math.round(mbps * 1_000_000)
 }
-export function recordingConfig(region: Rect, fps: RecordingFps = 30, captureCursor = true, countdownSeconds: 0 | 3 | 5 = 0, encoding: EncodingPreference = 'auto', quality: RecordingQuality = 'balanced', effects: InputEffects = defaultInputEffects(), bitrate: number | null = null, format: RecordingFormat = 'mp4', systemAudio = false, microphone = false): RecorderConfig {
+export function recordingConfig(region: Rect, fps: RecordingFps = 60, captureCursor = true, countdownSeconds: 0 | 3 | 5 = 0, encoding: EncodingPreference = 'auto', quality: RecordingQuality = 'balanced', effects: InputEffects = defaultInputEffects(), bitrate: number | null = null, format: RecordingFormat = 'mp4', systemAudio = false, microphone = false): RecorderConfig {
   if (!(format === 'gif' ? [10, 20] : [30, 60]).includes(fps)) throw new Error('帧率与录制格式不匹配。')
   // GIF 无音轨；从 MP4 切换后也不能把隐藏的声音偏好发给后端。
   if (format === 'gif') { bitrate = null; encoding = 'software'; systemAudio = false; microphone = false }
@@ -72,6 +81,12 @@ export function recordingConfig(region: Rect, fps: RecordingFps = 30, captureCur
 /** 与 Rust RecordingView / RecordingAction 保持一致，不使用前端计时推测视频长度。 */
 export type RecordingPhase = 'ready' | 'countdown' | 'recording' | 'paused' | 'encoding' | 'completed' | 'cancelled' | 'failed'
 export type RecordingAction = 'start' | 'pause' | 'resume' | 'stop' | 'cancel'
+/** 空格只控制录制状态，不抢占文字输入、输入法组词或内层已处理的按键。 */
+export function recordingSpaceAction(event: KeyboardEvent, phase?: RecordingPhase): RecordingAction | null {
+  if (event.key !== ' ' || event.defaultPrevented || event.repeat || event.isComposing || event.keyCode === 229 || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return null
+  if ((event.target as HTMLElement)?.closest?.('input, textarea, select, [contenteditable=true]')) return null
+  return phase === 'ready' ? 'start' : phase === 'recording' ? 'pause' : phase === 'paused' ? 'resume' : null
+}
 /** 本次运行最近一次成功导出，包含恢复导出；路径只供展示，操作只传 ID。 */
 export interface RecordingReplayRegion { left: number; top: number; width: number; height: number }
 export interface RecordingReplayLayout { x: number; y: number; width: number; height: number; video: RecordingReplayRegion; toolbar: RecordingReplayRegion }

@@ -57,6 +57,44 @@ fn window_bounds(id: u32) -> Result<RECT, String> {
     Ok(rect)
 }
 
+/// 查询和实际采集共用同一来源解析；WGC 表面大小不能用 DWM 窗口边界代替。
+fn capture_item(source: NativeSource) -> Result<GraphicsCaptureItem, String> {
+    unsafe {
+        let interop: IGraphicsCaptureItemInterop =
+            factory::<GraphicsCaptureItem, IGraphicsCaptureItemInterop>().map_err(error)?;
+        match source {
+            NativeSource::Monitor { x, y } => {
+                let monitor = MonitorFromPoint(POINT { x, y }, MONITOR_DEFAULTTONULL);
+                if monitor.0.is_null() {
+                    return Err("录制显示器已移除。".into());
+                }
+                interop.CreateForMonitor(monitor).map_err(error)
+            }
+            NativeSource::Window { id, pid } => {
+                let hwnd = HWND(id as usize as *mut _);
+                let mut current_pid = 0;
+                GetWindowThreadProcessId(hwnd, Some(&mut current_pid));
+                if !IsWindow(Some(hwnd)).as_bool() || IsIconic(hwnd).as_bool() || current_pid != pid
+                {
+                    return Err("录制窗口已关闭、最小化或被替换。".into());
+                }
+                interop.CreateForWindow(hwnd).map_err(error)
+            }
+        }
+    }
+}
+
+/// 在创建编码器之前读取真实物理像素尺寸，不启动采集或计时。
+pub fn source_dimensions(source: NativeSource) -> Result<(u32, u32), String> {
+    let _dpi = crate::desktop_capture::PhysicalDpi::enter()?;
+    let _runtime = Runtime::new()?;
+    let size = capture_item(source)?.Size().map_err(error)?;
+    if size.Width < 2 || size.Height < 2 {
+        return Err("录制来源尺寸无效。".into());
+    }
+    Ok((size.Width as u32, size.Height as u32))
+}
+
 struct Runtime(PhantomData<Rc<()>>);
 impl Runtime {
     fn new() -> Result<Self, String> {
@@ -116,6 +154,8 @@ pub struct Capture {
     device: ID3D11Device,
     region: Rect,
     size: (u32, u32),
+    // DWM 边界与 WGC 表面各自保存基准，避免把固有边框差异误判为窗口缩放。
+    window_size: Option<(i32, i32)>,
     started: bool,
     source: NativeSource,
     _runtime: Runtime,
@@ -127,6 +167,8 @@ impl Capture {
         size: (u32, u32),
         source: NativeSource,
     ) -> Result<Self, String> {
+        // 编码准备线程与实际采集线程都显式使用物理像素，避免跨 DPI 上下文比较尺寸。
+        let _dpi = crate::desktop_capture::PhysicalDpi::enter()?;
         supported()?;
         let runtime = Runtime::new()?;
         unsafe {
@@ -150,35 +192,19 @@ impl Capture {
                 .map_err(error)?
                 .cast()
                 .map_err(error)?;
-            let interop: IGraphicsCaptureItemInterop =
-                factory::<GraphicsCaptureItem, IGraphicsCaptureItemInterop>().map_err(error)?;
-            let item: GraphicsCaptureItem = match source {
-                NativeSource::Monitor { x, y } => {
-                    let monitor = MonitorFromPoint(POINT { x, y }, MONITOR_DEFAULTTONULL);
-                    if monitor.0.is_null() {
-                        return Err("录制显示器已移除。".into());
-                    }
-                    interop.CreateForMonitor(monitor).map_err(error)?
-                }
-                NativeSource::Window { id, pid } => {
-                    let hwnd = HWND(id as usize as *mut _);
-                    let mut current_pid = 0;
-                    GetWindowThreadProcessId(hwnd, Some(&mut current_pid));
-                    if !IsWindow(Some(hwnd)).as_bool()
-                        || IsIconic(hwnd).as_bool()
-                        || current_pid != pid
-                    {
-                        return Err("录制窗口已关闭、最小化或被替换。".into());
-                    }
-                    interop.CreateForWindow(hwnd).map_err(error)?
-                }
-            };
+            let item = capture_item(source)?;
             let native_size = item.Size().map_err(error)?;
             let native_dimensions = (native_size.Width as u32, native_size.Height as u32);
             if native_dimensions != size {
                 return Err("录制来源尺寸已变化，请重新选择录屏区域。".into());
             }
             let region = config.region;
+            let window_size = if let NativeSource::Window { id, .. } = source {
+                let bounds = window_bounds(id)?;
+                Some((bounds.right - bounds.left, bounds.bottom - bounds.top))
+            } else {
+                None
+            };
             let desc = D3D11_TEXTURE2D_DESC {
                 Width: region.width,
                 Height: region.height,
@@ -268,6 +294,7 @@ impl Capture {
                 device,
                 region,
                 size,
+                window_size,
                 started: false,
                 source,
                 _runtime: runtime,
@@ -350,11 +377,7 @@ impl CaptureBackend for Capture {
                 }
             }
             let bounds = window_bounds(id)?;
-            if (
-                i64::from(bounds.right) - i64::from(bounds.left),
-                i64::from(bounds.bottom) - i64::from(bounds.top),
-            ) != (i64::from(self.size.0), i64::from(self.size.1))
-            {
+            if Some((bounds.right - bounds.left, bounds.bottom - bounds.top)) != self.window_size {
                 return Err("录制窗口尺寸已改变，录制已结束；请重新选择来源。".into());
             }
         }
