@@ -1,5 +1,5 @@
 //! 录制中的标注：桌面浮层只负责交互，编码帧使用各自持有的不可变标注快照。
-//! 浮层排除于系统采集，避免把工具栏/选择手柄录进去；标注由编码线程真正写入 MP4/GIF。
+//! 原截图窗口移除冻结背景后继续提供交互；窗口排除于采集，标注由编码线程写入 MP4/GIF。
 use super::{frame, Phase, RecordingState};
 use crate::{
     annotations::{self, Annotation, Point},
@@ -7,12 +7,48 @@ use crate::{
 };
 use serde::Serialize;
 use std::sync::{Arc, Mutex};
-use tauri::{
-    AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindow,
-    WebviewWindowBuilder,
-};
+use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewWindow};
 
-const LABEL: &str = "recording-annotations";
+const LABEL: &str = "capture";
+
+/// 操作桌面时仅保留原窗口的工具栏区域；工具栏仍可点按，其余区域直接交给原应用。
+/// Windows 成功接管 region 的所有权，失败时必须自行释放，避免反复切换泄漏 GDI 对象。
+pub(in crate::capture) fn set_input_region(
+    window: &WebviewWindow,
+    rect: Option<Rect>,
+) -> Result<(), String> {
+    #[cfg(windows)]
+    unsafe {
+        use windows::Win32::{
+            Foundation::HWND,
+            Graphics::Gdi::{CreateRectRgn, DeleteObject, SetWindowRgn, HGDIOBJ},
+        };
+        let hwnd = HWND(window.hwnd().map_err(|e| e.to_string())?.0);
+        let region = if let Some(rect) = rect {
+            let region = CreateRectRgn(
+                rect.x as i32,
+                rect.y as i32,
+                (rect.x + rect.width) as i32,
+                (rect.y + rect.height) as i32,
+            );
+            if region.0.is_null() {
+                return Err("无法设置录屏工具栏交互区域。".into());
+            }
+            Some(region)
+        } else {
+            None
+        };
+        if SetWindowRgn(hwnd, region, true) == 0 {
+            if let Some(region) = region {
+                let _ = DeleteObject(HGDIOBJ(region.0));
+            }
+            return Err("无法设置录屏工具栏交互区域。".into());
+        }
+    }
+    #[cfg(not(windows))]
+    let _ = (window, rect);
+    Ok(())
+}
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AnnotationView {
@@ -174,8 +210,14 @@ pub(super) fn snapshot(app: &AppHandle, id: u64) -> (u64, Option<Arc<Layer>>) {
 }
 /// 编辑工具栏的按键、点击不产生录像中的输入特效，避免输入文字时泄露无关按键提示。
 pub(super) fn editing(app: &AppHandle, id: u64) -> bool {
-    app.state::<LiveAnnotationState>().session.lock().ok()
-        .is_some_and(|s| s.as_ref().is_some_and(|s| s.view.id == id && s.view.editing))
+    app.state::<LiveAnnotationState>()
+        .session
+        .lock()
+        .ok()
+        .is_some_and(|s| {
+            s.as_ref()
+                .is_some_and(|s| s.view.id == id && s.view.editing)
+        })
 }
 pub(super) fn update_origin(app: &AppHandle, id: u64, origin: (i32, i32)) {
     if let Ok(mut session) = app.state::<LiveAnnotationState>().session.lock() {
@@ -225,7 +267,10 @@ fn require_editing(app: &AppHandle, id: u64) -> Result<(), String> {
         s.view.id == id
             && !s.stop
             && !s.cancel
-            && matches!(s.view.phase, Phase::Recording | Phase::Paused)
+            && matches!(
+                s.view.phase,
+                Phase::Ready | Phase::Countdown | Phase::Recording | Phase::Paused
+            )
     }) {
         Ok(())
     } else {
@@ -250,66 +295,64 @@ pub fn current_recording_annotations(
     Ok(view.filter(|view| require_editing(&app, view.id).is_ok()))
 }
 
-/// 开启时接收选区绘制；完成后透明层保持可见但鼠标穿透，用户可继续操作原应用。
+/// 绘制时使用整个原选区窗口；操作桌面时裁成工具栏，用户仍可直接选工具恢复绘制。
 #[tauri::command]
 pub async fn set_recording_annotation_mode(
     app: AppHandle,
     window: WebviewWindow,
     id: u64,
     editing: bool,
+    toolbar: Option<Rect>,
 ) -> Result<(), String> {
-    if !matches!(
-        window.label(),
-        "recording-controls" | "recording-annotations"
-    ) {
+    if !matches!(window.label(), "capture" | "recording-controls") {
         return Err("当前窗口无权修改录制标注。".into());
     }
     tauri::async_runtime::spawn_blocking(move || {
         require_editing(&app, id)?;
-        let (screen, empty) = {
+        let state = app.state::<LiveAnnotationState>();
+        let _write = state.write.lock().map_err(|e| e.to_string())?;
+        let screen = {
             let state = app.state::<LiveAnnotationState>();
             let mut session = state.session.lock().map_err(|e| e.to_string())?;
             let s = session
                 .as_mut()
                 .filter(|s| s.view.id == id)
                 .ok_or("录屏标注会话已过期。")?;
+            if let Some(rect) = toolbar {
+                if rect.width == 0
+                    || rect.height == 0
+                    || u64::from(rect.x) + u64::from(rect.width) > u64::from(s.screen.width)
+                    || u64::from(rect.y) + u64::from(rect.height) > u64::from(s.screen.height)
+                {
+                    return Err("录屏工具栏范围超出显示器。".into());
+                }
+            }
             s.view.editing = editing;
-            (s.screen.clone(), s.view.shapes.is_empty())
+            s.screen.clone()
         };
         let result = (|| -> Result<(), String> {
-            let overlay = if let Some(value) = app.get_webview_window(LABEL) {
-                value
-            } else {
-                WebviewWindowBuilder::new(
-                    &app,
-                    LABEL,
-                    WebviewUrl::App("index.html?window=recording-annotations".into()),
-                )
-                .title("Snap Desk")
-                .transparent(true)
-                .decorations(false)
-                .resizable(false)
-                .always_on_top(true)
-                .skip_taskbar(true)
-                .shadow(false)
-                .content_protected(true)
-                .visible(false)
-                .build()
-                .map_err(|e| e.to_string())?
-            };
+            let overlay = app
+                .get_webview_window(LABEL)
+                .ok_or("截图选区窗口不可用。")?;
             overlay
                 .set_position(PhysicalPosition::new(screen.x, screen.y))
                 .map_err(|e| e.to_string())?;
             overlay
                 .set_size(PhysicalSize::new(screen.width, screen.height))
                 .map_err(|e| e.to_string())?;
+            set_input_region(&overlay, if editing { None } else { toolbar })?;
             overlay
-                .set_ignore_cursor_events(!editing)
+                .set_ignore_cursor_events(!editing && toolbar.is_none())
                 .map_err(|e| e.to_string())?;
-            if editing || !empty {
-                overlay.show().map_err(|e| e.to_string())?;
+            if editing || toolbar.is_some() {
+                // 显示前确认排除状态，不能先让窗口参与采集再设置保护。
                 #[cfg(windows)]
                 crate::capture::scroll::chrome::protect_recording_window(&overlay)?;
+                #[cfg(not(windows))]
+                overlay
+                    .set_content_protected(true)
+                    .map_err(|e| e.to_string())?;
+                overlay.show().map_err(|e| e.to_string())?;
                 if editing {
                     overlay.set_focus().map_err(|e| e.to_string())?;
                 }

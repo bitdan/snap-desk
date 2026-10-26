@@ -138,7 +138,7 @@ export const api = {
   chooseRecordingDirectory: (reset = false) => invoke<RecordingDirectory | null>('choose_recording_directory', { reset }),
   currentRecording: () => invoke<RecordingView | null>('current_recording'),
   recordingAnnotations: (knownRevision?: number) => invoke<RecordingAnnotationView | null>('current_recording_annotations', { knownRevision: knownRevision ?? null }),
-  setRecordingAnnotationMode: (id: number, editing: boolean) => invoke<void>('set_recording_annotation_mode', { id, editing }),
+  setRecordingAnnotationMode: (id: number, editing: boolean, toolbar?: Rect) => invoke<void>('set_recording_annotation_mode', { id, editing, ...(toolbar ? { toolbar } : {}) }),
   updateRecordingAnnotations: (id: number, shapes: Annotation[]) => invoke<RecordingAnnotationView>('update_recording_annotations', { id, shapes }),
   controlRecording: (id: number, action: RecordingAction) => invoke<void>('control_recording', { id, action }),
   pinClipboard: () => invoke<void>('pin_clipboard'),

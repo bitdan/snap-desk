@@ -901,6 +901,8 @@
   "页面加载失败，请重启 Snap Desk：{0}": "Page failed to load. Restart Snap Desk: {0}",
   "关闭自启": "Turn off",
   "录制中标注": "Annotate recording",
+  "标注操作": "Annotation actions",
+  "返回标注": "Return to annotations",
   "继续操作桌面": "Return to desktop",
   "滤镜按实时视频画面处理，编辑时显示范围。": "Filters process each video frame; the editor shows their bounds."
 }

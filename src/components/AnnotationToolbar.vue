@@ -1,19 +1,19 @@
 <script setup lang="ts">
 import { t, te } from '@/lib/i18n'
-import { computed, ref, nextTick, onUnmounted } from 'vue'
+import { computed, ref, nextTick, onUnmounted, useId } from 'vue'
 import { Eraser, Undo2, Redo2, Trash2, GripVertical, RotateCcw, ChevronUp, ChevronDown } from 'lucide-vue-next'
 import AnnotationToolGroup from './AnnotationToolGroup.vue'
 import { annotationTools, annotationToolGroups } from '@/lib/annotation-tools'
 import { readToolOrder, moveTool, normalizeToolOrder, toolbarOrderKey } from '@/lib/toolbar-order'
 import type { AnnotationEditor, AnnotationTool } from '@/lib/use-annotations'
-const props = defineProps<{ editor: AnnotationEditor; disabled: boolean; active: boolean; collapsible?: boolean }>()
+const props = defineProps<{ editor: AnnotationEditor; disabled: boolean; active: boolean; collapsible?: boolean; defaultExpanded?: boolean }>()
 const emit = defineEmits<{ tool: [tool: AnnotationTool]; float: [event: PointerEvent]; resetPosition: [] }>()
 // 顺序在截图和贴图窗口之间共享；存储失败不阻断当前窗口的编辑。
 const order = ref(readToolOrder())
-// 仅截图工具栏启用分组折叠；存储不可用时仍可在当前会话切换。
+// 截图与录制共享折叠偏好；展开直接替换同一行，避免重复显示两套工具。
 const expandedKey = 'snap-desk.capture-toolbar-expanded.v1'
-const expanded = ref((() => { try { return localStorage.getItem(expandedKey) === 'true' } catch { return false } })())
-const fullTools = computed(() => !props.collapsible || expanded.value)
+const expanded = ref(props.defaultExpanded || (() => { try { return localStorage.getItem(expandedKey) === 'true' } catch { return false } })())
+const toolsRowId = `annotation-tools-${useId().replaceAll(':', '')}`
 function toggleExpanded() {
   expanded.value = !expanded.value
   try { localStorage.setItem(expandedKey, String(expanded.value)) } catch { /* 不阻断工具使用。 */ }
@@ -121,28 +121,27 @@ function value(event: Event) { return (event.target as HTMLInputElement).value }
 
 <template>
   <div class="annotation-tools" @pointerdown.stop @contextmenu.stop.prevent>
-    <div v-for="row in (collapsible && expanded ? ['main', 'expanded'] : ['main'])" :key="row" class="annotation-tool-row" :class="{ 'expanded-tools': row === 'expanded' }" role="toolbar" :aria-label="row === 'main' ? t('标注工具') : t('全部标注工具')">
-      <template v-if="row === 'main'">
-        <button class="tool-grip" :disabled="locked" :title='t("拖动工具栏；双击恢复位置")' :aria-label='t("拖动工具栏，双击或 Enter 恢复位置")' @pointerdown.stop="emit('float', $event)" @dblclick="emit('resetPosition')" @keydown.enter.stop.prevent="emit('resetPosition')"><GripVertical :size="16" /></button>
-        <slot name="leading" />
-        <template v-if="collapsible">
-          <AnnotationToolGroup v-for="group in annotationToolGroups" :key="group.name" :name="group.name" :tools="group.tools" :selected="editor.tool" :active="active" :disabled="locked" @select="emit('tool', $event)" />
-        </template>
+    <div :id="toolsRowId" class="annotation-tool-row annotation-drawing-row" role="toolbar" :aria-label="t('标注工具')">
+      <button class="tool-grip" :disabled="locked" :title="t('拖动工具栏；双击恢复位置')" :aria-label="t('拖动工具栏，双击或 Enter 恢复位置')" @pointerdown.stop="emit('float', $event)" @dblclick="emit('resetPosition')" @keydown.enter.stop.prevent="emit('resetPosition')"><GripVertical :size="16" /></button>
+      <slot name="leading" />
+      <template v-if="collapsible && !expanded">
+        <AnnotationToolGroup v-for="group in annotationToolGroups" :key="group.name" :name="group.name" :tools="group.tools" :selected="editor.tool" :active="active" :disabled="locked" @select="emit('tool', $event)" />
       </template>
-      <template v-if="!collapsible || row === 'expanded'">
+      <template v-else>
         <button v-for="item in tools" :key="item.tool" :disabled="locked" :class="{ 'sorting-source': sortingTool === item.tool, 'sorting-target': sortingTarget === item.tool && sortingTarget !== sortingTool }" :title="t('{0}（拖动排序，Alt+←/→调整顺序）', { 0: t(item.name) })" :data-annotation-tool="item.tool" @pointerdown="startOrder($event, item.tool)" @pointermove="moveOrder" @pointerup="finishOrder" @pointercancel="cancelOrder" @lostpointercapture="cancelOrder" @dragstart.prevent @keydown="orderKey($event, item.tool)" :aria-label="t(item.name)" :aria-pressed="active && editor.tool === item.tool" @click="choose($event, item.tool)"><component :is="item.icon" :size="18" /></button>
         <button :disabled="locked" :title='t("恢复默认工具顺序")' :aria-label='t("恢复默认工具顺序")' @click="saveOrder(normalizeToolOrder(null))"><RotateCcw :size="16" /></button>
       </template>
-      <template v-if="row === 'main'">
-        <button v-if="collapsible" :disabled="locked" :title="expanded ? t('折叠相似工具') : t('展开全部工具（可拖动排序）')" :aria-label="expanded ? t('折叠工具栏') : t('展开工具栏')" :aria-expanded="expanded" @click="toggleExpanded"><component :is="expanded ? ChevronUp : ChevronDown" :size="16" /></button>
-        <span class="tool-divider" />
+        <button v-if="collapsible" :disabled="locked" :title="expanded ? t('折叠相似工具') : t('展开全部工具（可拖动排序）')" :aria-label="expanded ? t('折叠工具栏') : t('展开工具栏')" :aria-expanded="expanded" :aria-controls="toolsRowId" @click="toggleExpanded"><component :is="expanded ? ChevronUp : ChevronDown" :size="16" /></button>
+      <span class="tool-divider" />
         <button :disabled="locked || !editor.history.past.length" :title='t("撤销 Ctrl/⌘+Z")' :aria-label='t("撤销")' @click="editor.travel('undo')"><Undo2 :size="16" /></button>
         <button :disabled="locked || !editor.history.future.length" :title='t("重做 Ctrl/⌘+Shift+Z")' :aria-label='t("重做")' @click="editor.travel('redo')"><Redo2 :size="16" /></button>
-        <button v-if="fullTools || editor.selected >= 0" :disabled="locked || editor.selected < 0" :title='t("删除选中标注 Delete")' :aria-label='t("删除选中标注")' @click="editor.remove"><Trash2 :size="16" /></button>
-        <button v-if="fullTools || editor.history.present.length > 0" :disabled="locked || !editor.history.present.length" :title='t("清空标注，可撤销恢复")' :aria-label='t("清空标注")' @click="editor.clear"><Eraser :size="16" /><span>{{ t("清空") }}</span></button>
-        <span class="tool-divider" />
-        <slot name="actions" />
-      </template>
+        <button :disabled="locked || editor.selected < 0" :title='t("删除选中标注 Delete")' :aria-label='t("删除选中标注")' @click="editor.remove"><Trash2 :size="16" /></button>
+
+      <button :disabled="locked || !editor.history.present.length" :title="t('清空标注，可撤销恢复')" :aria-label="t('清空标注')" @click="editor.clear"><Eraser :size="16" /><span>{{ t('清空') }}</span></button>
+    </div>
+    <div class="annotation-tool-row annotation-action-row" role="toolbar" :aria-label="t('标注操作')">
+
+      <slot name="actions" />
     </div>
     <div v-if="active && (editor.tool !== 'edit' || editor.selected >= 0)" class="annotation-tool-row annotation-options" :aria-label='t("标注样式")'>
       <label>{{ t("颜色") }} <input type="color" :value="editor.color" :disabled="locked || filterMode" @change="editor.style({ color: value($event) })" /></label>
@@ -178,7 +177,7 @@ function value(event: Event) { return (event.target as HTMLInputElement).value }
 .tool-grip { color: #71717a; cursor: grab; touch-action: none; }
 .tool-grip:active { cursor: grabbing; }
 .tool-divider { width: 1px; height: 17px; background: #e4e4e7; margin: 0 4px; }
-.expanded-tools { display:flex; flex-wrap:wrap; white-space:normal; overflow:visible; border-top:1px solid #e1e4e8; padding:4px 0; background:#fff; }
+.annotation-action-row { border-top:1px solid #e1e4e8; padding-top:3px; }
 .annotation-options { gap: 10px; border-top: 1px solid #f4f4f5; }
 .annotation-tools label { display: inline-flex; align-items: center; gap: 3px; }
 .annotation-tools input { color: #374151; background: white; border: 1px solid #d4d4d8; border-radius: 3px; height: 24px; }
@@ -188,6 +187,6 @@ function value(event: Event) { return (event.target as HTMLInputElement).value }
 .annotation-tools :deep(button:disabled), .annotation-tools input:disabled, .annotation-tools select:disabled { opacity: .45; }
 .annotation-hint { font-size: 10px; color: #71717a; }
 .annotation-error { color: #e11d48; line-height: 16px; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-:global([data-theme=dark]) .annotation-tools, :global([data-theme=dark]) .expanded-tools { background:#20252c; color:#e6edf3; }
+:global([data-theme=dark]) .annotation-tools { background:#20252c; color:#e6edf3; }
 :global([data-theme=dark]) .annotation-tools input, :global([data-theme=dark]) .annotation-tools select { background:#181b20; color:#e6edf3; border-color:#39424e; }
 </style>

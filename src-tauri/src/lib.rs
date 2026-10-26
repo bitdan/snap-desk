@@ -448,12 +448,6 @@ pub fn run() {
                             capture::recording::dismiss_completed_preview(&app);
                         });
                     }
-                } else if window.label() == "recording-annotations" {
-                    api.prevent_close();
-                    let app = window.app_handle().clone();
-                    tauri::async_runtime::spawn_blocking(move || {
-                        capture::recording::live_annotations::hide_interaction(&app);
-                    });
                 } else if window.label() == "main" {
                     api.prevent_close();
                     let _ = window.hide();

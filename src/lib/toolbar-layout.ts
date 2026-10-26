@@ -1,5 +1,14 @@
 import { computed, onUnmounted, ref, watch, type Ref } from 'vue'
-import type { Point, Size } from './selection'
+import { clamp, type Point, type Size, type Rect } from './selection'
+
+/** 两种采集模式共用选区下方定位；工具展开后按实际尺寸向屏幕内避让。 */
+export function annotationToolbarPosition(selection: Rect, display: Rect, size: Size) {
+  return {
+    left: `${clamp(selection.x, display.x + 8, Math.max(display.x + 8, display.x + display.width - size.width - 8))}px`,
+    top: `${clamp(selection.y + selection.height + 12, display.y + 8, Math.max(display.y + 8, display.y + display.height - size.height - 8))}px`,
+    maxWidth: `${Math.max(1, display.width - 16)}px`,
+  }
+}
 
 /** 所有位置使用 WebView 的 CSS 像素，不能混入截图的物理像素。 */
 export function clampToolbar(point: Point, size: Size, viewport: Size): Point {

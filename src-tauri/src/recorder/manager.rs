@@ -145,7 +145,7 @@ impl Session {
 }
 
 #[derive(Default)]
-pub struct RecordingState(Mutex<Option<Session>>, Mutex<()>, AtomicBool);
+pub struct RecordingState(Mutex<Option<Session>>, Mutex<()>);
 
 /// 退出意图独立于录屏阶段：Completed 可能早于窗口和资源清理。
 #[derive(Default)]
@@ -432,9 +432,6 @@ pub fn current_recording(
     require_control_window(&window)?;
     let state = app.state::<RecordingState>();
     let guard = state.0.lock().map_err(err)?;
-    if window.label() == "recording-controls" {
-        state.2.store(true, Ordering::SeqCst);
-    }
     Ok(guard.as_ref().map(|s| {
         let mut view = s.view.clone();
         view.seconds = s.elapsed().as_secs_f64();
@@ -449,7 +446,7 @@ pub fn current_recording(
 }
 
 fn require_control_window(window: &WebviewWindow) -> Result<(), String> {
-    if matches!(window.label(), "main" | "recording-controls" | "recording-annotations") {
+    if matches!(window.label(), "main" | "capture" | "recording-controls") {
         Ok(())
     } else {
         Err("当前窗口无权控制录屏。".into())
@@ -660,6 +657,7 @@ pub async fn start_recording(
         )?;
         config.encoding = selected_encoding;
         // 窗口本地原点与控制条位置无关，控制条仍以用户确认的屏幕选区放置。
+        chrome::hide_recording(&app);
         chrome::place_recording(&app, &screen, placement)?;
         super::hide_overlay(&app, &window)?;
         let recording = app.state::<RecordingState>();
@@ -690,7 +688,7 @@ pub async fn start_recording(
             stop: false,
             cancel: false,
         });
-        // WGC 必须在所属线程初始化/释放。先握手确认，再显示可操作的控制条。
+        // WGC 必须在所属线程初始化/释放。握手成功后由原选区页接管并自动开始，不显示中间控制条。
         let (ready_tx, ready_rx) = mpsc::sync_channel(1);
         let (go_tx, go_rx) = mpsc::sync_channel(1);
         let worker_guard = WorkerGuard::acquire(&app)?;
@@ -753,19 +751,6 @@ pub async fn start_recording(
             Ok(_) => ready_rx.recv().map_err(err).and_then(|result| result),
             Err(e) => Err(err(e)),
         };
-        recording.2.store(false, Ordering::SeqCst);
-        let ready = ready
-            .and_then(|_| chrome::show_recording(&app))
-            .and_then(|_| {
-                let deadline = Instant::now() + Duration::from_secs(5);
-                while !recording.2.load(Ordering::SeqCst) {
-                    if Instant::now() >= deadline {
-                        return Err("录屏按钮页未成功加载，请重启应用后重试。".into());
-                    }
-                    std::thread::sleep(Duration::from_millis(20));
-                }
-                Ok(())
-            });
         if let Err(error) = ready {
             let _ = go_tx.send(false);
             chrome::hide_recording(&app);

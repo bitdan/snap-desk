@@ -1,10 +1,17 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { clampToolbar } from '../src/lib/toolbar-layout'
+import { annotationToolbarPosition, clampToolbar } from '../src/lib/toolbar-layout'
 import { moveTool, normalizeToolOrder, readToolOrder } from '../src/lib/toolbar-order'
 
 afterEach(() => vi.unstubAllGlobals())
 
 describe('工具栏位置与顺序', () => {
+  it('截图和录像的工具栏都跟随选区，展开变高后自动避让屏幕边缘', () => {
+    const selection = { x: 850, y: 500, width: 100, height: 40 }
+    const display = { x: 0, y: 0, width: 1000, height: 700 }
+    expect(annotationToolbarPosition(selection, display, { width: 600, height: 60 })).toEqual({ left: '392px', top: '552px', maxWidth: '984px' })
+    expect(annotationToolbarPosition(selection, display, { width: 600, height: 200 }).top).toBe('492px')
+    expect(annotationToolbarPosition(selection, display, { width: 1200, height: 800 })).toEqual({ left: '8px', top: '8px', maxWidth: '984px' })
+  })
   it('浮动位置限制在视口内，窗口缩小后仍可找到手柄', () => {
     const size = { width: 700, height: 80 }
     expect(clampToolbar({ x: 1000, y: -20 }, size, { width: 1200, height: 800 })).toEqual({ x: 500, y: 0 })

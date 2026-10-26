@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { t, te } from '@/lib/i18n'
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { Pause, Play, Pencil, Square, X } from 'lucide-vue-next'
+import { Pause, Play, Square, X } from 'lucide-vue-next'
 import { api, onRecordingPreviewClosed } from '@/lib/api'
 import RecordingEditor from './RecordingEditor.vue'
 import { newerRecording, recordingActive, recordingStatus, recordingTime, type RecordingAction, type RecordingView, type RecordingResult } from '@/lib/recording'
@@ -72,13 +72,6 @@ async function control(action: RecordingAction) {
   catch (e) { error.value = String(e) }
   finally { busy.value = false }
 }
-async function annotate() {
-  if (!view.value || busy.value) return
-  busy.value = true; error.value = ''
-  try { await api.setRecordingAnnotationMode(view.value.id, true) }
-  catch (e) { error.value = String(e) }
-  finally { busy.value = false }
-}
 let offPreview: (() => void) | undefined
 onMounted(async () => {
   try {
@@ -115,7 +108,6 @@ onUnmounted(() => { disposed = true; clearTimeout(timer); offPreview?.() })
     <button v-else-if="view?.phase === 'countdown'" disabled><Play :size="15" />{{ t("等待开始") }}</button>
     <button v-else-if="view?.phase === 'paused'" :disabled="busy" :title='t("继续录制")' :aria-label='t("继续录制")' @click="control('resume')"><Play :size="17" /></button>
     <button v-else :disabled="busy || view?.phase !== 'recording'" :title='t("暂停录制")' :aria-label='t("暂停录制")' @click="control('pause')"><Pause :size="17" /></button>
-    <button :disabled="busy || !view || !['recording', 'paused'].includes(view.phase)" :title="t('录制中标注')" :aria-label="t('录制中标注')" @click="annotate"><Pencil :size="17" /></button>
     <button :disabled="busy || !view || !['recording', 'paused'].includes(view.phase)" :title='t("结束录制并编辑")' :aria-label='t("结束录制并编辑")' @click="control('stop')"><Square :size="17" /></button>
     <button :disabled="busy || !recordingActive(view)" :title='t("取消并丢弃本次录屏")' :aria-label='t("取消并丢弃本次录屏")' @click="control('cancel')"><X :size="17" /></button>
     <span v-if="error" class="error" role="alert" :title="te(error)">{{ te(error) }}</span>

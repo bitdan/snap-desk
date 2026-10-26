@@ -8,8 +8,7 @@
     "pin-*",
     "scroll-preview",
     "scroll-controls",
-    "recording-controls",
-    "recording-annotations"
+    "recording-controls"
   ],
   "permissions": [
     "core:event:allow-listen",

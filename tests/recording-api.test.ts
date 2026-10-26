@@ -15,6 +15,9 @@ describe('录屏 IPC 契约', () => {
     expect(invoke).toHaveBeenLastCalledWith('current_recording_annotations', { knownRevision: 3 })
     await api.setRecordingAnnotationMode(42, true)
     expect(invoke).toHaveBeenLastCalledWith('set_recording_annotation_mode', { id: 42, editing: true })
+    const toolbar = { x: 10, y: 800, width: 800, height: 120 }
+    await api.setRecordingAnnotationMode(42, false, toolbar)
+    expect(invoke).toHaveBeenLastCalledWith('set_recording_annotation_mode', { id: 42, editing: false, toolbar })
     await api.updateRecordingAnnotations(42, [])
     expect(invoke).toHaveBeenLastCalledWith('update_recording_annotations', { id: 42, shapes: [] })
   })

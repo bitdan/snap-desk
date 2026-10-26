@@ -24,6 +24,7 @@
       {
         "label": "capture",
         "title": "Snap Desk Capture",
+        "transparent": true,
         "url": "index.html?window=capture",
         "visible": false,
         "decorations": false,
@@ -31,7 +32,7 @@
         "alwaysOnTop": true,
         "skipTaskbar": true,
         "shadow": false,
-        "backgroundColor": "#15141b"
+        "backgroundColor": "#00000000"
       },
       {
         "label": "recording-controls",

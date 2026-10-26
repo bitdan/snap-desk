@@ -2,6 +2,9 @@
 @tailwind components;
 @tailwind utilities;
 
+/* 实时录制沿用截图选区窗口；移除冻结截图后让真实桌面透出，不留下不透明背景。 */
+html.capture-window.recording-live, html.capture-window.recording-live body, html.capture-window.recording-live #app { background: transparent; }
+
 .annotation-preview { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 .capture-toolbar.annotation-toolbar { flex-direction: column; width: max-content; max-width: calc(100vw - 16px); background: #fff; color: #3f3f46; border-color: #d4d4d8; }
 .capture-toolbar.annotation-toolbar button { flex-shrink: 0; height: 28px; padding: 3px 6px; gap: 4px; }

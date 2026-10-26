@@ -11,9 +11,9 @@ import { Copy, Save, X, Monitor, RotateCcw, Scan, Move, Pin, Video, QrCode, Scan
 import { api, onFrame, onCaptureClosed, onCapturePin, onScroll, type CaptureFrame, type ColorFormat, type ScrollView, type QrResult } from '@/lib/api'
 import { clamp, move, normalize, resize, toPixels, nudgeSelection, type Handle, type Point, type Rect } from '@/lib/selection'
 import { useAnnotations, type AnnotationTool } from '@/lib/use-annotations'
-import AnnotationSurface from './AnnotationSurface.vue'
-import AnnotationToolbar from './AnnotationToolbar.vue'
-import { useFloatingToolbar } from '@/lib/toolbar-layout'
+import AnnotationWorkspace from './AnnotationWorkspace.vue'
+import RecordingAnnotations from './RecordingAnnotations.vue'
+import { annotationToolbarPosition, useFloatingToolbar } from '@/lib/toolbar-layout'
 import CaptureMagnifier from './CaptureMagnifier.vue'
 import { magnifierSample } from '@/lib/magnifier'
 import { newerScroll } from '@/lib/scroll-capture'
@@ -24,6 +24,9 @@ import { readRecentSelection, restoreRecentSelection, writeRecentSelection } fro
 
 // 截图帧是不可变快照，大量窗口目标不需要逐项响应式代理。
 const frame = shallowRef<CaptureFrame | null>(null)
+// 选区确认后仅替换背景和运行状态，继续使用当前 capture WebView，不弹出中间控制窗口。
+const liveRecordingId = ref<number | null>(null)
+watch(liveRecordingId, id => document.documentElement.classList.toggle('recording-live', id !== null), { flush: 'sync' })
 // 只传会话编号与版本；大图通过受限协议读取，URL 不包含本地文件路径。
 const imageUrl = computed(() => frame.value ? `${convertFileSrc(String(frame.value.id), 'capture-image')}/${frame.value.previewRevision}.png` : '')
 const selection = ref<Rect | null>(null)
@@ -188,9 +191,7 @@ watch(toolbar, (element, _, cleanup) => {
 const toolbarStyle = computed(() => {
   const r = selection.value
   if (!r) return {}
-  const bounds = activeDisplay.value
-  const { width, height } = toolbarSize.value
-  return { left: `${clamp(r.x, bounds.x + 8, Math.max(bounds.x + 8, bounds.x + bounds.width - width - 8))}px`, top: `${clamp(r.y + r.height + 12, bounds.y + 8, Math.max(bounds.y + 8, bounds.y + bounds.height - height - 8))}px`, maxWidth: `${Math.max(1, bounds.width - 16)}px` }
+  return annotationToolbarPosition(r, activeDisplay.value, toolbarSize.value)
 })
 // 所有图形保存在原图坐标系内；选区只负责裁剪和限制绘制区域。
 function chooseTool(tool: AnnotationTool) { if (busy.value || editor.pending || editor.interacting) return; editor.setTool(tool); annotating.value = true }
@@ -243,6 +244,7 @@ async function startRecording() {
   if (!recordingMode.value || !recordingCapabilities.value?.available) return
   if (!frame.value || !pixels.value || !valid.value || busy.value || editor.pending || editor.interacting || gesture.value) return
   const id = frame.value.id
+  let prepared = false
   busy.value = true; error.value = ''
   try {
     const rect = recordingRegion(pixels.value, recordingSource.value, frame.value.displays, { x: frame.value.originX, y: frame.value.originY })
@@ -250,9 +252,18 @@ async function startRecording() {
     config.source = recordingSource.value === 'window' ? 'selectedWindow' : 'selectedMonitor'
     if (recordingSource.value === 'window' && (selectedTarget.value === null || frame.value.targets[selectedTarget.value]?.kind !== 'window')) throw new Error('请先使用 Alt 点击吸附一个窗口。')
     await api.startRecording(id, rect, config, recordingSource.value === 'window' ? selectedTarget.value! : undefined, editor.history.present)
+    prepared = true
+    liveRecordingId.value = id
     releaseFrame(id)
+    await nextTick()
+    await api.setRecordingAnnotationMode(id, true)
+    await api.controlRecording(id, 'start')
   }
-  catch (e) { error.value = String(e) }
+  catch (e) {
+    // 已准备成功但窗口接管/自动开始失败时释放原生会话，不留下占用截图快捷键的 Ready 状态。
+    if (prepared) { try { await api.controlRecording(id, 'cancel') } catch { /* 保留最初的失败原因。 */ } }
+    error.value = String(e)
+  }
   finally { busy.value = false }
 }
 async function copyColor(format = colorFormat.value) {
@@ -310,6 +321,7 @@ function abortGesture() { gesture.value = null }
 function selectAll() { selectedTarget.value = null; if (!busy.value && !marked.value && !editor.interacting) { editor.reset(); selection.value = { x: 0, y: 0, ...viewport.value }; void selectedRecordingRegion() } }
 function receive(value: CaptureFrame) {
   if (disposed || value.id <= closedThroughId || (frame.value && value.id < frame.value.id)) return
+  liveRecordingId.value = null
   busy.value = false; reselect(); windowsOnly.value = false; scroll.value = null; recordingSetup.value = false; imageReady.value = false; recordingMode.value = !!value.recording; frame.value = value
 }
 async function loaded() {
@@ -341,6 +353,7 @@ async function finish(action: 'copy' | 'save' | 'pin') {
   finally { busy.value = false }
 }
 function key(e: KeyboardEvent) {
+  if (liveRecordingId.value !== null) return
   if (qrResult.value || ocrResult.value !== null) return
   if (scroll.value) return
   if (recordingSetup.value) {
@@ -389,7 +402,7 @@ function key(e: KeyboardEvent) {
   else if (command && e.key.toLowerCase() === 'y') { e.preventDefault(); void editor.travel('redo') }
 }
 function keyUp(e: KeyboardEvent) { if (e.key === 'Alt') windowsOnly.value = false }
-function resized() { viewport.value = { width: innerWidth, height: innerHeight }; if (!scroll.value) reselect() }
+function resized() { viewport.value = { width: innerWidth, height: innerHeight }; if (!scroll.value && liveRecordingId.value === null) reselect() }
 async function imageFailed() {
   error.value = '截图预览加载失败，请重新截图。'
   await cancel()
@@ -423,7 +436,8 @@ onUnmounted(() => { releaseFrame(); disposed = true; offClosed?.(); off?.(); off
 </script>
 
 <template>
-  <div v-if="scroll" />
+  <RecordingAnnotations v-if="liveRecordingId !== null" :session-id="liveRecordingId" :initial-editor="editor" @closed="liveRecordingId = null" />
+  <div v-else-if="scroll" />
   <div v-else class="capture-overlay" @pointerdown="down($event)" @pointermove.capture="drag" @pointerleave="pointer = null" @pointerup="up" @pointercancel="abortGesture(); pointer = null" @contextmenu.prevent="cancel">
     <img v-if="frame" :key="frame.id" ref="screenImage" class="screen-image" :src="imageUrl" crossorigin="anonymous" :alt='t("当前屏幕截图")' draggable="false" @load="loaded" @error="imageFailed" />
     <!-- 截图和录屏共用选区入口：开始框选前保持原图，仅在形成选区后遮暗外围。 -->
@@ -436,9 +450,7 @@ onUnmounted(() => { releaseFrame(); disposed = true; offClosed?.(); off?.(); off
       <span class="size-label">{{ pixels?.width }} × {{ pixels?.height }} px · ({{ pixels?.x }}, {{ pixels?.y }})</span>
       <template v-if="!marked && !annotating"><span v-for="handle in handles" :key="handle" :class="['resize-handle', handle]" @pointerdown.stop="down($event, handle)" /></template>
     </div>
-    <AnnotationSurface v-if="frame && pixels" :editor="editor" :width="frame.width" :height="frame.height" :bounds="pixels" :enabled="annotating && !busy" />
-    <div v-if="valid && !gesture" ref="toolbar" class="capture-toolbar annotation-toolbar" :style="[toolbarStyle, floatingToolbarStyle]" @pointerdown.stop @contextmenu.stop.prevent>
-      <AnnotationToolbar collapsible :editor="editor" :disabled="busy" :active="annotating" @tool="chooseTool" @float="floatToolbar" @reset-position="resetToolbarPosition">
+    <AnnotationWorkspace :editor="editor" :width="frame?.width ?? 1" :height="frame?.height ?? 1" :bounds="pixels ?? { x: 0, y: 0, width: 1, height: 1 }" :surface-visible="!!frame && !!pixels" :toolbar-visible="!!valid && !gesture" :enabled="annotating && !busy" :active="annotating" :disabled="busy" :toolbar-style="[toolbarStyle, floatingToolbarStyle]" @toolbar-element="toolbar = $event" @tool="chooseTool" @float="floatToolbar" @reset-position="resetToolbarPosition">
         <template #leading><button :disabled="busy || editor.pending || editor.interacting || marked" :aria-pressed="!annotating" :title='t("调整选区")' :aria-label='t("调整选区")' @click="annotating = false"><Move :size="16" /></button></template>
         <template #actions>
           <button v-if="!recordingMode && selectedTarget !== null && frame?.targets[selectedTarget]?.kind === 'window'" :disabled="busy || marked || editor.pending || editor.interacting" :title='t("原生窗口截图")' :aria-label='t("原生窗口截图")' @click="captureNative"><AppWindow :size="16" /></button>
@@ -456,7 +468,7 @@ onUnmounted(() => { releaseFrame(); disposed = true; offClosed?.(); off?.(); off
         </template>
         <button :disabled="busy || editor.pending" :title="recordingMode ? t('取消录屏') : t('取消截图')" :aria-label='t("取消截图")' @click="cancel"><X :size="16" /></button>
         </template>
-      </AnnotationToolbar>
+      <template #footer>
       <div v-if="recordingMode" class="recording-ready-row" role="toolbar" :aria-label='t("录屏准备工具栏")'>
         <button class="recording-grip" :disabled="busy" :title='t("拖动工具栏；双击恢复位置")' :aria-label='t("拖动录屏工具栏")' @pointerdown="floatToolbar" @dblclick="resetToolbarPosition"><GripVertical :size="16" /></button>
         <button :disabled="busy" :title='t("返回截图")' :aria-label='t("返回截图")' @click="leaveRecordingMode"><ArrowLeft :size="16" /></button>
@@ -473,11 +485,12 @@ onUnmounted(() => { releaseFrame(); disposed = true; offClosed?.(); off?.(); off
         <button ref="recordingSettingsTrigger" :disabled="busy" :title='t("更多录屏设置")' :aria-label='t("更多录屏设置")' :aria-expanded="recordingSetup" aria-controls="recording-inline-options" @click="openRecordingMenu"><Settings2 :size="16" /><ChevronDown :size="12" /></button>
         <span class="ready-divider" />
         <button :disabled="busy" :title='t("重新选择录屏范围")' :aria-label='t("重新选择录屏范围")' @click="reselect"><RotateCcw :size="16" /></button>
-        <button ref="recordingConfirmTrigger" class="recording-confirm" :disabled="busy || editor.pending || editor.interacting || !recordingCapabilities?.available" :title="recordingCapabilities?.reason ?? (recordingCapabilityError || (recordingCapabilities ? t('确认范围，进入录制控制条') : t('正在检查录屏能力…')))" @click="startRecording"><Circle :size="14" />{{ busy ? t("准备中…") : t("准备录制") }}</button>
+        <button ref="recordingConfirmTrigger" class="recording-confirm" :disabled="busy || editor.pending || editor.interacting || !recordingCapabilities?.available" :title="recordingCapabilities?.reason ?? (recordingCapabilityError || (recordingCapabilities ? t('开始录制') : t('正在检查录屏能力…')))" @click="startRecording"><Circle :size="14" />{{ busy ? t("准备中…") : t("开始录制") }}</button>
         <button :disabled="busy" :title='t("取消录屏")' :aria-label='t("取消录屏")' @click="cancel"><X :size="16" /></button>
       </div>
       <RecordingSetupMenu v-if="recordingMode && recordingSetup" id="recording-inline-options" embedded v-model:source="recordingSource" :window-available="selectedTarget !== null && frame?.targets[selectedTarget]?.kind === 'window'" v-model:format="recordingFormat" :formats="recordingCapabilities?.formats ?? []" v-model:fps="recordingFps" v-model:encoding="recordingEncoding" v-model:quality="recordingQuality" v-model:mbps="recordingMbps" v-model:countdown="recordingCountdown" v-model:cursor="captureCursor" v-model:effects="recordingEffects" v-model:system-audio="recordingSystemAudio" v-model:microphone="recordingMicrophone" :system-audio-available="!!recordingCapabilities?.systemAudio" :microphone-available="!!recordingCapabilities?.microphone" :busy="busy" :error="error" @confirm="startRecording" @close="recordingSetup = false" />
-    </div>
+      </template>
+    </AnnotationWorkspace>
     <CaptureMagnifier v-if="showMagnifier && screenImage && pointer && frame" :image="screenImage" :point="pointer" :viewport="viewport" :image-size="frame" :format="colorFormat" :relative="relativeCoordinates" :origin="pixels" :copied="colorCopied" :bounds="pointerDisplay" />
     <div v-if="ocrResult !== null" class="qr-shade" @pointerdown.stop @pointermove.stop @pointerup.stop @contextmenu.stop.prevent>
       <div :class="['qr-dialog', 'ocr-dialog', { 'translation-dialog': translationMode }]" :style="dialogStyle" role="dialog" aria-modal="true" :aria-label="translationMode ? t('文字翻译') : t('文字识别结果')">
@@ -509,9 +522,6 @@ onUnmounted(() => { releaseFrame(); disposed = true; offClosed?.(); off?.(); off
 .ocr-dialog { width: min(560px, calc(100vw - 32px)); }
 .translation-dialog { width: min(920px, calc(100vw - 32px)); }
 
-.capture-toolbar.annotation-toolbar { max-width: calc(100vw - 16px); background: #fff; }
-.capture-toolbar :deep(.annotation-tools) { width: max-content; max-width: 100%; }
-.capture-toolbar :deep(.annotation-tool-row) { overflow-x: auto; }
 .capture-modebar { position: absolute; top: 8px; left: 8px; z-index: 4; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; max-width: calc(100vw - 16px); border-radius: 6px; padding: 6px 8px; background: #242330ed; color: white; font-size: 12px; cursor: default; }
 .capture-modebar button { display: flex; align-items: center; gap: 5px; padding: 3px; }
 .capture-modebar button:disabled { opacity: .5; }

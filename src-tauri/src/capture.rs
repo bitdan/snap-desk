@@ -271,6 +271,17 @@ fn prepare(app: &AppHandle, recording: bool) -> Result<(), String> {
     let window = overlay(app)?;
     let started = Instant::now();
     hide_overlay(app, &window)?;
+    // 旧回放属于捕获排除窗口，先真正收起再截图；部分桌面截图路径会把可见的排除窗口画成黑矩形。
+    let replay_visible = app.get_webview_window("recording-controls")
+        .is_some_and(|window| window.is_visible().unwrap_or(false));
+    recording::dismiss_completed_preview(app);
+    if replay_visible {
+        *app.state::<CaptureState>().hidden_at.lock().map_err(err)? = Some(Instant::now());
+    }
+    // 录制复用过的窗口可能处于鼠标穿透/捕获排除状态；新截图重新恢复普通交互。
+    window.set_ignore_cursor_events(false).map_err(err)?;
+    window.set_content_protected(false).map_err(err)?;
+    recording::live_annotations::set_input_region(&window, None)?;
     // 已经隐藏超过 180ms 的常驻蒙层不再固定等待；刚关闭后立刻重截仍等待剩余时间。
     let remaining = state_hide_remaining(app)?;
     if !remaining.is_zero() {

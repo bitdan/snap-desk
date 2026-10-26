@@ -700,5 +700,7 @@
   "录制中最多支持 8 个实时滤镜。": "Up to 8 live filters are supported during recording.",
   "录制已结束或尚未开始，无法修改录制标注。": "Recording has ended or has not started; annotations cannot be changed.",
   "当前窗口无权修改录制标注。": "This window cannot change recording annotations.",
-  "录屏标注会话已过期。": "The recording annotation session has expired."
+  "录屏标注会话已过期。": "The recording annotation session has expired.",
+  "无法设置录屏工具栏交互区域。": "Could not set the recording toolbar input region.",
+  "录屏工具栏范围超出显示器。": "The recording toolbar extends beyond the display."
 }
