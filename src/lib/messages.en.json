@@ -899,5 +899,8 @@
   "选区太小，无法放置序号。": "The region is too small to place a number.",
   "文字最多 500 个字符。": "Text is limited to 500 characters.",
   "页面加载失败，请重启 Snap Desk：{0}": "Page failed to load. Restart Snap Desk: {0}",
-  "关闭自启": "Turn off"
+  "关闭自启": "Turn off",
+  "录制中标注": "Annotate recording",
+  "继续操作桌面": "Return to desktop",
+  "滤镜按实时视频画面处理，编辑时显示范围。": "Filters process each video frame; the editor shows their bounds."
 }

@@ -79,6 +79,14 @@ pub(crate) fn raster(s: &Annotation) -> Result<RgbaImage, String> {
 
 /// 限制数量、坐标、颜色和线宽，防止无效 IPC 数据造成越界或过长绘制循环。
 pub fn validate(shapes: &[Annotation], width: u32, height: u32) -> Result<(), String> {
+    validate_impl(shapes, width, height, false)
+}
+
+/// 录制滤镜只接受几何和样式，由编码帧实时取样；文字/序号仍必须提供受限字形 PNG。
+pub(crate) fn validate_live(shapes: &[Annotation], width: u32, height: u32) -> Result<(), String> {
+    validate_impl(shapes, width, height, true)
+}
+fn validate_impl(shapes: &[Annotation], width: u32, height: u32, live: bool) -> Result<(), String> {
     if shapes.len() > 100 {
         return Err("单张截图最多支持 100 个标注。".into());
     }
@@ -129,7 +137,9 @@ pub fn validate(shapes: &[Annotation], width: u32, height: u32) -> Result<(), St
             if s.start.x >= s.end.x || s.start.y >= s.end.y {
                 return Err("文字或滤镜范围为空。".into());
             }
-            raster(s)?;
+            if !(live && dynamic_filter(s)) {
+                raster(s)?;
+            }
         } else if s.raster.is_some() {
             return Err("此标注类型不接受像素数据。".into());
         }
@@ -260,14 +270,86 @@ pub fn render(image: &mut RgbaImage, shapes: &[Annotation], origin: Point) -> Re
     // 橡皮擦只修改透明标注层，最后叠回底图，保留透明文件贴图。
     if shapes.iter().any(|s| matches!(s.kind, Kind::Erase)) {
         let mut layer = RgbaImage::new(image.width(), image.height());
-        render_layer(&mut layer, shapes, origin)?;
+        render_layer(&mut layer, shapes, origin, None)?;
         image::imageops::overlay(image, &layer, 0, 0);
         return Ok(());
     }
-    render_layer(image, shapes, origin)
+    render_layer(image, shapes, origin, None)
 }
 
-fn render_layer(image: &mut RgbaImage, shapes: &[Annotation], origin: Point) -> Result<(), String> {
+pub(crate) fn dynamic_filter(shape: &Annotation) -> bool {
+    matches!(shape.kind, Kind::Mosaic | Kind::Blur | Kind::Magnify)
+}
+/// 以当前干净视频帧为滤镜来源，保持图层顺序和橡皮擦语义，不把某一帧截图冻结进视频。
+pub(crate) fn render_live(image: &mut RgbaImage, shapes: &[Annotation]) -> Result<(), String> {
+    let mut layer = RgbaImage::new(image.width(), image.height());
+    render_layer(&mut layer, shapes, Point { x: 0.0, y: 0.0 }, Some(image))?;
+    image::imageops::overlay(image, &layer, 0, 0);
+    Ok(())
+}
+
+/// 滤镜临时图最长边限制为 1024；只在实际使用滤镜时分配，不影响普通线条标注的快速路径。
+fn live_filter(frame: &RgbaImage, s: &Annotation) -> Result<RgbaImage, String> {
+    use image::imageops::{self, FilterType};
+    let x = (s.start.x.floor().max(0.0) as u32).min(frame.width() - 1);
+    let y = (s.start.y.floor().max(0.0) as u32).min(frame.height() - 1);
+    let width = (s.end.x.ceil() as u32)
+        .min(frame.width())
+        .saturating_sub(x)
+        .max(1);
+    let height = (s.end.y.ceil() as u32)
+        .min(frame.height())
+        .saturating_sub(y)
+        .max(1);
+    let scale = (1024.0 / f64::from(width.max(height))).min(1.0);
+    let w = (f64::from(width) * scale).ceil().max(1.0) as u32;
+    let h = (f64::from(height) * scale).ceil().max(1.0) as u32;
+    let (sx, sy, sw, sh) = if matches!(s.kind, Kind::Magnify) {
+        let zoom = s.magnification.unwrap_or(2.0);
+        let sw = (f64::from(width) / zoom).round().max(1.0) as u32;
+        let sh = (f64::from(height) / zoom).round().max(1.0) as u32;
+        (x + (width - sw) / 2, y + (height - sh) / 2, sw, sh)
+    } else {
+        (x, y, width, height)
+    };
+    let crop = imageops::crop_imm(frame, sx, sy, sw, sh).to_image();
+    let mut result = imageops::resize(&crop, w, h, FilterType::Triangle);
+    match s.kind {
+        Kind::Mosaic => {
+            let block = s.width.max(4.0);
+            let small = imageops::resize(
+                &crop,
+                (f64::from(width) / block).ceil().max(1.0) as u32,
+                (f64::from(height) / block).ceil().max(1.0) as u32,
+                FilterType::Triangle,
+            );
+            result = imageops::resize(&small, w, h, FilterType::Nearest);
+        }
+        Kind::Blur => result = imageops::blur(&result, (s.width * scale).max(2.0) as f32),
+        Kind::Magnify => {
+            let c = color(&s.color)?;
+            let border = (s.width * scale).round().max(1.0) as u32;
+            for (x, y, pixel) in result.enumerate_pixels_mut() {
+                if x < border
+                    || y < border
+                    || x >= w.saturating_sub(border)
+                    || y >= h.saturating_sub(border)
+                {
+                    *pixel = image::Rgba([c[0], c[1], c[2], 255]);
+                }
+            }
+        }
+        _ => {}
+    }
+    Ok(result)
+}
+
+fn render_layer(
+    image: &mut RgbaImage,
+    shapes: &[Annotation],
+    origin: Point,
+    live_source: Option<&RgbaImage>,
+) -> Result<(), String> {
     let mut spotlight_drawn = false;
     for s in shapes {
         if matches!(s.kind, Kind::Spotlight) {
@@ -312,7 +394,11 @@ fn render_layer(image: &mut RgbaImage, shapes: &[Annotation], origin: Point) -> 
             s.kind,
             Kind::Text | Kind::Number | Kind::Mosaic | Kind::Blur | Kind::Magnify
         ) {
-            let source = raster(s)?;
+            let source = if let Some(frame) = live_source.filter(|_| dynamic_filter(s)) {
+                live_filter(frame, s)?
+            } else {
+                raster(s)?
+            };
             let left = s.start.x - origin.x;
             let top = s.start.y - origin.y;
             let width = s.end.x - s.start.x;
@@ -682,6 +768,25 @@ mod tests {
             font_family: None,
             raster: None,
         }
+    }
+    #[test]
+    fn live_filters_sample_each_new_frame_without_requiring_frozen_png() {
+        for kind in [Kind::Mosaic, Kind::Blur, Kind::Magnify] {
+            let mut s = shape();
+            s.kind = kind;
+            s.magnification = if matches!(kind, Kind::Magnify) { Some(2.0) } else { None };
+            assert!(validate(std::slice::from_ref(&s), 32, 32).is_err());
+            validate_live(std::slice::from_ref(&s), 32, 32).unwrap();
+            for rgb in [[20, 80, 160, 255], [180, 50, 40, 255]] {
+                let mut frame = RgbaImage::from_pixel(32, 32, image::Rgba(rgb));
+                render_live(&mut frame, std::slice::from_ref(&s)).unwrap();
+                assert_eq!(frame.get_pixel(17, 17).0, rgb);
+                assert_eq!(frame.get_pixel(0, 0).0, rgb);
+            }
+        }
+        let mut text = shape();
+        text.kind = Kind::Text;
+        assert!(validate_live(&[text], 32, 32).is_err());
     }
     #[test]
     fn rectangle_uses_crop_origin_and_keeps_interior() {

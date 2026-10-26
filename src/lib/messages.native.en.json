@@ -695,5 +695,10 @@
   "已达到滚动截图容量限制（边长 60000 / 包围盒 3200 万像素 / 512 图块），仅输出已确认部分。": "Scroll capture capacity reached (60000 per side / 32 million bounding pixels / 512 tiles). Exporting confirmed content only.",
   "恢复文件": "Recovery file",
   "录屏恢复文件": "Recording recovery file",
-  "确认清理": "Confirm cleanup"
+  "确认清理": "Confirm cleanup",
+  "录制已结束。": "Recording has ended.",
+  "录制中最多支持 8 个实时滤镜。": "Up to 8 live filters are supported during recording.",
+  "录制已结束或尚未开始，无法修改录制标注。": "Recording has ended or has not started; annotations cannot be changed.",
+  "当前窗口无权修改录制标注。": "This window cannot change recording annotations.",
+  "录屏标注会话已过期。": "The recording annotation session has expired."
 }

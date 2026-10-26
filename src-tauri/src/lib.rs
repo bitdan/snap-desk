@@ -177,6 +177,7 @@ pub fn run() {
         .manage(translation::TranslationState::default())
         .manage(local_translation::LocalTranslationState::default())
         .manage(capture::recording::RecordingState::default())
+        .manage(capture::recording::live_annotations::LiveAnnotationState::default())
         .manage(capture::recording::result::ResultState::default())
         .manage(capture::recording::editing::EditState::default())
         .manage(capture::recording::ExitState::default())
@@ -447,6 +448,12 @@ pub fn run() {
                             capture::recording::dismiss_completed_preview(&app);
                         });
                     }
+                } else if window.label() == "recording-annotations" {
+                    api.prevent_close();
+                    let app = window.app_handle().clone();
+                    tauri::async_runtime::spawn_blocking(move || {
+                        capture::recording::live_annotations::hide_interaction(&app);
+                    });
                 } else if window.label() == "main" {
                     api.prevent_close();
                     let _ = window.hide();
@@ -550,6 +557,9 @@ pub fn run() {
             capture::recording::output::current_recording_directory,
             capture::recording::output::choose_recording_directory,
             capture::recording::control_recording,
+            capture::recording::live_annotations::current_recording_annotations,
+            capture::recording::live_annotations::set_recording_annotation_mode,
+            capture::recording::live_annotations::update_recording_annotations,
             pins::pin_clipboard,
             pins::pin_file,
             pins::set_pin_group,

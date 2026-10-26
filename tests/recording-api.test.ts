@@ -8,6 +8,16 @@ vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn() }))
 import { api } from '../src/lib/api'
 
 describe('录屏 IPC 契约', () => {
+  it('实时标注携带会话 ID，元数据查询携带已有版本', async () => {
+    await api.recordingAnnotations()
+    expect(invoke).toHaveBeenLastCalledWith('current_recording_annotations', { knownRevision: null })
+    await api.recordingAnnotations(3)
+    expect(invoke).toHaveBeenLastCalledWith('current_recording_annotations', { knownRevision: 3 })
+    await api.setRecordingAnnotationMode(42, true)
+    expect(invoke).toHaveBeenLastCalledWith('set_recording_annotation_mode', { id: 42, editing: true })
+    await api.updateRecordingAnnotations(42, [])
+    expect(invoke).toHaveBeenLastCalledWith('update_recording_annotations', { id: 42, shapes: [] })
+  })
   it('准备阶段的标注连同截图坐标提交，保留窗口来源参数', async () => {
     const rect = { x: 100, y: 50, width: 600, height: 400 }
     const annotations = [{ kind: 'rectangle' as const, start: { x: 110, y: 60 }, end: { x: 150, y: 90 }, color: '#ff0000', width: 2, opacity: 1 }]

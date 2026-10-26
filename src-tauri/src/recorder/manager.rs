@@ -14,6 +14,7 @@ mod config;
 mod countdown_tests;
 mod encoder;
 mod frame;
+pub mod live_annotations;
 mod gif;
 mod input;
 pub mod output;
@@ -402,6 +403,8 @@ pub fn control(app: &AppHandle, id: Option<u64>, action: RecordingAction) -> Res
         }
         RecordingAction::Stop | RecordingAction::Cancel => {
             s.stop_requested(matches!(action, RecordingAction::Cancel));
+            drop(guard);
+            live_annotations::hide_interaction(app);
             return Ok(());
         }
         _ => return Err("当前录屏状态不支持此操作。".into()),
@@ -446,7 +449,7 @@ pub fn current_recording(
 }
 
 fn require_control_window(window: &WebviewWindow) -> Result<(), String> {
-    if matches!(window.label(), "main" | "recording-controls") {
+    if matches!(window.label(), "main" | "recording-controls" | "recording-annotations") {
         Ok(())
     } else {
         Err("当前窗口无权控制录屏。".into())
@@ -642,8 +645,6 @@ pub async fn start_recording(
         };
         config.region = rect;
         config.validate(source_size)?;
-        let annotation_layer =
-            frame::AnnotationLayer::new(&annotations, rect.width, rect.height, annotation_origin)?;
         capture::supported()?;
         // 准备时固定本次目录；临时录制文件和最终文件同盘，停止时无需跨盘移动。
         let root = output::prepare(&app)?;
@@ -699,6 +700,7 @@ pub async fn start_recording(
             .spawn(move || {
                 let _worker = worker_guard;
                 let prepared = capture::prepare(&config, source_size, source).and_then(|backend| {
+                    live_annotations::initialize(&worker_app, id, &screen, config.region, backend.desktop_origin()?, annotations, annotation_origin)?;
                     let audio = if config.system_audio || config.microphone {
                         let audio_app = worker_app.clone();
                         // 初始化在确认选区阶段完成；只有 Recording 阶段才 Start 设备。
@@ -738,11 +740,11 @@ pub async fn start_recording(
                                 root,
                                 backend,
                                 audio,
-                                annotation_layer,
                             );
                         }
                     }
                     Err(e) => {
+                        live_annotations::clear(&worker_app, id);
                         let _ = ready_tx.send(Err(e));
                     }
                 }
@@ -767,6 +769,7 @@ pub async fn start_recording(
         if let Err(error) = ready {
             let _ = go_tx.send(false);
             chrome::hide_recording(&app);
+            live_annotations::clear(&app, id);
             *recording.0.lock().map_err(err)? = None;
             let _ = window.show();
             return Err(error);
@@ -817,7 +820,6 @@ fn collect(
     root: PathBuf,
     mut backend: Box<dyn capture::CaptureBackend>,
     audio: Option<audio::Worker>,
-    annotation_layer: Option<frame::AnnotationLayer>,
 ) {
     let state = app.state::<RecordingState>();
     let (sender, receiver) = mpsc::sync_channel::<QueuedFrame>(2);
@@ -835,13 +837,14 @@ fn collect(
                 receiver,
                 &writer_abort,
                 audio,
-                annotation_layer,
             )
         });
     let result = match writer {
         Err(e) => Err(err(e)),
         Ok(writer) => {
             let mut last_sample = None;
+            let mut annotation_revision = live_annotations::snapshot(&app, id).0;
+            let mut annotation_editing = false;
             let mut check_screen = Instant::now();
             let mut waiting_since = None;
             let mut listener: Option<input::Listener> = None;
@@ -876,11 +879,24 @@ fn collect(
                         }
                         effects_generation = Some(generation);
                     }
+                    let editing = live_annotations::editing(&app, id);
+                    if editing != annotation_editing {
+                        compositor.clear();
+                        base_dirty = base.is_some();
+                        annotation_editing = editing;
+                    }
+                    let revision = live_annotations::snapshot(&app, id).0;
+                    if running && revision != annotation_revision {
+                        // 即使桌面静止，确认一笔/撤销后也请求新帧，让标注变化立即进入视频。
+                        backend.refresh()?;
+                        annotation_revision = revision;
+                    }
                     if writer.is_finished() {
                         return Err("录屏编码线程已提前结束。".into());
                     }
                     if check_screen.elapsed() >= Duration::from_millis(500) {
                         backend.check_source()?;
+                        live_annotations::update_origin(&app, id, backend.desktop_origin()?);
                         if super::scroll::session::screen_at(&app, screen.x, screen.y)? != screen {
                             return Err("显示器位置、尺寸或 DPI 改变，请重新录屏。".into());
                         }
@@ -940,8 +956,10 @@ fn collect(
                                     base_dirty = true;
                                     waiting_since = None;
                                 }
-                                for (time, event) in events {
-                                    compositor.ingest(time, event);
+                                if !annotation_editing {
+                                    for (time, event) in events {
+                                        compositor.ingest(time, event);
+                                    }
                                 }
                                 if let Some(clean) = base.as_ref() {
                                     let needed = base_dirty || compositor.needs_frame();
@@ -984,6 +1002,7 @@ fn collect(
                                             match sender.try_send(QueuedFrame {
                                                 generation,
                                                 pts,
+                                                annotations: live_annotations::snapshot(&app, id).1,
                                                 image,
                                             }) {
                                                 Ok(()) => {
@@ -1031,6 +1050,7 @@ fn collect(
                                     match sender.try_send(QueuedFrame {
                                         generation,
                                         pts,
+                                        annotations: live_annotations::snapshot(&app, id).1,
                                         image: frame.image,
                                     }) {
                                         Ok(()) => s.view.stats.queued_frames += 1,
@@ -1116,6 +1136,7 @@ fn collect(
             }
         }
     };
+    live_annotations::clear(&app, id);
     let mut message = String::new();
     let mut completed = false;
     if let Ok(mut guard) = state.0.lock() {
@@ -1183,7 +1204,6 @@ fn write_video(
     receiver: mpsc::Receiver<QueuedFrame>,
     abort: &AtomicBool,
     mut audio: Option<audio::Worker>,
-    annotation_layer: Option<frame::AnnotationLayer>,
 ) -> Result<String, String> {
     let mut recovery = recovery::Pending::new(app, id, &root, config.format)?;
     let pending = recovery.path();
@@ -1241,7 +1261,7 @@ fn write_video(
         let encoding_started = Instant::now();
         // 标注层只绘制一次；每帧在编码前混合，确保准备阶段的标注真正进入成品。
         let mut image = frame.image;
-        if let Some(layer) = &annotation_layer {
+        if let Some(layer) = &frame.annotations {
             layer.apply(&mut image)?;
         }
         encoder.push(&image, frame.pts)?;

@@ -116,6 +116,8 @@ pub struct VideoFrame {
 
 /// 队列只携带已投影的时间与代次，编码线程可丢弃暂停前的排队帧。
 pub struct QueuedFrame {
+    /// 入队时固定快照，排队帧不能套用未来的标注版本。
+    pub annotations: Option<std::sync::Arc<super::live_annotations::Layer>>,
     pub generation: u64,
     pub pts: i64,
     pub image: BgraImage,

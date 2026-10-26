@@ -6,7 +6,7 @@ import { parse, compileScript } from '@vue/compiler-sfc'
 import { compile } from '@vue/compiler-dom'
 import type { RecordingView } from '../src/lib/recording'
 
-const api = vi.hoisted(() => ({ currentRecording: vi.fn(), latestRecordingResult: vi.fn(), controlRecording: vi.fn(), selectRecordingArea: vi.fn() }))
+const api = vi.hoisted(() => ({ currentRecording: vi.fn(), latestRecordingResult: vi.fn(), controlRecording: vi.fn(), selectRecordingArea: vi.fn(), setRecordingAnnotationMode: vi.fn() }))
 const closed = vi.hoisted(() => ({ subscribe: vi.fn(), callback: undefined as undefined | ((id: number) => void), off: vi.fn() }))
 vi.mock('../src/lib/api', () => ({ api, onRecordingPreviewClosed: closed.subscribe }))
 vi.mock('../src/components/RecordingEditor.vue', async () => {
@@ -66,6 +66,25 @@ beforeEach(() => {
 afterEach(() => { renderer.render(null, root); vi.clearAllTimers(); vi.useRealTimers() })
 
 describe('录屏控制条直接进入回放编辑', () => {
+  it.each(['recording', 'paused'] as const)('%s 时可打开标注，保持当前录制状态', async phase => {
+    api.currentRecording.mockResolvedValue(view(phase))
+    await mount()
+    const button = find(node => node.props['aria-label'] === '录制中标注')!
+    expect(button.props.disabled).toBe(false)
+    ;(button.props.onClick as () => void)()
+    await flush()
+    expect(api.setRecordingAnnotationMode).toHaveBeenCalledWith(7, true)
+    expect(api.controlRecording).not.toHaveBeenCalled()
+  })
+  it('打开标注失败显示原因并恢复按钮', async () => {
+    api.currentRecording.mockResolvedValue(view('recording'))
+    api.setRecordingAnnotationMode.mockRejectedValueOnce(new Error('浮层不可用'))
+    await mount()
+    ;(find(node => node.props['aria-label'] === '录制中标注')!.props.onClick as () => void)()
+    await flush()
+    expect(find(node => node.props.role === 'alert')?.text).toContain('浮层不可用')
+    expect(find(node => node.props['aria-label'] === '录制中标注')?.props.disabled).toBe(false)
+  })
   it('完成后直接打开成品编辑器，轮询不重复创建编辑会话；关闭后不重新弹出', async () => {
     await mount()
     expect(editor()?.props['data-editor-id']).toBe(42)

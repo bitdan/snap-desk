@@ -24,9 +24,9 @@ async function mount() {
   let component
   if (kind === 'selection-edge') {
     component = (await import('./components/SelectionEdge.vue')).default
-  } else if (kind === 'recording-controls') {
+  } else if (kind === 'recording-controls' || kind === 'recording-annotations') {
     await import('./recording-controls.css')
-    component = (await import('./components/RecordingControls.vue')).default
+    component = kind === 'recording-annotations' ? (await import('./components/RecordingAnnotations.vue')).default : (await import('./components/RecordingControls.vue')).default
   } else {
     await import('./style.css')
     component = kind === 'capture' ? (await import('./components/CaptureOverlay.vue')).default
@@ -34,7 +34,7 @@ async function mount() {
       : kind === 'scroll-preview' || kind === 'scroll-controls' ? (await import('./components/ScrollPreview.vue')).default
       : (await import('./App.vue')).default
   }
-  if (kind === 'selection-edge' || kind === 'recording-controls' || kind === 'scroll-controls') {
+  if (kind === 'selection-edge' || kind === 'recording-annotations' || kind === 'recording-controls' || kind === 'scroll-controls') {
     // 窄原生窗口无法容纳窗口外浮层，控制条使用系统 title 提示。
     const app = createApp(component)
     app.config.errorHandler = () => appLog('error', 'vue.component_error')

@@ -443,7 +443,7 @@ fn place_windows(
 /// 已排除的窗口只读校验，避免 WebView2 初始化后重复设置触发系统错误。
 /// 创建期未生效时才补设；不接受 WDA_MONITOR（它会将窗口录成黑块）。
 #[cfg(target_os = "windows")]
-fn protect_recording_window(window: &Window) -> Result<(), String> {
+pub(crate) fn protect_recording_window(window: &Window) -> Result<(), String> {
     use windows::Win32::{
         Foundation::HWND,
         UI::WindowsAndMessaging::{

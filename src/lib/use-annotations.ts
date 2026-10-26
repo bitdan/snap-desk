@@ -5,7 +5,7 @@ import { clamp, type Point, type Rect, type Handle } from './selection'
 
 export type AnnotationTool = 'edit' | 'eraser' | Annotation['kind']
 /** 截图/贴图共用编辑状态。一次拖动只提交一次历史，保存失败不改历史也不丢失原图形。 */
-export function useAnnotations(bounds: () => Rect, imageUrl: () => string, disabled: () => boolean, persist?: (shapes: Annotation[]) => Promise<void>) {
+export function useAnnotations(bounds: () => Rect, imageUrl: () => string, disabled: () => boolean, persist?: (shapes: Annotation[]) => Promise<void>, rasterizer: typeof prepareRaster = prepareRaster) {
   const state = reactive({ history: emptyHistory(), tool: 'edit' as AnnotationTool, selected: -1,
     draft: null as Annotation | null, pending: false, interacting: false, textEditing: false, textFrame: null as Rect | null, textAutoHeight: true, error: '',
     color: '#ef4444', width: 3, opacity: 1, magnification: 2, text: '', fontSize: 24, fontFamily: 'sans' as NonNullable<Annotation['fontFamily']> })
@@ -151,7 +151,7 @@ export function useAnnotations(bounds: () => Rect, imageUrl: () => string, disab
     const version = generation
     state.pending = true
     try {
-      if (shape.kind === 'mosaic' || shape.kind === 'blur' || shape.kind === 'magnify' || ((shape.kind === 'text' || shape.kind === 'number') && !editing)) shape = await prepareRaster(shape, imageUrl(), bounds())
+      if (shape.kind === 'mosaic' || shape.kind === 'blur' || shape.kind === 'magnify' || ((shape.kind === 'text' || shape.kind === 'number') && !editing)) shape = await rasterizer(shape, imageUrl(), bounds())
     } catch (e) { state.error = String(e); abort(); state.pending = false; return }
     state.pending = false
     if (version !== generation) return
@@ -166,7 +166,7 @@ export function useAnnotations(bounds: () => Rect, imageUrl: () => string, disab
     const version = generation
     state.pending = true; state.error = ''
     let shape: Annotation
-    try { shape = await prepareRaster(state.draft, imageUrl(), textBox()) }
+    try { shape = await rasterizer(state.draft, imageUrl(), textBox()) }
     catch (e) { if (version === generation) state.error = String(e); return }
     finally { state.pending = false }
     if (version !== generation) return
@@ -188,7 +188,7 @@ export function useAnnotations(bounds: () => Rect, imageUrl: () => string, disab
     let shape = { ...original, ...patch }
     state.pending = true
     try {
-      if (shape.kind === 'text' || (shape.kind === 'number' && 'color' in patch) || shape.kind === 'mosaic' || shape.kind === 'blur' || shape.kind === 'magnify') shape = await prepareRaster(shape, imageUrl(), bounds(), !('text' in patch || 'fontSize' in patch || 'fontFamily' in patch))
+      if (shape.kind === 'text' || (shape.kind === 'number' && 'color' in patch) || shape.kind === 'mosaic' || shape.kind === 'blur' || shape.kind === 'magnify') shape = await rasterizer(shape, imageUrl(), bounds(), !('text' in patch || 'fontSize' in patch || 'fontFamily' in patch))
     } catch (e) { state.error = String(e); state.pending = false; return }
     state.pending = false
     if (version !== generation) return

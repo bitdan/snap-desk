@@ -1,3 +1,4 @@
+import type { RecordingAnnotationView } from './recording-annotations'
 import type { RecordingEditorView, RecordingTrimRange, RecordingTrimExport } from './recording-editor'
 import type { DiagnosticsStatus, LogQuery, RecentLogs, ClearArchivesResult } from './diagnostics'
 import type { ClipboardSettings, ClipboardQuery, ClipboardPage, ClipboardStatus, ClipboardExportOptions, ClipboardExportResult } from './clipboard'
@@ -136,6 +137,9 @@ export const api = {
   currentRecordingDirectory: () => invoke<RecordingDirectory>('current_recording_directory'),
   chooseRecordingDirectory: (reset = false) => invoke<RecordingDirectory | null>('choose_recording_directory', { reset }),
   currentRecording: () => invoke<RecordingView | null>('current_recording'),
+  recordingAnnotations: (knownRevision?: number) => invoke<RecordingAnnotationView | null>('current_recording_annotations', { knownRevision: knownRevision ?? null }),
+  setRecordingAnnotationMode: (id: number, editing: boolean) => invoke<void>('set_recording_annotation_mode', { id, editing }),
+  updateRecordingAnnotations: (id: number, shapes: Annotation[]) => invoke<RecordingAnnotationView>('update_recording_annotations', { id, shapes }),
   controlRecording: (id: number, action: RecordingAction) => invoke<void>('control_recording', { id, action }),
   pinClipboard: () => invoke<void>('pin_clipboard'),
   pinFile: () => invoke<boolean>('pin_file'),

@@ -25,7 +25,7 @@ const items = computed(() => props.tools.map(tool => annotationTools.find(item =
       <DropdownMenuPortal>
         <!-- Portal 避开工具行的滚动裁剪；菜单自行处理焦点、方向键、Esc 和屏幕边缘避让。 -->
         <DropdownMenuContent class="annotation-group-menu" side="bottom" align="start" :side-offset="8" :collision-padding="8" :aria-label="t(name)" @pointerdown.stop @pointermove.stop @contextmenu.stop.prevent @keydown.stop>
-          <DropdownMenuItem v-for="item in items" :key="item.tool" class="annotation-group-item" :disabled="disabled" @select="emit('select', item.tool)">
+          <DropdownMenuItem v-for="item in items" :key="item.tool" class="annotation-group-item" :disabled="disabled" @select="open = false; emit('select', item.tool)">
             <component :is="item.icon" :size="16" /><span>{{ t(item.name) }}</span><span v-if="active && selected === item.tool" class="chosen">✓</span>
           </DropdownMenuItem>
         </DropdownMenuContent>
@@ -37,9 +37,15 @@ const items = computed(() => props.tools.map(tool => annotationTools.find(item =
 <style scoped>
 .tool-group { display: inline-flex; align-items: center; }
 .tool-group .group-trigger { min-width: 24px; width: 24px; padding: 2px; }
-.annotation-group-menu { z-index: 20; min-width: 156px; max-height: var(--reka-dropdown-menu-content-available-height); overflow-y: auto; padding: 4px; border: 1px solid #e1e4e8; border-radius: 6px; background: white; color: #24292f; box-shadow: 0 4px 16px #0002; font: 13px 'Segoe UI', 'Microsoft YaHei', sans-serif; }
-.annotation-group-item { display: flex; align-items: center; gap: 8px; min-height: 32px; padding: 4px 8px; border-radius: 4px; cursor: pointer; outline: none; }
-.annotation-group-item[data-highlighted] { background: #eff6ff; color: #2563eb; }
-.annotation-group-item[data-disabled] { opacity: .45; pointer-events: none; }
-.chosen { margin-left: auto; color: #2563eb; }
+</style>
+
+<!-- 菜单被 Portal 移到 body，显式全局类不依赖组件根节点转发 scoped 标记。 -->
+<style>
+.annotation-group-menu { z-index:2000; isolation:isolate; min-width:156px; max-height:var(--reka-dropdown-menu-content-available-height); overflow-y:auto; padding:4px; border:1px solid #d8dee4; border-radius:6px; background-color:#fff; color:#24292f; opacity:1; box-shadow:0 4px 16px #0003; font:13px 'Segoe UI', 'Microsoft YaHei', sans-serif; }
+.annotation-group-menu .annotation-group-item { display:flex; align-items:center; gap:8px; min-height:32px; padding:4px 8px; border-radius:4px; cursor:pointer; outline:none; }
+.annotation-group-menu .annotation-group-item[data-highlighted] { background:#eff6ff; color:#2563eb; }
+.annotation-group-menu .annotation-group-item[data-disabled] { opacity:.45; pointer-events:none; }
+.annotation-group-menu .chosen { margin-left:auto; color:#2563eb; }
+[data-theme=dark] .annotation-group-menu { background-color:#20252c; color:#e6edf3; border-color:#39424e; color-scheme:dark; }
+[data-theme=dark] .annotation-group-menu .annotation-group-item[data-highlighted] { background:#303f56; color:#93c5fd; }
 </style>

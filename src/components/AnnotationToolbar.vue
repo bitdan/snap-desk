@@ -164,7 +164,7 @@ function value(event: Event) { return (event.target as HTMLInputElement).value }
 </template>
 
 <style scoped>
-.annotation-tools { min-width: 0; max-width: 100%; font-size: 11px; color: inherit; }
+.annotation-tools { min-width: 0; max-width: 100%; font-size: 12px; color:#24292f; background:#fff; border-radius:5px; }
 .annotation-tool-row { display: flex; align-items: center; gap: 3px; min-height: 34px; white-space: nowrap; overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; }
 .annotation-tool-row > * { flex-shrink: 0; }
 .annotation-tools :deep(button), .annotation-tools select { display: inline-flex; align-items: center; justify-content: center; height: 28px; padding: 3px 6px; border-radius: 5px; color: inherit; background: transparent; }
@@ -178,7 +178,7 @@ function value(event: Event) { return (event.target as HTMLInputElement).value }
 .tool-grip { color: #71717a; cursor: grab; touch-action: none; }
 .tool-grip:active { cursor: grabbing; }
 .tool-divider { width: 1px; height: 17px; background: #e4e4e7; margin: 0 4px; }
-.expanded-tools { border-top: 1px solid #e1e4e8; }
+.expanded-tools { display:flex; flex-wrap:wrap; white-space:normal; overflow:visible; border-top:1px solid #e1e4e8; padding:4px 0; background:#fff; }
 .annotation-options { gap: 10px; border-top: 1px solid #f4f4f5; }
 .annotation-tools label { display: inline-flex; align-items: center; gap: 3px; }
 .annotation-tools input { color: #374151; background: white; border: 1px solid #d4d4d8; border-radius: 3px; height: 24px; }
@@ -188,4 +188,6 @@ function value(event: Event) { return (event.target as HTMLInputElement).value }
 .annotation-tools :deep(button:disabled), .annotation-tools input:disabled, .annotation-tools select:disabled { opacity: .45; }
 .annotation-hint { font-size: 10px; color: #71717a; }
 .annotation-error { color: #e11d48; line-height: 16px; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+:global([data-theme=dark]) .annotation-tools, :global([data-theme=dark]) .expanded-tools { background:#20252c; color:#e6edf3; }
+:global([data-theme=dark]) .annotation-tools input, :global([data-theme=dark]) .annotation-tools select { background:#181b20; color:#e6edf3; border-color:#39424e; }
 </style>
