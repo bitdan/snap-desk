@@ -50,7 +50,7 @@ it('释放冻结截图仅通知截图浮层，真正结束才清理滚动预览�
 
 describe('原生窗口截图 IPC', () => {
   it('提交会话和候选序号，返回新的冻结画面，不向前端暴露 HWND', async () => {
-    const frame = { id: 12, width: 4480, height: 1440, dataUrl: 'data:image/png;base64,new', targets: [] }
+    const frame = { id: 12, width: 4480, height: 1440, previewRevision: 1, targets: [] }
     invoke.mockResolvedValueOnce(frame)
     expect(await api.nativeWindow(12, 3)).toEqual(frame)
     expect(invoke).toHaveBeenLastCalledWith('capture_native_window', { id: 12, target: 3 })

@@ -8,7 +8,7 @@ export async function prepareRaster(shape: Annotation, imageUrl: string, crop: R
   // 临时画布和解码图只属于本次生成；成功、解码失败、超限都走 finally 释放。
   const canvases: HTMLCanvasElement[] = [], images: HTMLImageElement[] = []
   const createCanvas = () => { const value = document.createElement('canvas'); canvases.push(value); return value }
-  const createImage = () => { const value = new Image(); images.push(value); return value }
+  const createImage = () => { const value = new Image(); value.crossOrigin = 'anonymous'; images.push(value); return value }
   try {
     const canvas = createCanvas(), context = canvas.getContext('2d')!
     let box = shapeBounds(shape)

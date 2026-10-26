@@ -1,5 +1,5 @@
 /* 控制条独立于主界面的样式，整个 WebView 都是可见、可点击的操作区。 */
-:root { font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif; color: #27272a; background: #fafafa; }
+:root { font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif; color: #27272a; background: transparent; }
 * { box-sizing: border-box; }
 html, body, #app { width: 100%; height: 100%; margin: 0; overflow: hidden; }
 button { font: inherit; color: inherit; background: white; cursor: pointer; }

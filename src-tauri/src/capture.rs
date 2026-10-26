@@ -1,12 +1,11 @@
 //! 截图会话：先等待可取消的延时，再冻结桌面画面，最后裁剪并导出。
-use base64::{engine::general_purpose::STANDARD, Engine};
 use image::{ImageFormat, RgbaImage};
 use serde::{Deserialize, Serialize};
 use std::{
     io::Cursor,
     sync::{
         atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering},
-        Mutex,
+        Arc, Mutex,
     },
     time::{Duration, Instant},
 };
@@ -18,17 +17,14 @@ pub mod recording;
 #[path = "scroll/mod.rs"]
 pub mod scroll;
 
-/// 直接向最终 Data URL 编码，避免 format! 同时持有两份整屏 Base64 字符串。
-/// PNG 压缩策略保持 image 的快速默认值，原图和导出像素不发生变化。
-fn preview_data_url(image: &RgbaImage) -> Result<String, String> {
+#[path = "capture_preview.rs"]
+pub mod preview;
+
+/// PNG 原始字节留在会话中，由只读协议传输；元信息事件不再携带整屏 Base64。
+fn preview_png(image: &RgbaImage) -> Result<Arc<Vec<u8>>, String> {
     let mut png = Cursor::new(Vec::new());
     image.write_to(&mut png, ImageFormat::Png).map_err(err)?;
-    let png = png.into_inner();
-    let prefix = "data:image/png;base64,";
-    let mut data_url = String::with_capacity(prefix.len() + png.len().div_ceil(3) * 4);
-    data_url.push_str(prefix);
-    STANDARD.encode_string(&png, &mut data_url);
-    Ok(data_url)
+    Ok(Arc::new(png.into_inner()))
 }
 
 #[derive(Default)]
@@ -38,6 +34,8 @@ pub struct CaptureState {
     operation: AtomicBool,
     next_id: AtomicU64,
     session: Mutex<Option<Session>>,
+    /// 最近一次隐藏蒙层的时刻；快速连续截图仍需等待桌面合成器移除上一帧。
+    hidden_at: Mutex<Option<Instant>>,
     scroll: Mutex<Option<scroll::ScrollSession>>,
     /// 全局快捷键只写原子停止标志，不等待后台拼接持有的图片锁。
     scroll_collecting: AtomicBool,
@@ -55,6 +53,9 @@ struct Session {
     image: RgbaImage,
     shown: bool,
     desktop: crate::desktop_capture::Desktop,
+    /// 协议请求只克隆 Arc，离开锁后再复制响应体；取消会话后不接受新的读取。
+    preview: Arc<Vec<u8>>,
+    prepared_at: Instant,
 }
 
 #[derive(Clone, Serialize)]
@@ -63,7 +64,8 @@ pub struct Frame {
     id: u64,
     width: u32,
     height: u32,
-    data_url: String,
+    /// 原生窗口重抓后递增，令 WebView 重新加载图片，避免复用同一 URL 的旧像素。
+    preview_revision: u64,
     /// F3 进入录屏框选；随帧传递意图，窗口重新加载也不会丢失入口状态。
     recording: bool,
     origin_x: i32,
@@ -244,11 +246,37 @@ pub fn cancel_pending_capture(app: AppHandle, window: WebviewWindow) -> Result<(
     }
 }
 
+/// 所有截图蒙层隐藏入口共用时间记录，包含录屏/滚动截图接管和退出截图。
+fn hide_overlay(app: &AppHandle, window: &WebviewWindow) -> Result<(), String> {
+    let visible = window.is_visible().map_err(err)?;
+    window.hide().map_err(err)?;
+    if visible {
+        *app.state::<CaptureState>().hidden_at.lock().map_err(err)? = Some(Instant::now());
+    }
+    Ok(())
+}
+fn state_hide_remaining(app: &AppHandle) -> Result<Duration, String> {
+    let state = app.state::<CaptureState>();
+    let hidden = state.hidden_at.lock().map_err(err)?;
+    Ok(hide_remaining(*hidden, Instant::now()))
+}
+/// 使用单调时间计算剩余等待，首次启动（没有旧蒙层）无需等待。
+fn hide_remaining(hidden: Option<Instant>, now: Instant) -> Duration {
+    hidden
+        .map(|time| Duration::from_millis(180).saturating_sub(now.saturating_duration_since(time)))
+        .unwrap_or_default()
+}
+
 fn prepare(app: &AppHandle, recording: bool) -> Result<(), String> {
     let window = overlay(app)?;
-    window.hide().map_err(err)?;
-    // 保留主窗口以支持截取 Snap Desk 自身；只等待旧截图蒙层从桌面移除。
-    std::thread::sleep(Duration::from_millis(180));
+    let started = Instant::now();
+    hide_overlay(app, &window)?;
+    // 已经隐藏超过 180ms 的常驻蒙层不再固定等待；刚关闭后立刻重截仍等待剩余时间。
+    let remaining = state_hide_remaining(app)?;
+    if !remaining.is_zero() {
+        std::thread::sleep(remaining);
+    }
+    let capture_started = Instant::now();
     let (include_cursor, snap) = {
         let settings = app.state::<crate::settings::SettingsState>();
         let guard = settings.0.lock().map_err(err)?;
@@ -285,7 +313,10 @@ fn prepare(app: &AppHandle, recording: bool) -> Result<(), String> {
         ))
         .map_err(err)?;
     let image = std::mem::take(&mut desktop.image);
-    let data_url = preview_data_url(&image)?;
+    let capture_ms = capture_started.elapsed().as_secs_f64() * 1000.0;
+    let encode_started = Instant::now();
+    let preview = preview_png(&image)?;
+    let encode_ms = encode_started.elapsed().as_secs_f64() * 1000.0;
     let state = app.state::<CaptureState>();
     let id = state.next_id.fetch_add(1, Ordering::SeqCst) + 1;
     let frame = Frame {
@@ -298,14 +329,17 @@ fn prepare(app: &AppHandle, recording: bool) -> Result<(), String> {
         layout_key: serde_json::to_string(&desktop.displays).map_err(err)?,
         width: image.width(),
         height: image.height(),
-        data_url,
+        preview_revision: 0,
     };
     *state.session.lock().map_err(err)? = Some(Session {
         frame: frame.clone(),
         image,
         shown: false,
         desktop,
+        preview,
+        prepared_at: started,
     });
+    log::debug!("event=capture.prepared module=capture op=cap-{id} capture_ms={capture_ms:.2} encode_ms={encode_ms:.2} duration_ms={:.2}", started.elapsed().as_secs_f64() * 1000.0);
     app.emit_to("capture", "capture-ready", &frame)
         .map_err(err)?;
     // WebView 未能加载图片时自动释放会话，防止看不见蒙层又无法重新截图。
@@ -389,7 +423,7 @@ pub async fn capture_native_window(
                 (session.frame.origin_x, session.frame.origin_y),
             )
         };
-        window.hide().map_err(err)?;
+        hide_overlay(&app, &window)?;
         let result = (|| {
             let (image, x, y) = crate::desktop_capture::native_window(&native, include_cursor)?;
             let mut guard = state.session.lock().map_err(err)?;
@@ -417,7 +451,9 @@ pub async fn capture_native_window(
                 i64::from(x) - i64::from(origin.0),
                 i64::from(y) - i64::from(origin.1),
             );
-            session.frame.data_url = preview_data_url(&composed)?;
+            let preview = preview_png(&composed)?;
+            session.preview = preview;
+            session.frame.preview_revision += 1;
             session.image = composed;
             Ok(session.frame.clone())
         })();
@@ -493,6 +529,12 @@ pub fn show_capture(app: AppHandle, window: WebviewWindow, id: u64) -> Result<()
         .ok_or("截图已过期。")?;
     window.show().map_err(err)?;
     window.set_focus().map_err(err)?;
+    if !session.shown {
+        log::debug!(
+            "event=capture.visible module=capture op=cap-{id} duration_ms={:.2}",
+            session.prepared_at.elapsed().as_secs_f64() * 1000.0
+        );
+    }
     session.shown = true;
     Ok(())
 }
@@ -501,7 +543,7 @@ pub fn show_capture(app: AppHandle, window: WebviewWindow, id: u64) -> Result<()
 fn cleanup(app: &AppHandle) -> Result<(), String> {
     crate::translation::cancel_window(app, "capture");
     // Keep the session recoverable if hiding fails; don't expose a dead overlay.
-    overlay(app)?.hide().map_err(err)?;
+    hide_overlay(app, &overlay(app)?)?;
     scroll::chrome::hide(app);
     let state = app.state::<CaptureState>();
     state.scroll_stop.store(true, Ordering::SeqCst);
@@ -808,7 +850,7 @@ pub async fn save_capture(
         let cropped = crop(&app, id, rect, &annotations)?;
         let window = overlay(&app)?;
         // A topmost overlay must not cover the system save dialog.
-        window.hide().map_err(err)?;
+        hide_overlay(&app, &window)?;
         let result = crate::pins::save_capture_image(&app, &cropped);
         match result {
             Ok(true) => {
@@ -898,14 +940,26 @@ mod tests {
     use super::*;
 
     #[test]
+    fn hidden_overlay_only_waits_for_unfinished_composition() {
+        let now = Instant::now();
+        assert_eq!(hide_remaining(None, now), Duration::ZERO);
+        assert_eq!(hide_remaining(Some(now), now), Duration::from_millis(180));
+        assert_eq!(
+            hide_remaining(Some(now), now + Duration::from_millis(50)),
+            Duration::from_millis(130)
+        );
+        assert_eq!(
+            hide_remaining(Some(now), now + Duration::from_secs(1)),
+            Duration::ZERO
+        );
+    }
+
+    #[test]
     fn preview_encoding_preserves_rgba_pixels() {
         let image = RgbaImage::from_fn(17, 9, |x, y| {
             image::Rgba([x as u8 * 13, y as u8 * 27, 123, (x + y) as u8 * 9])
         });
-        let url = preview_data_url(&image).unwrap();
-        let bytes = STANDARD
-            .decode(url.strip_prefix("data:image/png;base64,").unwrap())
-            .unwrap();
+        let bytes = preview_png(&image).unwrap();
         let decoded = image::load_from_memory(&bytes).unwrap().to_rgba8();
         assert_eq!(decoded, image);
     }

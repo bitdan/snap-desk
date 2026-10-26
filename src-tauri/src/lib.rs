@@ -89,8 +89,17 @@ async fn open_project_homepage(window: WebviewWindow) -> Result<(), String> {
 /// 主窗口的录屏按钮直接进入录屏框选，复用全局录屏动作的采集入口。
 #[tauri::command]
 async fn select_recording_area(app: AppHandle, window: WebviewWindow) -> Result<(), String> {
-    require_window(&window, "main")?;
-    capture::begin_recording(app).await
+    // 回放工具条的“重新录制”与主窗口共用框选入口；其他辅助窗口仍不能触发。
+    if !matches!(window.label(), "main" | "recording-controls") {
+        return Err("当前窗口无权选择录屏范围。".into());
+    }
+    let from_replay = window.label() == "recording-controls";
+    let result = capture::begin_recording(app.clone()).await;
+    if result.is_err() && from_replay {
+        // 重新框选失败时回到原选区，已保存的成品仍可继续编辑。
+        let _ = capture::scroll::chrome::show_recording_preview(&app);
+    }
+    result
 }
 
 fn trigger(app: &AppHandle) {
@@ -172,6 +181,15 @@ pub fn run() {
         .manage(capture::recording::editing::EditState::default())
         .manage(capture::recording::ExitState::default())
         .manage(pins::PinState::default())
+        .manage(capture::scroll::chrome::RecordingPreviewState::default())
+        // 截图图片仅允许截图 WebView 读取；异步协议避免大响应复制占用 UI 线程。
+        .register_asynchronous_uri_scheme_protocol("capture-image", |context, request, responder| {
+            let app = context.app_handle().clone();
+            let allowed = context.webview_label() == "capture";
+            tauri::async_runtime::spawn_blocking(move || {
+                responder.respond(capture::preview::serve(&app.state::<CaptureState>(), allowed, request));
+            });
+        })
         .register_asynchronous_uri_scheme_protocol("recording", |context, request, responder| {
             let app = context.app_handle().clone();
             let main = matches!(context.webview_label(), "main" | "recording-controls");
@@ -423,6 +441,12 @@ pub fn run() {
                 {
                     // 录屏范围与控制条不能被 Alt+F4 关闭，只在停止/取消完成后统一收起。
                     api.prevent_close();
+                    if window.label() == "recording-controls" {
+                        let app = window.app_handle().clone();
+                        tauri::async_runtime::spawn_blocking(move || {
+                            capture::recording::dismiss_completed_preview(&app);
+                        });
+                    }
                 } else if window.label() == "main" {
                     api.prevent_close();
                     let _ = window.hide();

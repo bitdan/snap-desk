@@ -73,7 +73,9 @@ export function recordingConfig(region: Rect, fps: RecordingFps = 30, captureCur
 export type RecordingPhase = 'ready' | 'countdown' | 'recording' | 'paused' | 'encoding' | 'completed' | 'cancelled' | 'failed'
 export type RecordingAction = 'start' | 'pause' | 'resume' | 'stop' | 'cancel'
 /** 本次运行最近一次成功导出，包含恢复导出；路径只供展示，操作只传 ID。 */
-export interface RecordingResult { id: number; path: string; filename: string }
+export interface RecordingReplayRegion { left: number; top: number; width: number; height: number }
+export interface RecordingReplayLayout { x: number; y: number; width: number; height: number; video: RecordingReplayRegion; toolbar: RecordingReplayRegion }
+export interface RecordingResult { id: number; path: string; filename: string; replayLayout?: RecordingReplayLayout | null }
 export type RecordingResultAction = 'preview' | 'openDirectory' | 'copyPath'
 /** 与 Rust RecordingStats 一致，耗时为累计毫秒；空取样不是丢帧。 */
 export interface RecordingDiagnostics {

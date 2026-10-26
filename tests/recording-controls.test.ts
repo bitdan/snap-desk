@@ -6,12 +6,13 @@ import { parse, compileScript } from '@vue/compiler-sfc'
 import { compile } from '@vue/compiler-dom'
 import type { RecordingView } from '../src/lib/recording'
 
-const api = vi.hoisted(() => ({ currentRecording: vi.fn(), latestRecordingResult: vi.fn(), controlRecording: vi.fn() }))
-vi.mock('../src/lib/api', () => ({ api }))
+const api = vi.hoisted(() => ({ currentRecording: vi.fn(), latestRecordingResult: vi.fn(), controlRecording: vi.fn(), selectRecordingArea: vi.fn() }))
+const closed = vi.hoisted(() => ({ subscribe: vi.fn(), callback: undefined as undefined | ((id: number) => void), off: vi.fn() }))
+vi.mock('../src/lib/api', () => ({ api, onRecordingPreviewClosed: closed.subscribe }))
 vi.mock('../src/components/RecordingEditor.vue', async () => {
   const { defineComponent, h } = await import('vue')
-  return { default: defineComponent({ props: ['resultId', 'disabled'], emits: ['close'],
-    setup: (props, { emit }) => () => h('button', { 'data-editor-id': props.resultId, onClick: () => emit('close') }, '关闭预览') }) }
+  return { default: defineComponent({ props: { resultId: Number, disabled: Boolean, floating: Boolean, layout: Object, frameRate: Number }, emits: ['close', 'rerecord'],
+    setup: (props, { emit }) => () => h('div', { 'data-editor-id': props.resultId, 'data-floating': props.floating, onClick: () => emit('close') }, [h('button', { 'data-rerecord': true, onClick: () => emit('rerecord') })]) }) }
 })
 import RecordingControls from '../src/components/RecordingControls.vue'
 // Vitest 的 Node 管线保留真实 setup，模板另编译为客户端 render 供内存宿主执行。
@@ -59,6 +60,8 @@ beforeEach(() => {
   api.currentRecording.mockResolvedValue(view('completed'))
   api.latestRecordingResult.mockResolvedValue({ id: 42, path: 'D:/video.mp4', filename: 'video.mp4' })
   api.controlRecording.mockResolvedValue(undefined)
+  api.selectRecordingArea.mockResolvedValue(undefined)
+  closed.subscribe.mockImplementation(async (callback: (id: number) => void) => { closed.callback = callback; return closed.off })
 })
 afterEach(() => { renderer.render(null, root); vi.clearAllTimers(); vi.useRealTimers() })
 
@@ -66,6 +69,7 @@ describe('录屏控制条直接进入回放编辑', () => {
   it('完成后直接打开成品编辑器，轮询不重复创建编辑会话；关闭后不重新弹出', async () => {
     await mount()
     expect(editor()?.props['data-editor-id']).toBe(42)
+    expect(editor()?.props['data-floating']).toBe(true)
     await vi.advanceTimersByTimeAsync(1000)
     expect(api.latestRecordingResult).toHaveBeenCalledTimes(1)
     ;(editor()!.props.onClick as () => void)()
@@ -86,6 +90,43 @@ describe('录屏控制条直接进入回放编辑', () => {
     ;(start.props.onClick as () => void)()
     await flush()
     expect(api.controlRecording).toHaveBeenCalledWith(8, 'start')
+  })
+  it('重新录制先关闭原选区回放，再进入框选，不打开主窗口', async () => {
+    await mount()
+    ;(find(node => node.props['data-rerecord'] === true)!.props.onClick as () => void)()
+    await flush()
+    expect(api.controlRecording).toHaveBeenCalledWith(7, 'cancel')
+    expect(api.selectRecordingArea).toHaveBeenCalledOnce()
+    expect(api.controlRecording.mock.invocationCallOrder[0]).toBeLessThan(api.selectRecordingArea.mock.invocationCallOrder[0])
+    expect(editor()).toBeUndefined()
+  })
+  it('原生关闭通知卸载播放器，旧会话关闭不会影响新会话', async () => {
+    await mount()
+    closed.callback!(6); await flush(); expect(editor()).toBeDefined()
+    closed.callback!(7); await flush(); expect(editor()).toBeUndefined()
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(editor()).toBeUndefined()
+  })
+  it('重新框选失败恢复原选区编辑，原片仍可操作', async () => {
+    await mount()
+    api.selectRecordingArea.mockRejectedValueOnce(new Error('截图正在进行中'))
+    ;(find(node => node.props['data-rerecord'] === true)!.props.onClick as () => void)()
+    await flush()
+    expect(editor()?.props['data-editor-id']).toBe(42)
+    expect(find(node => node.props.role === 'alert')?.text).toContain('截图正在进行中')
+    closed.callback!(7); await flush() // 本地关闭的迟到通知不能关闭刚恢复的播放器。
+    expect(editor()).toBeDefined()
+    closed.callback!(7); await flush() // 后续真正的原生关闭仍然有效。
+    expect(editor()).toBeUndefined()
+  })
+  it('关闭通知先于结果查询返回时不重新挂载媒体', async () => {
+    let finish!: (value: unknown) => void
+    api.latestRecordingResult.mockReturnValueOnce(new Promise(resolve => { finish = resolve }))
+    await mount()
+    closed.callback!(7)
+    finish({ id: 42, path: 'D:/video.mp4', filename: 'video.mp4' })
+    await flush()
+    expect(editor()).toBeUndefined()
   })
   it('结果已更新时拒绝打开错误录像，并允许用户重试', async () => {
     api.latestRecordingResult.mockResolvedValueOnce({ id: 41, path: 'D:/old.mp4', filename: 'old.mp4' })

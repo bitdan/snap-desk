@@ -3,7 +3,7 @@ import { t, te, localizedDate } from '@/lib/i18n'
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { ContextMenuRoot, ContextMenuTrigger, ContextMenuPortal, ContextMenuContent, ContextMenuItem, ContextMenuSeparator } from 'reka-ui'
 import { Copy, Star, Pin, Trash2, File, FileText, FileImage, FileArchive, FileCode, FileSpreadsheet, FileVideo, FileAudio, AppWindow, Folder } from 'lucide-vue-next'
-import { api } from '@/lib/api'
+import { clipboardThumbnails } from '@/lib/clipboard-thumbnails'
 import type { ClipboardItem } from '@/lib/clipboard'
 const props = defineProps<{ item: ClipboardItem; selected: boolean; busy: boolean }>()
 const emit = defineEmits<{ select: []; restore: []; favorite: []; pin: []; delete: [] }>()
@@ -41,17 +41,23 @@ function select(event: MouseEvent) {
   if (event.detail < 2) emit('select')
 }
 let observer: IntersectionObserver | undefined; let disposed = false
+let request: AbortController | undefined
 onMounted(() => {
   if (props.item.kind !== 'image' || !root.value) return
-  // 仅请求进入视口的低分辨率图，组件卸载后释放 data URL 字符串。
+  // 离开可见区域即释放组件持有的字符串并取消排队请求；LRU 只保留有限的最近素材。
   observer = new IntersectionObserver(entries => {
-    if (!entries.some(entry => entry.isIntersecting)) return
-    observer?.disconnect()
-    void api.clipboardThumbnail(props.item.id).then(value => { if (!disposed) thumbnail.value = value }).catch(e => { if (!disposed) error.value = String(e) })
-  })
+    const visible = entries.at(-1)?.isIntersecting
+    if (!visible) { request?.abort(); request = undefined; thumbnail.value = ''; return }
+    if (thumbnail.value || request) return
+    const current = new AbortController(); request = current; error.value = ''
+    void clipboardThumbnails.get(props.item.id, current.signal)
+      .then(value => { if (!disposed && !current.signal.aborted) thumbnail.value = value })
+      .catch(e => { if (!disposed && !current.signal.aborted) error.value = String(e) })
+      .finally(() => { if (request === current) request = undefined })
+  }, { root: root.value.closest('.history-list'), rootMargin: '160px 0px' })
   observer.observe(root.value)
 })
-onUnmounted(() => { disposed = true; observer?.disconnect() })
+onUnmounted(() => { disposed = true; request?.abort(); observer?.disconnect(); thumbnail.value = '' })
 </script>
 <template>
   <ContextMenuRoot>
@@ -60,7 +66,7 @@ onUnmounted(() => { disposed = true; observer?.disconnect() })
         <input type="checkbox" :checked="selected" :disabled="busy" :aria-label="t('选择条目 {0}', { 0: item.id })" @change="$emit('select')" />
         <button class="history-content" :disabled="busy" :aria-pressed="selected" :aria-label="t('选择条目 {0}，双击复制', { 0: item.id })" @click="select" @dblclick="emit('restore')">
           <img v-if="thumbnail" :src="thumbnail" :alt='t("历史图片缩略图")' />
-          <span v-else-if="item.kind === 'image'">{{ te(error) || t("图片 {0} × {1}", { 0: item.width, 1: item.height }) }}</span>
+          <span v-else-if="item.kind === 'image'" class="history-image-placeholder">{{ te(error) || t("图片 {0} × {1}", { 0: item.width, 1: item.height }) }}</span>
           <span v-else-if="item.kind === 'file'" class="history-files">
             <span v-for="(file, index) in visibleFiles" :key="index" class="history-file-row" :title="file.path"><component :is="file.icon" :size="18" :style="{ color: file.color }" aria-hidden="true" /><span class="history-file-name">{{ file.name }}</span></span>
             <span v-if="(item.filePaths?.length ?? 0) > visibleFiles.length" class="history-file-more">{{ t("另有") }} {{ item.filePaths!.length - visibleFiles.length }} {{ t("项") }}</span>

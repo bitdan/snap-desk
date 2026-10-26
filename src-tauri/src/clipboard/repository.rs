@@ -54,6 +54,51 @@ fn row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Stored> {
         thumb: row.get("thumb_rel_path")?,
     })
 }
+/// 在事务内只统计一次总量、按索引顺序计算要淘汰的记录，再复用删除语句。
+/// protected 是刚插入的条目：不能靠删除它来假装插入成功；配额不足时由调用方回滚。
+fn enforce_quota(
+    tx: &rusqlite::Transaction<'_>,
+    settings: &ClipboardSettings,
+    protected: Option<i64>,
+) -> Result<(), String> {
+    let (mut count, mut bytes): (u64, u64) = tx
+        .query_row(
+            "SELECT count(*),coalesce(sum(byte_size),0) FROM clipboard_items",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .map_err(err)?;
+    let max_count = u64::from(settings.max_items);
+    let max_bytes = u64::from(settings.max_storage_mb) * 1024 * 1024;
+    if count <= max_count && bytes <= max_bytes {
+        return Ok(());
+    }
+    let mut removed = Vec::new();
+    {
+        let mut stmt = tx.prepare("SELECT id,byte_size FROM clipboard_items WHERE is_favorite=0 AND (?1 IS NULL OR id<>?1) ORDER BY last_seen_at,id").map_err(err)?;
+        let mut rows = stmt.query([protected]).map_err(err)?;
+        while count > max_count || bytes > max_bytes {
+            let Some(row) = rows.next().map_err(err)? else {
+                return Err(if protected.is_some() {
+                    "收藏或当前素材已占满历史配额，请清理历史或提高上限。"
+                } else {
+                    "收藏已超过历史配额，请先取消部分收藏或提高上限。"
+                }
+                .into());
+            };
+            removed.push(row.get::<_, i64>(0).map_err(err)?);
+            count -= 1;
+            bytes -= row.get::<_, u64>(1).map_err(err)?;
+        }
+    }
+    let mut delete = tx
+        .prepare("DELETE FROM clipboard_items WHERE id=?1")
+        .map_err(err)?;
+    for id in removed {
+        delete.execute([id]).map_err(err)?;
+    }
+    Ok(())
+}
 impl Repository {
     pub fn open(path: &Path) -> Result<Self, String> {
         Self::from_connection(Connection::open(path).map_err(err)?)
@@ -85,7 +130,20 @@ impl Repository {
     pub fn list(&self, q: &Query, revision: u64) -> Result<Page, String> {
         let (limit, time, id) = q.validate()?;
         let conn = self.0.lock().map_err(err)?;
-        let mut stmt = conn.prepare("SELECT * FROM clipboard_items WHERE (?1 IS NULL OR kind=?1) AND (?2=0 OR is_favorite=1) AND (?3='' OR instr(lower(coalesce(text_content,'')),lower(?3))>0) AND (last_seen_at < ?4 OR (last_seen_at=?4 AND id<?5)) ORDER BY last_seen_at DESC,id DESC LIMIT ?6").map_err(err)?;
+        // 仅拼接固定 SQL 片段，用户关键词仍使用绑定参数；分类/收藏条件可直接使用索引。
+        let mut sql =
+            String::from("SELECT * FROM clipboard_items WHERE (last_seen_at,id) < (?4,?5)");
+        if q.kind.is_some() {
+            sql.push_str(" AND kind=?1");
+        }
+        if q.favorites_only {
+            sql.push_str(" AND is_favorite=1");
+        }
+        if !q.keyword.is_empty() {
+            sql.push_str(" AND instr(lower(coalesce(text_content,'')),lower(?3))>0");
+        }
+        sql.push_str(" ORDER BY last_seen_at DESC,id DESC LIMIT ?6");
+        let mut stmt = conn.prepare(&sql).map_err(err)?;
         let mut items = stmt
             .query_map(
                 params![
@@ -149,26 +207,7 @@ impl Repository {
             )
             .map_err(err)?;
         }
-        loop {
-            let (count, bytes): (u64, u64) = tx
-                .query_row(
-                    "SELECT count(*),coalesce(sum(byte_size),0) FROM clipboard_items",
-                    [],
-                    |r| Ok((r.get(0)?, r.get(1)?)),
-                )
-                .map_err(err)?;
-            if count <= u64::from(settings.max_items)
-                && bytes <= u64::from(settings.max_storage_mb) * 1024 * 1024
-            {
-                break;
-            }
-            let oldest: Option<i64> = tx.query_row("SELECT id FROM clipboard_items WHERE is_favorite=0 AND id<>?1 ORDER BY last_seen_at,id LIMIT 1", [inserted], |r| r.get(0)).optional().map_err(err)?;
-            let Some(oldest) = oldest else {
-                return Err("收藏或当前素材已占满历史配额，请清理历史或提高上限。".into());
-            };
-            tx.execute("DELETE FROM clipboard_items WHERE id=?1", [oldest])
-                .map_err(err)?;
-        }
+        enforce_quota(&tx, settings, Some(inserted))?;
         tx.commit().map_err(err)
     }
     /// 启动、修改设置与定时维护共用。无法满足收藏配额时回滚，不删除收藏。
@@ -182,26 +221,7 @@ impl Repository {
             )
             .map_err(err)?;
         }
-        loop {
-            let (count, bytes): (u64, u64) = tx
-                .query_row(
-                    "SELECT count(*),coalesce(sum(byte_size),0) FROM clipboard_items",
-                    [],
-                    |r| Ok((r.get(0)?, r.get(1)?)),
-                )
-                .map_err(err)?;
-            if count <= u64::from(settings.max_items)
-                && bytes <= u64::from(settings.max_storage_mb) * 1024 * 1024
-            {
-                break;
-            }
-            let oldest:Option<i64>=tx.query_row("SELECT id FROM clipboard_items WHERE is_favorite=0 ORDER BY last_seen_at,id LIMIT 1",[],|r|r.get(0)).optional().map_err(err)?;
-            let Some(id) = oldest else {
-                return Err("收藏已超过历史配额，请先取消部分收藏或提高上限。".into());
-            };
-            tx.execute("DELETE FROM clipboard_items WHERE id=?1", [id])
-                .map_err(err)?;
-        }
+        enforce_quota(&tx, settings, None)?;
         tx.commit().map_err(err)
     }
     pub fn favorite(&self, id: i64, value: bool) -> Result<(), String> {
@@ -270,6 +290,117 @@ impl Repository {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn quota_removes_oldest_records_in_one_pass_and_preserves_favorites() {
+        let repo = Repository::from_connection(Connection::open_in_memory().unwrap()).unwrap();
+        for value in ["favorite", "second", "third", "fourth", "newest"] {
+            repo.insert(text(value), &ClipboardSettings::default(), 10)
+                .unwrap();
+        }
+        repo.favorite(1, true).unwrap();
+        repo.prune(
+            &ClipboardSettings {
+                max_items: 2,
+                ..ClipboardSettings::default()
+            },
+            10,
+        )
+        .unwrap();
+        assert!(repo.get(1).unwrap().item.favorite);
+        assert!(repo.get(5).is_ok());
+        assert_eq!(repo.totals().unwrap().0, 2);
+
+        let repo = Repository::from_connection(Connection::open_in_memory().unwrap()).unwrap();
+        let settings = ClipboardSettings {
+            max_storage_mb: 1,
+            ..ClipboardSettings::default()
+        };
+        repo.insert(text("favorite"), &settings, 1).unwrap();
+        repo.favorite(1, true).unwrap();
+        repo.insert(
+            NewItem {
+                bytes: 600_000,
+                ..text("old")
+            },
+            &settings,
+            2,
+        )
+        .unwrap();
+        repo.insert(
+            NewItem {
+                bytes: 600_000,
+                ..text("new")
+            },
+            &settings,
+            3,
+        )
+        .unwrap();
+        assert!(repo.get(1).unwrap().item.favorite);
+        assert!(repo.get(2).is_err());
+        assert!(repo.get(3).is_ok());
+    }
+
+    #[test]
+    fn failed_prune_rolls_back_retention_and_filters_keep_cursor_semantics() {
+        let repo = Repository::from_connection(Connection::open_in_memory().unwrap()).unwrap();
+        for value in ["Alpha", "Beta", "alpha second"] {
+            repo.insert(text(value), &ClipboardSettings::default(), 10)
+                .unwrap();
+        }
+        repo.favorite(1, true).unwrap();
+        repo.favorite(2, true).unwrap();
+        assert!(repo
+            .prune(
+                &ClipboardSettings {
+                    max_items: 1,
+                    retain_days: 1,
+                    ..ClipboardSettings::default()
+                },
+                172_800_000
+            )
+            .is_err());
+        assert_eq!(repo.totals().unwrap().0, 3);
+        for kind in [None, Some(Kind::Text)] {
+            let page = repo
+                .list(
+                    &Query {
+                        kind,
+                        keyword: "ALPHA".into(),
+                        limit: Some(1),
+                        ..Query::default()
+                    },
+                    7,
+                )
+                .unwrap();
+            assert_eq!(page.items[0].id, 3);
+            let next = repo
+                .list(
+                    &Query {
+                        kind,
+                        keyword: "ALPHA".into(),
+                        cursor: page.next_cursor,
+                        ..Query::default()
+                    },
+                    7,
+                )
+                .unwrap();
+            assert_eq!(next.items[0].id, 1);
+            let favorites = repo
+                .list(
+                    &Query {
+                        kind,
+                        favorites_only: true,
+                        keyword: "ALPHA".into(),
+                        ..Query::default()
+                    },
+                    7,
+                )
+                .unwrap();
+            assert_eq!(favorites.items.len(), 1);
+            assert_eq!(favorites.items[0].id, 1);
+        }
+    }
+
     #[test]
     fn migration_reopens_and_retention_preserves_favorites() {
         let dir = tempfile::tempdir().unwrap();

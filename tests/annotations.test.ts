@@ -1,8 +1,22 @@
 import { describe, expect, it } from 'vitest'
-import { append, arrowWings, commit, emptyHistory, hitTest, imagePoint, moveShape, resizeShape, shapeBounds, redo, shapePath, undo, type Annotation } from '../src/lib/annotations'
+import { append, arrowWings, commit, emptyHistory, hitTest, imagePoint, moveShape, resizeShape, shapeBounds, redo, shapePath, undo, HISTORY_RASTER_BYTES, type Annotation } from '../src/lib/annotations'
 
 const rectangle: Annotation = { kind: 'rectangle', start: { x: 40, y: 30 }, end: { x: 10, y: 5 }, color: '#ef4444', width: 3 }
 describe('annotations', () => {
+  it('evicts old raster versions by unique memory while sharing unchanged layers', () => {
+    const raster = 'x'.repeat(2_000_000)
+    let history = emptyHistory([{ ...rectangle, raster }])
+    for (let i = 0; i < 60; i++) history = commit(history, [{ ...rectangle, width: i + 1, raster }])
+    expect(history.past).toHaveLength(50)
+    const before = history
+    for (let i = 0; i < 12; i++) history = commit(history, [{ ...rectangle, raster: `${i}${raster}` }])
+    const unique = new Set([...history.past, history.present].flatMap(shapes => shapes.map(shape => shape.raster!)))
+    expect([...unique].reduce((total, value) => total + value.length * 2, 0)).toBeLessThanOrEqual(HISTORY_RASTER_BYTES)
+    expect(history.past.length).toBeLessThan(12)
+    expect(history.present[0].raster).toBe(`11${raster}`)
+    expect(redo(undo(history))).toEqual(history)
+    expect(before.past).toHaveLength(50)
+  })
   it('maps scaled pointer coordinates and clips strokes at the crop boundary', () => {
     const viewport = { width: 800, height: 600 }, image = { width: 1600, height: 1200 }
     const crop = { x: 100, y: 200, width: 600, height: 400 }

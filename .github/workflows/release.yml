@@ -76,6 +76,14 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      # 测试失败时停止发布；Rust 默认跳过需要实机桌面或模型资源的 ignored 测试。
+      - name: Test frontend
+        run: npm test
+
+      - name: Test native library
+        working-directory: src-tauri
+        run: cargo test --locked --lib
+
       # 复用本地脚本的 --ci、--locked 和 src-tauri/target 输出目录。
       - name: Build executable and installers
         env:

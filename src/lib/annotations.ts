@@ -23,8 +23,28 @@ export const emptyHistory = (present: Annotation[] = []): History => ({ past: []
 export function imagePoint(point: Point, viewport: Size, image: Size, crop: Rect): Point {
   return { x: clamp(point.x * image.width / viewport.width, crop.x, crop.x + crop.width), y: clamp(point.y * image.height / viewport.height, crop.y, crop.y + crop.height) }
 }
-/** 每次完成一个操作才保存快照；不可变图形让未修改内容共享引用，最多保留 50 步。 */
-export const commit = (h: History, shapes: Annotation[]): History => ({ past: [...h.past, h.present].slice(-50), present: shapes, future: [] })
+/** 历史最多保留 50 步、32 MiB 唯一栅格字符串（按每字符两字节保守估算）。
+ * 不可变图层在快照间共享素材，同一 PNG 只计一次；始终保留当前结果，优先淘汰最旧操作。
+ */
+export const HISTORY_RASTER_BYTES = 32 * 1024 * 1024
+export function commit(h: History, shapes: Annotation[]): History {
+  const seen = new Set<string>()
+  let bytes = 0
+  const include = (snapshot: Annotation[]) => {
+    for (const shape of snapshot) if (shape.raster && !seen.has(shape.raster)) {
+      seen.add(shape.raster); bytes += shape.raster.length * 2
+    }
+  }
+  include(shapes)
+  const candidates = [...h.past, h.present].slice(-50)
+  let start = candidates.length
+  for (let i = candidates.length - 1; i >= 0; i--) {
+    include(candidates[i])
+    if (bytes > HISTORY_RASTER_BYTES) break
+    start = i
+  }
+  return { past: candidates.slice(start), present: shapes, future: [] }
+}
 export const append = (h: History, shape: Annotation): History => commit(h, [...h.present, shape])
 export function undo(h: History): History {
   const last = h.past.at(-1)

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { t, te } from '@/lib/i18n'
+import { convertFileSrc } from '@tauri-apps/api/core'
 import ScrollCaptureIcon from './ScrollCaptureIcon.vue'
 import QrResultCard from './QrResultCard.vue'
 import OcrResultCard from './OcrResultCard.vue'
@@ -23,6 +24,8 @@ import { readRecentSelection, restoreRecentSelection, writeRecentSelection } fro
 
 // 截图帧是不可变快照，大量窗口目标不需要逐项响应式代理。
 const frame = shallowRef<CaptureFrame | null>(null)
+// 只传会话编号与版本；大图通过受限协议读取，URL 不包含本地文件路径。
+const imageUrl = computed(() => frame.value ? `${convertFileSrc(String(frame.value.id), 'capture-image')}/${frame.value.previewRevision}.png` : '')
 const selection = ref<Rect | null>(null)
 const selectedTarget = ref<number | null>(null)
 const windowsOnly = ref(false)
@@ -144,7 +147,7 @@ const relativeCoordinates = ref(false)
 const colorCopied = ref(false)
 const colorFormat = ref<ColorFormat>('rgb')
 const showMagnifier = computed(() => frame.value && imageReady.value && screenImage.value && pointer.value && !busy.value && !recordingSetup.value && !recordingMode.value && (!annotating.value && !marked.value))
-const editor = useAnnotations(() => pixels.value ?? { x: 0, y: 0, width: 0, height: 0 }, () => frame.value?.dataUrl ?? '', () => busy.value)
+const editor = useAnnotations(() => pixels.value ?? { x: 0, y: 0, width: 0, height: 0 }, () => imageUrl.value, () => busy.value)
 const marked = computed(() => editor.history.present.length > 0)
 const handles: Handle[] = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w']
 // 手势使用响应式状态，工具栏在框选、移动或缩放结束后才显示。
@@ -422,7 +425,7 @@ onUnmounted(() => { releaseFrame(); disposed = true; offClosed?.(); off?.(); off
 <template>
   <div v-if="scroll" />
   <div v-else class="capture-overlay" @pointerdown="down($event)" @pointermove.capture="drag" @pointerleave="pointer = null" @pointerup="up" @pointercancel="abortGesture(); pointer = null" @contextmenu.prevent="cancel">
-    <img v-if="frame" :key="frame.id" ref="screenImage" class="screen-image" :src="frame.dataUrl" :alt='t("当前屏幕截图")' draggable="false" @load="loaded" @error="imageFailed" />
+    <img v-if="frame" :key="frame.id" ref="screenImage" class="screen-image" :src="imageUrl" crossorigin="anonymous" :alt='t("当前屏幕截图")' draggable="false" @load="loaded" @error="imageFailed" />
     <!-- 截图和录屏共用选区入口：开始框选前保持原图，仅在形成选区后遮暗外围。 -->
     <div v-if="!selection" class="capture-tip" :style="{ left: `${activeDisplay.x + activeDisplay.width / 2}px`, top: `${activeDisplay.y + 64}px`, maxWidth: `${activeDisplay.width - 32}px`, whiteSpace: 'normal' }">{{ recordingMode ? t("拖动选择录屏范围") : frame?.targets.length ? t("点击吸附 · 拖动框选 · Alt 选窗口 · Shift 自由框选") : t("拖动框选屏幕") }} <span>{{ recordingMode ? t("Esc 返回截图 · Ctrl / ⌘ + A 全屏 · R 最近选区") : t("C 取色 · Esc 取消 · Ctrl / ⌘ + A 全屏 · R 最近选区") }}</span></div>
     <div v-if="frame" class="capture-modebar" :style="{ left: `${activeDisplay.x + 16}px`, top: `${activeDisplay.y + 16}px` }" @pointerdown.stop @contextmenu.stop.prevent>
@@ -478,7 +481,7 @@ onUnmounted(() => { releaseFrame(); disposed = true; offClosed?.(); off?.(); off
     <CaptureMagnifier v-if="showMagnifier && screenImage && pointer && frame" :image="screenImage" :point="pointer" :viewport="viewport" :image-size="frame" :format="colorFormat" :relative="relativeCoordinates" :origin="pixels" :copied="colorCopied" :bounds="pointerDisplay" />
     <div v-if="ocrResult !== null" class="qr-shade" @pointerdown.stop @pointermove.stop @pointerup.stop @contextmenu.stop.prevent>
       <div :class="['qr-dialog', 'ocr-dialog', { 'translation-dialog': translationMode }]" :style="dialogStyle" role="dialog" aria-modal="true" :aria-label="translationMode ? t('文字翻译') : t('文字识别结果')">
-        <ImageTranslation v-if="translationMode && frame && pixels" :key="ocrResult.requestId" :recognition="ocrResult" :source-text="ocrDraft" :image="{ dataUrl: frame.dataUrl, width: frame.width, height: frame.height, crop: pixels }" @back="translationMode = false" @close="closeOcr" />
+        <ImageTranslation v-if="translationMode && frame && pixels" :key="ocrResult.requestId" :recognition="ocrResult" :source-text="ocrDraft" :image="{ dataUrl: imageUrl, width: frame.width, height: frame.height, crop: pixels }" @back="translationMode = false" @close="closeOcr" />
         <OcrResultCard v-else v-model:text="ocrDraft" @translate="translationMode = true" @close="closeOcr" />
       </div>
     </div>

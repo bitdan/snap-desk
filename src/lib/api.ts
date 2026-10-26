@@ -21,7 +21,7 @@ export interface ResourceStatus { directory: string; ocrReady: boolean; modelsRe
 export interface ResourceProgress { name: string; received: number; total: number }
 export interface CaptureTarget { rect: Rect; kind: 'window' | 'element'; windowIndex: number }
 export interface CaptureDisplay { x: number; y: number; width: number; height: number; primary: boolean; scale: number }
-export interface CaptureFrame { originX: number; originY: number; displays: CaptureDisplay[]; targets: CaptureTarget[]; layoutKey: string; id: number; width: number; height: number; dataUrl: string; recording: boolean }
+export interface CaptureFrame { originX: number; originY: number; displays: CaptureDisplay[]; targets: CaptureTarget[]; layoutKey: string; id: number; width: number; height: number; previewRevision: number; recording: boolean }
 export interface PinView { zoom: number; opacity: number; locked: boolean; topmost: boolean; toolbarExpanded: boolean }
 export interface PinFrame { label: string; width: number; height: number; dataUrl: string; view: PinView; transparencySupported: boolean; annotations: Annotation[] }
 export interface PinSummary { label: string; width: number; height: number; visible: boolean; group: string }
@@ -151,6 +151,7 @@ export const api = {
   hide: () => invoke<void>('hide_main'),
 }
 export const onFrame = (fn: (frame: CaptureFrame) => void) => listen<CaptureFrame>('capture-ready', e => fn(e.payload))
+export const onRecordingPreviewClosed = (fn: (id: number) => void) => listen<number>('recording-preview-closed', e => fn(e.payload), 'recording-controls')
 // 原生关闭/取消或采集接管选区后清空常驻 WebView 图片；编号用于过滤迟到事件。
 // 接管时只发给 capture；滚动会话真正结束时再发给两个滚动辅助窗口。
 // Tauri 的默认 Any 监听也会收到 emit_to 发往其他窗口的事件。

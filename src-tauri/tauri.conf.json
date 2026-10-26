@@ -35,6 +35,7 @@
       },
       {
         "label": "recording-controls",
+        "transparent": true,
         "title": "录屏控制",
         "url": "index.html?window=recording-controls",
         "visible": false,
@@ -78,8 +79,8 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: recording: http://recording.localhost; media-src 'self' recording: http://recording.localhost; connect-src ipc: http://ipc.localhost; object-src 'none'; frame-src 'none'; base-uri 'self'",
-      "devCsp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: recording: http://recording.localhost; media-src 'self' recording: http://recording.localhost; connect-src ipc: http://ipc.localhost http://127.0.0.1:1420 ws://127.0.0.1:1420; object-src 'none'; frame-src 'none'; base-uri 'self'"
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: capture-image: http://capture-image.localhost recording: http://recording.localhost; media-src 'self' recording: http://recording.localhost; connect-src ipc: http://ipc.localhost; object-src 'none'; frame-src 'none'; base-uri 'self'",
+      "devCsp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: capture-image: http://capture-image.localhost recording: http://recording.localhost; media-src 'self' recording: http://recording.localhost; connect-src ipc: http://ipc.localhost http://127.0.0.1:1420 ws://127.0.0.1:1420; object-src 'none'; frame-src 'none'; base-uri 'self'"
     }
   },
   "bundle": {

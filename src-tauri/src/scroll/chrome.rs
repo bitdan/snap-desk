@@ -2,8 +2,8 @@
 use super::super::{err, Rect};
 use super::session::Screen;
 #[cfg(target_os = "windows")]
-use std::{collections::BTreeMap, sync::Mutex};
-use std::{thread, time::Duration};
+use std::collections::BTreeMap;
+use std::{sync::Mutex, thread, time::Duration};
 #[cfg(target_os = "windows")]
 static EDGE_SIZES: Mutex<BTreeMap<String, (u32, u32)>> = Mutex::new(BTreeMap::new());
 #[cfg(target_os = "windows")]
@@ -35,6 +35,96 @@ struct BoxRect {
     y: i32,
     w: u32,
     h: u32,
+}
+
+/// 回放复用录制选区，坐标为屏幕物理像素；子区域转为百分比，前端不再重复换算 DPI。
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ReplayLayout {
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+    video: ReplayRegion,
+    toolbar: ReplayRegion,
+}
+#[derive(Clone, serde::Serialize)]
+pub(crate) struct ReplayRegion {
+    left: f64,
+    top: f64,
+    width: f64,
+    height: f64,
+}
+#[derive(Default)]
+pub(crate) struct RecordingPreviewState(Mutex<Option<ReplayLayout>>);
+
+/// 工具条优先放选区下方，其次上方；全屏选区在原框内等比缩小回放，为工具条留位置。
+/// 窄选区也保留可用工具条宽度，透明 WebView 中未占用的区域仍显示原桌面。
+fn replay_layout(screen: &Screen, rect: Rect) -> ReplayLayout {
+    let scale = f64::from_bits(screen.scale);
+    let gap = (8.0 * scale).round() as u32;
+    let toolbar_h = ((128.0 * scale).round() as u32)
+        .min(screen.height.saturating_sub(1))
+        .max(1);
+    let toolbar_w = rect
+        .width
+        .max((640.0 * scale).round() as u32)
+        .min(screen.width)
+        .max(1);
+    let mut video = BoxRect {
+        x: rect.x as i32,
+        y: rect.y as i32,
+        w: rect.width,
+        h: rect.height,
+    };
+    let toolbar_y = if rect.y + rect.height + gap + toolbar_h <= screen.height {
+        rect.y + rect.height + gap
+    } else if rect.y >= gap + toolbar_h {
+        rect.y - gap - toolbar_h
+    } else {
+        // 不改变选区的屏幕归属；仅缩放回放画面，不裁掉视频像素。
+        let available = screen.height.saturating_sub(toolbar_h + gap).max(1);
+        let ratio = (f64::from(available) / f64::from(rect.height)).min(1.0);
+        video.w = (f64::from(rect.width) * ratio).round().max(1.0) as u32;
+        video.h = (f64::from(rect.height) * ratio).round().max(1.0) as u32;
+        video.x = (rect.x + (rect.width - video.w) / 2) as i32;
+        video.y = rect.y.min(available.saturating_sub(video.h)) as i32;
+        video.y as u32 + video.h + gap
+    };
+    let toolbar_x = (rect.x + rect.width)
+        .saturating_sub(toolbar_w)
+        .min(screen.width - toolbar_w);
+    let x = video.x.min(toolbar_x as i32);
+    let y = video.y.min(toolbar_y as i32);
+    let width = (video.x + video.w as i32).max((toolbar_x + toolbar_w) as i32) - x;
+    let height = (video.y + video.h as i32).max((toolbar_y + toolbar_h) as i32) - y;
+    let relative = |area: BoxRect| ReplayRegion {
+        left: f64::from(area.x - x) * 100.0 / f64::from(width),
+        top: f64::from(area.y - y) * 100.0 / f64::from(height),
+        width: f64::from(area.w) * 100.0 / f64::from(width),
+        height: f64::from(area.h) * 100.0 / f64::from(height),
+    };
+    ReplayLayout {
+        x: screen.x + x,
+        y: screen.y + y,
+        width: width as u32,
+        height: height as u32,
+        video: relative(video),
+        toolbar: relative(BoxRect {
+            x: toolbar_x as i32,
+            y: toolbar_y as i32,
+            w: toolbar_w,
+            h: toolbar_h,
+        }),
+    }
+}
+
+pub(crate) fn recording_preview_layout(app: &AppHandle) -> Option<ReplayLayout> {
+    app.state::<RecordingPreviewState>()
+        .0
+        .lock()
+        .ok()
+        .and_then(|value| value.clone())
 }
 impl BoxRect {
     fn overlaps(self, r: Rect) -> bool {
@@ -215,6 +305,9 @@ pub(in crate::capture) fn place_recording(
     );
     if result.is_err() {
         hide_recording(app);
+    } else {
+        *app.state::<RecordingPreviewState>().0.lock().map_err(err)? =
+            Some(replay_layout(screen, rect));
     }
     result.map(|_| ())
 }
@@ -404,30 +497,15 @@ pub(crate) fn hide_recording(app: &AppHandle) {
     }
 }
 
-/// 录制结束后复用控制窗口展示预览和时间裁剪；尺寸按所在屏幕工作区的物理像素限位。
+/// 结束后仍在原选区回放，工具条紧邻选区，不再居中打开一块独立的编辑界面。
 pub(crate) fn show_recording_preview(app: &AppHandle) -> Result<(), String> {
     let controls = window(app, "recording-controls").ok_or("录屏控制窗口不可用。")?;
-    let monitor = controls
-        .current_monitor()
-        .map_err(err)?
-        .or(app.primary_monitor().map_err(err)?)
-        .ok_or("无法获取录屏回放所在显示器。")?;
-    let area = monitor.work_area();
-    let scale = monitor.scale_factor();
-    let width = ((920.0 * scale) as u32)
-        .min(area.size.width.saturating_sub(16))
-        .max(1);
-    let height = ((720.0 * scale) as u32)
-        .min(area.size.height.saturating_sub(16))
-        .max(1);
+    let layout = recording_preview_layout(app).ok_or("录屏选区位置不可用。")?;
     controls
-        .set_size(PhysicalSize::new(width, height))
+        .set_size(PhysicalSize::new(layout.width, layout.height))
         .map_err(err)?;
     controls
-        .set_position(PhysicalPosition::new(
-            area.position.x + (area.size.width - width) as i32 / 2,
-            area.position.y + (area.size.height - height) as i32 / 2,
-        ))
+        .set_position(PhysicalPosition::new(layout.x, layout.y))
         .map_err(err)?;
     show_window(&controls)?;
     controls.set_focus().map_err(err)?;
@@ -485,6 +563,54 @@ mod tests {
             width: 1920,
             height: 1080,
             scale: scale.to_bits(),
+        }
+    }
+    #[test]
+    fn replay_stays_on_original_selection_with_dpi_and_negative_origin() {
+        for scale in [1.0, 1.25, 2.0] {
+            let mut screen = screen(scale);
+            screen.width = (1920.0 * scale) as u32;
+            screen.height = (1080.0 * scale) as u32;
+            screen.x = -(screen.width as i32);
+            for y in [100, 800] {
+                let rect = Rect {
+                    x: (300.0 * scale) as u32,
+                    y: (f64::from(y) * scale) as u32,
+                    width: (700.0 * scale) as u32,
+                    height: (180.0 * scale) as u32,
+                };
+                let layout = replay_layout(&screen, rect);
+                let video_x = layout.x as f64 + layout.video.left / 100.0 * f64::from(layout.width);
+                let video_y = layout.y as f64 + layout.video.top / 100.0 * f64::from(layout.height);
+                assert!((video_x - f64::from(screen.x + rect.x as i32)).abs() < 0.01);
+                assert!((video_y - f64::from(screen.y + rect.y as i32)).abs() < 0.01);
+                assert!(
+                    (layout.video.width / 100.0 * f64::from(layout.width) - f64::from(rect.width))
+                        .abs()
+                        < 0.01
+                );
+                assert!(layout.x >= screen.x && layout.y >= screen.y);
+                assert!(layout.x + layout.width as i32 <= screen.x + screen.width as i32);
+                assert!(layout.y + layout.height as i32 <= screen.y + screen.height as i32);
+            }
+            let full = replay_layout(
+                &screen,
+                Rect {
+                    x: 0,
+                    y: 0,
+                    width: screen.width,
+                    height: screen.height,
+                },
+            );
+            assert!(full.width <= screen.width && full.height <= screen.height);
+            assert!(full.video.top + full.video.height < full.toolbar.top);
+            assert!(
+                (full.video.width / full.video.height * f64::from(full.width)
+                    / f64::from(full.height)
+                    - f64::from(screen.width) / f64::from(screen.height))
+                .abs()
+                    < 0.01
+            );
         }
     }
     #[test]

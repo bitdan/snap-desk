@@ -6,6 +6,8 @@ import { api, desktop, onClipboardChanged, onClipboardError, onClipboardState, o
 import { defaultClipboardSettings, toggleSelection, type ClipboardItem as Item, type ClipboardStatus, type ClipboardKind, type ClipboardExportOptions } from '@/lib/clipboard'
 import { Search, ClipboardList, Type, Image, Star, X, Download, Pin, Trash2, Files } from 'lucide-vue-next'
 import ClipboardItem from './ClipboardItem.vue'
+import VirtualClipboardList from './VirtualClipboardList.vue'
+import { clipboardThumbnails } from '@/lib/clipboard-thumbnails'
 import Button from '@/components/ui/button/Button.vue'
 const items = ref<Item[]>([]), selected = ref<number[]>([]), cursor = ref<string | null>(null)
 const selectedItems = ref<Record<number, Item>>({})
@@ -26,7 +28,7 @@ function guardExportDismiss(event: Event) {
 }
 const options = ref<Omit<ClipboardExportOptions, 'ids'>>({ mode: 'pdf', pageSize: 'A4', gapPx: 16, marginMm: 12, background: 'white' })
 const searchInput = ref<HTMLInputElement | null>(null)
-const list = ref<HTMLElement | null>(null)
+const list = ref<InstanceType<typeof VirtualClipboardList> | null>(null)
 function focusSearch() { searchInput.value?.focus(); searchInput.value?.select() }
 /** 搜索与列表共用方向键；条目焦点与批量选择独立，浏览不会改变导出顺序。 */
 function navigate(event: KeyboardEvent) {
@@ -41,14 +43,13 @@ function navigate(event: KeyboardEvent) {
   if (fromSearch && !['ArrowDown', 'ArrowUp'].includes(event.key)) return
   const row = target.closest<HTMLElement>('.history-item')
   if (!fromSearch && !row) return
-  const rows = Array.from(list.value?.querySelectorAll<HTMLElement>('.history-item') ?? [])
-  if (!rows.length) return
+  if (!items.value.length) return
   event.preventDefault()
-  const current = row ? rows.indexOf(row) : -1
-  const index = event.key === 'Home' ? 0 : event.key === 'End' ? rows.length - 1
-    : current < 0 ? (event.key === 'ArrowDown' ? 0 : rows.length - 1)
-    : Math.max(0, Math.min(rows.length - 1, current + (event.key === 'ArrowDown' ? 1 : -1)))
-  rows[index].focus(); rows[index].scrollIntoView({ block: 'nearest' })
+  const current = row ? Number(row.closest<HTMLElement>('[data-history-index]')?.dataset.historyIndex ?? -1) : -1
+  const index = event.key === 'Home' ? 0 : event.key === 'End' ? items.value.length - 1
+    : current < 0 ? (event.key === 'ArrowDown' ? 0 : items.value.length - 1)
+    : Math.max(0, Math.min(items.value.length - 1, current + (event.key === 'ArrowDown' ? 1 : -1)))
+  void list.value?.focusIndex(index)
 }
 function selectItem(item: Item) {
   selected.value = toggleSelection(selected.value, item.id)
@@ -75,7 +76,7 @@ function scheduleRefresh() {
 // 输入停顿后查询；分类立即生效，清除旧选择和旧请求，避免显示过期结果。
 function applyFilter() {
   clearTimeout(refreshTimer)
-  selected.value = []; selectedItems.value = {}; void refresh()
+  selected.value = []; selectedItems.value = {}; list.value?.resetScroll(); void refresh()
 }
 watch(keyword, () => {
   revision++; clearTimeout(refreshTimer)
@@ -100,6 +101,7 @@ async function remove() {
   await run(async () => {
     if (action === 'clear') await api.clipboardClear(includeFavorites.value)
     else await api.clipboardDelete(selected.value)
+    clipboardThumbnails.clear()
     selected.value = []; selectedItems.value = {}; confirm.value = null; await refresh()
   }, '历史条目已删除。')
 }
@@ -132,7 +134,7 @@ onMounted(async () => {
     await refresh()
   } catch (e) { error.value = String(e) }
 })
-onUnmounted(() => { disposed = true; revision++; clearTimeout(refreshTimer); disposers.forEach(off => off()) })
+onUnmounted(() => { disposed = true; revision++; clearTimeout(refreshTimer); disposers.forEach(off => off()); clipboardThumbnails.clear() })
 </script>
 <template>
   <!-- 复用模态组件管理焦点与遮罩；导出期间保持弹窗，避免重复提交或误关闭。 -->
@@ -171,11 +173,15 @@ onUnmounted(() => { disposed = true; revision++; clearTimeout(refreshTimer); dis
     </DialogContent>
     </DialogPortal>
     <div class="history-browser">
-    <div ref="list" class="history-list" role="region" :aria-label='t("历史记录列表")' :aria-busy="loading">
-      <ClipboardItem v-for="item in items" :key="item.id" :item="item" :selected="selected.includes(item.id)" :busy="busy" @select="selectItem(item)" @restore="run(() => api.clipboardRestore(item.id), '已复制。')" @delete="selected = [item.id]; selectedItems = { [item.id]: item }; confirm = 'delete'" @pin="run(() => api.clipboardPin(item.id))" @favorite="run(async () => { await api.clipboardFavorite(item.id, !item.favorite); await refresh() })" />
+    <VirtualClipboardList ref="list" :items="items" role="region" :aria-label='t("历史记录列表")' :aria-busy="loading">
+      <template #default="{ item }">
+      <ClipboardItem :item="item" :selected="selected.includes(item.id)" :busy="busy" @select="selectItem(item)" @restore="run(() => api.clipboardRestore(item.id), '已复制。')" @delete="selected = [item.id]; selectedItems = { [item.id]: item }; confirm = 'delete'" @pin="run(() => api.clipboardPin(item.id))" @favorite="run(async () => { await api.clipboardFavorite(item.id, !item.favorite); await refresh() })" />
+      </template>
+      <template #footer>
       <p v-if="!items.length" class="history-empty">{{ loading ? t("正在加载…") : keyword || category ? t("没有匹配的记录，试试其他关键词或分类。") : status?.enabled ? t("暂无记录，复制文字或图片后会显示在这里。") : t("暂无记录，开启右上方开关后开始记录。") }}</p>
       <Button v-if="cursor" variant="outline" :disabled="loading" @click="refresh(true)">{{ loading ? t("加载中…") : t("加载更多") }}</Button>
-    </div>
+      </template>
+    </VirtualClipboardList>
     <!-- 侧栏独立于列表滚动并始终预留宽度，选择条目不会挤动列表或影响双击。 -->
     <aside class="history-action-rail" :aria-label='t("所选条目操作")'>
       <template v-if="selected.length">
@@ -235,7 +241,8 @@ onUnmounted(() => { disposed = true; revision++; clearTimeout(refreshTimer); dis
 .history-content { flex:1; min-width:0; text-align:left; }.history-content img { max-width:100%; max-height:96px; object-fit:contain; }
 .history-text { white-space:pre-wrap; overflow-wrap:anywhere; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; line-height:1.5; }
 .history-meta { display:flex; flex-wrap:wrap; justify-content:space-between; gap:4px 12px; color:#71717a; margin-top:4px; font-size:12px; }
-.history-content img { display:block; margin:0 auto; box-shadow:0 1px 5px #0002; }
+.history-image-placeholder { display:flex; height:96px; align-items:center; justify-content:center; }
+.history-content img { height:96px; display:block; margin:0 auto; box-shadow:0 1px 5px #0002; }
 .history-search { display:flex; align-items:center; gap:8px; color:#71717a; padding:2px 8px; border:1px solid #d8dee4; border-radius:4px; }
 .history-search > svg { flex-shrink:0; }
 .history-search button { display:flex; align-items:center; justify-content:center; min-width:24px; min-height:24px; }

@@ -2,7 +2,7 @@
 import { t, te } from '@/lib/i18n'
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { Pause, Play, Square, X } from 'lucide-vue-next'
-import { api } from '@/lib/api'
+import { api, onRecordingPreviewClosed } from '@/lib/api'
 import RecordingEditor from './RecordingEditor.vue'
 import { newerRecording, recordingActive, recordingStatus, recordingTime, type RecordingAction, type RecordingView, type RecordingResult } from '@/lib/recording'
 
@@ -12,6 +12,7 @@ const error = ref('')
 const result = ref<RecordingResult | null>(null)
 const loadingPreview = ref(false)
 let previewSession: number | null = null
+let localCloseSession: number | null = null
 const dismissedSession = ref<number | null>(null)
 const replay = computed(() => view.value?.phase === 'completed' && view.value.id !== dismissedSession.value)
 /** 成功结果只按原生 ID 打开；旧会话的异步查询不能覆盖下一次录制。 */
@@ -21,7 +22,7 @@ async function loadPreview() {
   previewSession = sessionId; loadingPreview.value = true; error.value = ''
   try {
     const next = await api.latestRecordingResult()
-    if (disposed || view.value?.id !== sessionId) return
+    if (disposed || view.value?.id !== sessionId || dismissedSession.value === sessionId) return
     if (!next || next.path !== view.value.path) throw new Error('录屏结果已更新，请重试。')
     result.value = next
   } catch (e) { if (!disposed && view.value?.id === sessionId) error.value = String(e) }
@@ -31,12 +32,23 @@ async function closePreview() {
   if (!view.value || busy.value) return
   const id = view.value.id
   busy.value = true; error.value = ''
+  localCloseSession = id
   try {
     // 已完成会话的 cancel 只收起回放；原生保留已经保存的成品。
     await api.controlRecording(id, 'cancel')
     dismissedSession.value = id; result.value = null
-  } catch (e) { error.value = String(e) }
+  } catch (e) { localCloseSession = null; error.value = String(e) }
   finally { busy.value = false }
+}
+/** 先卸载播放器并收起原选区回放，再进入现有框选流程；已保存的原片始终保留。 */
+async function rerecord() {
+  const previous = result.value, sessionId = view.value?.id
+  await closePreview()
+  if (error.value || disposed) return
+  try { await api.selectRecordingArea() }
+  catch (e) {
+    if (!disposed && view.value?.id === sessionId) { dismissedSession.value = null; result.value = previous; error.value = String(e) }
+  }
 }
 let disposed = false
 let timer: ReturnType<typeof setTimeout> | undefined
@@ -60,13 +72,26 @@ async function control(action: RecordingAction) {
   catch (e) { error.value = String(e) }
   finally { busy.value = false }
 }
-onMounted(poll)
-onUnmounted(() => { disposed = true; clearTimeout(timer) })
+let offPreview: (() => void) | undefined
+onMounted(async () => {
+  try {
+    const off = await onRecordingPreviewClosed(id => {
+      // 本地按钮已负责卸载；忽略它对应的异步通知，避免重新框选失败恢复后被迟到事件关闭。
+      if (localCloseSession === id) { localCloseSession = null; return }
+      if (view.value && view.value.id !== id) return
+      dismissedSession.value = id; result.value = null
+    })
+    if (disposed) { off(); return }
+    offPreview = off
+  } catch (e) { if (!disposed) error.value = String(e) }
+  if (!disposed) void poll()
+})
+onUnmounted(() => { disposed = true; clearTimeout(timer); offPreview?.() })
 </script>
 
 <template>
   <main v-if="replay" class="recording-replay" :aria-label='t("录屏回放与编辑")'>
-    <RecordingEditor v-if="result" :key="result.id" :result-id="result.id" :disabled="busy" @close="closePreview" />
+    <RecordingEditor v-if="result" :key="result.id" :result-id="result.id" :disabled="busy" floating :layout="result.replayLayout" :frame-rate="view?.targetFps ?? 30" @close="closePreview" @rerecord="rerecord" />
     <template v-else>
       <header><strong>{{ t("录屏回放与编辑") }}</strong><button :disabled="busy" @click="closePreview">{{ t("关闭") }}</button></header>
       <p v-if="loadingPreview" role="status">{{ t("正在加载录屏…") }}</p>
@@ -90,10 +115,10 @@ onUnmounted(() => { disposed = true; clearTimeout(timer) })
 </template>
 
 <style scoped>
-.recording-replay { height: 100vh; padding: 8px 16px; overflow: auto; background: #fff; color: #24292f; font-size: 13px; border: 1px solid #e1e4e8; border-radius: 7px; }
-.recording-replay :deep(.recording-editor) { border: 0; padding: 0; }
+.recording-replay { height: 100vh; overflow: hidden; color: #24292f; font-size: 13px; background: transparent; }
+.recording-replay > header, .recording-replay > p, .recording-replay > button { background: #fff; }
 .recording-replay header { display: flex; justify-content: space-between; align-items: center; margin: 8px 0; }
-.preview-error { color: #b91c1c; overflow-wrap: anywhere; }
+.preview-error { position:absolute; left:8px; right:8px; bottom:4px; z-index:3; margin:0; background:#fff; color:#b91c1c; overflow-wrap:anywhere; }
 .recording-controls { height: 100vh; display: flex; align-items: center; justify-content: center; gap: 8px; padding: 5px 8px; background: #fafafa; border: 1px solid #ddd; border-radius: 7px; color: #27272a; font-size: 12px; overflow: hidden; }
 .dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: #ef4444; }
 .dot.paused { background: #a1a1aa; }

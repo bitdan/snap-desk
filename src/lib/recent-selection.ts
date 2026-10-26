@@ -38,7 +38,7 @@ export function readRecentSelection(): RecentSelection | null {
   try { return parseRecentSelection(localStorage.getItem(storageKey)) } catch { return null }
 }
 export function writeRecentSelection(rect: Rect, image: Size & { layoutKey?: string }): RecentSelection | null {
-  // 显式拣选尺寸字段，避免把 CaptureFrame 的图片 dataUrl 一并写入存储。
+  // 显式拣选尺寸字段，避免把 CaptureFrame 的其他会话字段 一并写入存储。
   const recent = parseRecentSelection(JSON.stringify({ version: 1,
     image: { width: image.width, height: image.height, ...(typeof image.layoutKey === 'string' ? { layoutKey: image.layoutKey } : {}) }, rect }))
   if (recent) {

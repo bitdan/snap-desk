@@ -319,6 +319,17 @@ pub enum RecordingAction {
     Cancel,
 }
 
+/// Alt+F4 只关闭已经完成的回放，不能意外中止仍在录制/封装的视频。
+pub fn dismiss_completed_preview(app: &AppHandle) {
+    let state = app.state::<RecordingState>();
+    let id = state.0.lock().ok().and_then(|guard| {
+        guard.as_ref().filter(|s| s.view.phase == Phase::Completed).map(|s| s.view.id)
+    });
+    if let Some(id) = id {
+        let _ = control(app, Some(id), RecordingAction::Cancel);
+    }
+}
+
 /// 悬浮条暂停保留现场，托盘暂停可展开主页；恢复仅隐藏主页，边框和控制条不收起。
 pub fn control(app: &AppHandle, id: Option<u64>, action: RecordingAction) -> Result<(), String> {
     let state = app.state::<RecordingState>();
@@ -333,8 +344,11 @@ pub fn control(app: &AppHandle, id: Option<u64>, action: RecordingAction) -> Res
     if !active(s.view.phase) {
         if matches!(action, RecordingAction::Cancel) {
             // 完成后的关闭只收起回放，不删除已保存的录像；旧会话 ID 仍在上方校验。
+            let closed_id = s.view.id;
             drop(guard);
             chrome::hide_recording(app);
+            // Alt+F4/托盘关闭也通知常驻 WebView 卸载播放器，不能只隐藏仍在播放的媒体。
+            let _ = app.emit_to("recording-controls", "recording-preview-closed", closed_id);
             return Ok(());
         }
         return if matches!(action, RecordingAction::Stop | RecordingAction::Cancel) {
@@ -646,7 +660,7 @@ pub async fn start_recording(
         config.encoding = selected_encoding;
         // 窗口本地原点与控制条位置无关，控制条仍以用户确认的屏幕选区放置。
         chrome::place_recording(&app, &screen, placement)?;
-        window.hide().map_err(err)?;
+        super::hide_overlay(&app, &window)?;
         let recording = app.state::<RecordingState>();
         *recording.0.lock().map_err(err)? = Some(Session {
             view: RecordingView {
@@ -1287,7 +1301,7 @@ fn write_video(
     progress(app, "publishing", Some(&pending));
     output::publish(&pending, &output)?;
     recovery.published(&output);
-    result::remember(app, &output);
+    result::remember_with_layout(app, &output, chrome::recording_preview_layout(app));
     progress(app, "completed", Some(&output));
     // 终态与成品路径由 collect 收尾时一起发布，避免回放读到 Completed 却没有路径。
     Ok(output.to_string_lossy().into_owned())

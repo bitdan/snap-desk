@@ -13,6 +13,7 @@ pub struct RecordingResult {
     id: u64,
     path: String,
     filename: String,
+    replay_layout: Option<super::chrome::ReplayLayout>,
 }
 
 #[derive(Default)]
@@ -20,11 +21,20 @@ pub struct ResultState(Mutex<Option<RecordingResult>>);
 
 /// 发布成功后更新，失败或取消不覆盖上一次结果；查询不读取整个视频。
 pub fn remember(app: &AppHandle, path: &Path) {
+    remember_with_layout(app, path, None);
+}
+/// 只有当前录制携带原选区；恢复历史文件不能误用上次录制的桌面位置。
+pub(super) fn remember_with_layout(
+    app: &AppHandle,
+    path: &Path,
+    replay_layout: Option<super::chrome::ReplayLayout>,
+) {
     let state = app.state::<ResultState>();
     if let Ok(mut current) = state.0.lock() {
         let id = current.as_ref().map_or(1, |result| result.id + 1);
         *current = Some(RecordingResult {
             id,
+            replay_layout,
             path: path.to_string_lossy().into_owned(),
             filename: path
                 .file_name()

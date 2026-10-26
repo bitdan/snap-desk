@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
-import { recordingClipTime, recordingTrimRange } from '../src/lib/recording-editor'
+import { recordingClipTime, recordingTrimRange, moveRecordingTrim, recordingFrameTime, commitRecordingTrim, travelRecordingTrim } from '../src/lib/recording-editor'
 const invoke = vi.hoisted(() => vi.fn())
 vi.mock('@tauri-apps/api/core', () => ({ invoke, isTauri: () => true }))
 vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn() }))
@@ -9,6 +9,32 @@ import { ipcCommands } from '../src/lib/ipc-commands'
 beforeEach(() => vi.resetAllMocks())
 
 describe('录屏裁剪时间范围', () => {
+  it('端点拖动不能越界、交叉或留下过短片段，GIF 对齐 10ms', () => {
+    const range = { startMs: 100, endMs: 500 }
+    expect(moveRecordingTrim(range, 'start', 800, 1000, 'mp4')).toEqual({ startMs: 480, endMs: 500 })
+    expect(moveRecordingTrim(range, 'end', -10, 1000, 'mp4')).toEqual({ startMs: 100, endMs: 120 })
+    expect(moveRecordingTrim(range, 'start', 123, 1000, 'gif').startMs).toBe(120)
+    expect(moveRecordingTrim(range, 'end', 2000, 1000, 'gif').endMs).toBe(1000)
+    expect(moveRecordingTrim(range, 'start', NaN, 1000, 'mp4')).toEqual(range)
+  })
+  it('逐帧定位使用帧索引而非累计小数，并限制在所选片段', () => {
+    const range = { startMs: 100, endMs: 900 }
+    expect(recordingFrameTime(333, 1, 30, range)).toBe(367)
+    expect(recordingFrameTime(367, -1, 30, range)).toBe(333)
+    expect(recordingFrameTime(890, 1, 60, range)).toBe(900)
+    expect(recordingFrameTime(100, -1, 30, range)).toBe(100)
+    expect(recordingFrameTime(333, 1, NaN, range)).toBe(367)
+  })
+  it('裁剪范围支持撤销/重做，分支编辑清空重做，重复提交不增加历史', () => {
+    const original = { past: [], present: { startMs: 0, endMs: 1000 }, future: [] }
+    const first = commitRecordingTrim(original, { startMs: 100, endMs: 900 })
+    const second = commitRecordingTrim(first, { startMs: 200, endMs: 800 })
+    expect(commitRecordingTrim(second, second.present)).toBe(second)
+    expect(travelRecordingTrim(second).present).toEqual(first.present)
+    expect(travelRecordingTrim(travelRecordingTrim(second), true)).toEqual(second)
+    expect(commitRecordingTrim(travelRecordingTrim(second), { startMs: 300, endMs: 800 }).future).toEqual([])
+    expect(original.present).toEqual({ startMs: 0, endMs: 1000 })
+  })
   it('MP4 使用整数毫秒，允许整段及最小片段', () => {
     expect(recordingTrimRange('1.001', '5.000', 10000, 'mp4')).toEqual({ startMs: 1001, endMs: 5000 })
     expect(recordingTrimRange('0', '10', 10000, 'mp4')).toEqual({ startMs: 0, endMs: 10000 })

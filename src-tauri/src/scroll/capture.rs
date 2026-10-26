@@ -93,6 +93,43 @@ fn sample(
     Ok(cropped)
 }
 
+/// 快速路径也核对来源显示器的当前物理尺寸，避免切换分辨率后继续使用旧选区。
+fn sample_region(
+    monitor: &xcap::Monitor,
+    region: Rect,
+    source_size: (u32, u32),
+) -> Result<RgbaImage, String> {
+    region.validate(source_size.0, source_size.1)?;
+    let image = monitor
+        .capture_region(region.x, region.y, region.width, region.height)
+        .map_err(|e| e.to_string())?;
+    // 捕获后再查询，切换分辨率若发生在抓取过程中也会回退到整屏尺寸校验。
+    let size = (
+        monitor.width().map_err(|e| e.to_string())?,
+        monitor.height().map_err(|e| e.to_string())?,
+    );
+    if size != source_size {
+        return Err("显示器像素尺寸发生变化。".into());
+    }
+    Ok(image)
+}
+
+/// 区域采集是一条可回退的快速路径；失败时仍由整屏采集验证来源尺寸并返回可信像素。
+fn region_or_full(
+    enabled: &mut bool,
+    size: (u32, u32),
+    region: impl FnOnce() -> Result<RgbaImage, String>,
+    full: impl FnOnce() -> Result<RgbaImage, String>,
+) -> Result<RgbaImage, String> {
+    match region() {
+        Ok(image) if image.dimensions() == size => Ok(image),
+        _ => {
+            *enabled = false;
+            full()
+        }
+    }
+}
+
 /// 连续取样并等待区域稳定；结束前允许最后一次取样，取消仍立即生效。
 pub(super) fn sample_pair(
     state: &CaptureState,
@@ -104,7 +141,7 @@ pub(super) fn sample_pair(
     #[cfg(windows)]
     let _dpi = crate::desktop_capture::PhysicalDpi::enter()?;
     // 一轮稳定性检测绑定选区所在屏幕，全部坐标均为物理像素。
-    // 仍保留整屏路径；区域采集先由下方定向基准验证，避免未经实测替换默认后端。
+    // 每轮首帧仍使用整屏路径作为尺寸和像素基准，区域采集通过校验后仅用于本轮后续采样。
     let monitor = xcap::Monitor::all()
         .map_err(|e| e.to_string())?
         .into_iter()
@@ -115,7 +152,21 @@ pub(super) fn sample_pair(
                 && m.height().ok() == Some(screen.height)
         })
         .ok_or("来源显示器已变化，已结束采集，仅输出已确认部分。")?;
+    let sample_started = Instant::now();
     let mut reference = sample(&monitor, rect, source_size)?;
+    let _full_duration = sample_started.elapsed();
+    // Windows 物理 DPI 上下文已在本轮建立。只优化小选区，首次像素不一致则保留整屏路径；
+    // 动画可能造成保守回退，但不会把不同坐标系/尺寸的图片交给拼接器。
+    let mut native_region = false;
+    #[cfg(windows)]
+    if u64::from(rect.width) * u64::from(rect.height)
+        < u64::from(source_size.0) * u64::from(source_size.1) / 2
+    {
+        let started = Instant::now();
+        if let Ok(region) = sample_region(&monitor, rect, source_size) {
+            native_region = started.elapsed() < _full_duration && region == reference;
+        }
+    }
     let mut quiet_samples = 0;
     let mut settled = None;
     // 每 80 ms 检查，连续 240 ms 稳定即可继续，不再每轮固定停顿近一秒。
@@ -130,7 +181,17 @@ pub(super) fn sample_pair(
         } else if !wait(state, 80) {
             return Ok(None);
         }
-        let candidate = sample(&monitor, rect, source_size)?;
+        let candidate = if native_region {
+            // 区域失败或返回尺寸异常时立即回退，本轮不再尝试，避免不断重试不支持的后端。
+            region_or_full(
+                &mut native_region,
+                (rect.width, rect.height),
+                || sample_region(&monitor, rect, source_size),
+                || sample(&monitor, rect, source_size),
+            )?
+        } else {
+            sample(&monitor, rect, source_size)?
+        };
         if !finishing && state.scroll_stop.load(Ordering::SeqCst) {
             return Ok(None);
         }
@@ -152,7 +213,36 @@ pub(super) fn sample_pair(
 mod benchmarks {
     use super::*;
 
-    /// 手动运行，保持桌面静止且不移动光标；同时输出耗时和像素差，不能只比较速度。
+    /// 区域采集失败或尺寸异常时，整屏路径必须仍能返回可信结果或明确错误。
+    #[test]
+    fn region_failures_fall_back_without_losing_full_capture_errors() {
+        let mut enabled = true;
+        let full = RgbaImage::from_pixel(2, 3, image::Rgba([7, 8, 9, 255]));
+        for region in [Err("unsupported".into()), Ok(RgbaImage::new(3, 2))] {
+            let image =
+                region_or_full(&mut enabled, (2, 3), || region, || Ok(full.clone())).unwrap();
+            assert_eq!(image, full);
+            assert!(!enabled);
+        }
+        enabled = true;
+        let image = region_or_full(
+            &mut enabled,
+            (2, 3),
+            || Ok(full.clone()),
+            || panic!("不应重复整屏采集"),
+        )
+        .unwrap();
+        assert_eq!(image, full);
+        assert!(enabled);
+        assert!(region_or_full(
+            &mut enabled,
+            (2, 3),
+            || Err("region".into()),
+            || Err("display changed".into())
+        )
+        .is_err());
+    }
+
     #[test]
     #[ignore = "实机区域采集基准，会采集当前主屏；需手动运行"]
     fn compare_full_capture_and_native_region() {

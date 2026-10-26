@@ -573,7 +573,7 @@ pub async fn start_scroll(
         };
         refresh_preview(&mut session)?;
         let result = view(&session, true)?;
-        window.hide().map_err(err)?;
+        super::super::hide_overlay(&app, &window)?;
         *state.scroll.lock().map_err(err)? = Some(session);
         state.scroll_cancel.store(false, Ordering::SeqCst);
         state.scroll_stop.store(false, Ordering::SeqCst);
