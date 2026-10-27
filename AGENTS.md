@@ -21,6 +21,7 @@
 ## 验证与构建
 
 - 源码组织或依赖变化执行 `npm run check:architecture`；前端代码变化执行 `npm run check` 和受影响的定向测试。修正检查发现的问题，不删除检查或增加宽泛忽略。
+- IPC 变化执行 `npm run check:contracts`，同步命令注册、调用参数、审计名单及通信字段。组件测试优先复用 `tests/helpers/component-host.ts`，通过真实交互验证，避免抽取私有函数源码执行。
 - 除非用户明确要求，不执行编译、发布构建或打包，也不通过 Rust 测试隐式触发编译；可运行必要的静态检查和前端定向测试。
 - 构建统一复用 `src-tauri/target/`，不按版本新建目录。`desktop:build` 生成可运行程序，`desktop:package` 额外生成安装包；保留脚本中的 `--ci`、`--locked`，构建前从托盘退出程序。
 - npm 复用 `npm config get cache` 指向的共享缓存，不改用项目内缓存或备份依赖目录。安装因权限或占用失败时报告原因，不通过复制、改名 `node_modules` 绕过。

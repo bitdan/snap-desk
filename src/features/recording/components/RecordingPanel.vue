@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useRecordingPolling } from '@/features/recording/use-recording-polling'
 import { t, te } from '@/shared/i18n/i18n'
 import { onMounted, onUnmounted, ref, watch } from 'vue'
 import RecordingEditor from '@/features/recording/components/RecordingEditor.vue'
@@ -59,24 +60,19 @@ async function retryExport(id: string) {
   finally { busy.value = false }
 }
 let disposed = false
-let timer: ReturnType<typeof setTimeout> | undefined
 async function refresh() {
   try {
     const next = await api.currentRecording()
     if (!disposed) {
       const ended = recordingActive(view.value) && !recordingActive(next)
       view.value = newerRecording(view.value, next)
-      await loadResult()
+      if (!recordingActive(view.value)) await loadResult()
       if (ended) await loadRecoveries()
     }
   }
   catch (e) { if (!disposed) error.value = String(e) }
 }
-// 串行轮询，不在窗口后台堆积 IPC；录屏状态归 Rust 所有，重开面板仍可恢复。
-async function poll() {
-  await refresh()
-  if (!disposed) timer = setTimeout(poll, 750)
-}
+useRecordingPolling(refresh, () => view.value?.phase, e => { if (!disposed) error.value = String(e) }, () => desktop)
 async function control(action: RecordingAction) {
   if (!view.value || busy.value) return
   busy.value = true; error.value = ''
@@ -100,14 +96,13 @@ async function chooseDirectory(reset = false) {
 }
 onMounted(() => {
   if (!desktop) return
-  void poll()
   void loadRecoveries()
   void api.currentRecordingDirectory().then(value => { if (!disposed) directory.value = value })
     .catch(e => { if (!disposed) error.value = String(e) })
   void api.recordingCapabilities().then(value => { if (!disposed) capabilities.value = value })
     .catch(e => { if (!disposed) error.value = String(e) })
 })
-onUnmounted(() => { disposed = true; clearTimeout(timer) })
+onUnmounted(() => { disposed = true })
 </script>
 
 <template>

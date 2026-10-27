@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useRecordingPolling } from '@/features/recording/use-recording-polling'
 import { handleEscape } from '@/shared/ui/escape'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { listen } from '@tauri-apps/api/event'
@@ -47,7 +48,6 @@ const stage = computed(() => {
 const locked = computed(() => busy.value || editor.pending || editor.interacting)
 let disposed = false, closedThrough = -1
 let operation = 0
-let timer: ReturnType<typeof setTimeout> | undefined
 let off: (() => void) | undefined
 /** 只在首次加载/外部版本变化时重置历史，轮询不能打断正在画的一笔或撤销栈。 */
 async function poll() {
@@ -73,8 +73,8 @@ async function poll() {
       }
     }
   } catch (e) { if (!disposed) error.value = String(e) }
-  if (!disposed) timer = setTimeout(poll, 250)
 }
+useRecordingPolling(poll, () => recording.value?.phase, e => { if (!disposed) error.value = String(e) })
 let activation: Promise<void> | null = null
 /** 在原工具栏直接选工具即可恢复绘制；桌面操作期间不另开一块控制界面。 */
 async function activate() {
@@ -130,9 +130,8 @@ onMounted(async () => {
     if (disposed) { release(); return }
     off = release
   } catch (e) { error.value = String(e) }
-  if (!disposed) void poll()
 })
-onUnmounted(() => { disposed = true; clearTimeout(timer); off?.(); window.removeEventListener('keydown', key); window.removeEventListener('resize', resized) })
+onUnmounted(() => { disposed = true; off?.(); window.removeEventListener('keydown', key); window.removeEventListener('resize', resized) })
 </script>
 
 <template>

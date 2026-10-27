@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useRecordingPolling } from '@/features/recording/use-recording-polling'
 import { handleEscape } from '@/shared/ui/escape'
 import { t, te } from '@/shared/i18n/i18n'
 import { computed, onMounted, onUnmounted, ref } from 'vue'
@@ -55,7 +56,6 @@ async function rerecord() {
   } finally { busy.value = false }
 }
 let disposed = false
-let timer: ReturnType<typeof setTimeout> | undefined
 // 按需挂载先查询原生快照，不依赖窗口创建前可能错过的事件。
 async function refresh() {
   const next = await api.currentRecording()
@@ -65,10 +65,7 @@ async function refresh() {
   view.value = newerRecording(view.value, next)
   if (replay.value && previewSession !== view.value?.id) await loadPreview()
 }
-async function poll() {
-  try { await refresh() } catch (e) { if (!disposed) error.value = String(e) }
-  if (!disposed) timer = setTimeout(poll, 250)
-}
+useRecordingPolling(refresh, () => view.value?.phase, e => { if (!disposed) error.value = String(e) })
 async function control(action: RecordingAction) {
   if (!view.value || busy.value) return
   busy.value = true; error.value = ''
@@ -100,9 +97,8 @@ onMounted(async () => {
     if (disposed) { off(); return }
     offPreview = off
   } catch (e) { if (!disposed) error.value = String(e) }
-  if (!disposed) void poll()
 })
-onUnmounted(() => { disposed = true; window.removeEventListener('keydown', key); clearTimeout(timer); offPreview?.() })
+onUnmounted(() => { disposed = true; window.removeEventListener('keydown', key); offPreview?.() })
 </script>
 
 <template>

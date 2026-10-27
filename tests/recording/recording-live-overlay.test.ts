@@ -1,8 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as Vue from 'vue'
-import { readFileSync } from 'node:fs'
-import { compileScript, parse } from '@vue/compiler-sfc'
-import { compile } from '@vue/compiler-dom'
+import { clientComponent, MemoryNode as Node, memoryRenderer as renderer } from '../helpers/component-host'
 import type { AnnotationEditor } from '../../src/features/annotations/use-annotations'
 
 const api = vi.hoisted(() => ({ recordingAnnotations: vi.fn(), currentRecording: vi.fn(), updateRecordingAnnotations: vi.fn(), setRecordingAnnotationMode: vi.fn(), controlRecording: vi.fn() }))
@@ -18,19 +16,8 @@ vi.mock('../../src/features/annotations/components/AnnotationWorkspace.vue', asy
   } }) }
 })
 import Overlay from '../../src/features/recording/components/RecordingAnnotations.vue'
-const { descriptor } = parse(readFileSync('src/features/recording/components/RecordingAnnotations.vue', 'utf8'))
-const bindings = compileScript(descriptor, { id: 'live-overlay-test' }).bindings
-Object.assign(Overlay, { render: new Function('Vue', compile(descriptor.template!.content, { mode: 'function', prefixIdentifiers: true, bindingMetadata: bindings }).code)(Vue) })
-interface Node { type: string; props: Record<string, any>; children: Node[]; parent: Node | null; text: string }
-const node = (type: string): Node => ({ type, props: {}, children: [], parent: null, text: '' })
-const renderer = Vue.createRenderer<Node, Node>({
-  createElement: node, createText: text => ({ ...node('#text'), text }), createComment: node,
-  setText: (n, text) => { n.text = text }, setElementText: (n, text) => { n.text = text },
-  parentNode: n => n.parent, nextSibling: n => n.parent?.children[n.parent.children.indexOf(n) + 1] ?? null,
-  patchProp: (n, key, _old, value) => { n.props[key] = value },
-  insert(child, parent, anchor) { if (child.parent) child.parent.children.splice(child.parent.children.indexOf(child), 1); child.parent = parent; const i = anchor ? parent.children.indexOf(anchor) : -1; if (i < 0) parent.children.push(child); else parent.children.splice(i, 0, child) },
-  remove(child) { if (child.parent) child.parent.children.splice(child.parent.children.indexOf(child), 1); child.parent = null },
-})
+const OverlayClient = clientComponent(Overlay, new URL('../../src/features/recording/components/RecordingAnnotations.vue', import.meta.url))
+const node = (type: string) => new Node(type)
 const root = node('root')
 function find(test: (n: Node) => boolean, current = root): Node | undefined {
   if (test(current)) return current
@@ -47,7 +34,7 @@ function press(key: string) {
 }
 async function flush() { await vi.advanceTimersByTimeAsync(0); await Vue.nextTick() }
 async function mount() {
-  const Wrapper = { setup() { Vue.provide(Vue.ssrContextKey, { modules: new Set() }); return () => Vue.h(Overlay) } }
+  const Wrapper = { setup() { Vue.provide(Vue.ssrContextKey, { modules: new Set() }); return () => Vue.h(OverlayClient) } }
   renderer.render(Vue.h(Wrapper), root); await flush()
 }
 beforeEach(() => {

@@ -43,6 +43,7 @@ pub(super) fn remember_with_layout(
                 .into_owned(),
         });
     };
+    super::notify_changed(app);
 }
 
 #[tauri::command]

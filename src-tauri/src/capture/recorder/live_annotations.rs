@@ -376,6 +376,7 @@ pub async fn set_recording_annotation_mode(
                 hide_interaction(&app);
             }
         }
+        super::notify_changed(&app);
         result
     })
     .await

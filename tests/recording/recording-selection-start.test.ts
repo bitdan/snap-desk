@@ -1,90 +1,41 @@
 import { describe, expect, it, vi } from 'vitest'
-import { readFileSync } from 'node:fs'
-import { parse } from '@vue/compiler-sfc'
-import ts from 'typescript'
-import { recordingConfig, recordingRegion, recordingBitrate, defaultInputEffects } from '../../src/features/recording/recording'
-import { fromPixels } from '../../src/features/capture/capture-targets'
+import { prepareRecordingSession } from '../../src/features/recording/use-recording-setup'
 
-// 执行选区页的真实开始入口，隔离原生 IPC；不启动 WebView、采集设备或编码器。
-const script = parse(readFileSync('src/features/capture/components/CaptureOverlay.vue', 'utf8')).descriptor.scriptSetup!.content
-const ast = ts.createSourceFile('capture.ts', script, ts.ScriptTarget.Latest, true)
-const entry = ast.statements.find(n => ts.isFunctionDeclaration(n) && n.name?.text === 'startRecording')!
-const code = ts.transpileModule(entry.getText(ast), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText
-const chooseEntry = ast.statements.find(n => ts.isFunctionDeclaration(n) && n.name?.text === 'chooseRecordingSource')!
-const chooseCode = ts.transpileModule(chooseEntry.getText(ast), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText
-const ref = <T>(value: T) => ({ value })
+// 直接测试录屏接管协议，不再读取组件源码或依赖私有函数名称。
 function fixture() {
   const calls: string[] = []
-  const api = {
-    startRecording: vi.fn(async () => { calls.push('prepare') }),
-    setRecordingAnnotationMode: vi.fn(async () => { calls.push('same-window') }),
-    controlRecording: vi.fn(async (_id: number, action: string) => { calls.push(action) }),
-  }
-  const context = {
-    api, recordingConfig, recordingRegion, recordingBitrate, fromPixels, disposed: false,
-    marked: ref(false), viewport: ref({ width: 1920, height: 1080 }), selection: ref<any>(null), activeDisplay: ref({ x: 0, y: 0, width: 1920, height: 1080 }),
-    recordingMode: ref(true), recordingCapabilities: ref({ available: true, systemAudio: false, microphone: false }),
-    frame: ref<any>({ id: 7, width: 1920, height: 1080, originX: 0, originY: 0, displays: [{ x: 0, y: 0, width: 1920, height: 1080, scale: 1 }], targets: [] }),
-    pixels: ref({ x: 10, y: 20, width: 640, height: 480 }), valid: ref(true), busy: ref(false), error: ref(''), gesture: ref(null),
-    editor: { pending: false, interacting: false, history: { present: [] } },
-    recordingSource: ref('region'), recordingFps: ref(60), captureCursor: ref(true), recordingCountdown: ref(0), recordingEncoding: ref('auto'), recordingQuality: ref('balanced'),
-    recordingEffects: ref(defaultInputEffects()), recordingFormat: ref('mp4'), recordingMbps: ref(''), recordingSystemAudio: ref(false), recordingMicrophone: ref(false), selectedTarget: ref(null),
-    liveRecordingId: ref<number | null>(null),
-    releaseFrame: vi.fn(() => { calls.push('release-image') }),
-    nextTick: async () => { calls.push('render-shared-workspace') },
-  }
-  const start = new Function(...Object.keys(context), `${code}; return startRecording`)(...Object.values(context)) as () => Promise<void>
-  const choose = new Function(...Object.keys(context), `${chooseCode}; return chooseRecordingSource`)(...Object.values(context)) as (event: Event | string) => Promise<void>
-  return { context, calls, start, choose }
+  const prepare = vi.fn(async () => { calls.push('prepare') })
+  const activate = vi.fn(async () => { calls.push('activate') })
+  const cancel = vi.fn(async () => { calls.push('cancel') })
+  const onPrepared = vi.fn(() => { calls.push('release-image') })
+  const start = () => prepareRecordingSession(prepare, activate, cancel, onPrepared)
+  return { calls, prepare, activate, cancel, onPrepared, start }
 }
 
 describe('选区工具栏准备录制', () => {
-  it('仅支持选区和显示器，应用窗口来源不再改变状态', async () => {
-    const { context: c, choose, start } = fixture()
-    await choose('display')
-    expect(c.selection.value).toEqual(c.activeDisplay.value)
-    await choose('window:0')
-    expect(c.recordingSource.value).toBe('display')
-    await choose('region')
-    expect(c.recordingSource.value).toBe('region')
-    await start()
-    expect(c.api.startRecording).toHaveBeenCalledWith(7, expect.anything(), expect.objectContaining({ source: 'selectedMonitor' }), undefined, [])
-    c.marked.value = true
-    await choose('display')
-    expect(c.recordingSource.value).toBe('region')
+  it('准备完成后才交出背景和激活原窗口，不隐式开始采集', async () => {
+    const f = fixture()
+    await f.start()
+    expect(f.calls).toEqual(['prepare', 'release-image', 'activate'])
+    expect(f.cancel).not.toHaveBeenCalled()
   })
-  it('确认范围只完成准备和原窗口接管，等待用户明确开始', async () => {
-    const { context: c, calls, start } = fixture()
-    await start()
-    expect(calls).toEqual(['prepare', 'release-image', 'render-shared-workspace', 'same-window'])
-    expect(c.liveRecordingId.value).toBe(7)
-    expect(c.api.controlRecording).not.toHaveBeenCalled()
-    expect(c.busy.value).toBe(false)
-    expect(c.error.value).toBe('')
+  it('准备失败保留原选区，不尝试接管或取消不存在的会话', async () => {
+    const f = fixture(), error = new Error('采集设备不可用')
+    f.prepare.mockRejectedValueOnce(error)
+    await expect(f.start()).rejects.toBe(error)
+    expect(f.onPrepared).not.toHaveBeenCalled()
+    expect(f.activate).not.toHaveBeenCalled()
+    expect(f.cancel).not.toHaveBeenCalled()
   })
-  it('准备失败保留原选区，不接管或开始', async () => {
-    const { context: c, start } = fixture()
-    c.api.startRecording.mockRejectedValueOnce(new Error('采集设备不可用'))
-    await start()
-    expect(c.releaseFrame).not.toHaveBeenCalled()
-    expect(c.liveRecordingId.value).toBeNull()
-    expect(c.api.controlRecording).not.toHaveBeenCalled()
-    expect(c.error.value).toContain('采集设备不可用')
+  it('接管失败取消已准备的会话，不遗留等待开始状态', async () => {
+    const f = fixture(), error = new Error('窗口保护不可用')
+    f.activate.mockRejectedValueOnce(error)
+    await expect(f.start()).rejects.toBe(error)
+    expect(f.cancel).toHaveBeenCalledOnce()
   })
-  it('接管失败取消已准备的会话，不遗留等待开始的状态', async () => {
-    const { context: c, start } = fixture()
-    c.api.setRecordingAnnotationMode.mockRejectedValueOnce(new Error('窗口保护不可用'))
-    await start()
-    expect(c.api.controlRecording).toHaveBeenCalledTimes(1)
-    expect(c.api.controlRecording).toHaveBeenCalledWith(7, 'cancel')
-    expect(c.error.value).toContain('窗口保护不可用')
-    expect(c.busy.value).toBe(false)
-  })
-  it('原生录制准备不再显示旧的 480×48 控制窗，选区窗口支持透明复用', () => {
-    const native = readFileSync('src-tauri/src/capture/recorder/manager.rs', 'utf8').split('pub async fn start_recording')[1].split('fn measured_capture')[0]
-    expect(native).not.toContain('chrome::show_recording(')
-    expect(native).not.toContain('while !recording.2')
-    const config = JSON.parse(readFileSync('src-tauri/tauri.conf.json', 'utf8'))
-    expect(config.app.windows.find((w: { label: string }) => w.label === 'capture').transparent).toBe(true)
+  it('清理失败不覆盖最初的接管错误', async () => {
+    const f = fixture(), error = new Error('窗口保护不可用')
+    f.activate.mockRejectedValueOnce(error); f.cancel.mockRejectedValueOnce(new Error('cleanup'))
+    await expect(f.start()).rejects.toBe(error)
   })
 })

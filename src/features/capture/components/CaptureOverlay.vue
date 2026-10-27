@@ -22,7 +22,8 @@ import CaptureMagnifier from '@/features/capture/components/CaptureMagnifier.vue
 import { waitForCapturePaint } from '@/features/capture/capture-paint'
 import { magnifierSample } from '@/features/capture/magnifier'
 import { newerScroll } from '@/features/scroll/scroll-capture'
-import { defaultInputEffects, recordingBitrate, recordingConfig, recordingRegion, type RecordingSelection, type RecordingFormat, type RecordingFps, type EncodingPreference, type RecordingQuality, type RecorderCapabilities } from '@/features/recording/recording'
+import { recordingBitrate, recordingConfig, recordingRegion, type RecordingSelection } from '@/features/recording/recording'
+import { useRecordingSetup, prepareRecordingSession } from '@/features/recording/use-recording-setup'
 import RecordingSetupMenu from '@/features/recording/components/RecordingSetupMenu.vue'
 import RecordingSourceSelect from '@/features/recording/components/RecordingSourceSelect.vue'
 import { targetAt, fromPixels, snapPoint, displayBounds } from '@/features/capture/capture-targets'
@@ -117,8 +118,8 @@ async function selectedRecordingRegion() {
   await nextTick()
   recordingConfirmTrigger.value?.focus()
 }
-const recordingCapabilities = ref<RecorderCapabilities | null>(null)
-const recordingCapabilityError = ref('')
+const { recordingFormat, recordingFps, recordingEncoding, recordingQuality, recordingMbps, recordingCountdown, captureCursor,
+  recordingEffects, recordingSystemAudio, recordingMicrophone, recordingCapabilities, recordingCapabilityError } = useRecordingSetup()
 const recordingSource = ref<RecordingSelection>('region')
 /** 录屏仅选择屏幕区域或整台显示器，不再置前或绑定应用窗口。 */
 function chooseRecordingSource(value: string) {
@@ -128,24 +129,6 @@ function chooseRecordingSource(value: string) {
   if (value === 'display') selection.value = { ...activeDisplay.value }
   recordingSource.value = value
 }
-const recordingFormat = ref<RecordingFormat>('mp4')
-const recordingFps = ref<RecordingFps>(60)
-watch(recordingCapabilities, capabilities => {
-  if (capabilities?.formats.length && !capabilities.formats.includes(recordingFormat.value)) recordingFormat.value = capabilities.formats[0]!
-})
-// 准备条和设置面板共用格式；切换时不能把 MP4 帧率带入 GIF。
-watch(recordingFormat, format => { recordingFps.value = format === 'gif' ? 10 : 60 })
-const recordingEncoding = ref<EncodingPreference>('auto')
-const recordingQuality = ref<RecordingQuality>('balanced')
-// 空白使用自动码率；提交时才换算 bit/s，避免表单编辑影响已启动会话。
-const recordingMbps = ref<string | number>('')
-
-const recordingCountdown = ref<0 | 3 | 5>(0)
-const captureCursor = ref(true)
-// 每次提交显式附带声音偏好，默认不采集；能力尚未加载时保持禁用。
-const recordingSystemAudio = ref(false)
-const recordingMicrophone = ref(false)
-const recordingEffects = ref(defaultInputEffects())
 const viewport = ref({ width: innerWidth, height: innerHeight })
 const annotating = ref(false)
 const screenImage = shallowRef<HTMLImageElement | null>(null)
@@ -252,22 +235,20 @@ async function startRecording() {
   if (!recordingMode.value || !recordingCapabilities.value?.available) return
   if (!frame.value || !pixels.value || !valid.value || busy.value || editor.pending || editor.interacting || gesture.value) return
   const id = frame.value.id
-  let prepared = false
   busy.value = true; error.value = ''
   try {
     const rect = recordingRegion(pixels.value, recordingSource.value, frame.value.displays, { x: frame.value.originX, y: frame.value.originY })
     const config = recordingConfig(rect, recordingFps.value, captureCursor.value, recordingCountdown.value, recordingEncoding.value, recordingQuality.value, recordingEffects.value, recordingFormat.value === 'gif' ? null : recordingBitrate(recordingMbps.value), recordingFormat.value, recordingSystemAudio.value && !!recordingCapabilities.value?.systemAudio, recordingMicrophone.value && !!recordingCapabilities.value?.microphone)
     config.source = 'selectedMonitor'
-    await api.startRecording(id, rect, config, undefined, editor.history.present)
-    prepared = true
-    liveRecordingId.value = id
-    releaseFrame(id)
-    await nextTick()
-    await api.setRecordingAnnotationMode(id, true)
+    await prepareRecordingSession(
+      () => api.startRecording(id, rect, config, undefined, editor.history.present),
+      () => api.setRecordingAnnotationMode(id, true),
+      () => api.controlRecording(id, 'cancel'),
+      () => { liveRecordingId.value = id; releaseFrame(id) },
+    )
   }
   catch (e) {
     // 这里只进入 Ready，开始由录屏工具栏按钮或空格触发；接管失败则释放会话。
-    if (prepared) { try { await api.controlRecording(id, 'cancel') } catch { /* 保留最初的失败原因。 */ } }
     error.value = String(e)
   }
   finally { busy.value = false }

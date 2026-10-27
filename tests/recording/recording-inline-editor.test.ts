@@ -1,62 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { readFileSync } from 'node:fs'
-import { compileScript, parse } from '@vue/compiler-sfc'
-import ts from 'typescript'
 import * as Vue from 'vue'
-import * as icons from 'lucide-vue-next'
-import * as editing from '../../src/features/recording/recording-editor'
+import { clientComponent, MemoryNode as Node, memoryRenderer as renderer } from '../helpers/component-host'
+const api = vi.hoisted(() => ({ prepareRecordingEditor: vi.fn(), closeRecordingEditor: vi.fn(), trimRecording: vi.fn(), cancelRecordingTrim: vi.fn() }))
+vi.mock('../../src/services/api', () => ({ api }))
+vi.mock('@tauri-apps/api/core', () => ({ convertFileSrc: (token: string) => `recording://${token}` }))
+vi.mock('@tauri-apps/api/window', () => ({ getCurrentWindow: () => ({ startDragging: vi.fn() }) }))
+import Editor from '../../src/features/recording/components/RecordingEditor.vue'
+const RecordingEditor = clientComponent(Editor, new URL('../../src/features/recording/components/RecordingEditor.vue', import.meta.url))
 
-const api = { prepareRecordingEditor: vi.fn(), closeRecordingEditor: vi.fn(), trimRecording: vi.fn(), cancelRecordingTrim: vi.fn() }
-const source = compileScript(parse(readFileSync('src/features/recording/components/RecordingEditor.vue', 'utf8')).descriptor, { id: 'recording-inline-test', inlineTemplate: true }).content
-const code = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText
-const module = { exports: {} as { default: Vue.DefineComponent } }
-new Function('require', 'exports', code)((name: string) => {
-  if (name === 'vue') return Vue
-  if (name === 'lucide-vue-next') return icons
-  if (name === '@/features/recording/recording-editor') return editing
-  if (name === '@/services/api') return { api }
-  if (name === '@/shared/i18n/i18n') return { t: (value: string) => value, te: (value: string) => value }
-  if (name === '@tauri-apps/api/core') return { convertFileSrc: (token: string) => `recording://${token}` }
-  if (name === '@tauri-apps/api/window') return { getCurrentWindow: () => ({ startDragging: vi.fn() }) }
-  throw new Error(`Unexpected editor import: ${name}`)
-}, module.exports)
-const RecordingEditor = module.exports.default
-
-// 内存媒体宿主执行真实组件逻辑；不读取媒体文件、不创建浏览器或原生窗口。
-class Node {
-  parent: Node | null = null
-  children: Node[] = []
-  props: Record<string, any> = {}
-  text = ''
-  currentTime = 0
-  ended = false
-  muted = false
-  playbackRate = 1
-  value: unknown
-  selectedIndex = -1
-  get options() { return this.children.filter(child => child.type === 'option') }
-  focus = vi.fn()
-  load = vi.fn()
-  pause = vi.fn(() => this.props.onPause?.())
-  play = vi.fn(async () => { this.props.onPlay?.() })
-  removeAttribute = vi.fn((key: string) => { delete this.props[key] })
-  addEventListener = vi.fn()
-  constructor(public type: string) {}
-  closest(selector: string): Node | null { return selector.split(',').map(value => value.trim()).includes(this.type) ? this : this.parent?.closest(selector) ?? null }
-}
-const renderer = Vue.createRenderer<Node, Node>({
-  createElement: type => new Node(type), createText: text => Object.assign(new Node('#text'), { text }), createComment: type => new Node(type),
-  setText: (node, text) => { node.text = text }, setElementText: (node, text) => { node.text = text },
-  parentNode: node => node.parent, nextSibling: node => node.parent?.children[node.parent.children.indexOf(node) + 1] ?? null,
-  insert(node, parent, anchor) {
-    if (node.parent) node.parent.children.splice(node.parent.children.indexOf(node), 1)
-    node.parent = parent
-    const index = anchor ? parent.children.indexOf(anchor) : -1
-    if (index >= 0) parent.children.splice(index, 0, node); else parent.children.push(node)
-  },
-  remove(node) { node.parent?.children.splice(node.parent.children.indexOf(node), 1); node.parent = null },
-  patchProp(node, key, _old, value) { node.props[key] = value; if (key === 'value') node.value = value },
-})
 let root: Node
 let close: ReturnType<typeof vi.fn>
 function find(predicate: (node: Node) => boolean, parent = root): Node | undefined {

@@ -1,9 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as Vue from 'vue'
+import { clientComponent, MemoryNode as Node, memoryRenderer as renderer } from '../helpers/component-host'
 import { createRenderer, h, nextTick, provide, ssrContextKey } from 'vue'
-import { readFileSync } from 'node:fs'
-import { parse, compileScript } from '@vue/compiler-sfc'
-import { compile } from '@vue/compiler-dom'
 import type { RecordingView } from '../../src/features/recording/recording'
 
 const api = vi.hoisted(() => ({ currentRecording: vi.fn(), latestRecordingResult: vi.fn(), controlRecording: vi.fn(), selectRecordingArea: vi.fn(), setRecordingAnnotationMode: vi.fn() }))
@@ -16,28 +14,9 @@ vi.mock('../../src/features/recording/components/RecordingEditor.vue', async () 
 })
 import RecordingControls from '../../src/features/recording/components/RecordingControls.vue'
 // Vitest 的 Node 管线保留真实 setup，模板另编译为客户端 render 供内存宿主执行。
-const { descriptor } = parse(readFileSync(new URL('../../src/features/recording/components/RecordingControls.vue', import.meta.url), 'utf8'))
-const bindings = compileScript(descriptor, { id: 'recording-controls-test' }).bindings
-Object.assign(RecordingControls, { render: new Function('Vue', compile(descriptor.template!.content, { mode: 'function', prefixIdentifiers: true, bindingMetadata: bindings }).code)(Vue) })
-const Wrapper = { setup() { provide(ssrContextKey, { modules: new Set() }); return () => h(RecordingControls) } }
-
-
-// 使用内存渲染器测试实际组件状态切换，不启动浏览器或原生录屏。
-interface Node { type: string; props: Record<string, unknown>; children: Node[]; parent: Node | null; text: string }
-const node = (type: string): Node => ({ type, props: {}, children: [], parent: null, text: '' })
-const renderer = createRenderer<Node, Node>({
-  createElement: node, createText: text => ({ ...node('#text'), text }), createComment: node,
-  setText: (node, text) => { node.text = text }, setElementText: (node, text) => { node.text = text; node.children = [] },
-  parentNode: node => node.parent, nextSibling: node => node.parent?.children[node.parent.children.indexOf(node) + 1] ?? null,
-  patchProp: (node, key, _old, value) => { node.props[key] = value },
-  insert(child, parent, anchor) {
-    if (child.parent) child.parent.children.splice(child.parent.children.indexOf(child), 1)
-    child.parent = parent
-    const index = anchor ? parent.children.indexOf(anchor) : -1
-    if (index < 0) parent.children.push(child); else parent.children.splice(index, 0, child)
-  },
-  remove(child) { if (child.parent) child.parent.children.splice(child.parent.children.indexOf(child), 1); child.parent = null },
-})
+const RecordingControlsClient = clientComponent(RecordingControls, new URL('../../src/features/recording/components/RecordingControls.vue', import.meta.url))
+const Wrapper = { setup() { return () => h(RecordingControlsClient) } }
+const node = (type: string) => new Node(type)
 const root = node('root')
 function find(predicate: (node: Node) => boolean, current = root): Node | undefined {
   if (predicate(current)) return current
@@ -101,7 +80,7 @@ describe('录屏控制条直接进入回放编辑', () => {
   it('再次录屏卸载旧编辑器并恢复开始按钮', async () => {
     await mount()
     api.currentRecording.mockResolvedValue(view('ready', 8))
-    await vi.advanceTimersByTimeAsync(250)
+    await vi.advanceTimersByTimeAsync(10000)
     expect(editor()).toBeUndefined()
     const start = find(node => node.props['aria-label'] === '开始录制')!
     expect(start).toBeDefined()
