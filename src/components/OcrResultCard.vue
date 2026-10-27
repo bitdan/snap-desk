@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { t, te } from '@/lib/i18n'
+import { handleEscape } from '@/lib/escape'
 import { computed, nextTick, onMounted, ref } from 'vue'
 import { Check, Copy, Languages, ScanText, X } from 'lucide-vue-next'
 import Button from './ui/button/Button.vue'
@@ -21,7 +22,7 @@ async function copy() {
   finally { busy.value = false }
 }
 function key(event: KeyboardEvent) {
-  if (event.key === 'Escape' && !busy.value) { event.preventDefault(); emit('close') }
+  if (handleEscape(event, () => emit('close'))) return
   // 焦点限制在结果面板中，避免 Tab 移到截图工具栏后意外保存或关闭会话。
   if (event.key === 'Tab') {
     const nodes = [...(event.currentTarget as HTMLElement).querySelectorAll<HTMLElement>('textarea:not(:disabled), button:not(:disabled)')]
@@ -34,7 +35,7 @@ function key(event: KeyboardEvent) {
 
 <template>
   <section class="recognition-result" @keydown.stop="key">
-    <header class="result-header"><h2><ScanText :size="17" />{{ t("文字识别") }}</h2><Button class="result-close" variant="ghost" :disabled="busy" :title='t("关闭（Esc）")' :aria-label='t("关闭文字识别")' @click="emit('close')"><X :size="16" /></Button></header>
+    <header class="result-header"><h2><ScanText :size="17" />{{ t("文字识别") }}</h2><Button class="result-close" variant="ghost" :title='t("关闭（Esc）")' :aria-label='t("关闭文字识别")' @click="emit('close')"><X :size="16" /></Button></header>
     <div class="result-body">
       <div class="result-editor">
         <div class="editor-heading"><label for="ocr-result-text">{{ t("识别结果") }}</label><span>{{ t("可编辑 ·") }} {{ count }} {{ t("字符") }}</span></div>

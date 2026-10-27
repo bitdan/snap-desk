@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { t } from '@/lib/i18n'
+import { handleEscape } from '@/lib/escape'
 import { computed, onMounted, ref, watch } from 'vue'
 import { api, type QrResult } from '@/lib/api'
 import Button from './ui/button/Button.vue'
@@ -19,6 +20,9 @@ watch(() => props.captureResult, () => {
 })
 onMounted(() => card.value?.focus())
 
+function close() { dismissed.value = true; emit('close') }
+function key(event: KeyboardEvent) { handleEscape(event, close) }
+
 async function act(index: number, action: 'open' | 'copy') {
   if (!result.value || busy.value) return
   const id = result.value.id
@@ -33,8 +37,8 @@ async function act(index: number, action: 'open' | 'copy') {
 </script>
 
 <template>
-  <section v-if="!dismissed" ref="card" tabindex="-1" class="qr-result" :aria-label='t("二维码识别结果")' @keydown.esc.stop="!busy && (dismissed = true, emit('close'))">
-    <header><strong>{{ result.items.length ? t("发现二维码") : t("未发现二维码") }}</strong><Button variant="ghost" :disabled="busy" @click="dismissed = true; emit('close')">{{ t("关闭") }}</Button></header>
+  <section v-if="!dismissed" ref="card" tabindex="-1" class="qr-result" :aria-label='t("二维码识别结果")' @keydown.stop="key">
+    <header><strong>{{ result.items.length ? t("发现二维码") : t("未发现二维码") }}</strong><Button variant="ghost" @click="close">{{ t("关闭") }}</Button></header>
     <p v-if="!result.items.length">{{ t("请完整框选二维码并保留周围白边，然后重试。") }}</p>
     <div class="qr-items">
       <div v-for="(item, index) in result.items" :key="index" class="qr-item">

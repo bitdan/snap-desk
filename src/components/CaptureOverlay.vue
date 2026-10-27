@@ -179,7 +179,9 @@ const pointerDisplay = computed(() => frame.value && pointer.value ? displayBoun
 const dialogStyle = computed(() => ({ position: 'absolute' as const,
   left: `${activeDisplay.value.x + activeDisplay.value.width / 2}px`,
   top: `${activeDisplay.value.y + activeDisplay.value.height / 2}px`, transform: 'translate(-50%, -50%)',
-  maxWidth: `${activeDisplay.value.width - 32}px`, maxHeight: `${activeDisplay.value.height - 32}px` }))
+  maxWidth: `${activeDisplay.value.width - 32}px`, maxHeight: `${activeDisplay.value.height - 32}px`,
+  // 宽度同时受所在显示器的宽和高限制，保持高/宽 = 0.618，不挤出屏幕。
+  '--recognition-width': `${Math.max(1, Math.min(1280, activeDisplay.value.width - 32, (activeDisplay.value.height - 32) / 0.618))}px` }))
 const toolbar = ref<HTMLElement | null>(null)
 const { style: floatingToolbarStyle, start: floatToolbar, reset: resetToolbarPosition } = useFloatingToolbar(toolbar)
 const toolbarSize = ref({ width: 800, height: 46 })
@@ -372,7 +374,14 @@ async function finish(action: 'copy' | 'save' | 'pin') {
 function key(e: KeyboardEvent) {
   if (e.defaultPrevented || e.isComposing || e.keyCode === 229) return
   if (liveRecordingId.value !== null) return
-  if (qrResult.value || ocrResult.value !== null) return
+  if (qrResult.value || ocrResult.value !== null) {
+    // 未落在面板内的键盘事件由窗口兜底；同一次 Esc 不继续取消底层截图。
+    handleEscape(e, () => {
+      if (ocrResult.value !== null) closeOcr()
+      else qrResult.value = null
+    })
+    return
+  }
   if (scroll.value) return
   // 行内设置默认可见，不作为模态层消费 Esc；真正的下拉菜单自行关闭当前层。
   // 先退出窗口，再判断输入框和标注快捷键，避免 Esc 只取消文字或笔画。
@@ -548,8 +557,7 @@ onUnmounted(() => { releaseFrame(); disposed = true; offClosed?.(); off?.(); off
 :global([data-theme=dark]) .recording-ready-row select:hover:enabled { background:#303f56; }
 .qr-shade { position: absolute; inset: 0; z-index: 10; display: grid; place-items: center; cursor: default; background: #0003; }
 .qr-dialog { width: min(440px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow-y: auto; color: #20232b; }
-.ocr-dialog { width: min(560px, calc(100vw - 32px)); }
-.translation-dialog { width: min(920px, calc(100vw - 32px)); }
+.ocr-dialog { width: var(--recognition-width); aspect-ratio: 1 / 0.618; overflow: hidden; }
 
 .capture-modebar { position: absolute; top: 8px; left: 8px; z-index: 4; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; max-width: calc(100vw - 16px); border-radius: 6px; padding: 6px 8px; background: #242330ed; color: white; font-size: 12px; cursor: default; }
 .capture-modebar button { display: flex; align-items: center; gap: 5px; padding: 3px; }

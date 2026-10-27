@@ -23,6 +23,7 @@
       },
       {
         "label": "capture",
+        "create": false,
         "title": "Snap Desk Capture",
         "transparent": true,
         "url": "index.html?window=capture",

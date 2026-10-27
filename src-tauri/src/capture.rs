@@ -9,7 +9,7 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
+use tauri::{AppHandle, Emitter, Manager, WebviewWindow, WebviewWindowBuilder};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
 #[path = "recorder/manager.rs"]
@@ -113,6 +113,28 @@ fn err(error: impl std::fmt::Display) -> String {
 fn overlay(app: &AppHandle) -> Result<WebviewWindow, String> {
     app.get_webview_window("capture")
         .ok_or_else(|| "截图窗口不可用，请重启应用。".into())
+}
+
+/// 仅首次冻结桌面后创建截图 WebView，此后保留窗口复用，不影响连续截图。
+/// 隐藏 HWND 不代表 WebView2 的初始合成表面已经稳定；先抓屏可避免把默认
+/// 800×600 白色表面收进底图。调用方位于阻塞线程，不占用主线程等待创建完成。
+fn ensure_overlay(app: &AppHandle) -> Result<WebviewWindow, String> {
+    if let Some(window) = app.get_webview_window("capture") {
+        return Ok(window);
+    }
+    let config = app
+        .config()
+        .app
+        .windows
+        .iter()
+        .find(|config| config.label == "capture")
+        .ok_or("截图窗口不可用，请重启应用。")?;
+    WebviewWindowBuilder::from_config(app, config)
+        .map_err(err)?
+        .visible(false)
+        .focused(false)
+        .build()
+        .map_err(err)
 }
 pub fn require_window(window: &WebviewWindow, label: &str) -> Result<(), String> {
     if window.label() == label {
@@ -294,9 +316,14 @@ fn hide_remaining(hidden: Option<Instant>, now: Instant) -> Duration {
 }
 
 fn prepare(app: &AppHandle, recording: bool) -> Result<(), String> {
-    let window = overlay(app)?;
     let started = Instant::now();
-    hide_overlay(app, &window)?;
+    if let Some(window) = app.get_webview_window("capture") {
+        hide_overlay(app, &window)?;
+        // 录制复用过的窗口可能处于鼠标穿透/捕获排除状态；新截图恢复普通交互。
+        window.set_ignore_cursor_events(false).map_err(err)?;
+        window.set_content_protected(false).map_err(err)?;
+        recording::live_annotations::set_input_region(&window, None)?;
+    }
     // 旧回放属于捕获排除窗口，先真正收起再截图；部分桌面截图路径会把可见的排除窗口画成黑矩形。
     let replay_visible = app
         .get_webview_window("recording-controls")
@@ -305,14 +332,16 @@ fn prepare(app: &AppHandle, recording: bool) -> Result<(), String> {
     if replay_visible {
         *app.state::<CaptureState>().hidden_at.lock().map_err(err)? = Some(Instant::now());
     }
-    // 录制复用过的窗口可能处于鼠标穿透/捕获排除状态；新截图重新恢复普通交互。
-    window.set_ignore_cursor_events(false).map_err(err)?;
-    window.set_content_protected(false).map_err(err)?;
-    recording::live_annotations::set_input_region(&window, None)?;
     // 已经隐藏超过 180ms 的常驻蒙层不再固定等待；刚关闭后立刻重截仍等待剩余时间。
     let remaining = state_hide_remaining(app)?;
     if !remaining.is_zero() {
         std::thread::sleep(remaining);
+    }
+    // HWND 的隐藏与桌面合成更新并非同一时刻完成。即使 is_visible 已为 false，
+    // 仍需等待本应用已提交的合成更新，再交给 GDI 抓取桌面，避免读到旧窗口表面。
+    #[cfg(windows)]
+    unsafe {
+        windows::Win32::Graphics::Dwm::DwmFlush().map_err(err)?;
     }
     let capture_started = Instant::now();
     let (include_cursor, snap) = {
@@ -324,6 +353,9 @@ fn prepare(app: &AppHandle, recording: bool) -> Result<(), String> {
         )
     };
     let mut desktop = crate::desktop_capture::capture(false, include_cursor, recording || snap)?;
+    // 必须位于 capture 之后；前端仍通过 current_capture 补读会话，兼容冷启动时
+    // capture-ready 事件早于监听器注册的情况，解码完成后才会调用 show_capture。
+    let window = ensure_overlay(app)?;
     #[cfg(not(windows))]
     {
         let monitor = window
@@ -582,8 +614,11 @@ pub fn show_capture(app: AppHandle, window: WebviewWindow, id: u64) -> Result<()
 /// 完成、取消或失败后仅清理采集窗口和会话，不自动返回主界面。
 fn cleanup(app: &AppHandle) -> Result<(), String> {
     crate::translation::cancel_window(app, "capture");
-    // Keep the session recoverable if hiding fails; don't expose a dead overlay.
-    hide_overlay(app, &overlay(app)?)?;
+    // 首次抓屏或建窗失败时窗口可能尚不存在，仍须释放会话和 active 占用。
+    // 已有窗口若隐藏失败则保留会话，避免留下无法操作的蒙层。
+    if let Some(window) = app.get_webview_window("capture") {
+        hide_overlay(app, &window)?;
+    }
     scroll::chrome::hide(app);
     let state = app.state::<CaptureState>();
     state.scroll_stop.store(true, Ordering::SeqCst);

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { t, te } from '@/lib/i18n'
-import { computed, nextTick, onMounted, ref } from 'vue'
+import { handleEscape } from '@/lib/escape'
+import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import ImageTranslation from './ImageTranslation.vue'
 import { api, type PinFrame, type QrResult } from '@/lib/api'
 import type { OcrResult } from '@/lib/ai'
@@ -11,6 +12,7 @@ const emit = defineEmits<{ close: [] }>()
 const panel = ref<HTMLElement | null>(null)
 const textArea = ref<HTMLTextAreaElement | null>(null)
 const busy = ref(false), error = ref(''), message = ref('')
+let disposed = false
 const ocr = ref<OcrResult | null>(null), qr = ref<QrResult | null>(null)
 const selected = ref<string[]>([])
 const translating = ref(props.mode === 'translate')
@@ -23,16 +25,19 @@ const polygons = computed(() => lines.value.map(line => ({ id: line.id, text: li
 async function run(task: () => Promise<void>) {
   if (busy.value) return
   busy.value = true; error.value = ''; message.value = ''
-  try { await task() } catch (e) { error.value = String(e) }
-  finally { busy.value = false }
+  try { await task() } catch (e) { if (!disposed) error.value = String(e) }
+  finally { if (!disposed) busy.value = false }
 }
 async function recognize() {
   await run(async () => {
     pendingLink.value = null
     if (props.mode !== 'qr') {
-      ocr.value = await api.recognizePinText()
-      selected.value = ocr.value.lines.map(line => line.id)
-    } else qr.value = await api.recognizePinQr()
+      const result = await api.recognizePinText()
+      if (!disposed) { ocr.value = result; selected.value = result.lines.map(line => line.id) }
+    } else {
+      const result = await api.recognizePinQr()
+      if (!disposed) qr.value = result
+    }
   })
 }
 function toggle(id: string) {
@@ -56,7 +61,8 @@ async function qrAction(index: number, action: 'open' | 'copy') {
   })
 }
 function key(event: KeyboardEvent) {
-  if (event.key === 'Escape') { event.preventDefault(); if (!busy.value) emit('close') }
+  // 识别处理中也允许返回贴图；迟到结果由 disposed 忽略，不重新打开面板。
+  if (handleEscape(event, () => emit('close'))) return
   // 对话框内循环焦点，防止 Tab 移到背后的贴图工具。
   if (event.key !== 'Tab') return
   const nodes = [...(panel.value?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), textarea:not(:disabled)') ?? [])]
@@ -66,44 +72,47 @@ function key(event: KeyboardEvent) {
   else if (!event.shiftKey && (document.activeElement === last || document.activeElement === panel.value)) { event.preventDefault(); first?.focus() }
 }
 onMounted(() => { void nextTick(() => panel.value?.focus()); void recognize() })
+onUnmounted(() => { disposed = true })
 </script>
 
 <template>
   <div class="pin-recognition-shade" @pointerdown.stop @wheel.stop @contextmenu.stop.prevent>
-    <section v-if="translating && ocr" class="pin-recognition" role="dialog" aria-modal="true" :aria-label='t("图片翻译")'>
+    <section v-if="translating && ocr" class="pin-recognition translation-shell" role="dialog" aria-modal="true" :aria-label='t("图片翻译")'>
       <ImageTranslation :recognition="ocr" :image="frame" @close="emit('close')" @back="backToRecognition" />
     </section>
     <section v-else ref="panel" class="pin-recognition" role="dialog" aria-modal="true" :aria-label="mode !== 'qr' ? t('图片文字识别') : t('图片二维码识别')" tabindex="-1" @keydown.stop="key">
-      <header><strong>{{ mode !== 'qr' ? t("图片文字识别") : t("图片二维码识别") }}</strong><button :disabled="busy" @click="emit('close')">{{ t("关闭") }}</button></header>
-      <p v-if="busy" role="status">{{ t("正在处理…") }}</p>
-      <p v-if="error" role="alert" class="recognition-error">{{ te(error) }}</p>
-      <p v-if="message" role="status">{{ t(message) }}</p>
-      <template v-if="mode !== 'qr' && ocr">
-        <p v-if="!lines.length">{{ t("未识别到文字。") }}</p>
-        <p v-for="warning in ocr.warnings" :key="warning">{{ t(warning) }}</p>
-        <div class="image-preview">
-          <img :src="frame.dataUrl" :alt='t("识别原图（不含标注）")' draggable="false" @error="error = '预览加载失败，可从文字列表复制。'" />
-          <svg :viewBox="`0 0 ${frame.width} ${frame.height}`" preserveAspectRatio="none" aria-hidden="true">
-            <polygon v-for="line in polygons" :key="line.id" :points="line.points" :class="{ selected: selected.includes(line.id) }" @click="!busy && toggle(line.id)"><title>{{ line.text }}</title></polygon>
-          </svg>
-        </div>
-        <div v-if="lines.length" class="line-list" :aria-label='t("选择识别文字行")'>
-          <label v-for="line in lines" :key="line.id"><input v-model="selected" type="checkbox" :value="line.id" :disabled="busy" />{{ line.text }}</label>
-        </div>
-        <textarea ref="textArea" :value="text" readonly :aria-label='t("所选文字，可选择部分复制")' :placeholder='t("请选择文字行")' />
-        <footer><button :disabled="busy || !lines.length" @click="selected = lines.map(line => line.id)">{{ t("全选") }}</button><button :disabled="busy || !selected.length" @click="selected = []">{{ t("清空选择") }}</button><button :disabled="busy || !text.trim()" @click="copy">{{ t("复制文字 / 所选片段") }}</button></footer>
-      </template>
-      <template v-if="mode === 'qr' && qr">
-        <p v-if="!qr.items.length">{{ t("未发现二维码，请保留完整码及白边。") }}</p>
-        <div v-for="(item, index) in qr.items" :key="index" class="qr-item">
-          <p class="qr-text" dir="auto">{{ item.text }}</p>
-          <footer><button :disabled="busy" @click="qrAction(index, 'copy')">{{ t("复制内容") }}</button><button v-if="item.url" :disabled="busy" @click="pendingLink = index">{{ t("打开链接…") }}</button></footer>
-          <div v-if="pendingLink === index" role="group" :aria-label='t("确认打开链接")'>
-            <p>{{ t("将在浏览器打开：") }}<span class="qr-text">{{ item.url }}</span></p>
-            <footer><button :disabled="busy" @click="pendingLink = null">{{ t("取消") }}</button><button :disabled="busy" @click="qrAction(index, 'open')">{{ t("确认打开") }}</button></footer>
+      <header><strong>{{ mode !== 'qr' ? t("图片文字识别") : t("图片二维码识别") }}</strong><button @click="emit('close')">{{ t("关闭") }}</button></header>
+      <div class="pin-recognition-body">
+        <p v-if="busy" role="status">{{ t("正在处理…") }}</p>
+        <p v-if="error" role="alert" class="recognition-error">{{ te(error) }}</p>
+        <p v-if="message" role="status">{{ t(message) }}</p>
+        <template v-if="mode !== 'qr' && ocr">
+          <p v-if="!lines.length">{{ t("未识别到文字。") }}</p>
+          <p v-for="warning in ocr.warnings" :key="warning">{{ t(warning) }}</p>
+          <div class="image-preview">
+            <img :src="frame.dataUrl" :alt='t("识别原图（不含标注）")' draggable="false" @error="error = '预览加载失败，可从文字列表复制。'" />
+            <svg :viewBox="`0 0 ${frame.width} ${frame.height}`" preserveAspectRatio="none" aria-hidden="true">
+              <polygon v-for="line in polygons" :key="line.id" :points="line.points" :class="{ selected: selected.includes(line.id) }" @click="!busy && toggle(line.id)"><title>{{ line.text }}</title></polygon>
+            </svg>
           </div>
-        </div>
-      </template>
+          <div v-if="lines.length" class="line-list" :aria-label='t("选择识别文字行")'>
+            <label v-for="line in lines" :key="line.id"><input v-model="selected" type="checkbox" :value="line.id" :disabled="busy" />{{ line.text }}</label>
+          </div>
+          <textarea ref="textArea" :value="text" readonly :aria-label='t("所选文字，可选择部分复制")' :placeholder='t("请选择文字行")' />
+          <footer><button :disabled="busy || !lines.length" @click="selected = lines.map(line => line.id)">{{ t("全选") }}</button><button :disabled="busy || !selected.length" @click="selected = []">{{ t("清空选择") }}</button><button :disabled="busy || !text.trim()" @click="copy">{{ t("复制文字 / 所选片段") }}</button></footer>
+        </template>
+        <template v-if="mode === 'qr' && qr">
+          <p v-if="!qr.items.length">{{ t("未发现二维码，请保留完整码及白边。") }}</p>
+          <div v-for="(item, index) in qr.items" :key="index" class="qr-item">
+            <p class="qr-text" dir="auto">{{ item.text }}</p>
+            <footer><button :disabled="busy" @click="qrAction(index, 'copy')">{{ t("复制内容") }}</button><button v-if="item.url" :disabled="busy" @click="pendingLink = index">{{ t("打开链接…") }}</button></footer>
+            <div v-if="pendingLink === index" role="group" :aria-label='t("确认打开链接")'>
+              <p>{{ t("将在浏览器打开：") }}<span class="qr-text">{{ item.url }}</span></p>
+              <footer><button :disabled="busy" @click="pendingLink = null">{{ t("取消") }}</button><button :disabled="busy" @click="qrAction(index, 'open')">{{ t("确认打开") }}</button></footer>
+            </div>
+          </div>
+        </template>
+      </div>
       <footer><button :disabled="busy" @click="recognize">{{ t("重新识别") }}</button><button v-if="ocr && mode !== 'qr'" :disabled="busy || !ocr.fullText.trim()" @click="translating = true">{{ t("翻译图片") }}</button></footer>
     </section>
   </div>
@@ -111,8 +120,11 @@ onMounted(() => { void nextTick(() => panel.value?.focus()); void recognize() })
 
 <style scoped>
 .pin-recognition-shade { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; background: #0003; padding: 8px; }
-.pin-recognition { width: min(640px, 100%); max-height: 100%; overflow: auto; padding: 12px; background: #fff; border: 1px solid #d8dee4; border-radius: 6px; color: #24292f; font-size: 13px; user-select: text; }
-header, footer { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.pin-recognition { width: min(1280px, calc(100vw - 16px), calc((100vh - 16px) / 0.618)); aspect-ratio: 1 / 0.618; max-height: 100%; display: flex; flex-direction: column; min-height: 0; overflow: hidden; padding: 12px; background: #fff; border: 1px solid #d8dee4; border-radius: 8px; color: #24292f; font-size: 13px; user-select: text; }
+.pin-recognition-body { flex: 1; min-height: 0; overflow: auto; }
+.translation-shell { padding: 0; border: 0; }
+.translation-shell :deep(.recognition-result) { flex: 1; min-height: 0; }
+header, footer { flex-shrink: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 header { justify-content: space-between; border-bottom: 1px solid #e1e4e8; padding-bottom: 8px; }
 footer { margin-top: 8px; }
 button { min-height: 32px; padding: 4px 8px; border: 1px solid #d8dee4; border-radius: 4px; }

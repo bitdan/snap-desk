@@ -170,7 +170,12 @@ async function opacity(event: Event) {
   input.value = String(Math.round((frame.value?.view.opacity ?? 1) * 100))
 }
 function key(event: KeyboardEvent) {
-  if (contextMenu.value || recognitionMode.value) return
+  if (contextMenu.value) return
+  if (recognitionMode.value) {
+    // 子面板处理过的 Esc 已 preventDefault；焦点意外落到外层时也只关面板。
+    handleEscape(event, closeRecognition)
+    return
+  }
   if (handleEscape(event, () => {
     if (busy.value || editor.pending) return
     // 草稿从未保存；先放弃草稿解除交互锁，再走既有隐藏贴图接口。

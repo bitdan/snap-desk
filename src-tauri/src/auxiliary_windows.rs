@@ -1,4 +1,4 @@
-//! 辅助 WebView 的创建和释放策略；截图窗口不参与，始终保持 F1 热路径。
+//! 辅助 WebView 的创建和释放策略；截图窗口独立管理，首次冻结桌面后创建并常驻复用。
 use std::sync::Mutex;
 use tauri::{AppHandle, Manager, WebviewWindow, WebviewWindowBuilder};
 

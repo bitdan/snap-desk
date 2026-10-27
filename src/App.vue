@@ -45,7 +45,6 @@ let disposed = false
 let delayRevision = 0
 const initializing = ref(false)
 const initializationFailed = ref(false)
-const shortcut = computed(() => status.value?.settings.shortcuts.capture || (status.value ? t('未设置') : desktop ? t('未读取') : 'F1'))
 const locked = computed(() => !desktop || !status.value || initializing.value || initializationFailed.value || pending.value || saving.value || editingShortcut.value || testingShortcuts.value || remaining.value > 0)
 async function refreshStatus() {
   const revision = delayRevision
@@ -184,7 +183,6 @@ onUnmounted(() => { disposed = true; window.removeEventListener('keydown', key);
         <template v-if="page === '截图'">
           <section class="capture-panel" :aria-label='t("截图操作")'>
             <div class="capture-controls">
-              <kbd>{{ status?.settings.shortcutsEnabled === false ? t('快捷键已禁用') : shortcut }}</kbd>
               <label for="quick-delay">{{ t('延时') }}</label>
               <!-- 主页使用同一设置保存接口，确保按钮、托盘和快捷键的延时一致。 -->
               <select id="quick-delay" :value="status?.settings.delaySeconds ?? 0" :disabled="locked" @change="changeDelay"><option :value="0">{{ t('无延时') }}</option><option :value="3">{{ t('3 秒') }}</option><option :value="5">{{ t('5 秒') }}</option></select>
