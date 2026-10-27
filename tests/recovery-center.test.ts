@@ -1,5 +1,8 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { recoveryBytes, recoveryItemStatus, recoverySummary, recoveryTime, type RecoveryItem, type RecoveryStatus } from '../src/lib/recovery-center'
+import { appearance } from '../src/lib/appearance'
+
+afterEach(() => { appearance.value.language = 'zh-CN' })
 
 const invoke = vi.hoisted(() => vi.fn())
 vi.mock('@tauri-apps/api/core', () => ({ invoke, isTauri: () => true }))
@@ -29,9 +32,12 @@ describe('启动恢复中心', () => {
     expect(recoveryItemStatus(item({ stage: 'unsafe', ready: false }))).toContain('自动清理会拒绝')
     expect(recoveryItemStatus(item({ kind: 'recording', stage: 'cleanup-pending' }))).toContain('导出后残留')
   })
-  it('缺失时间保持未知，正常时间使用本机显示格式', () => {
-    expect(recoveryTime(null)).toBe('时间未知')
-    expect(recoveryTime(1792727969001)).toBe(new Date(1792727969001).toLocaleString())
+  it.each(['zh-CN', 'en'] as const)('缺失时间保持未知，正常时间跟随应用语言 %s', language => {
+    appearance.value.language = language
+    expect(recoveryTime(null)).toBe(language === 'en' ? 'Unknown time' : '时间未知')
+    // 应用语言可以与操作系统不同，预期值不能依赖 CI 机器的默认 locale。
+    const locale = language === 'en' ? 'en-US' : 'zh-CN'
+    expect(recoveryTime(1792727969001)).toBe(new Date(1792727969001).toLocaleString(locale))
   })
   it('启动查询返回上次运行信息与坏记录计数，不接收任意扫描目录', async () => {
     const status: RecoveryStatus = { previousStartedAt: 1792727969001, previousPid: 42, warning: null, items: [item()], unreadableRecords: 2 }
