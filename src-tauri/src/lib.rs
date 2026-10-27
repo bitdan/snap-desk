@@ -169,6 +169,7 @@ pub fn run() {
         ))
         .manage(autostart::AutostartState::default())
         .manage(CaptureState::default())
+        .manage(capture::MainWindowState::default())
         .manage(settings::ShortcutPressState::default())
         .manage(shortcut_probe::ProbeState::default())
         .manage(qr::QrState::default())
@@ -396,11 +397,13 @@ pub fn run() {
                 .iter()
                 .find(|config| config.label == "main")
                 .ok_or("缺少主窗口配置。")?;
-            // 创建时即隐藏，避免先显示再 hide 导致登录时主窗口闪烁。
+            // 首次加载也保持隐藏，收到前端就绪通知后再显示，避免冷启动白屏。
             let automatic = autostart::is_autostart(std::env::args_os().skip(1));
+            app.state::<capture::MainWindowState>()
+                .show_requested.store(!automatic, Ordering::SeqCst);
             WebviewWindowBuilder::from_config(app.handle(), main_config)?
-                .visible(!automatic)
-                .focused(!automatic)
+                .visible(false)
+                .focused(false)
                 .build()?;
             Ok(())
         })
@@ -473,6 +476,7 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            capture::main_window_ready,
             resources::resource_status,
             resources::download_resources,
             resources::choose_export_font,
@@ -525,7 +529,6 @@ pub fn run() {
             capture::start_capture,
             capture::current_capture,
             capture::capture_native_window,
-            capture::select_recording_window,
             capture::show_capture,
             capture::cancel_capture,
             capture::recognize_capture_qr,

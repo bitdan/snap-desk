@@ -13,7 +13,7 @@ const effects = defineModel<InputEffects>('effects', { required: true })
 </script>
 
 <template>
-  <!-- 每项只占一个紧凑下拉入口，自定义值与多选特效在各自菜单中编辑。 -->
+  <!-- 设置入口常驻；画质和编码按组排列，自定义值与特效在各自菜单中编辑。 -->
   <div class="recording-inline-options" role="group" :aria-label="t('录屏选项')" @pointerdown.stop @contextmenu.stop.prevent>
     <template v-if="format === 'mp4'">
       <select v-model="quality" :disabled="busy || mbps !== ''" :aria-label="t('画质')" :title="t('画质')"><option value="economy">{{ t('节省空间') }}</option><option value="balanced">{{ t('均衡') }}</option><option value="high">{{ t('高清') }}</option></select>
@@ -26,9 +26,15 @@ const effects = defineModel<InputEffects>('effects', { required: true })
 </template>
 
 <style scoped>
-.recording-inline-options { display: inline-flex; align-items: center; gap: 4px; }
+.recording-inline-options { display:inline-flex; flex-wrap:wrap; align-items:center; gap:3px; max-width:100%; padding:2px; border:1px solid #e1e4e8; border-radius:5px; background:#f6f7f8; }
+.recording-inline-options > * { flex-shrink:0; }
+.recording-inline-options :deep(.recording-option-trigger) { padding:3px 6px; border-radius:4px; }
 label { display: inline-flex; align-items: center; gap: 4px; }
-select, input { height: 28px; padding: 2px 4px; border: 1px solid #e1e4e8; border-radius: 4px; background: white; color: #24292f; font: inherit; }
+select, input { height:28px; padding:2px 5px; border:0; border-radius:4px; background:transparent; color:inherit; font:inherit; }
+select { cursor:pointer; }
+select:hover:enabled { background:#e9edf2; }
+:global([data-theme=dark]) .recording-inline-options { background:#272e37; border-color:#444c56; }
+:global([data-theme=dark]) select:hover:enabled { background:#303f56; }
 input[type=number] { width: 70px; }
 :focus-visible { outline: 2px solid #2563eb; outline-offset: -2px; }
 </style>

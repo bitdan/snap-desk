@@ -152,12 +152,11 @@ describe('多屏录制来源坐标', () => {
     expect(recordingRegion({ x: 2000, y: 300, width: 400, height: 300 }, 'display', displays, origin))
       .toEqual({ x: 1920, y: 200, width: 2560, height: 1440 })
   })
-  it('保留区域选区，拒绝跨屏及桌面空洞，窗口可跨屏', () => {
+  it('保留区域选区，拒绝跨屏及桌面空洞', () => {
     const region = { x: 1800, y: 300, width: 400, height: 300 }
     expect(() => recordingRegion(region, 'region', displays, origin)).toThrow('单个显示器')
     expect(() => recordingRegion(region, 'display', displays, origin)).toThrow('单个显示器')
     expect(() => recordingRegion({ x: 2200, y: 0, width: 20, height: 20 }, 'region', displays, origin)).toThrow()
-    expect(recordingRegion(region, 'window', displays, origin)).toEqual(region)
     const small = { x: 20, y: 40, width: 400, height: 300 }
     expect(recordingRegion(small, 'region', displays, origin)).toEqual(small)
     expect(recordingRegion(small, 'region', displays, origin)).not.toBe(small)

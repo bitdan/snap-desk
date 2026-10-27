@@ -9,7 +9,7 @@ use windows::{
         Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS},
         Graphics::Gdi::*,
         System::Threading::{
-            AttachThreadInput, GetCurrentThreadId, OpenProcess, QueryFullProcessImageNameW,
+            OpenProcess, QueryFullProcessImageNameW,
             PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
         },
         UI::{HiDpi::*, WindowsAndMessaging::*},
@@ -234,77 +234,6 @@ impl Drop for PhysicalDpi {
     fn drop(&mut self) {
         unsafe {
             SetThreadDpiAwarenessContext(self.0);
-        }
-    }
-}
-
-/// 来源列表选择应用时恢复并置前目标；不还原已最大化窗口，避免主动改变录制尺寸。
-pub fn activate_window(window: &AppWindow) -> Result<(), String> {
-    let hwnd = HWND(window.id().map_err(|e| e.to_string())? as usize as *mut _);
-    unsafe {
-        if !IsWindow(Some(hwnd)).as_bool() {
-            return Err("应用窗口已关闭，请重新选择。".into());
-        }
-        let mut pid = 0;
-        GetWindowThreadProcessId(hwnd, Some(&mut pid));
-        if pid != window.pid().map_err(|e| e.to_string())? {
-            return Err("应用窗口已被替换，请重新选择。".into());
-        }
-        // 原生命令运行在线程池。先创建消息队列并临时连接前台/目标输入线程，
-        // 避免“选择动作来自本应用，但线程池无法接管焦点”的情况；Drop 总会解除连接。
-        let mut message = MSG::default();
-        let _ = PeekMessageW(&mut message, None, 0, 0, PM_NOREMOVE);
-        let current = GetCurrentThreadId();
-        let foreground = GetWindowThreadProcessId(GetForegroundWindow(), None);
-        let target = GetWindowThreadProcessId(hwnd, None);
-        let _foreground = InputLink::connect(current, foreground);
-        let _target = (target != foreground).then(|| InputLink::connect(current, target));
-        if IsIconic(hwnd).as_bool() {
-            let _ = ShowWindow(hwnd, SW_RESTORE);
-        } else {
-            let _ = ShowWindow(hwnd, SW_SHOW);
-        }
-        BringWindowToTop(hwnd).map_err(|e| e.to_string())?;
-        let _ = SetForegroundWindow(hwnd);
-        for _ in 0..5 {
-            let active = GetForegroundWindow();
-            let mut active_pid = 0;
-            GetWindowThreadProcessId(active, Some(&mut active_pid));
-            // 应用可能激活自己的模态窗口；同一主窗口拥有的弹窗也视为应用已置前。
-            if active == hwnd
-                || (active_pid == pid
-                    && GetAncestor(active, GA_ROOTOWNER) == GetAncestor(hwnd, GA_ROOTOWNER))
-            {
-                return Ok(());
-            }
-            std::thread::sleep(std::time::Duration::from_millis(20));
-        }
-        return Err("无法将应用窗口置前，请先打开该应用后重试。".into());
-    }
-}
-
-/// 输入线程连接仅用于本次显式选择应用，绝不长期共享输入状态。
-struct InputLink {
-    current: u32,
-    other: u32,
-    attached: bool,
-}
-impl InputLink {
-    fn connect(current: u32, other: u32) -> Self {
-        let attached = other != 0
-            && current != other
-            && unsafe { AttachThreadInput(current, other, true) }.as_bool();
-        Self {
-            current,
-            other,
-            attached,
-        }
-    }
-}
-impl Drop for InputLink {
-    fn drop(&mut self) {
-        if self.attached {
-            let _ = unsafe { AttachThreadInput(self.current, self.other, false) };
         }
     }
 }

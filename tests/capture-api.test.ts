@@ -49,15 +49,6 @@ it('释放冻结截图仅通知截图浮层，真正结束才清理滚动预览�
 })
 
 describe('原生窗口截图 IPC', () => {
-  it('录屏选择只传当前会话和候选编号，返回置前后的预览帧', async () => {
-    const frame = { id: 12, previewRevision: 2 }
-    invoke.mockResolvedValueOnce(frame)
-    expect(await api.selectRecordingWindow(12, 3)).toEqual(frame)
-    expect(invoke).toHaveBeenLastCalledWith('select_recording_window', { id: 12, target: 3 })
-    expect(ipcCommands).toContain('select_recording_window')
-    expect(readFileSync(new URL('../src-tauri/src/lib.rs', import.meta.url), 'utf8')).toContain('capture::select_recording_window,')
-    expect(readFileSync(new URL('../src-tauri/src/diagnostics/catalog.rs', import.meta.url), 'utf8')).toContain('"select_recording_window",')
-  })
   it('提交会话和候选序号，返回新的冻结画面，不向前端暴露 HWND', async () => {
     const frame = { id: 12, width: 4480, height: 1440, previewRevision: 1, targets: [] }
     invoke.mockResolvedValueOnce(frame)

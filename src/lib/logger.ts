@@ -7,10 +7,11 @@ type EventMeta = {
   'ipc.failed': { command: IpcCommand; session?: unknown }
   'frontend.uncaught_error': undefined
   'frontend.unhandled_rejection': undefined
+  'frontend.appearance_listener_failed': undefined
   'frontend.mount_failed': undefined
   'vue.component_error': undefined
 }
-const events = new Set(['ipc.failed', 'frontend.uncaught_error', 'frontend.unhandled_rejection', 'frontend.mount_failed', 'vue.component_error'])
+const events = new Set(['ipc.failed', 'frontend.uncaught_error', 'frontend.unhandled_rejection', 'frontend.mount_failed', 'frontend.appearance_listener_failed', 'vue.component_error'])
 const commands = new Set<string>(ipcCommands)
 const writers = { debug, error, info, warn }
 // 只关联后端已有的数值会话 ID；文本 requestId、文件 ID 和任意参数不写盘。

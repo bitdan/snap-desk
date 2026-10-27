@@ -13,13 +13,11 @@ describe('紧凑录屏下拉入口', () => {
     expect(html).not.toContain('type="checkbox"')
     expect(html).not.toContain('type="number"')
   })
-  it('选中应用时显示其真实图标和名称，缺图标时仍可选', async () => {
-    const windows = [{ index: 2, label: 'Weixin · 微信', icon: 'png' }]
-    const html = await renderToString(h(RecordingSourceSelect, { disabled: false, value: 'window:2', windows }))
-    expect(html).toContain('data:image/png;base64,png')
-    expect(html).toContain('Weixin · 微信')
-    const fallback = await renderToString(h(RecordingSourceSelect, { disabled: false, value: 'window:2', windows: [{ index: 2, label: '微信' }] }))
-    expect(fallback).toContain('微信')
-    expect(fallback).not.toContain('data:image/png')
+  it('录制范围入口显示选区或显示器', async () => {
+    for (const value of ['region', 'display'] as const) {
+      const html = await renderToString(h(RecordingSourceSelect, { disabled: false, value }))
+      expect(html).toContain(value === 'region' ? '选区' : '显示器')
+      expect(html).not.toContain('应用窗口')
+    }
   })
 })

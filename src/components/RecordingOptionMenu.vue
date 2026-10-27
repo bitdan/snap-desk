@@ -9,7 +9,7 @@ watch(() => props.disabled, disabled => { if (disabled) open.value = false })
 
 <template>
   <PopoverRoot v-model:open="open">
-    <PopoverTrigger class="recording-option-trigger" :disabled="disabled" :aria-label="label">{{ label }}<ChevronDown :size="12" /></PopoverTrigger>
+    <PopoverTrigger class="recording-option-trigger" :disabled="disabled" :aria-label="label" :title="label">{{ label }}<ChevronDown :size="12" /></PopoverTrigger>
     <PopoverPortal>
       <!-- Portal 避免被单行工具栏裁剪；Esc 仅关闭当前选项菜单。 -->
       <PopoverContent class="recording-option-popup" side="top" align="start" :side-offset="6" :collision-padding="8" :aria-label="label" @pointerdown.stop @pointermove.stop @keydown.stop @contextmenu.stop.prevent>

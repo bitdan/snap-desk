@@ -1,23 +1,14 @@
 import { t } from './i18n'
 import type { Rect } from './selection'
-import type { CaptureTarget } from './api'
 
 export type RecordingSource = 'primaryMonitor' | 'selectedMonitor' | 'selectedWindow'
-export type RecordingSelection = 'region' | 'display' | 'window'
-/** 使用会话内候选下标选择窗口，不向后端传递任意窗口句柄。 */
-export function recordingWindowOptions(targets: CaptureTarget[]) {
-  return targets.flatMap((target, index) => {
-    if (target.kind !== 'window') return []
-    const title = target.title?.trim(), app = target.appName?.trim()
-    return [{ index, label: app && title && app !== title ? `${app} · ${title}` : title || app || t('窗口 {0}', { 0: target.windowIndex + 1 }), ...(target.icon ? { icon: target.icon } : {}) }]
-  })
-}
+export type RecordingSelection = 'region' | 'display'
 
 /** 输入/输出均是虚拟桌面图片坐标；负屏幕原点只参与平移，不按 DPI 缩放。 */
 export function recordingRegion(region: Rect, mode: RecordingSelection, displays: { x: number; y: number; width: number; height: number }[], origin: { x: number; y: number }): Rect {
   const display = displays.find(d => region.x + origin.x >= d.x && region.y + origin.y >= d.y
     && region.x + origin.x + region.width <= d.x + d.width && region.y + origin.y + region.height <= d.y + d.height)
-  if (mode !== 'window' && !display) throw new Error('请选择单个显示器内的区域。')
+  if (!display) throw new Error('请选择单个显示器内的区域。')
   return mode === 'display' && display ? { x: display.x - origin.x, y: display.y - origin.y, width: display.width, height: display.height } : { ...region }
 }
 

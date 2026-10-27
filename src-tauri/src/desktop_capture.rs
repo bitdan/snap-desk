@@ -8,14 +8,9 @@ mod windows;
 #[cfg(windows)]
 pub use windows::AppWindow as NativeWindow;
 #[cfg(windows)]
-pub(crate) use windows::{activate_window, PhysicalDpi};
+pub(crate) use windows::PhysicalDpi;
 #[cfg(not(windows))]
 pub type NativeWindow = xcap::Window;
-
-#[cfg(not(windows))]
-pub(crate) fn activate_window(_window: &NativeWindow) -> Result<(), String> {
-    Err("当前平台暂不支持应用窗口录制。".into())
-}
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -211,8 +206,8 @@ pub fn capture(primary_only: bool, include_cursor: bool, snap: bool) -> Result<D
         windows: Vec::new(),
         include_cursor,
     };
-    if !primary_only {
-        // 窗口候选同时服务录屏来源选择；截图关闭吸附时仍可切换到窗口录屏。
+    if !primary_only && snap {
+        // 只为截图吸附枚举可见窗口；录屏直接使用屏幕选区。
         for window in windows::application_windows()?.into_iter().take(256) {
             let visible = window.is_visible() && !window.is_minimized().unwrap_or(true);
             let on_screen = if visible {
@@ -224,20 +219,15 @@ pub fn capture(primary_only: bool, include_cursor: bool, snap: bool) -> Result<D
             } else {
                 None
             };
-            let recording_only = on_screen.is_none();
-            // 未恢复的窗口没有可吸附坐标，选择后由 select_recording_window 更新真实范围。
-            let rect = on_screen.unwrap_or(crate::capture::Rect {
-                x: 0,
-                y: 0,
-                width: 0,
-                height: 0,
-            });
+            let Some(rect) = on_screen else {
+                continue;
+            };
             let index = desktop.windows.len();
             desktop.targets.push(Target {
                 rect,
                 kind: "window",
                 window_index: index,
-                recording_only,
+                recording_only: false,
                 icon: window.icon(),
                 title: window
                     .title()
@@ -252,9 +242,7 @@ pub fn capture(primary_only: bool, include_cursor: bool, snap: bool) -> Result<D
                     .take(80)
                     .collect(),
             });
-            if let Some(id) = (snap && !recording_only)
-                .then(|| window.id().ok())
-                .flatten()
+            if let Some(id) = window.id().ok()
             {
                 let budget = 4096usize.saturating_sub(desktop.targets.len());
                 desktop.targets.extend(

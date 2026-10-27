@@ -1,11 +1,12 @@
 import { initializeAppearance, applyAppearance, parseAppearance } from './lib/appearance'
 import { t } from './lib/i18n'
 import { listen } from '@tauri-apps/api/event'
-import { createApp, defineComponent, h } from 'vue'
+import { createApp, defineComponent, h, nextTick } from 'vue'
 import { isTauri } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { resolveWindowKind } from './lib/window-kind'
 import { appLog, installGlobalErrorLogging } from './lib/logger'
+import { api } from './lib/api'
 
 initializeAppearance()
 installGlobalErrorLogging(window)
@@ -14,10 +15,10 @@ installGlobalErrorLogging(window)
 async function mount() {
   const kind = resolveWindowKind(isTauri() ? getCurrentWindow().label : null, location.search)
   // 原生设置提交后广播外观，已打开的辅助 WebView 也立即切换；缓存仅负责首帧。
-  if (isTauri() && kind !== 'selection-edge') await listen('appearance-changed', event => {
+  if (isTauri() && kind !== 'selection-edge') void listen('appearance-changed', event => {
     const value = parseAppearance(event.payload)
     if (value) applyAppearance(value)
-  })
+  }).catch(() => appLog('error', 'frontend.appearance_listener_failed'))
   document.documentElement.classList.toggle('capture-window', kind === 'capture')
   document.documentElement.classList.toggle('pin-window', kind === 'pin')
   document.documentElement.classList.toggle('selection-edge', kind === 'selection-edge')
@@ -45,9 +46,16 @@ async function mount() {
     app.config.errorHandler = () => appLog('error', 'vue.component_error')
     app.mount('#app')
   }
+  if (isTauri() && kind === 'main') {
+    // DOM 和样式先落地，再允许原生窗口显示；设置查询在组件内继续异步执行。
+    await nextTick()
+    await api.mainWindowReady()
+  }
 }
 void mount().catch(error => {
   appLog('error', 'frontend.mount_failed')
   const root = document.getElementById('app')
   if (root) root.textContent = t('页面加载失败，请重启 Snap Desk：{0}', { 0: String(error) })
+  // 加载失败也展示错误文本，避免窗口一直隐藏而无法获知原因。
+  if (isTauri() && getCurrentWindow().label === 'main') void api.mainWindowReady().catch(() => {})
 })
