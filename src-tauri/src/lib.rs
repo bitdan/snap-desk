@@ -1,3 +1,4 @@
+mod auxiliary_windows;
 mod annotations;
 mod ai_credentials;
 mod translation;
@@ -169,6 +170,7 @@ pub fn run() {
         ))
         .manage(autostart::AutostartState::default())
         .manage(CaptureState::default())
+        .manage(auxiliary_windows::AuxiliaryWindows::default())
         .manage(capture::MainWindowState::default())
         .manage(settings::ShortcutPressState::default())
         .manage(shortcut_probe::ProbeState::default())
@@ -390,6 +392,7 @@ pub fn run() {
             // 配置中的主窗口禁用自动创建：Tauri 自动创建窗口早于本 setup，
             // 页面可能提前调用 app_status，读取尚未 manage 的 SettingsState 而 panic。
             // 等设置、快捷键和托盘全部就绪后，再沿用原窗口配置加载主界面。
+            auxiliary_windows::initialize(app.handle())?;
             let main_config = app
                 .config()
                 .app
@@ -448,7 +451,7 @@ pub fn run() {
                     if window.label() == "recording-controls" {
                         let app = window.app_handle().clone();
                         tauri::async_runtime::spawn_blocking(move || {
-                            capture::recording::dismiss_completed_preview(&app);
+                            capture::recording::close_completed_preview(&app);
                         });
                     }
                 } else if window.label() == "main" {

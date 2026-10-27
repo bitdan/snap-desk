@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import { handleEscape } from '@/lib/escape'
-import { computed, onMounted, onUnmounted, ref, watch, type CSSProperties } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { listen } from '@tauri-apps/api/event'
-import { Check, Pause, Play, Square } from 'lucide-vue-next'
+import { Pause, Play, Square } from 'lucide-vue-next'
 import { api } from '@/lib/api'
 import { t, te } from '@/lib/i18n'
 import { recordingTime, recordingSpaceAction, type RecordingView, type RecordingAction } from '@/lib/recording'
-import { prepareRecordingRaster, recordingToolbarRegion, type RecordingAnnotationView } from '@/lib/recording-annotations'
+import { prepareRecordingRaster, type RecordingAnnotationView } from '@/lib/recording-annotations'
 import { useAnnotations, type AnnotationEditor, type AnnotationTool } from '@/lib/use-annotations'
 import { annotationToolbarPosition, useFloatingToolbar } from '@/lib/toolbar-layout'
 import AnnotationWorkspace from './AnnotationWorkspace.vue'
@@ -18,7 +18,6 @@ const recording = ref<RecordingView | null>(null)
 const busy = ref(false), error = ref('')
 const toolbar = ref<HTMLElement | null>(null)
 const { style: toolbarStyle, start: floatToolbar, reset: resetToolbar } = useFloatingToolbar(toolbar)
-const passiveToolbarStyle = ref<CSSProperties | null>(null)
 const viewport = ref({ x: 0, y: 0, width: innerWidth, height: innerHeight })
 const toolbarSize = ref({ width: 800, height: 80 })
 watch(toolbar, (element, _, cleanup) => {
@@ -76,21 +75,6 @@ async function poll() {
   } catch (e) { if (!disposed) error.value = String(e) }
   if (!disposed) timer = setTimeout(poll, 250)
 }
-async function finish() {
-  if (!view.value || locked.value || !toolbar.value) return
-  if (!view.value.editing) return
-  operation++
-  busy.value = true; error.value = ''
-  try {
-    const box = toolbar.value.getBoundingClientRect()
-    const region = recordingToolbarRegion(box, viewport.value, { width: view.value.viewportWidth, height: view.value.viewportHeight })
-    passiveToolbarStyle.value = { left: `${box.left}px`, top: `${box.top}px`, maxWidth: `${viewport.value.width - 16}px` }
-    await api.setRecordingAnnotationMode(view.value.id, false, region)
-    if (view.value) view.value.editing = false
-    editor.selected = -1
-  } catch (e) { error.value = String(e) }
-  finally { busy.value = false }
-}
 let activation: Promise<void> | null = null
 /** 在原工具栏直接选工具即可恢复绘制；桌面操作期间不另开一块控制界面。 */
 async function activate() {
@@ -99,7 +83,7 @@ async function activate() {
     operation++
     const id = view.value.id
     activation = api.setRecordingAnnotationMode(id, true).then(() => {
-      if (view.value?.id === id) { view.value.editing = true; passiveToolbarStyle.value = null }
+      if (view.value?.id === id) view.value.editing = true
     }).catch(e => { error.value = String(e) }).finally(() => { activation = null })
   }
   await activation
@@ -153,13 +137,12 @@ onUnmounted(() => { disposed = true; clearTimeout(timer); off?.(); window.remove
 
 <template>
   <main v-if="view" class="live-annotations" :aria-label="t('录制中标注')">
-    <AnnotationWorkspace :key="view.id" default-expanded :editor="editor" :width="view.width" :height="view.height" :bounds="bounds" :surface-visible="view.editing" :toolbar-visible="true" :enabled="view.editing && !busy" :active="true" :disabled="busy" :surface-style="stage" :outlined="view.editing" :toolbar-style="[defaultToolbarStyle, toolbarStyle, passiveToolbarStyle]" @toolbar-element="toolbar = $event" @activate="activate" @tool="chooseTool" @float="moveToolbar" @reset-position="resetToolbar">
+    <AnnotationWorkspace :key="view.id" default-expanded :editor="editor" :width="view.width" :height="view.height" :bounds="bounds" :surface-visible="view.editing" :toolbar-visible="true" :enabled="view.editing && !busy" :active="true" :disabled="busy" :surface-style="stage" :outlined="view.editing" :toolbar-style="[defaultToolbarStyle, toolbarStyle]" @toolbar-element="toolbar = $event" @activate="activate" @tool="chooseTool" @float="moveToolbar" @reset-position="resetToolbar">
         <template #leading><span class="recording-time">● {{ recordingTime(recording?.seconds ?? 0) }}</span></template>
         <template #actions>
           <button v-if="recording?.phase === 'ready'" :disabled="locked" :title="t('开始录制')" @click="control('start')"><Play :size="16" />{{ t('开始录制') }}</button>
           <button v-else :disabled="locked || !recording || !['recording', 'paused'].includes(recording.phase)" :title="t(recording?.phase === 'paused' ? '继续录制' : '暂停录制')" @click="control(recording?.phase === 'paused' ? 'resume' : 'pause')"><Play v-if="recording?.phase === 'paused'" :size="16" /><Pause v-else :size="16" /></button>
           <button :disabled="locked || !recording || !['recording', 'paused'].includes(recording.phase)" :title="t('结束录制并编辑')" @click="control('stop')"><Square :size="16" /></button>
-          <button :disabled="locked || !view.editing" @click="finish"><Check :size="16" />{{ t('继续操作桌面') }}</button>
         </template>
       <template #footer>
       <p v-if="error || editor.error" role="alert">{{ te(error || editor.error) }}</p>

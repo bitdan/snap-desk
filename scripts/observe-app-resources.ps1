@@ -7,6 +7,8 @@ param(
     [ValidateRange(200, 60000)][int]$IntervalMilliseconds = 1000,
     [ValidateRange(0, 300)][int]$ExitGraceSeconds = 30,
     [ValidatePattern('^[A-Za-z0-9_-]+$')][string]$Label = 'baseline',
+    [ValidateSet('eager', 'lazy-retain', 'lazy-release')][string]$Lifecycle = 'lazy-release',
+    [ValidatePattern('^[A-Za-z0-9_-]+$')][string]$InitialPhase,
     [string]$OutputDirectory
 )
 $ErrorActionPreference = 'Stop'
@@ -18,13 +20,21 @@ if (!$OutputDirectory) {
 $runDirectory = Join-Path $OutputDirectory ("{0}-{1}-{2}" -f $Label, (Get-Date -Format 'yyyyMMdd-HHmmss'), [guid]::NewGuid().ToString('N').Substring(0, 8))
 New-Item -ItemType Directory -Path $runDirectory -Force | Out-Null
 $phasePath = Join-Path $runDirectory 'phase.txt'
-Set-Content -LiteralPath $phasePath -Value 'cold-start' -Encoding UTF8
+if (!$InitialPhase) { $InitialPhase = if ($PSCmdlet.ParameterSetName -eq 'Launch') { 'cold-start' } else { 'existing-running' } }
+Set-Content -LiteralPath $phasePath -Value $InitialPhase -Encoding UTF8
 Write-Host "采样目录：$runDirectory"
 Write-Host "操作阶段：在另一个终端修改 $phasePath；脚本不会操作或关闭应用。"
 
+$started = [DateTime]::UtcNow
+$watch = [Diagnostics.Stopwatch]::StartNew()
 if ($PSCmdlet.ParameterSetName -eq 'Launch') {
     $binaryPath = (Resolve-Path -LiteralPath $Binary).Path
-    $launched = Start-Process -FilePath $binaryPath -WorkingDirectory (Split-Path $binaryPath -Parent) -WindowStyle Hidden -PassThru
+    # 仅为这次子进程设置策略，启动后立即恢复，不修改系统或用户环境变量。
+    $previousPolicy = [Environment]::GetEnvironmentVariable('SNAP_DESK_AUX_LIFECYCLE', 'Process')
+    try {
+        [Environment]::SetEnvironmentVariable('SNAP_DESK_AUX_LIFECYCLE', $Lifecycle, 'Process')
+        $launched = Start-Process -FilePath $binaryPath -WorkingDirectory (Split-Path $binaryPath -Parent) -WindowStyle Hidden -PassThru
+    } finally { [Environment]::SetEnvironmentVariable('SNAP_DESK_AUX_LIFECYCLE', $previousPolicy, 'Process') }
     $ProcessId = $launched.Id
 }
 $rootProcess = Get-CimInstance Win32_Process -Filter "ProcessId = $ProcessId"
@@ -34,16 +44,15 @@ $rootIdentity = Get-ProcessIdentity $rootProcess
 $known = @{ $rootIdentity = $rootProcess }
 $previousCpu = @{}
 $logicalProcessors = [Environment]::ProcessorCount
-$started = [DateTime]::UtcNow
 $metadata = [ordered]@{
     schemaVersion = 1; startedUtc = $started.ToString('o'); rootProcessId = $ProcessId
     rootIdentity = $rootIdentity; binary = $rootProcess.ExecutablePath
     label = $Label; intervalMilliseconds = $IntervalMilliseconds; durationSeconds = $DurationSeconds
     exitGraceSeconds = $ExitGraceSeconds; logicalProcessors = $logicalProcessors
+    lifecycle = if ($PSCmdlet.ParameterSetName -eq 'Launch') { $Lifecycle } else { 'unknown' }
     os = [Environment]::OSVersion.VersionString; powershell = $PSVersionTable.PSVersion.ToString()
 }
 $metadata | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $runDirectory 'metadata.json') -Encoding UTF8
-$watch = [Diagnostics.Stopwatch]::StartNew()
 $rootExitedAt = $null
 $sampleIndex = 0
 $writer = [IO.StreamWriter]::new((Join-Path $runDirectory 'processes.jsonl'), $false, [Text.UTF8Encoding]::new($false))

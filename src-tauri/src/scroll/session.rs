@@ -554,6 +554,7 @@ pub async fn start_scroll(
                 archive = None;
             }
         }
+        let mut pending_windows = chrome::PendingScrollWindows(&app, false);
         let obscuring_windows = chrome::place(&app, &screen, rect)?;
         let mut session = ScrollSession {
             id,
@@ -591,6 +592,7 @@ pub async fn start_scroll(
         // 后续匹配仅使用选区帧/图块；不再常驻整桌面的 RGBA 和 Base64。
         // Operation 在本闭包结束前仍被持有，采集线程不会抢先结束会话。
         super::super::release_selection(&app, id)?;
+        pending_windows.1 = true;
         log::info!(
             "event=scroll.started module=scroll op=scroll-{id} width={} height={}",
             result.width,

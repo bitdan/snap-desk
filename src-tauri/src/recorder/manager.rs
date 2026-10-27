@@ -322,16 +322,20 @@ pub enum RecordingAction {
 
 /// Alt+F4 只关闭已经完成的回放，不能意外中止仍在录制/封装的视频。
 pub fn dismiss_completed_preview(app: &AppHandle) {
+    // 进入新框选前暂时隐藏；截图成功才销毁，失败仍能返回原回放。
     let state = app.state::<RecordingState>();
-    let id = state.0.lock().ok().and_then(|guard| {
-        guard
-            .as_ref()
-            .filter(|s| s.view.phase == Phase::Completed)
-            .map(|s| s.view.id)
+    let completed = state.0.lock().ok().is_some_and(|guard| {
+        guard.as_ref().is_some_and(|s| !active(s.view.phase))
     });
-    if let Some(id) = id {
-        let _ = control(app, Some(id), RecordingAction::Cancel);
-    }
+    if completed { chrome::hide_recording(app); }
+}
+
+/// Alt+F4 明确关闭回放；与新框选前的临时隐藏分开处理。
+pub fn close_completed_preview(app: &AppHandle) {
+    let id = app.state::<RecordingState>().0.lock().ok().and_then(|guard| {
+        guard.as_ref().filter(|s| !active(s.view.phase)).map(|s| s.view.id)
+    });
+    if let Some(id) = id { let _ = control(app, Some(id), RecordingAction::Cancel); }
 }
 
 /// 悬浮条暂停保留现场，托盘暂停可展开主页；恢复仅隐藏主页，边框和控制条不收起。
@@ -351,8 +355,9 @@ pub fn control(app: &AppHandle, id: Option<u64>, action: RecordingAction) -> Res
             let closed_id = s.view.id;
             drop(guard);
             chrome::hide_recording(app);
-            // Alt+F4/托盘关闭也通知常驻 WebView 卸载播放器，不能只隐藏仍在播放的媒体。
+            // 保留模式通知前端卸载播放器；释放模式还会销毁整个 WebView。
             let _ = app.emit_to("recording-controls", "recording-preview-closed", closed_id);
+            chrome::release_recording(app);
             return Ok(());
         }
         return if matches!(action, RecordingAction::Stop | RecordingAction::Cancel) {
@@ -758,7 +763,7 @@ pub async fn start_recording(
         };
         if let Err(error) = ready {
             let _ = go_tx.send(false);
-            chrome::hide_recording(&app);
+            chrome::release_recording(&app);
             live_annotations::clear(&app, id);
             *recording.0.lock().map_err(err)? = None;
             let _ = window.show();
@@ -1171,8 +1176,8 @@ fn collect(
             s.view.revision += 1;
         }
     }
-    chrome::hide_recording(&app);
-    // 控制条原地切换为回放/裁剪窗口，成功后无需到主界面寻找录像。
+    chrome::release_recording(&app);
+    // 按需创建回放窗口，成功后切换为回放/裁剪窗口，成功后无需到主界面寻找录像。
     if completed {
         if let Err(error) = chrome::show_recording_preview(&app) {
             super::report_error(&app, format!("无法显示录屏回放：{error}"));

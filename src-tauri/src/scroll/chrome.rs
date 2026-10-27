@@ -285,7 +285,9 @@ fn show_window(window: &Window) -> Result<(), String> {
 }
 
 pub(super) fn place(app: &AppHandle, screen: &Screen, rect: Rect) -> Result<Vec<String>, String> {
-    place_windows(app, screen, rect, &LABELS, &layout(screen, rect), false)
+    let result = place_windows(app, screen, rect, &LABELS, &layout(screen, rect), false);
+    if result.is_err() { release(app); }
+    result
 }
 
 /// 录屏复用细边框和操作条定位；排除预览窗，并通过系统捕获保护保持窗口常显。
@@ -299,12 +301,13 @@ pub(in crate::capture) fn place_recording(
         app,
         screen,
         rect,
-        &RECORDING_LABELS,
-        &layout_with_controls(screen, rect, 480.0)[1..],
+        // 实时控制已由 capture 承担，录屏期间只创建四条边框。
+        &RECORDING_LABELS[1..],
+        &layout_with_controls(screen, rect, 480.0)[2..],
         true,
     );
     if result.is_err() {
-        hide_recording(app);
+        release_recording(app);
     } else {
         *app.state::<RecordingPreviewState>().0.lock().map_err(err)? =
             Some(replay_layout(screen, rect));
@@ -360,7 +363,7 @@ fn place_windows(
             .build()
             .map_err(err)?
         } else {
-            return Err(format!("滚动截图辅助窗口不可用：{label}"));
+            crate::auxiliary_windows::ensure(app, label)?
         };
         if edge {
             window.set_ignore_cursor_events(true).map_err(err)?;
@@ -484,7 +487,7 @@ pub(crate) fn hide_recording(app: &AppHandle) {
 
 /// 结束后仍在原选区回放，工具条紧邻选区，不再居中打开一块独立的编辑界面。
 pub(crate) fn show_recording_preview(app: &AppHandle) -> Result<(), String> {
-    let controls = window(app, "recording-controls").ok_or("录屏控制窗口不可用。")?;
+    let controls = crate::auxiliary_windows::ensure(app, "recording-controls")?;
     let layout = recording_preview_layout(app).ok_or("录屏选区位置不可用。")?;
     controls
         .set_size(PhysicalSize::new(layout.width, layout.height))
@@ -511,6 +514,20 @@ pub(crate) fn hide(app: &AppHandle) {
             let _ = w.hide();
         }
     }
+}
+
+/// 结束会话时释放边框和业务 WebView；取样临时避让仍只调用 hide。
+pub(crate) fn release(app: &AppHandle) {
+    for label in LABELS { crate::auxiliary_windows::release(app, label); }
+}
+pub(crate) fn release_recording(app: &AppHandle) {
+    for label in RECORDING_LABELS { crate::auxiliary_windows::release(app, label); }
+}
+
+/// 滚动截图准备中任何一步失败都回收已经创建的窗口；成功后交给会话清理。
+pub(super) struct PendingScrollWindows<'a>(pub &'a AppHandle, pub bool);
+impl Drop for PendingScrollWindows<'_> {
+    fn drop(&mut self) { if !self.1 { release(self.0); } }
 }
 
 /// 只有与选区相交的辅助窗口需要避让，普通布局的四条边框会一直显示。

@@ -113,9 +113,8 @@ describe('录屏控制条直接进入回放编辑', () => {
     await mount()
     ;(find(node => node.props['data-rerecord'] === true)!.props.onClick as () => void)()
     await flush()
-    expect(api.controlRecording).toHaveBeenCalledWith(7, 'cancel')
+    expect(api.controlRecording).not.toHaveBeenCalled()
     expect(api.selectRecordingArea).toHaveBeenCalledOnce()
-    expect(api.controlRecording.mock.invocationCallOrder[0]).toBeLessThan(api.selectRecordingArea.mock.invocationCallOrder[0])
     expect(editor()).toBeUndefined()
   })
   it('原生关闭通知卸载播放器，旧会话关闭不会影响新会话', async () => {
@@ -132,8 +131,6 @@ describe('录屏控制条直接进入回放编辑', () => {
     await flush()
     expect(editor()?.props['data-editor-id']).toBe(42)
     expect(find(node => node.props.role === 'alert')?.text).toContain('截图正在进行中')
-    closed.callback!(7); await flush() // 本地关闭的迟到通知不能关闭刚恢复的播放器。
-    expect(editor()).toBeDefined()
     closed.callback!(7); await flush() // 后续真正的原生关闭仍然有效。
     expect(editor()).toBeUndefined()
   })

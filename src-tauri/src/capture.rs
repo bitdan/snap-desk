@@ -379,6 +379,7 @@ fn prepare(app: &AppHandle, recording: bool) -> Result<(), String> {
         prepared_at: started,
     });
     log::debug!("event=capture.prepared module=capture op=cap-{id} capture_ms={capture_ms:.2} encode_ms={encode_ms:.2} duration_ms={:.2}", started.elapsed().as_secs_f64() * 1000.0);
+    scroll::chrome::release_recording(app);
     app.emit_to("capture", "capture-ready", &frame)
         .map_err(err)?;
     // WebView 未能加载图片时自动释放会话，防止看不见蒙层又无法重新截图。
@@ -602,6 +603,7 @@ fn cleanup(app: &AppHandle) -> Result<(), String> {
             let _ = app.emit_to(label, "capture-closed", id);
         }
     }
+    scroll::chrome::release(app);
     state.active.store(false, Ordering::SeqCst);
     Ok(())
 }

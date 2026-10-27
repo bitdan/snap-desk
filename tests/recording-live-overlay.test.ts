@@ -114,12 +114,10 @@ describe('共享标注页面的录制宿主', () => {
     expect(editor().history.present).toHaveLength(1)
     expect(editor().history.past).toHaveLength(1)
   })
-  it('返回桌面后原工具栏仍可操作，直接选择工具恢复绘制', async () => {
+  it('不再显示继续操作桌面按钮，外部桌面模式仍可直接选择工具恢复绘制', async () => {
+    api.recordingAnnotations.mockResolvedValueOnce({ ...initial, editing: false })
     await mount()
-    const finish = find(n => n.type === 'button' && n.children.some(c => c.text.includes('继续操作桌面')))
-    expect(finish).toBeDefined()
-    ;(finish!.props.onClick as () => void)(); await flush()
-    expect(api.setRecordingAnnotationMode).toHaveBeenCalledWith(7, false, { x: 100, y: 600, width: 800, height: 100 })
+    expect(find(n => n.type === 'button' && n.children.some(c => c.text.includes('继续操作桌面')))).toBeUndefined()
     expect(workspace()?.props.toolbarVisible).toBe(true)
     expect(api.controlRecording).not.toHaveBeenCalled()
     ;(workspace()!.props.onChoose as () => void)(); await flush()
@@ -130,8 +128,8 @@ describe('共享标注页面的录制宿主', () => {
     await mount()
     editor().setTool('pen')
     editor().begin({ x: 10, y: 10 }, 1); editor().drag({ x: 40, y: 40 }); await editor().finish()
-    const finish = find(n => n.type === 'button' && n.children.some(c => c.text.includes('继续操作桌面')))!
-    ;(finish.props.onClick as () => void)(); await flush()
+    api.recordingAnnotations.mockResolvedValueOnce({ ...initial, revision: 1, editing: false, shapes: undefined })
+    await vi.advanceTimersByTimeAsync(250)
     api.updateRecordingAnnotations.mockResolvedValueOnce({ ...initial, revision: 2, editing: false, shapes: undefined })
     await editor().travel('undo')
     expect(api.updateRecordingAnnotations).toHaveBeenLastCalledWith(7, [])

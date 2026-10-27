@@ -74,6 +74,7 @@ struct Source {
 }
 #[derive(Default)]
 struct Editor {
+    owner: Option<String>,
     generation: u64,
     preparing: Option<u64>,
     source: Option<Source>,
@@ -106,6 +107,7 @@ pub async fn prepare_recording_editor(
         if editor.active.is_some() || editor.preparing.is_some() {
             return Err("请先等待当前录屏读取或裁剪结束。".into());
         }
+        editor.owner = Some(window.label().to_string());
         editor.generation += 1;
         editor.source = None;
         editor.preparing = Some(editor.generation);
@@ -190,6 +192,18 @@ pub fn close_recording_editor(
         editor.generation += 1;
     }
     Ok(())
+}
+/// WebView 销毁不会执行 Vue 卸载回调，原生侧主动取消属于该窗口的编辑任务。
+/// 主窗口使用同一编辑能力，必须核对 owner，不能误清理另一个窗口的媒体。
+pub(crate) fn release_window(app: &AppHandle, label: &str) {
+    if let Ok(mut editor) = app.state::<EditState>().0.lock() {
+        if editor.owner.as_deref() == Some(label) {
+            if let Some((_, cancel)) = &editor.active { cancel.store(true, Ordering::SeqCst); }
+            editor.generation += 1;
+            editor.owner = None;
+            editor.source = None;
+        }
+    }
 }
 pub fn shutdown(app: &AppHandle) {
     if let Ok(editor) = app.state::<EditState>().0.lock() {

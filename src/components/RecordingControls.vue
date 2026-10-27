@@ -44,16 +44,19 @@ async function closePreview() {
 /** 先卸载播放器并收起原选区回放，再进入现有框选流程；已保存的原片始终保留。 */
 async function rerecord() {
   const previous = result.value, sessionId = view.value?.id
-  await closePreview()
-  if (error.value || disposed) return
-  try { await api.selectRecordingArea() }
-  catch (e) {
+  if (busy.value) return
+  busy.value = true; error.value = ''
+  dismissedSession.value = sessionId ?? null; result.value = null
+  try {
+    // 单条 IPC 在原生侧完成隐藏旧回放、开始框选和成功后释放窗口。
+    await api.selectRecordingArea()
+  } catch (e) {
     if (!disposed && view.value?.id === sessionId) { dismissedSession.value = null; result.value = previous; error.value = String(e) }
-  }
+  } finally { busy.value = false }
 }
 let disposed = false
 let timer: ReturnType<typeof setTimeout> | undefined
-// 控制条窗口复用且保持挂载；新会话清除上次错误，顺序号拦截迟到查询。
+// 按需挂载先查询原生快照，不依赖窗口创建前可能错过的事件。
 async function refresh() {
   const next = await api.currentRecording()
   if (disposed) return
