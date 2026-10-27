@@ -3,6 +3,7 @@
 mod archive;
 mod capture;
 pub(crate) mod chrome;
+mod input;
 mod matcher;
 mod recovery;
 pub(crate) mod session;

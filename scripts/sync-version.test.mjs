@@ -23,7 +23,7 @@ function fixture(t, version) {
     '': { name: 'snap-desk', version: '0.1.3' },
     'node_modules/example': { version: '0.1.3', integrity: 'unchanged' },
   } }))
-  write('src-tauri/tauri.conf.json', '{"version":"0.1.3","productName":"Snap Desk"}')
+  write('src-tauri/tauri.conf.json', '{"version":"../package.json","productName":"Snap Desk"}')
   write('src-tauri/Cargo.toml', '[package]\r\nname = "snap-desk"\r\nversion = "0.1.3"\r\n\r\n[dependencies]\r\nexample = "0.1.3"\r\n')
   write('src-tauri/Cargo.lock', 'version = 4\n\n[[package]]\nname = "example"\nversion = "0.1.3"\n\n[[package]]\nname = "snap-desk"\nversion = "0.1.3"\ndependencies = ["example"]\n')
   for (const file of ['sync-version.mjs', 'check-release-version.mjs']) {
@@ -36,12 +36,13 @@ function fixture(t, version) {
 for (const version of ['0.1.4', '0.1.4-beta.1', '0.1.4-rc.1']) {
   test(`同步 ${version}，保留依赖和换行，重复执行不改变文件`, t => {
     const f = fixture(t, version)
+    const configBefore = f.read('src-tauri/tauri.conf.json')
     syncVersion(f.root)
     const lock = JSON.parse(f.read('package-lock.json'))
     assert.equal(lock.version, version)
     assert.equal(lock.packages[''].version, version)
     assert.deepEqual(lock.packages['node_modules/example'], { version: '0.1.3', integrity: 'unchanged' })
-    assert.equal(JSON.parse(f.read('src-tauri/tauri.conf.json')).version, version)
+    assert.equal(f.read('src-tauri/tauri.conf.json'), configBefore)
     assert.equal(f.read('src-tauri/Cargo.toml'), `[package]\r\nname = "snap-desk"\r\nversion = "${version}"\r\n\r\n[dependencies]\r\nexample = "0.1.3"\r\n`)
     assert.equal(f.read('src-tauri/Cargo.lock'), `version = 4\n\n[[package]]\nname = "example"\nversion = "0.1.3"\n\n[[package]]\nname = "snap-desk"\nversion = "${version}"\ndependencies = ["example"]\n`)
     const before = f.snapshot()
@@ -62,6 +63,29 @@ test('非法版本和缺失 Cargo 包信息均在写入前失败', t => {
   assert.deepEqual(f.snapshot(), before)
 })
 
+test('只修改 package.json 即可更新派生版本，Tauri 始终保留直接引用', t => {
+  const f = fixture(t, '0.1.4-beta.1')
+  syncVersion(f.root)
+  const configBefore = f.read('src-tauri/tauri.conf.json')
+  f.write('package.json', '{"version":"0.2.0"}')
+  syncVersion(f.root)
+  assert.equal(f.read('src-tauri/tauri.conf.json'), configBefore)
+  const config = JSON.parse(configBefore)
+  const referenced = JSON.parse(readFileSync(resolve(f.root, 'src-tauri', config.version), 'utf8'))
+  assert.equal(referenced.version, '0.2.0')
+  assert.equal(JSON.parse(f.read('package-lock.json')).packages[''].version, '0.2.0')
+  assert.match(f.read('src-tauri/Cargo.toml'), /version = "0\.2\.0"/)
+  assert.match(f.read('src-tauri/Cargo.lock'), /name = "snap-desk"\nversion = "0\.2\.0"/)
+})
+
+test('Tauri 误填版本字面量时先报错，不部分更新锁文件', t => {
+  const f = fixture(t, '0.2.0')
+  f.write('src-tauri/tauri.conf.json', '{"version":"0.1.3"}')
+  const before = f.snapshot()
+  assert.throws(() => syncVersion(f.root), /必须引用/)
+  assert.deepEqual(f.snapshot(), before)
+})
+
 test('CI 先拒绝错误标签，匹配标签后再同步派生文件', t => {
   const f = fixture(t, '0.1.4-beta.1')
   const before = f.snapshot()
@@ -72,5 +96,5 @@ test('CI 先拒绝错误标签，匹配标签后再同步派生文件', t => {
   assert.deepEqual(f.snapshot(), before)
   const result = check('v0.1.4-beta.1')
   assert.equal(result.status, 0, result.stderr)
-  assert.equal(JSON.parse(f.read('src-tauri/tauri.conf.json')).version, '0.1.4-beta.1')
+  assert.equal(JSON.parse(f.read('src-tauri/tauri.conf.json')).version, '../package.json')
 })

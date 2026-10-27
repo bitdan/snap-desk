@@ -1,4 +1,4 @@
-//! 合成真值按二维坐标裁帧，逐像素核对覆盖区；绝不把空洞当成已观察内容。
+//! 单轴滚动的合成真值及底层图块边界测试：逐像素核对覆盖区。
 use super::*;
 
 fn document() -> RgbaImage {
@@ -298,59 +298,6 @@ fn historical_position_conflict_clears_recovery_candidates_before_anchor_evictio
 }
 
 #[test]
-fn all_axes_reverse_and_diagonal_preserve_document_pixels() {
-    let doc = document();
-    let mut stitch = Stitch::new(frame(&doc, 200, 200)).unwrap();
-    let mut previous = (200, 200);
-    for (x, y) in [
-        (200, 300),
-        (300, 300),
-        (300, 220),
-        (210, 250),
-        (110, 250),
-        (110, 150),
-        (200, 200),
-    ] {
-        moved(
-            stitch.consider(frame(&doc, x, y)).unwrap(),
-            x as i32 - previous.0,
-            y as i32 - previous.1,
-        );
-        previous = (x as i32, y as i32);
-        assert_truth(&stitch, &doc, (200, 200));
-    }
-    assert!(stitch.bounds.x < 0 && stitch.bounds.y < 0);
-    assert_eq!(stitch.viewport().x, 0);
-    assert_eq!(stitch.viewport().y, 0);
-}
-#[test]
-fn l_path_leaves_transparent_hole_and_snake_fills_it() {
-    let doc = document();
-    let mut stitch = Stitch::new(frame(&doc, 0, 0)).unwrap();
-    moved(stitch.consider(frame(&doc, 0, 100)).unwrap(), 0, 100);
-    moved(stitch.consider(frame(&doc, 100, 100)).unwrap(), 100, 0);
-    assert!(stitch.has_holes());
-    assert_eq!(stitch.compose().get_pixel(230, 30)[3], 0);
-    assert!(
-        (stitch.coverage() - 100.0 * (260.0 * 260.0 - 10000.0) / (260.0 * 260.0)).abs() < 0.001
-    );
-    moved(stitch.consider(frame(&doc, 100, 0)).unwrap(), 0, -100);
-    assert!(!stitch.has_holes());
-    assert_eq!(
-        stitch.compose(),
-        image::imageops::crop_imm(&doc, 0, 0, 260, 260).to_image()
-    );
-    let before = stitch.compose();
-    let count = stitch.count();
-    moved(stitch.consider(frame(&doc, 0, 0)).unwrap(), -100, 0);
-    assert_eq!(stitch.compose(), before);
-    assert_eq!(stitch.count(), count);
-    assert_eq!(
-        stitch.consider(frame(&doc, 0, 0)).unwrap(),
-        Match::Unchanged
-    );
-}
-#[test]
 fn historical_anchor_relocates_without_overlap_with_latest() {
     let doc = document();
     let mut stitch = Stitch::new(frame(&doc, 0, 0)).unwrap();
@@ -394,7 +341,7 @@ fn fixed_header_footer_and_frozen_column_are_excluded_from_content() {
     };
     let mut stitch = Stitch::new(fixed(100, 100)).unwrap();
     moved(stitch.consider(fixed(100, 180)).unwrap(), 0, 80);
-    moved(stitch.consider(fixed(180, 180)).unwrap(), 80, 0);
+    moved(stitch.consider(fixed(100, 220)).unwrap(), 0, 40);
     assert_eq!(
         stitch.content,
         Content {
@@ -405,273 +352,7 @@ fn fixed_header_footer_and_frozen_column_are_excluded_from_content() {
         }
     );
     assert_truth(&stitch, &doc, (100, 100));
-    assert!(stitch.has_holes());
-}
-#[test]
-fn established_fixed_bands_survive_axis_changes_and_reverse_paths() {
-    let doc = document();
-    // 表头随横向滚动、冻结列随纵向滚动，因此它们并非始终在屏幕坐标静止。
-    // 先沿垂直于固定栏的方向识别边界，再切换方向与折返，边界不能重新扩张。
-    for columns in [false, true] {
-        let fixed = |x, y| {
-            let mut image = frame(&doc, x, y);
-            for py in 0..160 {
-                for px in 0..160 {
-                    if columns && (px < 12 || px >= 148) {
-                        image.put_pixel(px, py, *doc.get_pixel(400 + px, y + py));
-                    } else if !columns && (py < 12 || py >= 148) {
-                        image.put_pixel(px, py, *doc.get_pixel(x + px, 400 + py));
-                    }
-                }
-            }
-            image
-        };
-        let path = if columns {
-            [(180, 100), (180, 180), (140, 180), (100, 100)]
-        } else {
-            [(100, 180), (180, 180), (180, 140), (100, 100)]
-        };
-        let mut stitch = Stitch::new(fixed(100, 100)).unwrap();
-        let mut previous = (100, 100);
-        for (x, y) in path {
-            moved(
-                stitch.consider(fixed(x, y)).unwrap(),
-                x as i32 - previous.0,
-                y as i32 - previous.1,
-            );
-            previous = (x as i32, y as i32);
-            assert_eq!(
-                stitch.content,
-                if columns {
-                    Content {
-                        left: 12,
-                        top: 0,
-                        right: 148,
-                        bottom: 160,
-                    }
-                } else {
-                    Content {
-                        left: 0,
-                        top: 12,
-                        right: 160,
-                        bottom: 148,
-                    }
-                }
-            );
-            assert_truth(&stitch, &doc, (100, 100));
-        }
-        // 当前帧无重叠时也通过起点历史锚点重定位；不能退回全选区匹配。
-        for (x, y) in [(180, 100), (260, 100), (340, 100)] {
-            moved(stitch.consider(fixed(x, y)).unwrap(), 80, 0);
-        }
-        let before = stitch.compose();
-        moved(stitch.consider(fixed(100, 100)).unwrap(), -240, 0);
-        assert_eq!(stitch.compose(), before);
-        assert_truth(&stitch, &doc, (100, 100));
-    }
-}
-
-#[test]
-fn first_diagonal_motion_discovers_tangentially_moving_fixed_bands() {
-    let doc = document();
-    // 起始就斜向移动，旧的屏幕同位置检测看不到随切向移动的表头/冻结列。
-    // 四种符号覆盖负位移，之后切换单轴并返回起点，逐像素核对正文。
-    for columns in [false, true] {
-        for (dx, dy) in [(40, 40), (-40, 40), (40, -40), (-40, -40)] {
-            let fixed = |x, y| {
-                let mut image = frame(&doc, x, y);
-                for py in 0..160 {
-                    for px in 0..160 {
-                        if columns && (px < 12 || px >= 148) {
-                            image.put_pixel(px, py, *doc.get_pixel(400 + px, y + py));
-                        } else if !columns && (py < 12 || py >= 148) {
-                            image.put_pixel(px, py, *doc.get_pixel(x + px, 400 + py));
-                        }
-                    }
-                }
-                image
-            };
-            let x = (200i32 + dx) as u32;
-            let y = (200i32 + dy) as u32;
-            let mut stitch = Stitch::new(fixed(200, 200)).unwrap();
-            moved(stitch.consider(fixed(x, y)).unwrap(), dx, dy);
-            assert_eq!(
-                stitch.content,
-                if columns {
-                    Content {
-                        left: 12,
-                        top: 0,
-                        right: 148,
-                        bottom: 160,
-                    }
-                } else {
-                    Content {
-                        left: 0,
-                        top: 12,
-                        right: 160,
-                        bottom: 148,
-                    }
-                }
-            );
-            assert_truth(&stitch, &doc, (200, 200));
-            moved(stitch.consider(fixed(x, 200)).unwrap(), 0, -dy);
-            assert_truth(&stitch, &doc, (200, 200));
-            moved(stitch.consider(fixed(200, 200)).unwrap(), -dx, 0);
-            assert_truth(&stitch, &doc, (200, 200));
-
-            // 若先沿固定栏切向滚动，旧画布已经包含它，后续才发现边界时仍须
-            // 保守拒绝；不能为了支持首次斜向识别而静默回裁已确认画布。
-            let mut late = Stitch::new(fixed(200, 200)).unwrap();
-            let (tx, ty) = if columns { (200, y) } else { (x, 200) };
-            moved(
-                late.consider(fixed(tx, ty)).unwrap(),
-                tx as i32 - 200,
-                ty as i32 - 200,
-            );
-            let before = late.compose();
-            let viewport = late.viewport();
-            let revision = late.match_revision();
-            let next_x = (tx as i32 + dx) as u32;
-            let next_y = (ty as i32 + dy) as u32;
-            assert_eq!(
-                late.consider_recoverable(fixed(next_x, next_y)).unwrap(),
-                (Match::Uncertain, false)
-            );
-            assert_eq!(late.compose(), before);
-            assert_eq!(late.viewport(), viewport);
-            assert_eq!(late.match_revision(), revision);
-        }
-    }
-}
-
-#[test]
-fn intersecting_frozen_corners_preserve_body_across_diagonal_and_reverse() {
-    let doc = document();
-    // 同时冻结行列：交叉角静止，行只随 x 移动，列只随 y 移动。
-    // 四个单角与四边全冻结分别覆盖边界正反扫描，不能只测孤立的表头。
-    for (left, right, top, bottom) in [
-        (true, false, true, false),
-        (false, true, true, false),
-        (true, false, false, true),
-        (false, true, false, true),
-        (true, true, true, true),
-    ] {
-        let fixed = |x, y| {
-            let mut image = frame(&doc, x, y);
-            for py in 0..160 {
-                for px in 0..160 {
-                    let column = (left && px < 12) || (right && px >= 148);
-                    let row = (top && py < 12) || (bottom && py >= 148);
-                    if column || row {
-                        image.put_pixel(
-                            px,
-                            py,
-                            *doc.get_pixel(
-                                if column { 400 + px } else { x + px },
-                                if row { 400 + py } else { y + py },
-                            ),
-                        );
-                    }
-                }
-            }
-            image
-        };
-        let expected = Content {
-            left: if left { 12 } else { 0 },
-            right: if right { 148 } else { 160 },
-            top: if top { 12 } else { 0 },
-            bottom: if bottom { 148 } else { 160 },
-        };
-        for (dx, dy) in [(40, 40), (-40, 40), (40, -40), (-40, -40)] {
-            let a = fixed(200, 200);
-            let x = (200i32 + dx) as u32;
-            let y = (200i32 + dy) as u32;
-            let b = fixed(x, y);
-            // 历史锚点快速复核与完整搜索必须看到相同边界，错误位移仍拒绝。
-            let verified = verify_at(&a, &b, dx, dy, Content::full(&a)).unwrap();
-            assert_eq!(verified.content, expected);
-            assert_eq!(
-                alignment_in(&a, &b, ScrollMode::Auto, Content::full(&a)),
-                Match::Aligned(verified)
-            );
-            assert!(verify_at(&a, &b, dx + 1, dy, Content::full(&a)).is_none());
-            let mut stitch = Stitch::new(a).unwrap();
-            moved(stitch.consider(b).unwrap(), dx, dy);
-            assert_eq!(stitch.content, expected);
-            assert_truth(&stitch, &doc, (200, 200));
-            // 已发现的行列边界跨单轴切换保留，折返不能重复写入冻结角。
-            moved(stitch.consider(fixed(x, 200)).unwrap(), 0, -dy);
-            assert_eq!(stitch.content, expected);
-            assert_truth(&stitch, &doc, (200, 200));
-            moved(stitch.consider(fixed(200, 200)).unwrap(), -dx, 0);
-            assert_eq!(stitch.content, expected);
-            assert_truth(&stitch, &doc, (200, 200));
-        }
-        // 交叉冻结且中央重叠不足时，不能用交叉角的错误运动猜测边界。
-        // 保持画布、视口和版本，交给既有恢复流程提示用户缩小滚动幅度。
-        let a = fixed(200, 200);
-        let b = fixed(264, 264);
-        assert!(verify_at(&a, &b, 64, 64, Content::full(&a)).is_none());
-        let mut stitch = Stitch::new(a).unwrap();
-        let before = stitch.compose();
-        let viewport = stitch.viewport();
-        let revision = stitch.match_revision();
-        assert_eq!(stitch.consider(b).unwrap(), Match::Uncertain);
-        assert_eq!(stitch.compose(), before);
-        assert_eq!(stitch.viewport(), viewport);
-        assert_eq!(stitch.match_revision(), revision);
-    }
-}
-
-#[test]
-fn isolated_frozen_bands_keep_large_diagonal_overlap() {
-    let doc = document();
-    // 中央半区在 64 像素切向位移下只剩 16 像素，不够检测；原本可用的
-    // 完整切向重叠仍有 96 像素，必须保留这一成功路径。
-    for columns in [false, true] {
-        let fixed = |x, y| {
-            let mut image = frame(&doc, x, y);
-            for py in 0..160 {
-                for px in 0..160 {
-                    if columns && (px < 12 || px >= 148) {
-                        image.put_pixel(px, py, *doc.get_pixel(400 + px, y + py));
-                    } else if !columns && (py < 12 || py >= 148) {
-                        image.put_pixel(px, py, *doc.get_pixel(x + px, 400 + py));
-                    }
-                }
-            }
-            image
-        };
-        for (dx, dy) in [(64, 64), (-64, 64), (64, -64), (-64, -64)] {
-            let mut stitch = Stitch::new(fixed(200, 200)).unwrap();
-            moved(
-                stitch
-                    .consider(fixed((200i32 + dx) as u32, (200i32 + dy) as u32))
-                    .unwrap(),
-                dx,
-                dy,
-            );
-            assert_eq!(
-                stitch.content,
-                if columns {
-                    Content {
-                        left: 12,
-                        right: 148,
-                        top: 0,
-                        bottom: 160,
-                    }
-                } else {
-                    Content {
-                        left: 0,
-                        right: 160,
-                        top: 12,
-                        bottom: 148,
-                    }
-                }
-            );
-            assert_truth(&stitch, &doc, (200, 200));
-        }
-    }
+    assert!(!stitch.has_holes());
 }
 
 #[test]
@@ -818,13 +499,12 @@ fn unsupported_motion_patterns_and_size_changes_do_not_modify_canvas() {
 }
 
 #[test]
-fn stationary_floating_texture_cannot_enter_new_strips() {
+fn stationary_floating_texture_in_observed_overlap_is_rejected() {
     let doc = document();
-    for (dx, dy) in [(40, 0), (0, 40), (40, 40), (-40, 0), (0, -40)] {
-        // 控件只占 1% 画面，旧的多数像素投票足以放行；至少一个方向
-        // 将它放在新覆盖条带，专门验证不能只检查重叠矩形。
-        let px = if dx < 0 { 8 } else { 136 };
-        let py = if dy < 0 { 8 } else { 136 };
+    for (dx, dy) in [(40, 0), (0, 40), (-40, 0), (0, -40)] {
+        // 控件只占 1% 画面；全局多数票可能放行，但真实重叠像素能提供局部反证。
+        let px = 72;
+        let py = 72;
         let overlay = |x, y| {
             let mut image = frame(&doc, x, y);
             for oy in 0..16 {
@@ -865,7 +545,7 @@ fn stationary_floating_texture_cannot_enter_new_strips() {
 #[test]
 fn animated_seam_rejects_without_changing_confirmed_state() {
     let doc = document();
-    for (dx, dy) in [(40, 0), (0, 40), (40, 40), (-40, 0), (0, -40)] {
+    for (dx, dy) in [(40, 0), (0, 40), (-40, 0), (0, -40)] {
         let first = frame(&doc, 200, 200);
         let mut next = frame(&doc, (200 + dx) as u32, (200 + dy) as u32);
         let (left, top) = if dx != 0 {
@@ -1089,15 +769,7 @@ fn capacity_rejection_and_snapshot_copy_on_write_preserve_pixels() {
 #[test]
 fn one_pixel_and_minimum_overlap_are_exact() {
     let doc = document();
-    for (dx, dy) in [
-        (1, 0),
-        (0, 1),
-        (128, 0),
-        (0, 128),
-        (-128, 0),
-        (0, -128),
-        (70, -50),
-    ] {
+    for (dx, dy) in [(1, 0), (0, 1), (128, 0), (0, 128), (-128, 0), (0, -128)] {
         let mut stitch = Stitch::new(frame(&doc, 200, 200)).unwrap();
         moved(
             stitch
@@ -1189,5 +861,127 @@ fn restored_replay_endpoints_obey_anchor_budgets_without_changing_canvas() {
             stitch.restore_viewport(&observed);
             assert_eq!(stitch.anchors.len(), anchors, "未补采时不追加当前帧");
         }
+    }
+}
+
+/// 首次可信匹配锁定单轴，换轴与斜向都不得改变成图；反向回访仍保留原图。
+#[test]
+fn first_axis_is_locked_and_reverse_scroll_preserves_pixels() {
+    let doc = document();
+    for horizontal in [false, true] {
+        let mut stitch = Stitch::new(frame(&doc, 200, 200)).unwrap();
+        let position = |offset| {
+            if horizontal {
+                (offset, 200)
+            } else {
+                (200, offset)
+            }
+        };
+        let (x, y) = position(300);
+        moved(
+            stitch.consider(frame(&doc, x, y)).unwrap(),
+            if horizontal { 100 } else { 0 },
+            if horizontal { 0 } else { 100 },
+        );
+        let before = stitch.clone();
+        for (x, y) in if horizontal {
+            [(300, 240), (340, 240)]
+        } else {
+            [(240, 300), (240, 340)]
+        } {
+            assert_eq!(
+                stitch.consider(frame(&doc, x, y)).unwrap(),
+                Match::Uncertain
+            );
+            assert_eq!(stitch.compose(), before.compose());
+            assert_eq!(stitch.viewport(), before.viewport());
+        }
+        let (x, y) = position(200);
+        moved(
+            stitch.consider(frame(&doc, x, y)).unwrap(),
+            if horizontal { -100 } else { 0 },
+            if horizontal { 0 } else { -100 },
+        );
+        assert_eq!(stitch.compose(), before.compose());
+        assert!(!stitch.has_holes());
+        assert_truth(&stitch, &doc, (200, 200));
+    }
+}
+
+/// 重绘后的帧必须通过完整拼接链路；旧重叠像素保持不变，只写入实际观察到的新条带。
+#[test]
+fn minor_redraw_small_scroll_composes_only_the_new_strip() {
+    let doc = document();
+    for horizontal in [false, true] {
+        for shift in [-9, -3, -1, 1, 3, 9, 27] {
+            let mode = if horizontal {
+                ScrollMode::Horizontal
+            } else {
+                ScrollMode::Vertical
+            };
+            let mut stitch = Stitch::with_mode(frame(&doc, 200, 200), mode).unwrap();
+            let (dx, dy) = if horizontal { (shift, 0) } else { (0, shift) };
+            let mut next = frame(&doc, (200 + dx) as u32, (200 + dy) as u32);
+            for pixel in next.pixels_mut() {
+                for channel in &mut pixel.0[..3] {
+                    *channel = channel.saturating_add(2);
+                }
+            }
+            moved(stitch.consider(next).unwrap(), dx, dy);
+            let expected = RgbaImage::from_fn(stitch.width, stitch.height, |x, y| {
+                let gx = stitch.bounds.x + i64::from(x);
+                let gy = stitch.bounds.y + i64::from(y);
+                let mut pixel = *doc.get_pixel((200 + gx) as u32, (200 + gy) as u32);
+                if !(0..160).contains(&gx) || !(0..160).contains(&gy) {
+                    for channel in &mut pixel.0[..3] {
+                        *channel = channel.saturating_add(2);
+                    }
+                }
+                pixel
+            });
+            assert_eq!(stitch.compose(), expected);
+            assert!(!stitch.has_holes());
+            assert_eq!(stitch.count(), 2);
+        }
+    }
+}
+
+/// 代码编辑器经常在同一列重复出现括号、关键字。新条带中的相同小块不是遮挡反证。
+#[test]
+fn repeated_document_glyph_in_new_strip_does_not_block_scroll() {
+    for horizontal in [false, true] {
+        let mut doc = document();
+        // 同一文档中两个合法重复片段，恰好在滚动前后的屏幕同位置出现。
+        for oy in 0..12 {
+            for ox in 0..12 {
+                let pixel = *doc.get_pixel(600 + ox, 600 + oy);
+                if horizontal {
+                    doc.put_pixel(336 + ox, 272 + oy, pixel);
+                    doc.put_pixel(376 + ox, 272 + oy, pixel);
+                } else {
+                    doc.put_pixel(272 + ox, 336 + oy, pixel);
+                    doc.put_pixel(272 + ox, 376 + oy, pixel);
+                }
+            }
+        }
+        let (dx, dy) = if horizontal { (40, 0) } else { (0, 40) };
+        let first = frame(&doc, 200, 200);
+        let next = frame(&doc, (200 + dx) as u32, (200 + dy) as u32);
+        moved(
+            alignment_in(&first, &next, ScrollMode::Auto, Content::full(&first)),
+            dx,
+            dy,
+        );
+        assert!(!stationary_overlay_conflict(
+            &first,
+            &next,
+            Content::full(&first),
+            dx,
+            dy
+        ));
+        let mut stitch = Stitch::new(first).unwrap();
+        moved(stitch.consider(next).unwrap(), dx, dy);
+        assert_truth(&stitch, &doc, (200, 200));
+        assert!(!stitch.has_holes());
     }
 }

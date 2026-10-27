@@ -41,6 +41,9 @@ impl Recovery {
         };
         match result {
             Match::Uncertain => {
+                if self.failures == 0 {
+                    stitch.log_rejection();
+                }
                 self.failures = self.failures.saturating_add(1);
                 self.failed_revision = Some(stitch.match_revision());
                 if cacheable {
@@ -90,19 +93,19 @@ impl Recovery {
     pub fn message(&self, result: Option<Match>) -> &'static str {
         match result {
             Some(Match::Uncertain) | None if self.failures >= 3 => {
-                "未找到可靠重叠，可能滚动过快或纹理重复；已确认内容保留，请沿原路滚回重叠区并停顿，匹配后自动继续。"
+                "未找到可靠重叠；已确认内容保留，请沿原路滚回重叠区并停顿，或重新框选滚动正文。"
             }
             Some(Match::Uncertain) | None if self.is_recovering() => {
                 "已确认内容保留；请沿原路滚回重叠区并停顿，匹配后自动继续。"
             }
             None => "等待页面稳定；若有局部动画，请暂停动画后继续。",
-            _ => "自动拼接中，请正常滚动页面，完成后点击完成。",
+            _ => "沿首次滚动方向所在的横轴或纵轴继续滚动，完成后点击完成。",
         }
     }
 
     pub fn delay(&self) -> u64 {
         // 重试短暂退避，仍持续采集，绝不按失败次数结束会话。
-        80 + u64::from(self.failures.min(4)) * 80
+        40 + u64::from(self.failures.min(4)) * 40
     }
 }
 

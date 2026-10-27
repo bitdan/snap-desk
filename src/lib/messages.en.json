@@ -180,7 +180,7 @@
   "清空标注并重新框选": "Clear annotations and select again",
   "选择整个屏幕 Ctrl/⌘+A": "Select full screen · Ctrl/⌘+A",
   "选择整个屏幕": "Select full screen",
-  "开始滚动截图，手动上下左右滚动后停顿拼接": "Start scroll capture; scroll in any direction, then pause to stitch",
+  "开始滚动截图，按首次滚轮方向进行横向或纵向拼接": "Start scroll capture; the first wheel input selects horizontal or vertical stitching",
   "开始滚动截图": "Start scroll capture",
   "展开录屏工具栏": "Expand recording toolbar",
   "切换到录屏": "Switch to recording",

@@ -1,4 +1,4 @@
-// CI 在安装依赖前校验标签，再从唯一版本来源生成 Tauri / Cargo / npm 所需字段。
+// CI 校验标签，再从 package.json 生成 Cargo/npm 字段；Tauri 直接引用 package.json。
 import { readVersion, syncVersion } from './sync-version.mjs'
 
 const tag = process.env.GITHUB_REF_NAME

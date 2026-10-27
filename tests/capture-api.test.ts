@@ -62,7 +62,7 @@ describe('原生窗口截图 IPC', () => {
   })
 })
 
-describe('二维滚动截图 IPC', () => {
+describe('单轴滚动截图 IPC', () => {
   it('部分保存冻结可信画布，普通完成和取消沿用同一控制命令', async () => {
     await api.controlScroll(12, false, true)
     expect(invoke).toHaveBeenLastCalledWith('control_scroll', { id: 12, cancel: false, confirmedOnly: true })
@@ -72,18 +72,18 @@ describe('二维滚动截图 IPC', () => {
     expect(invoke).toHaveBeenLastCalledWith('control_scroll', { id: 12, cancel: true, confirmedOnly: false })
   })
   const rect = { x: 10, y: 20, width: 640, height: 480 }
-  it('旧调用默认自动识别和白底，不开启原始帧存档', async () => {
+  it('默认由滚轮自动识别方向，使用白底且不存档原始帧', async () => {
     invoke.mockResolvedValueOnce({ id: 12 })
     await api.startScroll(12, rect, false)
     expect(invoke).toHaveBeenLastCalledWith('start_scroll', {
-      id: 12, rect, saveFrames: false, mode: 'auto', background: 'white',
+      id: 12, rect, saveFrames: false, background: 'white',
     })
   })
-  it('横向与透明背景选项通过同一命令发送', async () => {
+  it('透明背景沿用同一命令，不传手动方向', async () => {
     invoke.mockResolvedValueOnce({ id: 13 })
-    await api.startScroll(13, rect, false, 'horizontal', 'transparent')
+    await api.startScroll(13, rect, false, 'transparent')
     expect(invoke).toHaveBeenLastCalledWith('start_scroll', {
-      id: 13, rect, saveFrames: false, mode: 'horizontal', background: 'transparent',
+      id: 13, rect, saveFrames: false, background: 'transparent',
     })
   })
 })

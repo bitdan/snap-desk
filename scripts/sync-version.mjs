@@ -1,4 +1,4 @@
-// package.json 是唯一版本来源；其他工具所需的版本字段由此脚本生成。
+// package.json 是唯一版本来源。Tauri 直接引用它，Cargo/npm 必需的字面量由此生成。
 import { readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -40,7 +40,11 @@ export function syncVersion(root = defaultRoot) {
     lock.version = version
     lock.packages[''].version = version
   })
-  updateJson('src-tauri/tauri.conf.json', config => { config.version = version })
+  // 不把路径改回版本字面量，让 Tauri CLI、应用内版本与安装包直接读取 package.json。
+  const config = JSON.parse(readFileSync(resolve(root, 'src-tauri/tauri.conf.json'), 'utf8'))
+  if (config.version !== '../package.json') {
+    throw new Error('tauri.conf.json version 必须引用 ../package.json。')
+  }
 
   // 按 TOML 段定位，禁止全局替换，以免改到恰好同版本的第三方依赖。
   const updateToml = (file, header) => update(file, text => {

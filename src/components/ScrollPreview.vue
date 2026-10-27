@@ -7,7 +7,7 @@ import { isTauri } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { resolveWindowKind } from '@/lib/window-kind'
 import { api, onCaptureClosed, onScroll, type ScrollView } from '@/lib/api'
-import { newerScrollPreview, scrollCoverageLabel, scrollViewportStyle } from '@/lib/scroll-capture'
+import { newerScrollPreview, scrollViewportStyle } from '@/lib/scroll-capture'
 
 const controls = resolveWindowKind(isTauri() ? getCurrentWindow().label : null, location.search) === 'scroll-controls'
 const view = ref<ScrollView | null>(null)
@@ -32,7 +32,7 @@ function receive(next: ScrollView) {
   if (next.id !== view.value?.id) { busy.value = false; error.value = '' }
   view.value = next
 }
-// 二维视口以文档包围盒归一化，回滚时移动框但不重复增长画布。
+// 单轴回滚时移动视口框，不重复增长画布。
 const marker = computed(() => view.value ? scrollViewportStyle(view.value) : {})
 async function finish(cancel: boolean) {
   if (!view.value || busy.value) return
@@ -73,7 +73,7 @@ onUnmounted(() => { disposed = true; window.removeEventListener('keydown', key);
         </div>
         <span v-else>{{ t("准备采集…") }}</span>
       </div>
-      <p v-if="view" class="coverage">{{ t("覆盖") }} {{ scrollCoverageLabel(view) }}%<span v-if="view.hasHoles"> {{ t("· 棋盘格标出未采集区域（细小空洞会放大显示），请按蛇形路径补齐") }}</span></p>
+      <p v-if="view" class="coverage">{{ t("已拼接 {0} 帧", { 0: view.frames }) }}</p>
       <p class="preview-hint" :class="{ error, recovering }" :role="error ? 'alert' : recovering ? 'status' : undefined" :title="te(hint)">{{ te(hint) }}<span v-if="recovering && !error">{{ t("也可保存已确认部分或取消。") }}</span></p>
     </template>
     <footer v-else>

@@ -236,7 +236,7 @@ async function startScroll() {
   // 滚动截图仅输出拼接结果；排错使用应用日志，不再额外保存原始帧。
   const id = frame.value.id
   try {
-    await api.startScroll(id, pixels.value, false, 'auto', 'white')
+    await api.startScroll(id, pixels.value, false, 'white')
     // 独立预览窗口接管进度；隐藏浮层不保留整桌面图片或标注历史。
     releaseFrame(id)
     if (!frame.value) scroll.value = null
@@ -482,7 +482,7 @@ onUnmounted(() => { releaseFrame(); disposed = true; offClosed?.(); off?.(); off
           <button v-if="!recordingMode && selectedTarget !== null && frame?.targets[selectedTarget]?.kind === 'window'" :disabled="busy || marked || editor.pending || editor.interacting" :title='t("原生窗口截图")' :aria-label='t("原生窗口截图")' @click="captureNative"><AppWindow :size="16" /></button>
           <button :disabled="busy || editor.pending || editor.interacting" :title='t("清空标注并重新框选")' :aria-label='t("清空标注并重新框选")' @click="reselect"><RotateCcw :size="16" /></button>
           <button :disabled="busy || editor.pending || editor.interacting || marked" :title='t("选择整个屏幕 Ctrl/⌘+A")' :aria-label='t("选择整个屏幕")' @click="selectAll"><Monitor :size="16" /></button>
-          <button v-if="!recordingMode" :disabled="busy || editor.pending || editor.interacting || marked" :title='t("开始滚动截图，手动上下左右滚动后停顿拼接")' :aria-label='t("开始滚动截图")' @click="startScroll"><ScrollCaptureIcon :size="16" /></button>
+          <button v-if="!recordingMode" :disabled="busy || editor.pending || editor.interacting || marked" :title='t("开始滚动截图，按首次滚轮方向进行横向或纵向拼接")' :aria-label='t("开始滚动截图")' @click="startScroll"><ScrollCaptureIcon :size="16" /></button>
           <button ref="recordingTrigger" class="recording-mode-trigger" :disabled="busy || editor.pending || editor.interacting || !recordingCapabilities?.available" :title="recordingCapabilities?.reason ?? (recordingCapabilityError || (recordingCapabilities ? t(recordingMode ? '返回截图' : '切换到录屏') : t('正在检查录屏能力…')))" :aria-label="t(recordingMode ? '返回截图' : '展开录屏工具栏')" :aria-pressed="recordingMode" :aria-expanded="recordingMode" @click="recordingMode ? leaveRecordingMode() : enterRecordingMode()"><Video :size="16" /></button>
         <template v-if="!recordingMode">
         <button :disabled="busy || editor.pending || editor.interacting" :title='t("贴图 Ctrl/⌘+P")' :aria-label='t("贴图")' @click="finish('pin')"><Pin :size="16" /></button>

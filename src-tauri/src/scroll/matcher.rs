@@ -1,4 +1,4 @@
-//! 二维纯平移匹配：纹理指纹提出候选，空间分块与原始像素复核后才提交。
+//! 单轴平移匹配：只扫描固定的 20 条采样线，分区投票后复核重叠像素。
 //! 不缩放或拉伸文字；重复纹理、运动冲突和无重叠均保守拒绝。
 use image::RgbaImage;
 use serde::{Deserialize, Serialize};
@@ -78,38 +78,9 @@ fn difference(a: &RgbaImage, b: &RgbaImage, ax: u32, ay: u32, bx: u32, by: u32) 
 
 /// 静止边界必须连续、包含纹理且在四分之一尺寸内终止；空白背景不当成固定栏。
 fn content(a: &RgbaImage, b: &RgbaImage) -> Content {
-    content_with_motion(a, b, 0, 0)
-}
-
-/// 首次斜向滚动时，固定表头只跟随横向分量，冻结列只跟随纵向分量。
-/// 候选位移只是检测线索：仍要求连续、带纹理的边界和后续正文像素复核。
-/// 纯单轴滚动沿用同位置检测，避免把整个正常正文误识别为固定区。
-fn content_with_motion(a: &RgbaImage, b: &RgbaImage, dx: i32, dy: i32) -> Content {
-    let band = |vertical: bool, reverse: bool, central: bool| {
+    let band = |vertical: bool, reverse: bool| {
         let length = if vertical { a.width() } else { a.height() };
         let cross = if vertical { a.height() } else { a.width() };
-        let shift = if dx != 0 && dy != 0 {
-            if vertical {
-                dy
-            } else {
-                dx
-            }
-        } else {
-            0
-        };
-        // q 属于新帧，q + shift 属于旧帧；两点都必须位于切向真实重叠。
-        // 斜向移动时，只在两帧中央半区取样：可识别固定栏本就小于尺寸的
-        // 四分之一，交叉冻结角因而不会混入另一条固定栏的切向复核。
-        // 例如表头随 x 移动，但左上冻结角不动；把它们混采会错误否决表头。
-        // 先尝试完整重叠，仅失败时使用中央区；不能让较大位移下中央重叠
-        // 不足的新限制破坏原本可识别的单条固定栏。证据不足仍不猜边界。
-        let inset = if central { i64::from(cross / 4) } else { 0 };
-        let cross_end = i64::from(cross) - inset;
-        let start = inset.max(inset - i64::from(shift));
-        let end = cross_end.min(cross_end - i64::from(shift));
-        if end - start < i64::from(MIN_OVERLAP) {
-            return 0;
-        }
         let mut textured = 0;
         let mut count = 0;
         for i in 0..length / 4 {
@@ -117,12 +88,9 @@ fn content_with_motion(a: &RgbaImage, b: &RgbaImage, dx: i32, dy: i32) -> Conten
             let mut same = 0;
             let mut row_texture = 0;
             for n in 1..=48 {
-                let q = (start + i64::from(n) * (end - start - 1) / 49) as u32;
-                let old_q = (i64::from(q) + i64::from(shift)) as u32;
+                let q = n * (cross - 1) / 49;
                 let (x, y) = if vertical { (pos, q) } else { (q, pos) };
-                let (ax, ay) = if vertical { (pos, old_q) } else { (old_q, pos) };
-                same += u32::from(difference(a, b, ax, ay, x, y) <= 6);
-                // 沿边界切向检查纹理，不能借用边界外正文的纹理把空白边距当固定栏。
+                same += u32::from(difference(a, b, x, y, x, y) <= 6);
                 let (nx, ny) = if vertical {
                     (x, (y + 2).min(a.height() - 1))
                 } else {
@@ -142,19 +110,11 @@ fn content_with_motion(a: &RgbaImage, b: &RgbaImage, dx: i32, dy: i32) -> Conten
             0
         }
     };
-    let detect = |vertical, reverse| {
-        let full = band(vertical, reverse, false);
-        if full == 0 && dx != 0 && dy != 0 {
-            band(vertical, reverse, true)
-        } else {
-            full
-        }
-    };
     Content {
-        left: detect(true, false),
-        right: a.width() - detect(true, true),
-        top: detect(false, false),
-        bottom: a.height() - detect(false, true),
+        left: band(true, false),
+        right: a.width() - band(true, true),
+        top: band(false, false),
+        bottom: a.height() - band(false, true),
     }
 }
 
@@ -166,8 +126,8 @@ fn texture(image: &RgbaImage, x: u32, y: u32) -> bool {
 }
 
 /// 检查正文中是否存在随屏幕静止、却不服从文档位移的纹理小块。
-/// 仅凭大多数重叠像素一致不能安全写入整帧：悬浮按钮可能位于新增条带，
-/// 根本不参加重叠复核。这里扫描整个有效内容区，发现冲突就保留可信画布。
+/// 只在真实重叠区检查反证：新增条带没有旧文档像素可比较，不能仅凭屏幕同位置
+/// 恰好出现相同小块，就把 IDEA 中重复的括号、缩进或关键字认作悬浮控件。
 /// 这不是控件识别器；不尝试猜测遮挡下的正文，也不放宽动画的匹配阈值。
 pub(super) fn stationary_overlay_conflict(
     a: &RgbaImage,
@@ -196,14 +156,16 @@ pub(super) fn stationary_overlay_conflict(
                 for ox in (0..=4).step_by(2) {
                     let ax = i64::from(x + ox) + i64::from(dx);
                     let ay = i64::from(y + oy) + i64::from(dy);
-                    // 位移后的点在旧内容区之外时也算冲突：否则新增条带内的
-                    // 悬浮按钮会绕过检查。空白块没有纹理，不会走到这里。
+                    // 旧帧未观察到该文档坐标时没有反证，不能把“未知”当作像素冲突。
+                    // 新增条带中的重复代码会与旧屏幕同位置相同，但这是合法文档内容。
                     if ax < i64::from(roi.left)
                         || ax >= i64::from(roi.right)
                         || ay < i64::from(roi.top)
                         || ay >= i64::from(roi.bottom)
-                        || difference(a, b, ax as u32, ay as u32, x + ox, y + oy) > 36
                     {
+                        continue;
+                    }
+                    if difference(a, b, ax as u32, ay as u32, x + ox, y + oy) > 36 {
                         conflicts += 1;
                     }
                 }
@@ -228,18 +190,6 @@ fn fingerprint(image: &RgbaImage, x: u32, y: u32) -> u64 {
     hash
 }
 
-/// 先用两个像素筛掉不可能命中的位置，再计算完整指纹。
-/// 位表只会多放行、不会漏掉相同纹理；最终仍使用原来的完整指纹与像素复核。
-const PREFIX_WORDS: usize = 1024;
-fn prefix(image: &RgbaImage, x: u32, y: u32) -> usize {
-    let a = image.get_pixel(x, y);
-    let b = image.get_pixel(x + 2, y + 2);
-    let rgb =
-        |p: &image::Rgba<u8>| u32::from(p[0]) | (u32::from(p[1]) << 8) | (u32::from(p[2]) << 16);
-    let mixed = rgb(a).wrapping_mul(0x9e3779b1) ^ rgb(b).wrapping_mul(0x85ebca6b);
-    ((mixed ^ (mixed >> 16)) & 0xffff) as usize
-}
-
 /// 已由最新帧确定位置时，历史锚点只需复核这个位移，不再全图搜索一次。
 /// None 表示缺少可信证据；调用方保留完整搜索作为失败回退。
 pub(super) fn verify_at(
@@ -249,7 +199,8 @@ pub(super) fn verify_at(
     dy: i32,
     known: Content,
 ) -> Option<Alignment> {
-    if a.dimensions() != b.dimensions() || a.width() < 32 || a.height() < 64 {
+    if (dx != 0 && dy != 0) || a.dimensions() != b.dimensions() || a.width() < 32 || a.height() < 64
+    {
         return None;
     }
     verify(a, b, content(a, b).intersect(known), dx, dy)
@@ -258,12 +209,6 @@ pub(super) fn verify_at(
 /// 每个交集分成 4×4 块，按多数纹理提名位移；少量差异仍可能通过。
 /// 这里只负责定位，实际写入前还须由 Stitch 复核画布与接缝冲突。
 fn verify(a: &RgbaImage, b: &RgbaImage, roi: Content, dx: i32, dy: i32) -> Option<Alignment> {
-    // 全搜索和历史位移快速复核共用此入口，不能让其中一路丢掉新边界证据。
-    let roi = if dx != 0 && dy != 0 {
-        content_with_motion(a, b, dx, dy).intersect(roi)
-    } else {
-        roi
-    };
     let left = (roi.left as i32).max(roi.left as i32 - dx);
     let top = (roi.top as i32).max(roi.top as i32 - dy);
     let right = (roi.right as i32).min(roi.right as i32 - dx);
@@ -323,290 +268,377 @@ fn verify(a: &RgbaImage, b: &RgbaImage, roi: Content, dx: i32, dy: i32) -> Optio
 
 #[cfg(test)]
 pub fn alignment(a: &RgbaImage, b: &RgbaImage, mode: ScrollMode) -> Match {
-    align_impl(a, b, mode, true)
+    alignment_in(a, b, mode, Content::full(a))
 }
 
-/// 直接匹配与历史锚点匹配共用内容区，保证候选提名、像素复核和写入边界一致。
+/// 自动状态只用于首次识别：分别试两个单轴，不能接受斜向或有歧义的位移。
+/// Windows 会话在调用前由滚轮输入锁轴；其他平台由首个可信单轴画面锁轴。
 pub(super) fn alignment_in(
     a: &RgbaImage,
     b: &RgbaImage,
     mode: ScrollMode,
     known: Content,
 ) -> Match {
-    align_content(a, b, mode, true, known)
-}
-
-// 测试可关闭前置过滤，与原扫描路径对照；生产路径始终启用。
-#[cfg(test)]
-fn align_impl(a: &RgbaImage, b: &RgbaImage, mode: ScrollMode, filter_prefix: bool) -> Match {
-    align_content(a, b, mode, filter_prefix, Content::full(a))
-}
-
-fn align_content(
-    a: &RgbaImage,
-    b: &RgbaImage,
-    mode: ScrollMode,
-    filter_prefix: bool,
-    known: Content,
-) -> Match {
     if a.dimensions() != b.dimensions() || a.width() < 32 || a.height() < 64 {
         return Match::Uncertain;
     }
-    // 相同画面无需再扫描全帧。精确相同不会把重复页面误认成移动。
     if a == b {
         return Match::Unchanged;
     }
     let roi = content(a, b).intersect(known);
-    // 防止无效内容区在下面的无符号采样坐标计算中下溢。
     if roi.right.saturating_sub(roi.left) < MIN_OVERLAP
         || roi.bottom.saturating_sub(roi.top) < MIN_OVERLAP
     {
         return Match::Uncertain;
     }
-    let mut patches: HashMap<u64, Vec<(u32, u32, usize)>> = HashMap::new();
-    let mut prefixes = [0u64; PREFIX_WORDS];
-    for row in 0..20 {
-        for col in 0..20 {
-            let x = roi.left + (roi.right - roi.left - 3) * col / 19;
-            let y = roi.top + (roi.bottom - roi.top - 3) * row / 19;
+    match mode {
+        ScrollMode::Vertical => align_axis(a, b, roi, true),
+        ScrollMode::Horizontal => align_axis(a, b, roi, false),
+        ScrollMode::Auto => match (align_axis(a, b, roi, true), align_axis(a, b, roi, false)) {
+            (result @ Match::Aligned(_), Match::Uncertain)
+            | (Match::Uncertain, result @ Match::Aligned(_)) => result,
+            _ => Match::Uncertain,
+        },
+    }
+}
+
+/// 单轴移动时横截坐标保持不变，因此只需要扫描 20 条线，而无需遍历整帧。
+/// 指纹仅提名位移；重复纹理、有多个近似解、无重叠仍然拒绝，最终检查原始像素。
+fn align_axis(a: &RgbaImage, b: &RgbaImage, roi: Content, vertical: bool) -> Match {
+    match align_axis_exact(a, b, roi, vertical) {
+        Ok(result) => return Match::Aligned(result),
+        // 已经复核出多个近似位移时保留拒绝，不能让回退丢掉已知歧义。
+        Err(true) => return Match::Uncertain,
+        Err(false) => {}
+    }
+    // 浏览器滚动后可能重新栅格化文字。精确指纹没有通过时，再用有容差的小块提名；
+    // 两条路径最终共用 verify，不能为了恢复候选而降低整幅重叠区的验收标准。
+    align_axis_tolerant(a, b, roi, vertical)
+}
+
+// Err(true) 表示像素复核已确认歧义；Err(false) 表示证据不足，可继续容差搜索。
+fn align_axis_exact(
+    a: &RgbaImage,
+    b: &RgbaImage,
+    roi: Content,
+    vertical: bool,
+) -> Result<Alignment, bool> {
+    let (start, end, cross_start, cross_end) = if vertical {
+        (roi.top, roi.bottom, roi.left, roi.right)
+    } else {
+        (roi.left, roi.right, roi.top, roi.bottom)
+    };
+    let point = |cross, along| {
+        if vertical {
+            (cross, along)
+        } else {
+            (along, cross)
+        }
+    };
+    let mut candidates: HashMap<i32, u16> = HashMap::new();
+    for line in 0..20 {
+        let cross = cross_start + (cross_end - cross_start - 3) * line / 19;
+        let mut patches: HashMap<u64, Vec<(u32, usize)>> = HashMap::new();
+        for sample in 0..20 {
+            let along = start + (end - start - 3) * sample / 19;
+            let (x, y) = point(cross, along);
             if texture(b, x, y) {
-                let key = prefix(b, x, y);
-                prefixes[key / 64] |= 1u64 << (key % 64);
-                patches.entry(fingerprint(b, x, y)).or_default().push((
-                    x,
-                    y,
-                    (row / 5 * 4 + col / 5) as usize,
-                ));
+                patches
+                    .entry(fingerprint(b, x, y))
+                    .or_default()
+                    .push((along, (line / 5 * 4 + sample / 5) as usize));
             }
         }
-    }
-    if patches.is_empty() {
-        return Match::Uncertain;
-    }
-    // 每块只保留少量命中；高度重复图案不能让候选数量或 CPU 无界增长。
-    let mut hits: HashMap<u64, Vec<(u32, u32)>> = HashMap::new();
-    for y in roi.top..roi.bottom - 2 {
-        for x in roi.left..roi.right - 2 {
-            if filter_prefix {
-                let key = prefix(a, x, y);
-                if prefixes[key / 64] & (1u64 << (key % 64)) == 0 {
-                    continue;
-                }
-            }
-            if !texture(a, x, y) {
-                continue;
-            }
+        if patches.is_empty() {
+            continue;
+        }
+        let mut hits: HashMap<u64, Vec<u32>> = HashMap::new();
+        for along in start..end - 2 {
+            let (x, y) = point(cross, along);
             let hash = fingerprint(a, x, y);
             if patches.contains_key(&hash) {
                 let points = hits.entry(hash).or_default();
                 if points.len() < 9 {
-                    points.push((x, y));
+                    points.push(along);
+                }
+            }
+        }
+        for (hash, points) in hits {
+            if points.len() > 8 {
+                continue;
+            }
+            for &(next, region) in &patches[&hash] {
+                for &previous in &points {
+                    let shift = previous as i32 - next as i32;
+                    if shift != 0 {
+                        *candidates.entry(shift).or_default() |= 1 << region;
+                    }
                 }
             }
         }
     }
-    let mut candidates: HashMap<(i32, i32), u16> = HashMap::new();
-    for (hash, points) in hits {
-        // 重复块只允许有限候选参与消歧；九次以上视为无定位价值。
-        if points.len() > 8 {
-            continue;
-        }
-        for &(bx, by, region) in &patches[&hash] {
-            for &(ax, ay) in &points {
-                let (dx, dy) = (ax as i32 - bx as i32, ay as i32 - by as i32);
-                // 先收集各方向冲突，模式只限制最终接受的位移，不能掩盖独立面板。
-                if dx == 0 && dy == 0 {
-                    continue;
-                }
-                *candidates.entry((dx, dy)).or_default() |= 1 << region;
-            }
-        }
-    }
-    let mut ranked: Vec<_> = candidates
+    let ranked: Vec<_> = candidates
         .into_iter()
-        .filter(|(_, regions)| regions.count_ones() >= 2)
+        .filter(|(_, votes)| votes.count_ones() >= 2)
         .collect();
-    ranked.sort_by_key(|(_, regions)| std::cmp::Reverse(regions.count_ones()));
-    // 两个明显不同的运动都获得多区域支持时，不能猜测主容器。
     if ranked.len() > 64 {
-        return Match::Uncertain;
+        return Err(false);
     }
-    let mut valid = Vec::new();
-    for ((dx, dy), _) in ranked {
-        if let Some(result) = verify(a, b, roi, dx, dy) {
-            valid.push(result);
-        }
-    }
+    let mut valid: Vec<_> = ranked
+        .into_iter()
+        .filter_map(|(shift, _)| {
+            let (dx, dy) = if vertical { (0, shift) } else { (shift, 0) };
+            verify(a, b, roi, dx, dy)
+        })
+        .collect();
     valid.sort_by(|a, b| b.confidence.total_cmp(&a.confidence));
     let Some(best) = valid.first().copied() else {
-        return Match::Uncertain;
+        return Err(false);
     };
     if valid
         .iter()
         .skip(1)
         .any(|v| v.confidence >= best.confidence - 0.03)
     {
-        return Match::Uncertain;
+        return Err(true);
     }
-    if (mode == ScrollMode::Vertical && best.dx != 0)
-        || (mode == ScrollMode::Horizontal && best.dy != 0)
-    {
-        return Match::Uncertain;
+    Ok(best)
+}
+
+/// 有界的容差回退：在 20 条线上自适应选取纹理，不要求文字恰好落在固定网格点。
+/// 每个空间分区最多两个锚点，总数最多 32；只沿已锁定的轴搜索，不做二维搜索。
+fn align_axis_tolerant(a: &RgbaImage, b: &RgbaImage, roi: Content, vertical: bool) -> Match {
+    let (start, end, cross_start, cross_end) = if vertical {
+        (roi.top, roi.bottom, roi.left, roi.right)
+    } else {
+        (roi.left, roi.right, roi.top, roi.bottom)
+    };
+    let point = |cross, along| {
+        if vertical {
+            (cross, along)
+        } else {
+            (along, cross)
+        }
+    };
+    // (纹理强度, 横截坐标, 轴向坐标)，各区保留相隔至少 8 像素的两个小块。
+    let mut anchors: [Vec<(u32, u32, u32)>; 16] = std::array::from_fn(|_| Vec::new());
+    for line in 0..20 {
+        let cross = cross_start + (cross_end - cross_start - 3) * line / 19;
+        for along in start..end - 2 {
+            let (x, y) = point(cross, along);
+            let score = difference(b, b, x, y, x + 2, y)
+                + difference(b, b, x, y, x, y + 2)
+                + difference(b, b, x, y, x + 2, y + 2);
+            if score <= 60 {
+                continue;
+            }
+            let region = (line / 5 * 4 + ((along - start) * 4 / (end - start)).min(3)) as usize;
+            let patches = &mut anchors[region];
+            if let Some(close) = patches
+                .iter_mut()
+                .find(|(_, c, p)| cross.abs_diff(*c) + along.abs_diff(*p) < 8)
+            {
+                if score > close.0 {
+                    *close = (score, cross, along);
+                }
+            } else if patches.len() < 2 {
+                patches.push((score, cross, along));
+            } else {
+                let weakest = usize::from(patches[1].0 < patches[0].0);
+                if score > patches[weakest].0 {
+                    patches[weakest] = (score, cross, along);
+                }
+            }
+        }
     }
-    Match::Aligned(best)
+    let length = (end - start) as i32;
+    // 位移以 length 为零点索引，避免为每个命中分配 HashMap 节点。
+    let mut votes = vec![0u16; (length * 2 + 1) as usize];
+    for (region, patches) in anchors.iter().enumerate() {
+        for &(_, cross, next) in patches {
+            let (bx, by) = point(cross, next);
+            for previous in start..end - 2 {
+                let shift = previous as i32 - next as i32;
+                if shift == 0 || length - shift.abs() < MIN_OVERLAP as i32 {
+                    continue;
+                }
+                let (ax, ay) = point(cross, previous);
+                if difference(a, b, ax, ay, bx, by) > 36 {
+                    continue;
+                }
+                let mut bad = 0;
+                'patch: for oy in 0..3 {
+                    for ox in 0..3 {
+                        bad += u32::from(difference(a, b, ax + ox, ay + oy, bx + ox, by + oy) > 36);
+                        if bad > 1 {
+                            break 'patch;
+                        }
+                    }
+                }
+                if bad <= 1 {
+                    votes[(shift + length) as usize] |= 1 << region;
+                }
+            }
+        }
+    }
+    let mut best: Option<Alignment> = None;
+    let mut runner_up = 0.0f32;
+    let mut candidates = 0;
+    for (index, regions) in votes.into_iter().enumerate() {
+        if regions.count_ones() < 2 {
+            continue;
+        }
+        candidates += 1;
+        let shift = index as i32 - length;
+        let (dx, dy) = if vertical { (0, shift) } else { (shift, 0) };
+        let Some(result) = verify(a, b, roi, dx, dy) else {
+            continue;
+        };
+        if best.is_none_or(|current| result.confidence > current.confidence) {
+            runner_up = best.map_or(runner_up, |current| runner_up.max(current.confidence));
+            best = Some(result);
+        } else {
+            runner_up = runner_up.max(result.confidence);
+        }
+        // 次优解已接近满分时，任何后续候选都无法拉开安全差距；重复表格尽早拒绝。
+        if runner_up >= 0.97 {
+            break;
+        }
+    }
+    if log::log_enabled!(log::Level::Debug) && crate::diagnostics::runtime::sample_debug() {
+        log::debug!(
+            "event=scroll.match_tolerant module=scroll candidates={} matched={}",
+            candidates,
+            best.is_some()
+        );
+    }
+    match best {
+        Some(result) if runner_up < result.confidence - 0.03 => Match::Aligned(result),
+        _ => Match::Uncertain,
+    }
 }
 
 #[cfg(test)]
-mod performance_tests {
+mod tests {
     use super::*;
     use image::Rgba;
-    use std::{hint::black_box, time::Instant};
 
-    fn document(width: u32, height: u32, sparse: bool) -> RgbaImage {
-        RgbaImage::from_fn(width, height, |x, y| {
-            if sparse && (y % 30 > 10 || x % 50 > 24) {
-                return Rgba([250, 250, 250, 255]);
+    /// 白底、窄文字区、重复行距；每行的笔画不同，文档位置有唯一真值。
+    fn text_document() -> RgbaImage {
+        RgbaImage::from_fn(480, 1000, |x, y| {
+            if !(80..360).contains(&x) || y % 27 >= 10 {
+                return Rgba([255, 255, 255, 255]);
             }
-            let value =
-                (x.wrapping_mul(73856093) ^ y.wrapping_mul(19349663)).wrapping_mul(83492791);
-            Rgba([value as u8, (value >> 8) as u8, (value >> 16) as u8, 255])
+            let mut value = ((x / 7).wrapping_mul(73856093)
+                ^ (y / 27).wrapping_mul(19349663)
+                ^ (x % 7).wrapping_mul(83492791)
+                ^ (y % 27).wrapping_mul(2654435761))
+            .wrapping_mul(2246822519);
+            value ^= value >> 13;
+            let shade = if value % 3 == 0 { 45 } else { 255 };
+            Rgba([shade, shade, shade, 255])
         })
     }
 
     #[test]
-    fn prefix_filter_preserves_full_scan_results() {
-        for sparse in [false, true] {
-            let doc = document(560, 560, sparse);
-            let frame = |x, y| image::imageops::crop_imm(&doc, x, y, 160, 160).to_image();
-            let a = frame(160, 160);
-            for (x, y) in [
-                (160, 160),
-                (161, 160),
-                (160, 288),
-                (32, 160),
-                (205, 107),
-                (380, 380),
-            ] {
-                let b = frame(x, y);
-                for mode in [
-                    ScrollMode::Auto,
-                    ScrollMode::Vertical,
-                    ScrollMode::Horizontal,
-                ] {
-                    assert_eq!(alignment(&a, &b, mode), align_impl(&a, &b, mode, false));
+    fn small_text_scroll_survives_minor_redraw_in_both_axes_and_directions() {
+        let doc = text_document();
+        let first = image::imageops::crop_imm(&doc, 0, 150, 480, 320).to_image();
+        for shift in [-9, -3, -1, 1, 3, 9, 27] {
+            let mut next =
+                image::imageops::crop_imm(&doc, 0, (150 + shift) as u32, 480, 320).to_image();
+            for pixel in next.pixels_mut() {
+                if pixel[0] < 240 {
+                    for channel in &mut pixel.0[..3] {
+                        *channel += 2;
+                    }
                 }
             }
+            // 先锁定旧实现的失败前提：微小重绘使精确哈希没有候选。
+            assert_eq!(
+                align_axis_exact(&first, &next, Content::full(&first), true),
+                Err(false)
+            );
+            for horizontal in [false, true] {
+                let (a, b, mode) = if horizontal {
+                    (
+                        image::imageops::rotate90(&first),
+                        image::imageops::rotate90(&next),
+                        ScrollMode::Horizontal,
+                    )
+                } else {
+                    (first.clone(), next.clone(), ScrollMode::Vertical)
+                };
+                let Match::Aligned(result) = alignment(&a, &b, mode) else {
+                    panic!("小幅文字滚动未匹配：{shift}, horizontal={horizontal}");
+                };
+                assert_eq!(
+                    (result.dx, result.dy),
+                    if horizontal { (-shift, 0) } else { (0, shift) }
+                );
+            }
         }
-        let repeat = RgbaImage::from_fn(160, 320, |x, y| {
+    }
+
+    #[test]
+    fn tolerant_search_rejects_repeated_textures_blank_pages_and_wrong_axes() {
+        let repeat = RgbaImage::from_fn(160, 360, |x, y| {
             Rgba([((x % 20) * 12) as u8, ((y % 20) * 12) as u8, 0, 255])
         });
-        let a = image::imageops::crop_imm(&repeat, 0, 0, 160, 160).to_image();
-        let b = image::imageops::crop_imm(&repeat, 0, 5, 160, 160).to_image();
-        assert_eq!(alignment(&a, &b, ScrollMode::Auto), Match::Uncertain);
+        let first = image::imageops::crop_imm(&repeat, 0, 40, 160, 160).to_image();
+        let next = image::imageops::crop_imm(&repeat, 0, 45, 160, 160).to_image();
         assert_eq!(
-            alignment(&a, &b, ScrollMode::Auto),
-            align_impl(&a, &b, ScrollMode::Auto, false)
+            align_axis_tolerant(&first, &next, Content::full(&first), true),
+            Match::Uncertain
+        );
+        assert_eq!(
+            alignment(
+                &first,
+                &RgbaImage::from_pixel(160, 160, Rgba([255; 4])),
+                ScrollMode::Vertical
+            ),
+            Match::Uncertain
+        );
+        let doc = text_document();
+        let first = image::imageops::crop_imm(&doc, 0, 150, 480, 320).to_image();
+        let next = image::imageops::crop_imm(&doc, 0, 159, 480, 320).to_image();
+        assert_eq!(
+            alignment(&first, &next, ScrollMode::Horizontal),
+            Match::Uncertain
         );
     }
-
     #[test]
-    fn diagonal_known_offset_preserves_new_fixed_band_evidence() {
-        let doc = document(600, 600, false);
-        for columns in [false, true] {
-            let frame = |x, y| {
-                let mut image = image::imageops::crop_imm(&doc, x, y, 160, 160).to_image();
-                for py in 0..160 {
-                    for px in 0..160 {
-                        if columns && (px < 12 || px >= 148) {
-                            image.put_pixel(px, py, *doc.get_pixel(400 + px, y + py));
-                        } else if !columns && (py < 12 || py >= 148) {
-                            image.put_pixel(px, py, *doc.get_pixel(x + px, 400 + py));
-                        }
-                    }
-                }
-                image
+    fn single_axes_match_exactly_and_diagonal_motion_is_rejected() {
+        let doc = RgbaImage::from_fn(600, 600, |x, y| {
+            let v = (x.wrapping_mul(73856093) ^ y.wrapping_mul(19349663)).wrapping_mul(83492791);
+            Rgba([v as u8, (v >> 8) as u8, (v >> 16) as u8, 255])
+        });
+        let frame = |x, y| image::imageops::crop_imm(&doc, x, y, 160, 160).to_image();
+        let first = frame(200, 200);
+        for (dx, dy, mode) in [
+            (1, 0, ScrollMode::Horizontal),
+            (-128, 0, ScrollMode::Horizontal),
+            (0, 1, ScrollMode::Vertical),
+            (0, 128, ScrollMode::Vertical),
+        ] {
+            let next = frame((200 + dx) as u32, (200 + dy) as u32);
+            let Match::Aligned(result) = alignment(&first, &next, mode) else {
+                panic!("未识别单轴位移");
             };
-            let a = frame(100, 100);
-            let b = frame(140, 60);
-            assert_eq!(content(&a, &b), Content::full(&a));
-            let verified = verify_at(&a, &b, 40, -40, Content::full(&a)).unwrap();
+            assert_eq!((result.dx, result.dy), (dx, dy));
             assert_eq!(
-                verified.content,
-                if columns {
-                    Content {
-                        left: 12,
-                        top: 0,
-                        right: 148,
-                        bottom: 160,
-                    }
-                } else {
-                    Content {
-                        left: 0,
-                        top: 12,
-                        right: 160,
-                        bottom: 148,
-                    }
-                }
+                alignment(&first, &next, ScrollMode::Auto),
+                Match::Aligned(result)
             );
-            assert_eq!(
-                alignment(&a, &b, ScrollMode::Auto),
-                Match::Aligned(verified)
-            );
-            assert!(verify_at(&a, &b, 41, -40, Content::full(&a)).is_none());
+            assert!(verify_at(&first, &next, dx + 2, dy + 2, Content::full(&first)).is_none());
         }
-    }
-
-    #[test]
-    fn known_offset_still_requires_pixel_agreement() {
-        let doc = document(400, 400, false);
-        let a = image::imageops::crop_imm(&doc, 80, 80, 160, 160).to_image();
-        let b = image::imageops::crop_imm(&doc, 120, 50, 160, 160).to_image();
-        let expected = verify_at(&a, &b, 40, -30, Content::full(&a)).unwrap();
         assert_eq!(
-            alignment(&a, &b, ScrollMode::Auto),
-            Match::Aligned(expected)
+            alignment(&first, &frame(240, 240), ScrollMode::Auto),
+            Match::Uncertain
         );
-        assert!(verify_at(&a, &b, 41, -30, Content::full(&a)).is_none());
-        assert!(verify_at(&a, &b, 150, 0, Content::full(&a)).is_none());
-    }
-
-    /// 同一进程交替执行优化前后扫描，输出中位数；不把机器相关耗时写成测试阈值。
-    #[test]
-    #[ignore = "滚动识别定向性能基准；需用户允许编译后以 release 手动运行"]
-    fn compare_matcher_scan_cost() {
-        for (width, height) in [(640, 480), (1280, 720), (2560, 1440)] {
-            for sparse in [false, true] {
-                let doc = document(width + 200, height + 200, sparse);
-                let a = image::imageops::crop_imm(&doc, 0, 0, width, height).to_image();
-                let b = image::imageops::crop_imm(&doc, 61, 97, width, height).to_image();
-                let expected = align_impl(&a, &b, ScrollMode::Auto, false);
-                assert!(matches!(expected, Match::Aligned(_)));
-                let mut baseline = Vec::new();
-                let mut optimized = Vec::new();
-                for iteration in 0..6 {
-                    for filter in if iteration % 2 == 0 {
-                        [false, true]
-                    } else {
-                        [true, false]
-                    } {
-                        let started = Instant::now();
-                        let result =
-                            align_impl(black_box(&a), black_box(&b), ScrollMode::Auto, filter);
-                        let elapsed = started.elapsed().as_secs_f64() * 1000.0;
-                        assert_eq!(result, expected);
-                        if filter {
-                            optimized.push(elapsed);
-                        } else {
-                            baseline.push(elapsed);
-                        }
-                    }
-                }
-                baseline.sort_by(f64::total_cmp);
-                optimized.sort_by(f64::total_cmp);
-                let before = (baseline[2] + baseline[3]) / 2.0;
-                let after = (optimized[2] + optimized[3]) / 2.0;
-                eprintln!("scroll.matcher {width}x{height} sparse={sparse} baseline_median_ms={before:.2} optimized_median_ms={after:.2} ratio={:.2}",before/after);
-            }
-        }
+        assert_eq!(
+            alignment(&first, &frame(240, 200), ScrollMode::Vertical),
+            Match::Uncertain
+        );
     }
 }

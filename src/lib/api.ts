@@ -27,13 +27,12 @@ export interface PinView { zoom: number; opacity: number; locked: boolean; topmo
 export interface PinFrame { label: string; width: number; height: number; dataUrl: string; view: PinView; transparencySupported: boolean; annotations: Annotation[] }
 export interface PinSummary { label: string; width: number; height: number; visible: boolean; group: string }
 export type ColorFormat = 'hex' | 'rgb'
-export type ScrollMode = 'auto' | 'vertical' | 'horizontal'
 export type ScrollBackground = 'white' | 'transparent'
 export interface ScrollView {
   id: number; revision: number; collecting: boolean; archivePath: string | null;
   width: number; height: number; frames: number; message: string; preview: string; frameHeight: number
   canvasBounds: Rect; viewportRect: Rect; coveragePercent: number; hasHoles: boolean
-  direction: 'none' | 'up' | 'down' | 'left' | 'right' | 'diagonal'
+  direction: 'none' | 'up' | 'down' | 'left' | 'right'
   status: 'collecting' | 'recovering' | 'finishing' | 'failed' 
 }
 export type PinTransform = 'rotateRight' | 'rotateLeft' | 'flipHorizontal' | 'flipVertical' | 'grayscale' | 'invert' | 'reset'
@@ -130,7 +129,7 @@ export const api = {
   copyColor: (id: number, point: Point, format: ColorFormat) => invoke<void>('copy_capture_color', { id, point, format }),
   save: (id: number, rect: Rect, annotations: Annotation[]) => invoke<boolean>('save_capture', { id, rect, annotations }),
   pin: (id: number, rect: Rect, annotations: Annotation[]) => invoke<void>('pin_capture', { id, rect, annotations }),
-  startScroll: (id: number, rect: Rect, saveFrames: boolean, mode: ScrollMode = 'auto', background: ScrollBackground = 'white') => invoke<ScrollView>('start_scroll', { id, rect, saveFrames, mode, background }),
+  startScroll: (id: number, rect: Rect, saveFrames: boolean, background: ScrollBackground = 'white') => invoke<ScrollView>('start_scroll', { id, rect, saveFrames, background }),
   controlScroll: (id: number, cancel = false, confirmedOnly = false) => invoke<void>('control_scroll', { id, cancel, confirmedOnly }),
   currentScroll: () => invoke<ScrollView | null>('current_scroll'),
   startRecording: (id: number, rect: Rect, config?: RecorderConfig, target?: number, annotations?: Annotation[]) => invoke<void>('start_recording', { id, rect, config, ...(target === undefined ? {} : { target }), ...(annotations?.length ? { annotations } : {}) }),

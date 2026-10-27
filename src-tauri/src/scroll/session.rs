@@ -6,6 +6,7 @@ use super::{
     archive::Archive,
     capture::{self, wait},
     chrome,
+    input::Direction,
     matcher::{Bounds, Match, ScrollMode},
     recovery, stability,
     stitcher::Stitch,
@@ -79,6 +80,7 @@ pub(in crate::capture) struct ScrollSession {
     screen: Screen,
     source_size: (u32, u32),
     stitch: Stitch,
+    direction: Direction,
     recovery: recovery::Recovery,
     message: String,
     preview: Arc<str>,
@@ -266,6 +268,12 @@ fn sample_pair(
             .ok_or("滚动截图会话已结束。")?
     };
     let revision = snapshot.revision;
+    // Windows 以实际滚轮输入决定轴；还没滚动时无需抓屏和匹配。
+    #[cfg(windows)]
+    if snapshot.direction.mode() == ScrollMode::Auto {
+        return Ok(Some(Match::Unchanged));
+    }
+    snapshot.stitch.lock_axis(snapshot.direction.mode());
     if screen_at(app, snapshot.screen.x, snapshot.screen.y)? != snapshot.screen {
         return Err("显示器布局、尺寸或 DPI 发生变化，已结束采集，仅输出已确认部分。".into());
     }
@@ -392,7 +400,7 @@ fn collect(app: AppHandle, id: u64, first_delay: u64) {
     let mut finish_latest = true;
     let mut delay = first_delay;
     while finish_latest && wait(&state, delay) {
-        delay = 80;
+        delay = 40;
         if Instant::now() >= deadline {
             message = "采集达到 5 分钟上限，已自动结束。".into();
             finish_latest = false;
@@ -501,10 +509,34 @@ fn collect(app: AppHandle, id: u64, first_delay: u64) {
 }
 
 fn launch(app: &AppHandle, id: u64, first_delay: u64) -> Result<(), String> {
+    #[cfg(windows)]
+    let listener = {
+        let state = app.state::<CaptureState>();
+        let guard = state.scroll.lock().map_err(err)?;
+        let s = guard
+            .as_ref()
+            .filter(|s| s.id == id)
+            .ok_or("滚动截图会话已结束。")?;
+        let x = i64::from(s.screen.x) + i64::from(s.rect.x);
+        let y = i64::from(s.screen.y) + i64::from(s.rect.y);
+        super::input::Listener::start(
+            s.direction.clone(),
+            (
+                x,
+                y,
+                x + i64::from(s.rect.width),
+                y + i64::from(s.rect.height),
+            ),
+        )?
+    };
     let app = app.clone();
     std::thread::Builder::new()
         .name("scroll-capture".into())
-        .spawn(move || collect(app, id, first_delay))
+        .spawn(move || {
+            #[cfg(windows)]
+            let _listener = listener;
+            collect(app, id, first_delay)
+        })
         .map(|_| ())
         .map_err(err)
 }
@@ -516,7 +548,6 @@ pub async fn start_scroll(
     id: u64,
     rect: Rect,
     save_frames: bool,
-    mode: Option<ScrollMode>,
     background: Option<ExportBackground>,
 ) -> Result<ScrollView, String> {
     require_window(&window, "capture")?;
@@ -530,7 +561,7 @@ pub async fn start_scroll(
         let (rect, screen) = super::super::selected_region(&app, id, rect)?;
         let source_size = (screen.width, screen.height);
         // 先校验选区容量，非法选区不创建持久化目录。
-        let stitch = Stitch::with_mode(seed, mode.unwrap_or_default())?;
+        let stitch = Stitch::with_mode(seed, ScrollMode::Auto)?;
         let mut archive = if save_frames {
             match Archive::new(&app) {
                 Ok(archive) => Some(archive),
@@ -564,8 +595,9 @@ pub async fn start_scroll(
             obscuring_windows,
             source_size,
             stitch,
+            direction: Direction::default(),
             recovery: recovery::Recovery::default(),
-            message: "自动拼接中，请正常滚动页面，完成后点击完成。".into(),
+            message: "滚动鼠标以识别方向，本次仅拼接横向或纵向。".into(),
             archive,
             preview: Arc::from(""),
             status: "collecting",
@@ -582,7 +614,7 @@ pub async fn start_scroll(
         for label in ["scroll-preview", "scroll-controls"] {
             let _ = app.emit_to(label, "scroll-updated", &result);
         }
-        if let Err(error) = chrome::show(&app).and_then(|_| launch(&app, id, 2000)) {
+        if let Err(error) = chrome::show(&app).and_then(|_| launch(&app, id, 120)) {
             state.scroll_collecting.store(false, Ordering::SeqCst);
             *state.scroll.lock().map_err(err)? = None;
             chrome::hide(&app);

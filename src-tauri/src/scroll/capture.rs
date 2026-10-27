@@ -141,7 +141,7 @@ pub(super) fn sample_pair(
     #[cfg(windows)]
     let _dpi = crate::desktop_capture::PhysicalDpi::enter()?;
     // 一轮稳定性检测绑定选区所在屏幕，全部坐标均为物理像素。
-    // 每轮首帧仍使用整屏路径作为尺寸和像素基准，区域采集通过校验后仅用于本轮后续采样。
+    // 区域采集与整屏回退共用同一来源监视器，尺寸校验不依赖整屏首帧。
     let monitor = xcap::Monitor::all()
         .map_err(|e| e.to_string())?
         .into_iter()
@@ -152,33 +152,31 @@ pub(super) fn sample_pair(
                 && m.height().ok() == Some(screen.height)
         })
         .ok_or("来源显示器已变化，已结束采集，仅输出已确认部分。")?;
-    let sample_started = Instant::now();
-    let mut reference = sample(&monitor, rect, source_size)?;
-    let _full_duration = sample_started.elapsed();
-    // Windows 物理 DPI 上下文已在本轮建立。只优化小选区，首次像素不一致则保留整屏路径；
-    // 动画可能造成保守回退，但不会把不同坐标系/尺寸的图片交给拼接器。
-    let mut native_region = false;
-    #[cfg(windows)]
-    if u64::from(rect.width) * u64::from(rect.height)
-        < u64::from(source_size.0) * u64::from(source_size.1) / 2
-    {
-        let started = Instant::now();
-        if let Ok(region) = sample_region(&monitor, rect, source_size) {
-            native_region = started.elapsed() < _full_duration && region == reference;
-        }
-    }
+    // Windows 已进入物理 DPI 上下文，优先直接采选区；区域失败时回退整屏校验。
+    // 不再每轮先抓整屏，再做一次区域性能/像素对照，避免重复采集和分配。
+    let mut native_region = cfg!(windows);
+    let mut reference = if native_region {
+        region_or_full(
+            &mut native_region,
+            (rect.width, rect.height),
+            || sample_region(&monitor, rect, source_size),
+            || sample(&monitor, rect, source_size),
+        )?
+    } else {
+        sample(&monitor, rect, source_size)?
+    };
     let mut quiet_samples = 0;
     let mut settled = None;
-    // 每 80 ms 检查，连续 240 ms 稳定即可继续，不再每轮固定停顿近一秒。
+    // 每 40 ms 检查，连续 80 ms 稳定即可匹配，降低滚动到拼接的等待。
     // 始终与本段静止期的首帧比较，防止缓慢动画的逐帧小变化累积成错位。
-    // 最多等待约 1.3 秒；持续运动交由外层重试，期间绝不再发送滚轮。
+    // 最多等待约 0.64 秒；持续运动交由外层重试，期间绝不再发送滚轮。
     for _ in 0..16 {
         if finishing {
             if state.scroll_cancel.load(Ordering::SeqCst) {
                 return Ok(None);
             }
-            std::thread::sleep(Duration::from_millis(80));
-        } else if !wait(state, 80) {
+            std::thread::sleep(Duration::from_millis(40));
+        } else if !wait(state, 40) {
             return Ok(None);
         }
         let candidate = if native_region {
@@ -197,7 +195,7 @@ pub(super) fn sample_pair(
         }
         if stable(&reference, &candidate) {
             quiet_samples += 1;
-            if quiet_samples >= 3 {
+            if quiet_samples >= 2 {
                 settled = Some(candidate);
                 break;
             }

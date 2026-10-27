@@ -1,4 +1,4 @@
-//! 稀疏二维画布：256² 图块、逐像素覆盖位、负坐标和有界空间锚点。
+//! 单轴滚动的分块画布：256² 图块、覆盖位、负坐标和有界历史锚点。
 //! 快照共享 Arc，只有新增像素所在图块执行写时复制；预览直接取样图块。
 use super::matcher::{
     alignment_in, stationary_overlay_conflict, verify_at, Alignment, Bounds, Content, Match,
@@ -26,14 +26,14 @@ mod tests;
 
 #[derive(Clone)]
 struct Tile {
-    pixels: Vec<Rgba<u8>>,
+    pixels: Vec<[u8; 4]>,
     covered: Vec<u64>,
     filled: usize,
 }
 impl Tile {
     fn new() -> Self {
         Self {
-            pixels: vec![Rgba([0, 0, 0, 0]); TILE_PIXELS],
+            pixels: vec![[0, 0, 0, 0]; TILE_PIXELS],
             covered: vec![0; TILE_PIXELS / 64],
             filled: 0,
         }
@@ -56,6 +56,8 @@ pub struct Stitch {
     latest: Anchor,
     content: Content,
     mode: ScrollMode,
+    // 只记录判定阶段，不记录截图内容；失败时可区分定位、固定栏、遮挡和接缝。
+    rejection: &'static str,
     frames: usize,
     covered: u64,
     // 可信位置或画布变化时递增，用于使失败帧匹配缓存失效。
@@ -69,7 +71,14 @@ pub struct Stitch {
 }
 
 impl Stitch {
-    /// 测试使用自动方向的简便入口；实际会话通过 with_mode 显式传入方向设置。
+    /// 只允许从自动状态进入单轴，之后反向滚动可回访，但不能换轴产生混合画布。
+    pub(super) fn lock_axis(&mut self, mode: ScrollMode) {
+        if self.mode == ScrollMode::Auto && mode != ScrollMode::Auto {
+            self.mode = mode;
+            self.match_revision = self.match_revision.wrapping_add(1);
+        }
+    }
+    /// 测试使用自动方向的简便入口；实际会话由首次滚轮输入锁定方向。
     #[cfg(test)]
     pub fn new(image: RgbaImage) -> Result<Self, String> {
         Self::with_mode(image, ScrollMode::Auto)
@@ -97,6 +106,7 @@ impl Stitch {
             },
             content,
             mode,
+            rejection: "none",
             frames: 1,
             covered: 0,
             match_revision: 0,
@@ -117,6 +127,15 @@ impl Stitch {
     }
     pub fn count(&self) -> usize {
         self.frames
+    }
+    /// 每轮进入恢复状态时由 Recovery 调用一次，避免同一失败帧刷屏。
+    pub(super) fn log_rejection(&self) {
+        log::info!(
+            "event=scroll.rejected module=scroll reason={} axis={:?} frames={}",
+            self.rejection,
+            self.mode,
+            self.frames
+        );
     }
     pub(super) fn match_revision(&self) -> u64 {
         self.match_revision
@@ -162,7 +181,7 @@ impl Stitch {
             (0, 1) => "down",
             (-1, 0) => "left",
             (1, 0) => "right",
-            _ => "diagonal",
+            _ => "none",
         }
     }
 
@@ -189,6 +208,14 @@ impl Stitch {
         image: Arc<RgbaImage>,
         cacheable: &mut bool,
     ) -> Result<Match, String> {
+        self.rejection = "none";
+        // 各个早退路径使用稳定原因码；对外结果和可信画布的处理保持一致。
+        macro_rules! reject {
+            ($reason:literal) => {{
+                self.rejection = $reason;
+                return Ok(Match::Uncertain);
+            }};
+        }
         if image.dimensions() != self.last().dimensions() {
             return Err("采集区域尺寸发生变化，请重新开始滚动截图。".into());
         }
@@ -200,7 +227,7 @@ impl Stitch {
         // 必须在历史锚点复核之前拒绝，否则旧锚点可能用较宽的正文区覆盖此证据。
         if self.frames > 1 && matches!(direct, Match::Aligned(a) if a.content != self.content) {
             *cacheable = false;
-            return Ok(Match::Uncertain);
+            reject!("fixed_bounds_changed");
         }
         let mut located = match direct {
             Match::Aligned(a) => Some((
@@ -224,7 +251,7 @@ impl Stitch {
                         // 同一画面出现两个文档坐标，属于定位歧义而非缺少重叠。
                         // 锚点淘汰后重放会丢失反证，因此恢复层必须清空候选。
                         *cacheable = false;
-                        return Ok(Match::Uncertain);
+                        reject!("anchor_position_conflict");
                     }
                     continue;
                 }
@@ -243,7 +270,7 @@ impl Stitch {
                     // 快速复核也会检测固定栏，不能只取“匹配成功”而丢掉边界。
                     if self.frames > 1 && verified.content != self.content {
                         *cacheable = false;
-                        return Ok(Match::Uncertain);
+                        reject!("anchor_fixed_bounds_changed");
                     }
                     continue;
                 }
@@ -268,7 +295,7 @@ impl Stitch {
                 Match::Aligned(a) => {
                     if self.frames > 1 && a.content != self.content {
                         *cacheable = false;
-                        return Ok(Match::Uncertain);
+                        reject!("anchor_fixed_bounds_changed");
                     }
                     Some((anchor.x + i64::from(a.dx), anchor.y + i64::from(a.dy), a))
                 }
@@ -278,44 +305,44 @@ impl Stitch {
                 if located.is_some_and(|p| p.0 != next.0 || p.1 != next.1) {
                     // 搜索得到的历史位置也必须遵守相同的禁止缓存规则。
                     *cacheable = false;
-                    return Ok(Match::Uncertain);
+                    reject!("anchor_position_conflict");
                 }
                 located = Some(next);
             }
         }
         let Some((x, y, mut result)) = located else {
-            return Ok(Match::Uncertain);
+            reject!("alignment_missing");
         };
         // 后续固定边界发生变化时不回溯篡改已提交内容，等待用户返回相同布局。
         if self.frames > 1 && result.content != self.content {
             *cacheable = false;
-            return Ok(Match::Uncertain);
+            reject!("fixed_bounds_changed");
         }
         result.dx = i32::try_from(x - self.latest.x).map_err(|_| "滚动位移超限。")?;
         result.dy = i32::try_from(y - self.latest.y).map_err(|_| "滚动位移超限。")?;
         if (self.mode == ScrollMode::Vertical && result.dx != 0)
             || (self.mode == ScrollMode::Horizontal && result.dy != 0)
         {
-            return Ok(Match::Uncertain);
+            reject!("axis_changed");
         }
         // 最终位移必须同时满足最新视口的屏幕固定纹理检查。放在统一提交入口，
         // 避免历史锚点搜索或已知位移快速复核绕过它；拒绝时尚未修改任何状态。
         if stationary_overlay_conflict(self.last(), &image, result.content, result.dx, result.dy) {
             *cacheable = false;
-            return Ok(Match::Uncertain);
+            reject!("stationary_overlay");
         }
         let next = Anchor { image, x, y };
         // 定位正确不等于新增像素可信：跨接缝的动画可能只占整帧 1%，
         // 通过全局九成一致门槛，却把另一半动画永久写入未覆盖区。
         if self.seam_conflict(&next, result.content) {
             *cacheable = false;
-            return Ok(Match::Uncertain);
+            reject!("seam_conflict");
         }
         if !self.consistent(&next, result.content) {
             // 已定位却与旧画布冲突的帧不是可信的桥接材料；禁止在后续
             // 覆盖率变化后借全局多数票重新放行，避免把问题帧的新增区写入成图。
             *cacheable = false;
-            return Ok(Match::Uncertain);
+            reject!("canvas_conflict");
         }
         // 所有可能失败的容量检查先完成；失败不改变画布、锚点或视口。
         self.check_capacity(&next, result.content)?;
@@ -335,6 +362,11 @@ impl Stitch {
         }
         self.remember_latest();
         self.latest = next;
+        self.lock_axis(if result.dx != 0 {
+            ScrollMode::Horizontal
+        } else {
+            ScrollMode::Vertical
+        });
         self.dx = result.dx;
         self.dy = result.dy;
         self.match_revision = self.match_revision.wrapping_add(1);
@@ -538,9 +570,10 @@ impl Stitch {
                     for x in left..end_x {
                         let i = index(x, y);
                         if !tile.has(i) {
-                            tile.pixels[i] = *anchor
+                            tile.pixels[i] = anchor
                                 .image
-                                .get_pixel((x - anchor.x) as u32, (y - anchor.y) as u32);
+                                .get_pixel((x - anchor.x) as u32, (y - anchor.y) as u32)
+                                .0;
                             tile.covered[i / 64] |= 1u64 << (i % 64);
                             tile.filled += 1;
                             self.covered += 1;
@@ -559,13 +592,46 @@ impl Stitch {
         self.tiles
             .get(&key)
             .filter(|t| t.has(i))
-            .map_or(Rgba([0, 0, 0, 0]), |t| t.pixels[i])
+            .map_or(Rgba([0, 0, 0, 0]), |t| Rgba(t.pixels[i]))
     }
     /// 空洞透明保留；导出背景选项在会话层统一应用，不污染占用掩码。
     pub fn compose(&self) -> RgbaImage {
-        RgbaImage::from_fn(self.width, self.height, |x, y| {
-            self.pixel(self.bounds.x + i64::from(x), self.bounds.y + i64::from(y))
-        })
+        // 每个图块只查一次坐标，整行复制；避免导出时对每个像素做哈希查找。
+        let mut image = RgbaImage::new(self.width, self.height);
+        let output: &mut [u8] = &mut image;
+        for (&(tx, ty), tile) in &self.tiles {
+            let left = (tx * TILE).max(self.bounds.x);
+            let top = (ty * TILE).max(self.bounds.y);
+            let right = ((tx + 1) * TILE).min(self.bounds.x + i64::from(self.width));
+            let bottom = ((ty + 1) * TILE).min(self.bounds.y + i64::from(self.height));
+            for y in top..bottom {
+                let source = ((y - ty * TILE) * TILE + left - tx * TILE) as usize;
+                let target = ((y - self.bounds.y) * i64::from(self.width) + left - self.bounds.x)
+                    as usize
+                    * 4;
+                let bytes = (right - left) as usize * 4;
+                let row = &tile.pixels[source..source + bytes / 4];
+                output[target..target + bytes].copy_from_slice(row.as_flattened());
+                // 部分图块以覆盖位为准；按 64 位跳过完整区，仅清空实际缺失像素。
+                // 正常新增条带大多整字覆盖，不会退回逐像素查找整张图。
+                if tile.filled < TILE_PIXELS {
+                    let mut index = source;
+                    let end = source + row.len();
+                    while index < end {
+                        let count = (64 - index % 64).min(end - index);
+                        let mask = u64::MAX >> (64 - count);
+                        let mut missing = !(tile.covered[index / 64] >> (index % 64)) & mask;
+                        while missing != 0 {
+                            let offset = index - source + missing.trailing_zeros() as usize;
+                            output[target + offset * 4..target + offset * 4 + 4].fill(0);
+                            missing &= missing - 1;
+                        }
+                        index += count;
+                    }
+                }
+            }
+        }
+        image
     }
     /// 检查半开文档矩形是否全部采集过；使用覆盖位而非像素透明度。
     /// 按图块及每行的 64 位掩码检查，避免为缩略图合成整张原尺寸画布。

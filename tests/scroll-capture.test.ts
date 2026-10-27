@@ -39,7 +39,7 @@ describe('scroll completion state', () => {
   })
 })
 
-describe('二维滚动预览', () => {
+describe('滚动预览状态与视口', () => {
   it('细小空洞不会因覆盖率取整显示为完整覆盖', () => {
     expect(scrollCoverageLabel({ coveragePercent: 99.999, hasHoles: true })).toBe('<100')
     expect(scrollCoverageLabel({ coveragePercent: 99.94, hasHoles: true })).toBe('99.9')
