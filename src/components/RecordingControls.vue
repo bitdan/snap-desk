@@ -119,7 +119,7 @@ onUnmounted(() => { disposed = true; window.removeEventListener('keydown', key);
     <span class="dot" :class="{ paused: view?.phase !== 'recording' }" />
     <span class="time" role="timer">{{ recordingTime(view?.seconds ?? 0) }}</span>
     <span class="status" role="status">{{ view ? t(recordingStatus(view)) : t("连接中…") }}</span>
-    <span v-if="view?.phase !== 'countdown'" class="fps" :title="t('近两秒 {0} FPS；编码提交 {1} 帧，队列满 {2} 帧，旧代次 {3} 帧；静态画面低 FPS 不等同丢帧', { 0: view?.stats.recentFps.toFixed(1) ?? '0.0', 1: view?.frames ?? 0, 2: view?.stats.queueDroppedFrames ?? 0, 3: view?.stats.staleQueuedFrames ?? 0 })">{{ view?.targetFps ?? 30 }} FPS</span>
+    <span v-if="view?.phase !== 'countdown'" class="fps">{{ view?.targetFps ?? 30 }} FPS</span>
     <button v-if="view?.phase === 'ready'" class="start" :disabled="busy" :title='t("开始录制")' :aria-label='t("开始录制")' @click="control('start')"><Play :size="15" />{{ t("开始") }}</button>
     <button v-else-if="view?.phase === 'countdown'" disabled><Play :size="15" />{{ t("等待开始") }}</button>
     <button v-else-if="view?.phase === 'paused'" :disabled="busy" :title='t("继续录制")' :aria-label='t("继续录制")' @click="control('resume')"><Play :size="17" /></button>

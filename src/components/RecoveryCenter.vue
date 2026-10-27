@@ -47,11 +47,11 @@ onMounted(() => { if (desktop) void refresh() })
     <p v-if="!desktop" class="py-2 text-sm">{{ t("请在桌面应用中检查残留文件。") }}</p>
     <p v-if="status?.previousStartedAt" class="notice" role="status">{{ t("上次运行未记录正常退出（启动于") }} {{ recoveryTime(status.previousStartedAt) }}{{ t("，进程") }} {{ status.previousPid }}{{ t("）。旧截图与采集不会自动恢复；文件由你选择保留、恢复或删除。") }}</p>
     <p v-if="status?.warning" class="notice" role="alert">{{ te(status.warning) }}</p>
-    <div v-if="status?.unreadableRecords" class="notice" role="alert"><p>{{ status.unreadableRecords }} {{ t("条记录无法安全读取，相关文件已保留；当前列表不代表全部残留。可检查 export-recovery / recording-recovery 中的记录，勿删除仍需保留的源文件。") }}</p><Button variant="outline" @click="openDataDirectory">{{ t("打开应用数据目录") }}</Button></div>
+    <div v-if="status?.unreadableRecords" class="notice" role="alert"><p>{{ status.unreadableRecords }} {{ t("条记录读取失败，原文件已保留，请打开数据目录检查。") }}</p><Button variant="outline" @click="openDataDirectory">{{ t("打开应用数据目录") }}</Button></div>
     <p v-if="error" class="notice error" role="alert">{{ te(error) }}</p>
     <p v-if="message" class="notice break-all" role="status">{{ t(message) }}</p>
-    <p class="py-2 text-xs text-zinc-500">{{ t("仅检查本应用登记的录屏、导出和临时文件，不扫描用户目录。未完成编码的文件不会自动修复；已导出的最终文件不会被清理。") }}</p>
-    <p v-if="status && !status.items.length && !loading && !status.unreadableRecords" class="py-4 text-sm">{{ t("当前没有发现已登记的待恢复或可清理文件。") }}</p>
+    <p class="py-2 text-xs text-zinc-500">{{ t("仅清理应用暂存文件，已导出的文件保留。") }}</p>
+    <p v-if="status && !status.items.length && !loading && !status.unreadableRecords" class="py-4 text-sm">{{ t("没有待恢复或可清理的文件。") }}</p>
     <div v-for="item in status?.items ?? []" :key="`${item.kind}:${item.id}`" class="border-b py-3">
       <div class="flex flex-wrap items-center justify-between gap-2"><strong class="text-sm">{{ t(item.title) }}</strong><span class="text-xs text-zinc-500">{{ t(recoveryBytes(item.bytes)) }} · {{ recoveryTime(item.modifiedAt) }}</span></div>
       <p class="break-all py-2 text-xs">{{ item.path }}</p>

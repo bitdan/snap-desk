@@ -181,7 +181,7 @@ fn allowed_release_redirect(url: &reqwest::Url, previous_count: usize) -> bool {
 fn read_pack(dir: &Path) -> Result<Pack, String> {
     let mut bytes = Vec::new();
     fs::File::open(dir.join("pack.json"))
-        .map_err(|_| "未安装语言包，请在识别与翻译设置中安装。")?
+        .map_err(|_| "请先安装语言包。")?
         .take(64 * 1024 + 1)
         .read_to_end(&mut bytes)
         .map_err(|e| e.to_string())?;
@@ -233,6 +233,7 @@ pub struct ModelStatus {
 #[serde(rename_all = "camelCase")]
 pub struct LocalStatus {
     runtime_ready: bool,
+    runtime_supported: bool,
     models: Vec<ModelStatus>,
 }
 fn status(app: &AppHandle) -> Result<LocalStatus, String> {
@@ -257,6 +258,7 @@ fn status(app: &AppHandle) -> Result<LocalStatus, String> {
         .collect::<Result<Vec<_>, String>>()?;
     Ok(LocalStatus {
         runtime_ready: crate::local_translation::executable(app).is_ok(),
+        runtime_supported: crate::translation_runtime::supported(),
         models,
     })
 }
@@ -346,7 +348,7 @@ pub async fn translation_model_action(
     action: ModelAction,
 ) -> Result<LocalStatus, String> {
     crate::capture::require_window(&window, "main")?;
-    if !IDS.contains(&model_id.as_str()) {
+    if model_id != "runtime" && !IDS.contains(&model_id.as_str()) {
         return Err("未知语言包。".into());
     }
     let state = app.state::<crate::local_translation::LocalTranslationState>();
@@ -363,6 +365,15 @@ pub async fn translation_model_action(
     tauri::async_runtime::spawn_blocking(move || {
         // guard 随阻塞任务存活，即使调用方关闭窗口，安装中途也不能启动翻译。
         let _guard = slot;
+        // 引擎和语言包共用 Worker 互斥锁，替换 EXE/DLL 前已等待旧进程退出。
+        if model_id == "runtime" {
+            match action {
+                ModelAction::Download => crate::translation_runtime::install(&app, false)?,
+                ModelAction::Import => crate::translation_runtime::install(&app, true)?,
+                ModelAction::Delete => return Err("不支持此引擎操作。".into()),
+            }
+            return status(&app);
+        }
         match action {
             ModelAction::Download => {
                 let pack = catalog()?

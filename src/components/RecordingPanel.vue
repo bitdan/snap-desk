@@ -129,7 +129,7 @@ onUnmounted(() => { disposed = true; clearTimeout(timer) })
     </div>
     <div class="mb-3">
       <div class="setting-row"><strong>{{ t("可恢复录制 / 清理残留（") }}{{ recoveries.length }}）</strong><Button variant="outline" :disabled="busy" @click="loadRecoveries">{{ t("刷新") }}</Button></div>
-      <p class="py-2 text-sm">{{ recoveries.length ? t("仅已封装文件可重新导出；未封装数据不会自动修复或删除。") : t("暂无待恢复录制。") }}</p>
+      <p class="py-2 text-sm">{{ recoveries.length ? t("仅完整录制文件可重新导出。") : t("暂无待恢复录制。") }}</p>
       <div v-for="item in recoveries" :key="item.id" class="setting-row gap-3">
         <span class="min-w-0 flex-1 break-all">{{ item.path }}<small>{{ t(recordingRecoveryStatus(item)) }}</small></span>
         <div class="flex flex-wrap gap-2">
@@ -157,7 +157,7 @@ onUnmounted(() => { disposed = true; clearTimeout(timer) })
       <div class="setting-row"><span>{{ t("录制时长") }}</span><span>{{ t("不设时长上限") }}</span></div>
       <p v-if="!capabilities?.available" class="py-3 text-sm" role="status">{{ te(capabilities?.reason) || (desktop ? t("正在检查录屏能力…") : t("请在桌面应用中使用录屏。")) }}</p>
       <div v-if="view" class="setting-row"><span>{{ t(recordingStatus(view)) }}</span><span>{{ recordingTime(view.seconds) }} {{ t("· 编码提交") }} {{ view.frames }} {{ t("帧") }}</span></div>
-      <div v-if="view" class="setting-row" :title='t("成功提交编码帧的媒体时间窗口，不含暂停；恢复后重置近两秒窗口。静态画面可自然降至 0 FPS，并非丢帧。")'><span>{{ t("有效帧率") }}</span><span>{{ t(recordingStats(view)) }}</span></div>
+      <div v-if="view" class="setting-row"><span>{{ t("有效帧率") }}</span><span>{{ t(recordingStats(view)) }}</span></div>
       <div v-if="view && view.targetBitrate > 0" class="setting-row"><span>{{ t("目标码率") }}</span><span>{{ (view.targetBitrate / 1_000_000).toFixed(1) }} Mbps</span></div>
       <div v-if="view" class="setting-row"><span>{{ t("编码方式") }}</span><span>{{ t(encoderLabels[view.encoderKind]) }}</span></div>
       <p v-if="view?.encoderFallback" class="notice break-all" role="status">{{ te(view.encoderFallback) }}</p>

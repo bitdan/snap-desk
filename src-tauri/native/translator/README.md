@@ -9,7 +9,7 @@ URL、Windows 路径、反引号代码、常见占位符和快捷键按片段原
 ## Windows x64 原生引擎
 
 GitHub Actions 已拆为引擎、模型和主程序三条流水线。首次启用、版本锁与许可审核步骤见
-[CI 操作说明](../../../scripts/ci/README.md)。引擎锁尚未填写真实摘要时，发布 CI 会阻止构建。
+[CI 操作说明](../../../scripts/ci/README.md)。应用和模型流水线共用固定引擎版本与 ZIP 摘要。
 
 仓库约定不自动编译。以下命令由开发者在 VS 2022 x64 Native Tools 环境中执行。
 先按 [CTranslate2 官方构建说明](https://opennmt.net/CTranslate2/installation.html)
@@ -26,9 +26,8 @@ cmake --install src-tauri/target/translator --config Release --component transla
 
 CMake 固定 SentencePiece v0.2.0 和 nlohmann/json v3.11.3。
 核对运行目录包含 worker、CT2 及实际依赖 DLL、第三方许可和必要 VC++ runtime；
-不得把开发机 PATH 当作用户运行前提。`desktop:build` / `desktop:package` 在发现
-worker 时自动合并 `tauri.translation.conf.json`，将整个 runtime 目录复制进应用资源。
-缺少 worker 时会明确警告，普通截图仍可构建。直接调用 Tauri CLI 时需自行传该 config。
+不得把开发机 PATH 当作用户运行前提。`desktop:build` / `desktop:package` 不再捆绑引擎。
+用户在“识别与翻译”页下载引擎或导入官方 ZIP；仅接受与应用内置引擎锁摘要一致的归档。
 
 ## 制作语言包（开发/CI）
 
@@ -47,7 +46,7 @@ python scripts/prepare-translation-model.py --direction zh-en --revision <40位H
 
 在应用“识别与翻译”页选择方向并导入产出的目录。导入只复制固定模型文件白名单，
 不接受可执行程序；文件 SHA-256 仅证明包内一致性，不证明作者可信。
-原生引擎始终来自应用安装目录。下载/导入先暂存并完整校验，再替换旧目录。
+原生引擎保存在应用数据目录。下载/导入先暂存并完整校验，再整体替换旧目录。
 
 `assets/translation-models.json` 当前有意为空：没有已经转换验收并发布的模型资源，
 不能编造 URL、大小或摘要。发布者使用 `--base-url` 填入每个固定版本的 HTTPS 文件目录，

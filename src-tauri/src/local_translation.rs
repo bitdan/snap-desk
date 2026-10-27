@@ -24,27 +24,9 @@ pub struct Worker {
     last_used: Instant,
 }
 
-/// 只运行随应用发布的程序，绝不从 PATH 或模型包加载可执行文件。
+/// 只运行应用数据目录内经过固定摘要校验的引擎，不从 PATH 或语言包加载程序。
 pub fn executable(app: &AppHandle) -> Result<PathBuf, String> {
-    let name = if cfg!(windows) {
-        "snap-translator-worker.exe"
-    } else {
-        "snap-translator-worker"
-    };
-    #[cfg(debug_assertions)]
-    let base = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("translator-runtime");
-    #[cfg(not(debug_assertions))]
-    let base = app
-        .path()
-        .resource_dir()
-        .map_err(|e| e.to_string())?
-        .join("translator-runtime");
-    let _ = app;
-    let path = base.join(name);
-    if !path.is_file() {
-        return Err("此安装缺少本地翻译引擎，请安装包含原生翻译引擎的版本。".into());
-    }
-    Ok(path)
+    crate::translation_runtime::executable(app)
 }
 
 impl Worker {
@@ -53,7 +35,11 @@ impl Worker {
         let _ = self.child.kill().await;
     }
     async fn start(app: &AppHandle) -> Result<Self, String> {
-        let path = executable(app)?;
+        // 完整摘要校验涉及磁盘读取，移到阻塞池，避免占用异步运行时线程。
+        let handle = app.clone();
+        let path = tauri::async_runtime::spawn_blocking(move || executable(&handle))
+            .await
+            .map_err(|_| "翻译引擎校验任务失败。")??;
         let mut command = Command::new(&path);
         command
             .current_dir(path.parent().ok_or("翻译引擎路径无效。")?)

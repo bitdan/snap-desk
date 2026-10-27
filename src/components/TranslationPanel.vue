@@ -28,7 +28,7 @@ async function loadConfig() {
     const value = await api.aiTranslationConfig()
     if (disposed) return
     config.value = value
-    if (config.value.provider === 'online-llm' && (!config.value.endpoint || !config.value.model)) error.value = '请先在主窗口的识别与翻译页配置服务地址、模型与密钥。'
+    if (config.value.provider === 'online-llm' && (!config.value.endpoint || !config.value.model)) error.value = '请先在“识别与翻译”中配置在线服务。'
   } catch (e) { if (!disposed) error.value = String(e) }
   finally { loading.value = false }
 }

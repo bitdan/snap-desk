@@ -38,13 +38,6 @@ jobs:
         with:
           python-version: '3.11'
 
-      # 与模型流水线共用受审版本和 ZIP 摘要；锁未填写时尽早失败。
-      - name: Download and verify required translator runtime
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-        run: ./scripts/ci/download-translator-runtime.ps1
-
       - name: Verify embedded model catalog and published files
         run: |
           python scripts/ci/generate-model-catalog.py --check --remote
@@ -86,8 +79,6 @@ jobs:
 
       # 复用本地脚本的 --ci、--locked 和 src-tauri/target 输出目录。
       - name: Build executable and installers
-        env:
-          SNAP_DESK_REQUIRE_TRANSLATION: '1'
         run: npm run desktop:package
 
       - name: Publish GitHub Release
@@ -121,8 +112,8 @@ jobs:
           $engine = Get-Content scripts/ci/translation-engine.json -Raw | ConvertFrom-Json
           $notes = @(
             "Translation engine: $($engine.tag) (Windows x64 CPU, protocol 1).",
-            'NSIS/MSI include the translation runtime and third-party licenses; models are downloaded/imported separately.',
-            'The standalone EXE does NOT include the local translation runtime. Use an installer for local translation.',
+            'Download or import the translation engine ZIP and language packs in Recognition & Translation settings.',
+            'NSIS/MSI and standalone EXE use the same on-demand translation resources; no runtime is bundled.',
             'Model sources and licenses are recorded in each model pack.json and LICENSE.txt.'
           )
           $notes | Set-Content src-tauri/target/release/translation-release-notes.txt -Encoding utf8

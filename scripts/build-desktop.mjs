@@ -3,7 +3,6 @@ import { spawnSync } from 'node:child_process'
 import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import { resolve } from 'node:path'
-import { existsSync } from 'node:fs'
 import { rustEnvironment } from './rust-env.mjs'
 import { syncVersion } from './sync-version.mjs'
 
@@ -14,17 +13,7 @@ const cli = require.resolve('@tauri-apps/cli/tauri.js')
 const target = resolve(root, 'src-tauri', 'target')
 const version = syncVersion(root)
 const buildArgs = process.argv.slice(2)
-// 已准备原生引擎时自动带入资源映射；普通截图开发不被尚未构建的引擎阻断。
-const workerName = process.platform === 'win32' ? 'snap-translator-worker.exe' : 'snap-translator-worker'
-if (existsSync(resolve(root, 'src-tauri', 'translator-runtime', workerName))) {
-  buildArgs.unshift('--config', 'src-tauri/tauri.translation.conf.json')
-} else {
-  // 发布流水线必须显式声明此开关；本地开发仍允许不构建翻译引擎。
-  if (process.env.SNAP_DESK_REQUIRE_TRANSLATION === '1') {
-    throw new Error('发布构建缺少原生翻译 Worker，禁止生成无本地翻译引擎的安装包。')
-  }
-  console.warn('未找到原生翻译引擎，本次产物不能进行本地翻译。参见 src-tauri/native/translator/README.md。')
-}
+// 翻译引擎在设置中按需下载或导入，不再随主程序打包，也不依赖本机准备的 runtime。
 // MSI 不接受 beta.1 / rc.1 等文本后缀；Windows 测试版仅生成 NSIS EXE。
 // 参数放在 Cargo 的 `-- --locked` 分隔符之前；仅构建程序时保留 --no-bundle。
 if (process.platform === 'win32' && version.includes('-') && !buildArgs.includes('--no-bundle')) {

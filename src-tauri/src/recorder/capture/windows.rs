@@ -135,7 +135,7 @@ pub fn supported() -> Result<(), String> {
     )
     .map_err(error)?
     {
-        return Err("录屏需要 Windows 10 2004 或更新版本（光标控制及辅助窗口捕获排除）。".into());
+        return Err("录屏需要 Windows 10 2004 或更新版本。".into());
     }
     Ok(())
 }

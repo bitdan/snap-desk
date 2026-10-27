@@ -40,16 +40,17 @@ async function save() {
 async function credentialAction(action: 'delete' | 'test') {
   busy.value = true; error.value = ''; message.value = ''
   try {
-    if (action === 'delete') { await api.aiCredentialSet(null); configured.value = false; message.value = '已删除已保存服务的密钥。' }
-    else { await api.aiProviderTest(); message.value = '已保存配置的文本翻译测试成功。' }
+    if (action === 'delete') { await api.aiCredentialSet(null); configured.value = false; message.value = '密钥已删除。' }
+    else { await api.aiProviderTest(); message.value = '翻译测试成功。' }
   } catch (e) { error.value = String(e) }
   finally { busy.value = false }
 }
-/** 用户主动下载或导入，语言包状态与 OCR 独立。 */
+/** 引擎和语言包均由用户主动下载或导入，状态与 OCR 独立。 */
 async function modelAction(modelId: string, action: 'download' | 'import' | 'delete') {
-  busy.value = true; error.value = ''; message.value = ''
-  try { localStatus.value = await api.translationModelAction(modelId, action); message.value = '语言包状态已更新。' }
-  catch (e) { error.value = String(e) }
+  if (busy.value) return
+  busy.value = true; error.value = ''; message.value = modelId === 'runtime' ? '正在安装引擎…' : ''
+  try { localStatus.value = await api.translationModelAction(modelId, action); message.value = modelId === 'runtime' ? '引擎状态已更新。' : '语言包状态已更新。' }
+  catch (e) { message.value = ''; error.value = String(e) }
   finally { busy.value = false }
 }
 </script>
@@ -58,34 +59,36 @@ async function modelAction(modelId: string, action: 'download' | 'import' | 'del
   <section class="ai-settings">
     <h3>{{ t("文字识别") }}</h3>
     <ResourceSettings kind="ocr" />
-    <p class="hint">{{ t("识别结束后空闲 5 分钟自动释放模型，下次识别时重新加载。") }}</p>
     <h3>{{ t("文本翻译") }}</h3>
     <fieldset :disabled="busy || !ready">
-      <label>{{ t("翻译引擎") }}<select v-model="draft.provider"><option value="local-ctranslate2">{{ t("本地离线 · CTranslate2 / OPUS-MT") }}</option><option value="online-llm">{{ t("在线文本服务") }}</option></select></label>
+      <label>{{ t("翻译引擎") }}<select v-model="draft.provider"><option value="local-ctranslate2">{{ t("本地离线") }}</option><option value="online-llm">{{ t("在线文本服务") }}</option></select></label>
       <template v-if="local">
-        <p :class="{ 'status-ok': localStatus?.runtimeReady }" role="status"><Check v-if="localStatus?.runtimeReady" :size="14" />{{ !localStatus ? t("引擎状态未读取") : localStatus.runtimeReady ? t("本地引擎已安装") : t("缺少翻译引擎，请安装带引擎的版本。") }}</p>
+        <div class="model-row">
+          <span :class="{ 'status-ok': localStatus?.runtimeReady }" role="status"><Check v-if="localStatus?.runtimeReady" :size="14" />{{ !localStatus ? t("引擎状态未读取") : localStatus.runtimeReady ? t("本地引擎已安装") : t("翻译引擎未安装或校验失败") }}</span>
+          <Button variant="outline" :disabled="!localStatus?.runtimeSupported" @click="modelAction('runtime', 'download')">{{ t("下载引擎") }}</Button>
+          <Button variant="outline" :disabled="!localStatus?.runtimeSupported" @click="modelAction('runtime', 'import')">{{ t("导入引擎 ZIP") }}</Button>
+        </div>
+        <p v-if="localStatus && !localStatus.runtimeSupported" class="hint">{{ t("翻译引擎下载和导入目前仅支持 Windows x64。") }}</p>
         <div v-for="pack in localStatus?.models" :key="pack.modelId" class="model-row">
           <span>{{ pack.modelId.includes('en-zh') ? t("英语 → 简体中文") : t("中文 → 英语") }}</span><span :class="{ 'status-ok': pack.ready }" role="status"><Check v-if="pack.ready" :size="14" />{{ pack.ready ? t("已校验") : t("未安装或校验失败") }}</span>
           <Button variant="outline" :disabled="!pack.downloadable" @click="modelAction(pack.modelId, 'download')">{{ t("下载") }}{{ pack.downloadBytes ? `（${Math.ceil(pack.downloadBytes / 1048576)} MiB）` : '' }}</Button>
           <Button variant="outline" @click="modelAction(pack.modelId, 'import')">{{ t("导入语言包") }}</Button>
           <Button v-if="pack.revision" variant="ghost" @click="modelAction(pack.modelId, 'delete')">{{ t("卸载") }}</Button>
         </div>
-        <p class="hint">{{ t("仅导入可信来源的语言包；文件校验不代表来源可信。") }}</p>
         <label>{{ t("闲置回收（秒）") }}<input v-model.number="draft.localIdleSeconds" type="number" min="0" max="3600" step="1" /></label>
-        <p class="hint">{{ t("0 表示保持缓存，或设为 30～3600 秒；自动回收后下次翻译会重新加载。") }}</p>
+        <p class="hint">{{ t("0 不回收；可设为 30～3600 秒。") }}</p>
       </template>
       <template v-else>
-      <p>{{ t("每次翻译前确认发送原文，可能产生服务费用。") }}</p>
+      <p>{{ t("在线翻译会发送原文，可能产生费用。") }}</p>
       <label>{{ t("完整接口地址") }}<input v-model.trim="draft.endpoint" type="url" :placeholder='t("https://服务域名/v1/chat/completions")' autocomplete="off" /></label>
       <label>{{ t("模型名称") }}<input v-model.trim="draft.model" :placeholder='t("填写服务支持的模型 ID")' /></label>
       </template>
       <label>{{ t("目标语言") }}<select v-model="draft.targetLanguage"><option v-for="item in languages" :key="item.value" :value="item.value">{{ t(item.label) }}</option></select></label>
       <label>{{ t("超时（秒）") }}<input v-model.number="draft.timeoutSeconds" type="number" min="5" max="120" /></label>
-      <label v-if="!local">API Key<input v-model="secret" type="password" autocomplete="new-password" :placeholder='t("留空保留密钥；输入后点击保存")' /></label>
-      <p v-if="!local" :class="{ 'status-ok': configured }" role="status"><Check v-if="configured" :size="14" />{{ t("密钥") }}{{ configured ? t("已配置") : t("未配置") }}{{ t("（系统凭证库，更换地址需重设）") }}</p>
+      <label v-if="!local">API Key<input v-model="secret" type="password" autocomplete="new-password" :placeholder='t("留空保留现有密钥")' /></label>
+      <p v-if="!local" :class="{ 'status-ok': configured }" role="status"><Check v-if="configured" :size="14" />{{ t("密钥") }}{{ configured ? t("已配置") : t("未配置") }}{{ t("（更换地址后需重新保存）") }}</p>
       <div class="actions"><Button @click="save">{{ t("保存") }}</Button><Button variant="outline" :disabled="!local && !configured" @click="credentialAction('test')">{{ t("测试已保存配置") }}</Button><Button v-if="!local" variant="ghost" :disabled="!configured" @click="credentialAction('delete')">{{ t("删除已保存密钥") }}</Button></div>
     </fieldset>
-    <p v-if="!local" class="hint">{{ t("连接测试会发送固定文本 Hello，可能产生少量费用。翻译失败不会自动切换服务。") }}</p>
     <p v-if="message" role="status">{{ t(message) }}</p><p v-if="error" class="error" role="alert">{{ te(error) }}</p>
   </section>
 </template>

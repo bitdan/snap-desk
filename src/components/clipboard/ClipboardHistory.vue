@@ -193,7 +193,7 @@ onUnmounted(() => { disposed = true; revision++; clearTimeout(refreshTimer); dis
       </template>
     </aside>
     </div>
-    <footer class="history-footer"><span>{{ t("单击选择 · ↑↓ 浏览 · Enter / 双击复制") }}</span><p v-if="category === 'file'">{{ t("文件仅保存路径引用，不备份内容；原文件移动或删除后无法恢复。复制后可到资源管理器粘贴。") }}</p><p>{{ t("历史仅存本机，未加密、不上传，可能包含密码等私人内容。暂停不影响已有记录。") }}</p></footer>
+    <footer class="history-footer"><span>{{ t("单击选择 · ↑↓ 浏览 · Enter / 双击复制") }}</span><p v-if="category === 'file'">{{ t("仅记录文件路径，原文件移动或删除后失效。") }}</p><p>{{ t("历史仅存本机，未加密；暂停不删除已有记录。") }}</p></footer>
   </section>
   </DialogRoot>
 </template>

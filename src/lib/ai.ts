@@ -49,4 +49,4 @@ export function validateAiSettings(value: AiSettings): string | null {
 export interface TranslationResult { requestId: string; translatedText: string; targetLanguage: string }
 
 export interface TranslationModelStatus { modelId: string; ready: boolean; downloadable: boolean; revision: string | null; downloadBytes: number }
-export interface LocalTranslationStatus { runtimeReady: boolean; models: TranslationModelStatus[] }
+export interface LocalTranslationStatus { runtimeReady: boolean; runtimeSupported: boolean; models: TranslationModelStatus[] }

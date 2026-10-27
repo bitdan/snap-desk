@@ -35,10 +35,10 @@ onMounted(load)
       <fieldset :disabled="busy || !ready || !desktop">
         <div class="setting-row"><label for="history-text">{{ t("记录文本") }}</label><input id="history-text" v-model="settings.saveCopiedText" type="checkbox" /></div>
         <div class="setting-row"><label for="history-images">{{ t("记录图片") }}</label><input id="history-images" v-model="settings.saveCopiedImages" type="checkbox" /></div>
-        <div class="setting-row"><label for="history-files">{{ t("记录文件") }}<small>{{ t("只保存文件／文件夹路径，不备份内容；原文件移动或删除后引用失效。") }}</small></label><input id="history-files" v-model="settings.saveCopiedFiles" type="checkbox" /></div>
+        <div class="setting-row"><label for="history-files">{{ t("记录文件") }}<small>{{ t("仅记录路径，不备份文件。") }}</small></label><input id="history-files" v-model="settings.saveCopiedFiles" type="checkbox" /></div>
         <div class="setting-row"><label for="history-count">{{ t("最多条目") }}</label><input id="history-count" v-model.number="settings.maxItems" type="number" min="100" max="5000" required /></div>
         <div class="setting-row"><label for="history-size">{{ t("容量上限（MiB）") }}</label><input id="history-size" v-model.number="settings.maxStorageMb" type="number" min="50" max="2048" required /></div>
-        <div class="setting-row"><label for="history-days">{{ t("保留天数（0 为不限）") }}<small>{{ t("收藏不会自动删除；启动、保存设置和记录期间自动清理。") }}</small></label><input id="history-days" v-model.number="settings.retainDays" type="number" min="0" max="3650" required /></div>
+        <div class="setting-row"><label for="history-days">{{ t("保留天数（0 为不限）") }}<small>{{ t("自动清理不删除收藏。") }}</small></label><input id="history-days" v-model.number="settings.retainDays" type="number" min="0" max="3650" required /></div>
         <Button type="submit" :disabled="busy || !ready || !desktop">{{ t("保存历史设置") }}</Button>
       </fieldset>
     </form>

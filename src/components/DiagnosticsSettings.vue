@@ -43,7 +43,7 @@ async function refresh() {
 }
 async function toggleDebug() {
   acceptStatus(await api.diagnosticsSetDebug(remaining.value === 0))
-  message.value = remaining.value > 0 ? 'DEBUG 已立即生效，30 分钟后自动关闭；重启也会恢复 INFO。' : '已恢复 INFO。'
+  message.value = remaining.value > 0 ? '详细日志已开启，30 分钟后自动关闭。' : '已恢复 INFO。'
 }
 async function exportLogs() {
   const saved = await api.diagnosticsExport()
@@ -96,7 +96,7 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
       <Button variant="outline" :disabled="!desktop || busy || !status || !!status.error || !status.archives" @click="run(clearArchives)">{{ t("清理历史归档") }}</Button>
       <Button variant="ghost" :disabled="!desktop || busy || !status" :aria-pressed="remaining > 0" @click="run(toggleDebug)">{{ remaining > 0 ? t("关闭详细日志") : t("临时开启 DEBUG（30 分钟）") }}</Button>
     </div>
-    <p v-if="status && !status.exportSupported" class="mt-2 text-xs text-zinc-500">{{ t("当前平台暂不支持 ZIP 导出；可打开日志目录查看文件。") }}</p>
+    <p v-if="status && !status.exportSupported" class="mt-2 text-xs text-zinc-500">{{ t("此平台不支持导出，请打开日志目录。") }}</p>
   </section>
 </template>
 

@@ -31,13 +31,13 @@ async function toggleAutostart() {
   } finally { startupBusy.value = false }
 }
 const labels: Record<AppDirectory, { name: string; description: string }> = {
-  logs: { name: '应用日志目录', description: '本机诊断日志，默认 INFO，可临时开启 DEBUG；单文件 5 MB，最多保留 5 份归档。分享前请检查内容。' },
-  config: { name: '应用配置目录', description: '保存快捷键、主配置与目录偏好，不是图片或视频输出目录' },
-  data: { name: '应用数据目录', description: '恢复记录与本地数据；export-recovery 为导出记录，recording-recovery 为录屏记录' },
-  captures: { name: '截图保存目录', description: '查看上一次记住的保存位置；可在截图设置中切换记住目录' },
+  logs: { name: '应用日志目录', description: '本机日志，分享前请检查内容。' },
+  config: { name: '应用配置目录', description: '快捷键与应用设置' },
+  data: { name: '应用数据目录', description: '本地数据与恢复文件' },
+  captures: { name: '截图保存目录', description: '上次保存位置' },
   recordings: { name: '录屏保存目录', description: '视频输出位置，恢复默认不会移动已有视频' },
   scrollResults: { name: '滚动截图结果目录', description: '滚动截图自动保存的 PNG 结果' },
-  clipboard: { name: '剪贴板历史目录', description: '本地历史数据库与图片；请通过历史页清理，勿在运行中手动删除数据库文件' },
+  clipboard: { name: '剪贴板历史目录', description: '剪贴板历史，请在应用内清理' },
 }
 async function refresh() { directories.value = await api.appDirectories() }
 async function run(action: () => Promise<unknown>, success = '') {

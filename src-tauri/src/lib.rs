@@ -5,6 +5,7 @@ mod translation;
 mod local_translation;
 mod resource_lifecycle;
 mod translation_models;
+mod translation_runtime;
 mod autostart;
 mod capture;
 mod desktop_capture;

@@ -82,7 +82,7 @@ onMounted(() => { void nextTick(() => panel.value?.focus()); void recognize() })
         <p v-if="!lines.length">{{ t("未识别到文字。") }}</p>
         <p v-for="warning in ocr.warnings" :key="warning">{{ t(warning) }}</p>
         <div class="image-preview">
-          <img :src="frame.dataUrl" :alt='t("识别原图（不含标注）")' draggable="false" @error="error = '原图预览加载失败，仍可通过下方文字列表选择和复制。'" />
+          <img :src="frame.dataUrl" :alt='t("识别原图（不含标注）")' draggable="false" @error="error = '预览加载失败，可从文字列表复制。'" />
           <svg :viewBox="`0 0 ${frame.width} ${frame.height}`" preserveAspectRatio="none" aria-hidden="true">
             <polygon v-for="line in polygons" :key="line.id" :points="line.points" :class="{ selected: selected.includes(line.id) }" @click="!busy && toggle(line.id)"><title>{{ line.text }}</title></polygon>
           </svg>
@@ -94,7 +94,7 @@ onMounted(() => { void nextTick(() => panel.value?.focus()); void recognize() })
         <footer><button :disabled="busy || !lines.length" @click="selected = lines.map(line => line.id)">{{ t("全选") }}</button><button :disabled="busy || !selected.length" @click="selected = []">{{ t("清空选择") }}</button><button :disabled="busy || !text.trim()" @click="copy">{{ t("复制文字 / 所选片段") }}</button></footer>
       </template>
       <template v-if="mode === 'qr' && qr">
-        <p v-if="!qr.items.length">{{ t("未发现二维码，请使用包含完整二维码及周围白边的图片。") }}</p>
+        <p v-if="!qr.items.length">{{ t("未发现二维码，请保留完整码及白边。") }}</p>
         <div v-for="(item, index) in qr.items" :key="index" class="qr-item">
           <p class="qr-text" dir="auto">{{ item.text }}</p>
           <footer><button :disabled="busy" @click="qrAction(index, 'copy')">{{ t("复制内容") }}</button><button v-if="item.url" :disabled="busy" @click="pendingLink = index">{{ t("打开链接…") }}</button></footer>

@@ -24,11 +24,10 @@ async function test() {
       <h3 class="text-sm font-semibold">{{ t("特殊应用兼容") }}</h3>
       <Button variant="outline" :disabled="!desktop || disabled || running" @click="test">{{ running ? t("测试中，八秒后结束…") : t("测试已保存快捷键（八秒）") }}</Button>
     </div>
-    <p class="text-xs text-zinc-500" role="status">{{ running ? t("现在切换到 Axure 或目标软件并按已保存的快捷键，停留至测试结束。本轮只测试接收，不执行功能动作。") : t("Windows：测试前结束截图和录屏；开始后切换到目标软件并按键。") }}</p>
+    <p class="text-xs text-zinc-500" role="status">{{ running ? t("切换到目标软件并按快捷键；测试不会执行截图或录屏。") : t("Windows：测试前结束截图和录屏；开始后切换到目标软件并按键。") }}</p>
     <p v-if="error" class="py-2 text-sm text-red-600" role="alert">{{ te(error) }}</p>
     <ul v-if="messages.length" class="list-disc space-y-2 py-3 pl-5 text-xs" aria-live="polite"><li v-for="message in messages" :key="message">{{ t(message) }}</li></ul>
     <h3 class="pt-4 text-sm font-semibold">{{ t("替代触发") }}</h3>
-    <p class="py-2 text-xs text-zinc-500">{{ t("托盘菜单可直接截图、贴图、录屏或打开剪贴板历史，不依赖热键。需要切回目标软件时，在截图页选择 3 / 5 秒延时，再点击开始截图；录屏也可通过控制条停止。") }}</p>
-    <p class="pb-3 text-xs text-zinc-500">{{ t("默认使用系统全局快捷键，不安装低层键盘钩子或注入目标进程。禁用后注销热键；不承诺绕过游戏反作弊、受保护桌面或系统安全限制。") }}</p>
+    <p class="py-2 text-xs text-zinc-500">{{ t("快捷键不可用时，可使用托盘菜单或延时截图。") }}</p>
   </section>
 </template>
