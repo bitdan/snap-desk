@@ -197,8 +197,8 @@ watch(toolbar, (element, _, cleanup) => {
 })
 const toolbarStyle = computed(() => {
   const r = selection.value
-  // F3 进入录屏时，即使还没框选也显示来源列表，可以直接选择应用窗口。
-  if (!r) return recordingMode.value ? annotationToolbarPosition({ x: activeDisplay.value.x + 16, y: activeDisplay.value.y + 64, width: 0, height: 0 }, activeDisplay.value, toolbarSize.value) : {}
+  // 截图与录屏都在选区确定后显示工具栏，位置统一跟随选区。
+  if (!r) return {}
   return annotationToolbarPosition(r, activeDisplay.value, toolbarSize.value)
 })
 // 所有图形保存在原图坐标系内；选区只负责裁剪和限制绘制区域。
@@ -479,7 +479,7 @@ onUnmounted(() => { releaseFrame(); disposed = true; offClosed?.(); off?.(); off
       <span class="size-label">{{ pixels?.width }} × {{ pixels?.height }} px · ({{ pixels?.x }}, {{ pixels?.y }})</span>
       <template v-if="!marked && !annotating"><span v-for="handle in handles" :key="handle" :class="['resize-handle', handle]" @pointerdown.stop="down($event, handle)" /></template>
     </div>
-    <AnnotationWorkspace :editor="editor" :width="frame?.width ?? 1" :height="frame?.height ?? 1" :bounds="pixels ?? { x: 0, y: 0, width: 1, height: 1 }" :surface-visible="!!frame && !!pixels" :toolbar-visible="(!!valid || (!!frame && recordingMode)) && !gesture" :enabled="annotating && !busy" :active="annotating" :disabled="busy || !valid" :toolbar-style="[toolbarStyle, floatingToolbarStyle]" @toolbar-element="toolbar = $event" @tool="chooseTool" @float="floatToolbar" @reset-position="resetToolbarPosition">
+    <AnnotationWorkspace :editor="editor" :width="frame?.width ?? 1" :height="frame?.height ?? 1" :bounds="pixels ?? { x: 0, y: 0, width: 1, height: 1 }" :surface-visible="!!frame && !!pixels" :toolbar-visible="!!valid && !gesture" :enabled="annotating && !busy" :active="annotating" :disabled="busy || !valid" :toolbar-style="[toolbarStyle, floatingToolbarStyle]" @toolbar-element="toolbar = $event" @tool="chooseTool" @float="floatToolbar" @reset-position="resetToolbarPosition">
         <template #leading><button :disabled="busy || editor.pending || editor.interacting || marked" :aria-pressed="!annotating" :title='t("调整选区")' :aria-label='t("调整选区")' @click="annotating = false"><Move :size="16" /></button></template>
         <template #actions>
           <button v-if="!recordingMode && selectedTarget !== null && frame?.targets[selectedTarget]?.kind === 'window'" :disabled="busy || marked || editor.pending || editor.interacting" :title='t("原生窗口截图")' :aria-label='t("原生窗口截图")' @click="captureNative"><AppWindow :size="16" /></button>

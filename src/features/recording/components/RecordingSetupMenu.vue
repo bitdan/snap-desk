@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { t } from '@/shared/i18n/i18n'
 import RecordingInputSettings from '@/features/recording/components/RecordingInputSettings.vue'
 import RecordingOptionMenu from '@/features/recording/components/RecordingOptionMenu.vue'
@@ -10,6 +11,8 @@ const quality = defineModel<RecordingQuality>('quality', { required: true })
 const mbps = defineModel<string | number>('mbps', { required: true })
 const countdown = defineModel<0 | 3 | 5>('countdown', { required: true })
 const effects = defineModel<InputEffects>('effects', { required: true })
+// 只统计监听开关，尺寸、颜色等偏好本身不代表开启了特效。
+const effectCount = computed(() => [effects.value.keyboard, effects.value.clicks, effects.value.movement, effects.value.drag, effects.value.wheel].filter(Boolean).length)
 </script>
 
 <template>
@@ -21,7 +24,7 @@ const effects = defineModel<InputEffects>('effects', { required: true })
       <select v-model="encoding" :disabled="busy" :aria-label="t('编码方式')"><option value="auto">{{ t('自动编码') }}</option><option value="software">{{ t('软件兼容') }}</option></select>
     </template>
     <select v-model="countdown" :disabled="busy" :aria-label="t('倒计时')"><option v-for="value in [0, 3, 5]" :key="value" :value="value">{{ value ? t('{0} 秒', { 0: value }) : t('无延时') }}</option></select>
-    <RecordingOptionMenu :label="t('键鼠特效')" :disabled="busy"><RecordingInputSettings v-model="effects" :disabled="busy" /></RecordingOptionMenu>
+    <RecordingOptionMenu :label="t('键鼠特效')" :status="effectCount ? t('{0} 项', { 0: effectCount }) : t('已关闭')" :active="effectCount > 0" wide :disabled="busy"><RecordingInputSettings v-model="effects" :disabled="busy" /></RecordingOptionMenu>
   </div>
 </template>
 
