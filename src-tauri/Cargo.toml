@@ -1,7 +1,7 @@
 [package]
 name = "snap-desk"
 # Cargo 要求版本字面量；开发/构建脚本从 ../package.json 自动生成，无需手动维护。
-version = "0.1.7-beta.1"
+version = "0.1.7-beta.2"
 license = "GPL-3.0-only"
 repository = "https://github.com/bitdan/snap-desk"
 description = "A focused cross-platform screenshot tool"
