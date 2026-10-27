@@ -1,0 +1,108 @@
+<script setup lang="ts">
+import { t, te } from '@/shared/i18n/i18n'
+import { computed, onMounted, ref, watch } from 'vue'
+import { api } from '@/services/api'
+import { defaultAiSettings, targetLanguages, validateAiSettings } from '@/features/recognition/ai'
+import type { LocalTranslationStatus } from '@/features/recognition/ai'
+import { Check } from 'lucide-vue-next'
+import Button from '@/shared/ui/button/Button.vue'
+import ResourceSettings from '@/features/resources/components/ResourceSettings.vue'
+
+const draft = ref(defaultAiSettings()), secret = ref(''), configured = ref(false)
+const localStatus = ref<LocalTranslationStatus | null>(null)
+const local = computed(() => draft.value.provider === 'local-ctranslate2')
+const languages = computed(() => local.value ? targetLanguages.slice(0, 2) : targetLanguages)
+watch(local, value => { if (value && !['zh-CN', 'en'].includes(draft.value.targetLanguage)) draft.value.targetLanguage = 'zh-CN' })
+const busy = ref(false), ready = ref(false), error = ref(''), message = ref('')
+onMounted(async () => {
+  try {
+    draft.value = { ...(await api.status()).settings.ai }; ready.value = true
+    localStatus.value = await api.translationModelStatus()
+    configured.value = local.value ? false : await api.aiProviderStatus()
+  }
+  catch (e) { error.value = String(e) }
+})
+/** 只覆盖 AI 字段，读取最新配置以保留其他页面已保存的设置。密钥从不进入 settings。 */
+async function save() {
+  if (busy.value || !ready.value) return
+  busy.value = true; error.value = ''; message.value = ''
+  try {
+    const invalid = validateAiSettings(draft.value)
+    if (invalid) throw new Error(invalid)
+    const current = (await api.status()).settings
+    await api.saveSettings({ ...current, ai: { ...draft.value } })
+    if (!local.value && secret.value) { await api.aiCredentialSet(secret.value); secret.value = '' }
+    configured.value = local.value ? false : await api.aiProviderStatus()
+    message.value = '翻译设置已保存。'
+  } catch (e) { error.value = String(e) }
+  finally { busy.value = false }
+}
+async function credentialAction(action: 'delete' | 'test') {
+  busy.value = true; error.value = ''; message.value = ''
+  try {
+    if (action === 'delete') { await api.aiCredentialSet(null); configured.value = false; message.value = '密钥已删除。' }
+    else { await api.aiProviderTest(); message.value = '翻译测试成功。' }
+  } catch (e) { error.value = String(e) }
+  finally { busy.value = false }
+}
+/** 引擎和语言包均由用户主动下载或导入，状态与 OCR 独立。 */
+async function modelAction(modelId: string, action: 'download' | 'import' | 'delete') {
+  if (busy.value) return
+  busy.value = true; error.value = ''; message.value = modelId === 'runtime' ? '正在安装引擎…' : ''
+  try { localStatus.value = await api.translationModelAction(modelId, action); message.value = modelId === 'runtime' ? '引擎状态已更新。' : '语言包状态已更新。' }
+  catch (e) { message.value = ''; error.value = String(e) }
+  finally { busy.value = false }
+}
+</script>
+
+<template>
+  <section class="ai-settings">
+    <h3>{{ t("文字识别") }}</h3>
+    <ResourceSettings kind="ocr" />
+    <h3>{{ t("文本翻译") }}</h3>
+    <fieldset :disabled="busy || !ready">
+      <label>{{ t("翻译引擎") }}<select v-model="draft.provider"><option value="local-ctranslate2">{{ t("本地离线") }}</option><option value="online-llm">{{ t("在线文本服务") }}</option></select></label>
+      <template v-if="local">
+        <div class="model-row">
+          <span :class="{ 'status-ok': localStatus?.runtimeReady }" role="status"><Check v-if="localStatus?.runtimeReady" :size="14" />{{ !localStatus ? t("引擎状态未读取") : localStatus.runtimeReady ? t("本地引擎已安装") : t("翻译引擎未安装或校验失败") }}</span>
+          <Button variant="outline" :disabled="!localStatus?.runtimeSupported" @click="modelAction('runtime', 'download')">{{ t("下载引擎") }}</Button>
+          <Button variant="outline" :disabled="!localStatus?.runtimeSupported" @click="modelAction('runtime', 'import')">{{ t("导入引擎 ZIP") }}</Button>
+        </div>
+        <p v-if="localStatus && !localStatus.runtimeSupported" class="hint">{{ t("翻译引擎下载和导入目前仅支持 Windows x64。") }}</p>
+        <div v-for="pack in localStatus?.models" :key="pack.modelId" class="model-row">
+          <span>{{ pack.modelId.includes('en-zh') ? t("英语 → 简体中文") : t("中文 → 英语") }}</span><span :class="{ 'status-ok': pack.ready }" role="status"><Check v-if="pack.ready" :size="14" />{{ pack.ready ? t("已校验") : t("未安装或校验失败") }}</span>
+          <Button variant="outline" :disabled="!pack.downloadable" @click="modelAction(pack.modelId, 'download')">{{ t("下载") }}{{ pack.downloadBytes ? `（${Math.ceil(pack.downloadBytes / 1048576)} MiB）` : '' }}</Button>
+          <Button variant="outline" @click="modelAction(pack.modelId, 'import')">{{ t("导入语言包") }}</Button>
+          <Button v-if="pack.revision" variant="ghost" @click="modelAction(pack.modelId, 'delete')">{{ t("卸载") }}</Button>
+        </div>
+        <label>{{ t("闲置回收（秒）") }}<input v-model.number="draft.localIdleSeconds" type="number" min="0" max="3600" step="1" /></label>
+        <p class="hint">{{ t("0 不回收；可设为 30～3600 秒。") }}</p>
+      </template>
+      <template v-else>
+      <p>{{ t("在线翻译会发送原文，可能产生费用。") }}</p>
+      <label>{{ t("完整接口地址") }}<input v-model.trim="draft.endpoint" type="url" :placeholder='t("https://服务域名/v1/chat/completions")' autocomplete="off" /></label>
+      <label>{{ t("模型名称") }}<input v-model.trim="draft.model" :placeholder='t("填写服务支持的模型 ID")' /></label>
+      </template>
+      <label>{{ t("目标语言") }}<select v-model="draft.targetLanguage"><option v-for="item in languages" :key="item.value" :value="item.value">{{ t(item.label) }}</option></select></label>
+      <label>{{ t("超时（秒）") }}<input v-model.number="draft.timeoutSeconds" type="number" min="5" max="120" /></label>
+      <label v-if="!local">API Key<input v-model="secret" type="password" autocomplete="new-password" :placeholder='t("留空保留现有密钥")' /></label>
+      <p v-if="!local" :class="{ 'status-ok': configured }" role="status"><Check v-if="configured" :size="14" />{{ t("密钥") }}{{ configured ? t("已配置") : t("未配置") }}{{ t("（更换地址后需重新保存）") }}</p>
+      <div class="actions"><Button @click="save">{{ t("保存") }}</Button><Button variant="outline" :disabled="!local && !configured" @click="credentialAction('test')">{{ t("测试已保存配置") }}</Button><Button v-if="!local" variant="ghost" :disabled="!configured" @click="credentialAction('delete')">{{ t("删除已保存密钥") }}</Button></div>
+    </fieldset>
+    <p v-if="message" role="status">{{ t(message) }}</p><p v-if="error" class="error" role="alert">{{ te(error) }}</p>
+  </section>
+</template>
+
+<style scoped>
+.ai-settings { max-width: 760px; font-size: 13px; }
+h3 { font-size: 14px; font-weight: 600; margin: 0 0 8px; }
+h3:not(:first-child) { border-top: 1px solid #e1e4e8; margin-top: 16px; padding-top: 16px; }
+p { color: #57606a; margin: 8px 0; }
+fieldset { border: 0; padding: 0; min-width: 0; }
+label { display: grid; grid-template-columns: 120px minmax(0, 1fr); align-items: center; gap: 12px; margin: 8px 0; }
+input, select { height: 32px; border: 1px solid #d8dee4; border-radius: 4px; padding: 4px 8px; min-width: 0; width: 100%; }
+input:focus-visible, select:focus-visible { outline: 2px solid #2563eb; }
+.model-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 8px 0; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.hint { font-size: 12px; }.error { color: #b91c1c; }
+</style>

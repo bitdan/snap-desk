@@ -1,12 +1,12 @@
-import { initializeAppearance, applyAppearance, parseAppearance } from './lib/appearance'
-import { t } from './lib/i18n'
+import { initializeAppearance, applyAppearance, parseAppearance } from '@/shared/ui/appearance'
+import { t } from '@/shared/i18n/i18n'
 import { listen } from '@tauri-apps/api/event'
 import { createApp, defineComponent, h, nextTick } from 'vue'
 import { isTauri } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import { resolveWindowKind } from './lib/window-kind'
-import { appLog, installGlobalErrorLogging } from './lib/logger'
-import { api } from './lib/api'
+import { resolveWindowKind } from '@/shared/window/window-kind'
+import { appLog, installGlobalErrorLogging } from '@/services/logger'
+import { api } from '@/services/api'
 
 initializeAppearance()
 installGlobalErrorLogging(window)
@@ -24,16 +24,16 @@ async function mount() {
   document.documentElement.classList.toggle('selection-edge', kind === 'selection-edge')
   let component
   if (kind === 'selection-edge') {
-    component = (await import('./components/SelectionEdge.vue')).default
+    component = (await import('@/features/capture/components/SelectionEdge.vue')).default
   } else if (kind === 'recording-controls') {
-    await import('./recording-controls.css')
-    component = (await import('./components/RecordingControls.vue')).default
+    await import('@/features/recording/recording-controls.css')
+    component = (await import('@/features/recording/components/RecordingControls.vue')).default
   } else {
-    await import('./style.css')
-    component = kind === 'capture' ? (await import('./components/CaptureOverlay.vue')).default
-      : kind === 'pin' ? (await import('./components/PinWindow.vue')).default
-      : kind === 'scroll-preview' || kind === 'scroll-controls' ? (await import('./components/ScrollPreview.vue')).default
-      : (await import('./App.vue')).default
+    await import('@/app/styles/main.css')
+    component = kind === 'capture' ? (await import('@/features/capture/components/CaptureOverlay.vue')).default
+      : kind === 'pin' ? (await import('@/features/pins/components/PinWindow.vue')).default
+      : kind === 'scroll-preview' || kind === 'scroll-controls' ? (await import('@/features/scroll/components/ScrollPreview.vue')).default
+      : (await import('@/app/App.vue')).default
   }
   if (kind === 'selection-edge' || kind === 'recording-controls' || kind === 'scroll-controls') {
     // 窄原生窗口无法容纳窗口外浮层，控制条使用系统 title 提示。
@@ -41,7 +41,7 @@ async function mount() {
     app.config.errorHandler = () => appLog('error', 'vue.component_error')
     app.mount('#app')
   } else {
-    const TooltipLayer = (await import('./components/TooltipLayer.vue')).default
+    const TooltipLayer = (await import('@/shared/ui/TooltipLayer.vue')).default
     const app = createApp(defineComponent({ render: () => [h(component), h(TooltipLayer)] }))
     app.config.errorHandler = () => appLog('error', 'vue.component_error')
     app.mount('#app')

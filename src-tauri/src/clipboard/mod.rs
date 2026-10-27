@@ -119,7 +119,7 @@ pub async fn clipboard_restore(
                 .clipboard()
                 .write_text(t.clone())
                 .map_err(|_| "复制文本失败，请重试。".to_string())?,
-            Content::Image(i) => crate::image_io::copy(app, i)?,
+            Content::Image(i) => crate::shared::image_io::copy(app, i)?,
             Content::Files(paths) => platform::write_files(paths)?,
         }
         *s.restored.lock().map_err(|_| "恢复状态不可用。")? =

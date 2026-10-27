@@ -148,15 +148,15 @@ pub async fn diagnostics_clear_archives(
         let _guard = OPERATION.try_lock().map_err(|_| "诊断操作正在进行。")?;
         let confirmed = app
             .dialog()
-            .message(crate::native_i18n::text(
+            .message(crate::shared::native_i18n::text(
                 &app,
                 "仅删除历史日志归档，保留当前正在写入的日志。此操作无法撤销。",
             ))
-            .title(crate::native_i18n::text(&app, "清理历史日志"))
+            .title(crate::shared::native_i18n::text(&app, "清理历史日志"))
             .parent(&window)
             .buttons(MessageDialogButtons::OkCancelCustom(
-                crate::native_i18n::text(&app, "确认清理"),
-                crate::native_i18n::text(&app, "取消"),
+                crate::shared::native_i18n::text(&app, "确认清理"),
+                crate::shared::native_i18n::text(&app, "取消"),
             ))
             .blocking_show();
         let mut result = ClearResult {

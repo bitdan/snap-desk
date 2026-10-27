@@ -7,9 +7,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
-    "build": "vue-tsc --noEmit && vite build",
-    "check": "vue-tsc --noEmit",
-    "test": "vitest run && node --test scripts/sync-version.test.mjs",
+    "build": "npm run check && vite build",
+    "check": "npm run check:architecture && vue-tsc --noEmit",
+    "check:architecture": "node scripts/check-architecture.mjs",
+    "test": "npm run check:architecture && vitest run && node --test scripts/sync-version.test.mjs scripts/check-architecture.test.mjs",
     "tauri": "tauri",
     "version:sync": "node scripts/sync-version.mjs",
     "predesktop:dev": "npm run version:sync",

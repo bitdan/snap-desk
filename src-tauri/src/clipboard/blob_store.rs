@@ -225,7 +225,7 @@ impl BlobStore {
             } else {
                 if !thumb_exists {
                     // 解码或写盘失败时返回错误并保留记录，不能将暂时故障当作数据丢失。
-                    let image = crate::pin_content::read_image(&self.path(&blob)?)?;
+                    let image = crate::pins::content::read_image(&self.path(&blob)?)?;
                     let thumbnail = image::DynamicImage::ImageRgba8(image).thumbnail(240, 160);
                     let parent = Path::new(&thumb).parent().ok_or("缩略图路径无效。")?;
                     let dir = self.directory(parent.to_str().ok_or("缩略图路径无效。")?)?;

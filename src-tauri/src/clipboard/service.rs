@@ -347,7 +347,7 @@ impl Data {
                 &item.text.ok_or("文件引用损坏。")?,
             )?)),
             Kind::Text => Ok(Content::Text(item.text.ok_or("历史文本损坏。")?)),
-            Kind::Image => Ok(Content::Image(crate::pin_content::read_image(
+            Kind::Image => Ok(Content::Image(crate::pins::content::read_image(
                 &self.blobs.path(&item.blob.ok_or("图片引用损坏。")?)?,
             )?)),
         }

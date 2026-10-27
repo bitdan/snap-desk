@@ -33,6 +33,34 @@ npm run desktop:dev
 `src-tauri/target/debug/snap-desk.exe`；发布优化程序使用 `npm run desktop:build`。
 构建前从托盘退出旧程序。缺少本地翻译 Worker 时仍可构建截图工具，本地翻译需另行准备引擎。
 
+## 代码组织
+
+```text
+src/
+  main.ts              # WebView 启动与窗口选择
+  app/                 # 主界面、引导和全局样式
+  features/<功能>/     # 业务逻辑、components、api、events 与通信类型
+  shared/              # 通用 UI、几何、集合、语言与窗口标签解析
+  services/            # IPC 错误处理、命令白名单、日志与 API 汇总
+src-tauri/src/
+  lib.rs / main.rs     # 模块地图与原生启动入口
+  app/                 # Tauri 组装、应用命令、托盘/快捷键动作
+  capture/             # 截图会话、桌面采集、预览；含 recorder/ 和 scroll/
+  pins/                # 桌面贴图与内容读取
+  clipboard/           # 剪贴板历史、持久化、导出与平台适配
+  recognition/         # OCR、二维码、翻译、模型、引擎与凭据
+  settings/            # 设置、快捷键、自启与目录访问
+  resources/           # 资源下载与空闲资源回收
+  diagnostics/         # 日志查询、诊断与导出
+  recovery/            # 恢复与清理
+  shared/              # 标注渲染、图像导出、窗口和系统基础设施
+tests/<功能>/          # 对应功能的前端测试
+```
+
+前端功能目录为 `capture`、`annotations`、`scroll`、`recording`、`pins`、`clipboard`、`recognition`、`settings`、`resources`、`diagnostics` 和 `recovery`。新增功能先找所属目录，组件与业务逻辑放在一起；跨功能通用代码才进入 `shared`。通信命令与事件由各功能维护，通过 `services/ipc.ts` 统一处理错误，`services/api.ts` 只汇总导出。
+
+`npm run check` 执行目录边界检查和 TypeScript 静态检查；`npm test` 同样先检查目录边界。具体协作规则见 [AGENTS.md](AGENTS.md)。
+
 ## 项目进度
 
 项目仍在开发和测试中，部分功能及跨平台支持尚未完善。详情见 [TODO](Snap_Desk_TODO.md)。

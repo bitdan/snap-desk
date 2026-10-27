@@ -15,7 +15,7 @@ pub fn save(app: &AppHandle, window: &WebviewWindow) -> Result<bool, String> {
         .dialog()
         .file()
         .set_parent(window)
-        .set_title(crate::native_i18n::text(&app, "导出本地诊断包"))
+        .set_title(crate::shared::native_i18n::text(&app, "导出本地诊断包"))
         .set_file_name(name)
         .add_filter("ZIP", &["zip"])
         .blocking_save_file()
@@ -49,7 +49,7 @@ pub fn save(app: &AppHandle, window: &WebviewWindow) -> Result<bool, String> {
         "collectedAt": collected,
         "logLevel": if runtime::remaining_seconds() > 0 { "DEBUG" } else { "INFO" },
         "ocr": crate::resources::diagnostic_summary(app),
-        "translation": crate::translation_models::diagnostic_summary(app),
+        "translation": crate::recognition::translation_models::diagnostic_summary(app),
         // 不为导出试录视频；标明仅为后端能力检查，编码器未探测。
         "recording": crate::capture::recording::diagnostic_summary(),
         "logs": {

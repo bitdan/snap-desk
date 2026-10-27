@@ -239,7 +239,7 @@ fn long_png_with_font<W: Write + Seek>(
     for (item, h) in items.iter().zip(heights) {
         let image = match item {
             Snapshot::Text(t) => text_image_with_font(t, font_bytes)?,
-            Snapshot::Image(p, _, _) => crate::pin_content::read_image(p)?,
+            Snapshot::Image(p, _, _) => crate::pins::content::read_image(p)?,
         };
         let scaled = image::imageops::resize(
             &image,
@@ -312,9 +312,9 @@ fn pdf_with_font<W: Write>(
                 }
             }
             Snapshot::Image(path, w, h) => {
-                let image = crate::pin_content::read_image(path)?;
+                let image = crate::pins::content::read_image(path)?;
                 // PDF 采用白色纸面，先正确合成透明像素，避免透明处变黑。
-                let rgb = crate::image_io::white_background(&image);
+                let rgb = crate::shared::image_io::white_background(&image);
                 let margin = options.margin_mm;
                 let (pw, ph) = if options.page_size == PageSize::Original {
                     (
@@ -377,7 +377,7 @@ pub async fn clipboard_export(
             )
             .map_err(|_| "已有素材正在导出，请完成或取消当前保存对话框。")?;
         let _export = ExportGuard(&service.exporting);
-        let temp = crate::recovery_center::Workspace::temporary(
+        let temp = crate::recovery::Workspace::temporary(
             &app,
             "剪贴板导出快照",
             (0..options.ids.len()).map(|i| format!("{i}.png")).collect(),
@@ -406,9 +406,9 @@ pub async fn clipboard_export(
         let mut dialog = app
             .dialog()
             .file()
-            .set_title(crate::native_i18n::text(&app, "导出剪贴板素材"));
+            .set_title(crate::shared::native_i18n::text(&app, "导出剪贴板素材"));
         if remember {
-            if let Some(dir) = crate::image_io::current_directory(&app)? {
+            if let Some(dir) = crate::shared::image_io::current_directory(&app)? {
                 dialog = dialog.set_directory(dir);
             }
         }
@@ -437,7 +437,7 @@ pub async fn clipboard_export(
                 })
                 .collect();
             let staging =
-                crate::recovery_center::Workspace::new(&app, &parent, "剪贴板独立文件批次", names)?;
+                crate::recovery::Workspace::new(&app, &parent, "剪贴板独立文件批次", names)?;
             for (index, item) in items.iter().enumerate() {
                 let path = staging.path().join(format!(
                     "{:03}.{}",
@@ -470,7 +470,7 @@ pub async fn clipboard_export(
                 "png"
             };
             let Some(path) = dialog
-                .add_filter(crate::native_i18n::text(&app, "导出文件"), &[ext])
+                .add_filter(crate::shared::native_i18n::text(&app, "导出文件"), &[ext])
                 .set_file_name(format!("SnapDesk-{}.{}", super::service::now(), ext))
                 .blocking_save_file()
             else {
@@ -485,7 +485,7 @@ pub async fn clipboard_export(
             }
             directory = path.parent().ok_or("导出路径无效。")?.to_path_buf();
             let mut file =
-                crate::recovery_center::TrackedFile::new(&app, &directory, ext, "剪贴板组合导出")?;
+                crate::recovery::TrackedFile::new(&app, &directory, ext, "剪贴板组合导出")?;
             if options.mode == Mode::Pdf {
                 pdf_with_font(&items, &options, file.file_mut(), &font_bytes)?;
             } else {
@@ -496,7 +496,7 @@ pub async fn clipboard_export(
             outputs.push(path.to_string_lossy().into_owned());
         }
         if remember {
-            let _ = crate::image_io::remember_export_directory(&app, &directory);
+            let _ = crate::shared::image_io::remember_export_directory(&app, &directory);
         }
         Ok(ExportResult {
             status: "saved",
@@ -514,10 +514,10 @@ mod tests {
     #[test]
     #[ignore = "使用完整字体测量 PDF/PNG 实际耗时及大小，不放入日常单元测试"]
     fn perf_export_full_font() {
-        let font = fs::read(crate::perf::assets().join("export-font.ttf")).unwrap();
+        let font = fs::read(crate::shared::perf::assets().join("export-font.ttf")).unwrap();
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("screen.png");
-        crate::perf::screenshot(1920, 1080).save(&path).unwrap();
+        crate::shared::perf::screenshot(1920, 1080).save(&path).unwrap();
         for (label, items) in [
             (
                 "text",
