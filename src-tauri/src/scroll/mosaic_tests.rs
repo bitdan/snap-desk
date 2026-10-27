@@ -502,13 +502,13 @@ fn unsupported_motion_patterns_and_size_changes_do_not_modify_canvas() {
 fn stationary_floating_texture_in_observed_overlap_is_rejected() {
     let doc = document();
     for (dx, dy) in [(40, 0), (0, 40), (-40, 0), (0, -40)] {
-        // 控件只占 1% 画面；全局多数票可能放行，但真实重叠像素能提供局部反证。
+        // 控件只占约 0.25% 画面；全局多数票可能放行，但真实重叠像素能提供局部反证。
         let px = 72;
         let py = 72;
         let overlay = |x, y| {
             let mut image = frame(&doc, x, y);
-            for oy in 0..16 {
-                for ox in 0..16 {
+            for oy in 0..8 {
+                for ox in 0..8 {
                     image.put_pixel(px + ox, py + oy, *doc.get_pixel(400 + ox, 400 + oy));
                 }
             }

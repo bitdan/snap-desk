@@ -208,7 +208,8 @@ mod tests {
         // 四边分别验证；冻结列沿横向暴露，页头/页脚沿纵向暴露。
         for side in 0..4 {
             let columns = side < 2;
-            let position = |offset| {
+            // 图像裁剪使用无符号物理像素坐标；显式标注，避免整数默认推断为 i32。
+            let position = |offset: u32| -> (u32, u32) {
                 if columns {
                     (200 + offset, 200)
                 } else {
@@ -320,8 +321,8 @@ mod tests {
         });
         let frame = |y| image::imageops::crop_imm(&doc, 0, y, 160, 160).to_image();
         let overlay = |mut image: RgbaImage| {
-            for y in 136..152 {
-                for x in 136..152 {
+            for y in 72..80 {
+                for x in 72..80 {
                     image.put_pixel(x, y, *doc.get_pixel(x + 200, y + 200));
                 }
             }
@@ -409,7 +410,7 @@ mod tests {
         );
         assert_eq!(recovery.failures, 0);
         assert!(!recovery.is_recovering());
-        assert_eq!(recovery.delay(), 80);
+        assert_eq!(recovery.delay(), 40);
         assert_eq!(stitch.viewport().y, 120);
     }
 

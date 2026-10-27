@@ -761,12 +761,12 @@ mod tests {
     fn appearance_legacy_defaults_roundtrip_and_rejects_unknown_values() {
         let old: Settings = serde_json::from_str("{}").unwrap();
         assert_eq!(old.appearance, Appearance::default());
-        let configured: Settings = serde_json::from_str(
-            r#"{"appearance":{"theme":"dark","language":"en"}}"#,
-        ).unwrap();
+        let configured: Settings =
+            serde_json::from_str(r#"{"appearance":{"theme":"dark","language":"en"}}"#).unwrap();
         assert_eq!(configured.appearance.theme, Theme::Dark);
         assert_eq!(configured.appearance.language, Language::English);
-        let restored: Settings = serde_json::from_value(serde_json::to_value(&configured).unwrap()).unwrap();
+        let restored: Settings =
+            serde_json::from_value(serde_json::to_value(&configured).unwrap()).unwrap();
         assert_eq!(restored.appearance, configured.appearance);
         for invalid in [
             r#"{"appearance":{"theme":"invalid"}}"#,
@@ -1277,8 +1277,12 @@ mod tests {
 
     #[test]
     fn function_keys_are_valid_without_modifiers() {
-        // F1～F12 可单独作为全局快捷键，这也是新的默认值 F1 的使用场景。
-        for n in (1..=12).filter(|n| ![2, 3].contains(n)) {
+        // 先验证 F1～F12 本身均可无修饰键；动作之间的占用冲突另行校验。
+        for n in 1..=12 {
+            assert!(parse_shortcut(&format!("F{n}")).unwrap().is_some());
+        }
+        // 默认 F2/F3/F4 已分别被贴图、录屏和历史占用，不能重复用作截图键。
+        for n in (1..=12).filter(|n| ![2, 3, 4].contains(n)) {
             assert!(Settings {
                 shortcuts: Shortcuts {
                     capture: format!("F{n}"),
@@ -1289,8 +1293,8 @@ mod tests {
             .validate()
             .is_ok());
         }
-        // F13 及字母、数字仍然需要修饰键。
-        for shortcut in ["F2", "F3", "F13", "A", "1"] {
+        // 重复动作映射及不支持的主键不能通过完整配置校验。
+        for shortcut in ["F2", "F3", "F4", "F13", "A", "1"] {
             assert!(Settings {
                 shortcuts: Shortcuts {
                     capture: shortcut.into(),

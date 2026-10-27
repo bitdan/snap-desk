@@ -317,6 +317,8 @@ mod tests {
             width: 1920,
             height: 1080,
         });
+        // 此场景比较 30/60 FPS，不依赖 for_region 当前的默认帧率。
+        config.fps = 30;
         assert_eq!(config.target_bitrate(), 8_087_040);
         config.fps = 60;
         assert_eq!(config.target_bitrate(), 16_174_080);
