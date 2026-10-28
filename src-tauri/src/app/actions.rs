@@ -14,9 +14,10 @@ pub(super) fn trigger(app: &AppHandle) {
     if app.state::<CaptureState>().active.load(Ordering::SeqCst) {
         return;
     }
+    let requested_at = std::time::Instant::now();
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
-        if let Err(error) = capture::begin(app.clone()).await {
+        if let Err(error) = capture::begin_at(app.clone(), requested_at).await {
             capture::report_error(&app, error);
         }
     });

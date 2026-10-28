@@ -1,65 +1,77 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { readFileSync } from 'node:fs'
-import { parse } from '@vue/compiler-sfc'
-import ts from 'typescript'
-import { waitForCapturePaint } from '../../src/features/capture/capture-paint'
+import { presentCaptureImage, waitForCapturePaint } from '../../src/features/capture/capture-paint'
 
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals() })
+function frames() {
+  vi.useFakeTimers()
+  const callbacks = new Map<number, FrameRequestCallback>()
+  let next = 0
+  vi.stubGlobal('requestAnimationFrame', vi.fn(callback => { callbacks.set(++next, callback); return next }))
+  vi.stubGlobal('cancelAnimationFrame', vi.fn(id => callbacks.delete(id)))
+  return async () => {
+    for (let i = 0; i < 2; i++) {
+      const pending = [...callbacks.entries()]; callbacks.clear()
+      for (const [, callback] of pending) callback(performance.now())
+      await Promise.resolve()
+    }
+  }
+}
+function fixture() {
+  let decode!: () => void
+  let current = true
+  const options = {
+    image: { decode: vi.fn(() => new Promise<void>(resolve => { decode = resolve })) },
+    receivedAt: performance.now(), isCurrent: () => current,
+    decoded: vi.fn(), decodeFailed: vi.fn(async () => {}), ready: vi.fn(async () => {}), painted: vi.fn(async () => {}),
+  }
+  return { options, start: () => presentCaptureImage(options), decode: () => decode(), cancel: () => { current = false } }
+}
 
-describe('隐藏截图窗口首帧', () => {
-  it('等待两次绘制回调，隐藏窗口不派发回调时也能结束等待', async () => {
-    vi.useFakeTimers()
-    const callbacks: FrameRequestCallback[] = []
-    vi.stubGlobal('requestAnimationFrame', vi.fn(callback => callbacks.push(callback)))
-    vi.stubGlobal('cancelAnimationFrame', vi.fn())
-    const done = vi.fn()
-    const painted = waitForCapturePaint().then(done)
-    callbacks.shift()!(0)
-    await Promise.resolve()
-    expect(done).not.toHaveBeenCalled()
-    callbacks.shift()!(16)
-    await painted
-    expect(done).toHaveBeenCalledTimes(1)
-    const hidden = waitForCapturePaint().then(done)
+describe('截图首帧时序', () => {
+  it('两次 rAF 成功时标记绘制回调；隐藏窗口超时单独标记且清除回调', async () => {
+    const paint = frames()
+    const visible = waitForCapturePaint()
+    await paint()
+    expect((await visible).source).toBe('raf')
+    const hidden = waitForCapturePaint()
     await vi.advanceTimersByTimeAsync(100)
-    await hidden
-    expect(done).toHaveBeenCalledTimes(2)
+    expect((await hidden).source).toBe('timeout')
     expect(vi.getTimerCount()).toBe(0)
   })
-
-  // 执行组件的真实加载入口，用可控的解码/绘制 Promise 重放首次截屏和取消时序。
-  const script = parse(readFileSync('src/features/capture/components/CaptureOverlay.vue', 'utf8')).descriptor.scriptSetup!.content
-  const ast = ts.createSourceFile('capture.ts', script, ts.ScriptTarget.Latest, true)
-  const entry = ast.statements.find(n => ts.isFunctionDeclaration(n) && n.name?.text === 'loaded')!
-  const code = ts.transpileModule(entry.getText(ast), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText
-  function fixture() {
-    let decoded!: () => void, painted!: () => void
-    const image = { decode: vi.fn(() => new Promise<void>(resolve => { decoded = resolve })) }
-    const context = {
-      frame: { value: { id: 7 } as { id: number } | null }, screenImage: { value: image },
-      imageUrl: { value: '/7/0.png' }, disposed: false, imageReady: { value: false },
-      error: { value: '' }, api: { ready: vi.fn() }, imageFailed: vi.fn(), nextTick: vi.fn(),
-      waitForCapturePaint: vi.fn(() => new Promise<void>(resolve => { painted = resolve })),
-    }
-    const loaded = new Function(...Object.keys(context), `${code}; return loaded`)(...Object.values(context))
-    return { context, load: () => loaded({ target: image }), decode: () => decoded(), paint: () => painted() }
-  }
-  it('解码和绘制等待完成前不显示原生窗口', async () => {
-    const f = fixture(), pending = f.load()
-    expect(f.context.api.ready).not.toHaveBeenCalled()
-    f.decode()
-    await vi.waitFor(() => expect(f.context.waitForCapturePaint).toHaveBeenCalled())
-    expect(f.context.api.ready).not.toHaveBeenCalled()
-    f.paint(); await pending
-    expect(f.context.api.ready).toHaveBeenCalledExactlyOnceWith(7)
+  it('解码和预合成结束后显示，再等待可见绘制后发送计时回执', async () => {
+    const paint = frames(), f = fixture(), pending = f.start()
+    expect(f.options.ready).not.toHaveBeenCalled()
+    f.decode(); await vi.advanceTimersByTimeAsync(0)
+    expect(f.options.decoded).toHaveBeenCalledOnce()
+    expect(f.options.ready).not.toHaveBeenCalled()
+    await paint(); await vi.advanceTimersByTimeAsync(0)
+    expect(f.options.ready).toHaveBeenCalledOnce()
+    expect(f.options.painted).not.toHaveBeenCalled()
+    await paint(); await pending
+    expect(f.options.painted).toHaveBeenCalledWith(expect.objectContaining({ paintSource: 'raf' }))
   })
-  it.each(['cancel', 'replace'] as const)('等待期间 %s 不重新唤起旧窗口', async action => {
-    const f = fixture(), pending = f.load()
-    f.decode()
-    await vi.waitFor(() => expect(f.context.waitForCapturePaint).toHaveBeenCalled())
-    if (action === 'cancel') f.context.frame.value = null
-    else f.context.imageUrl.value = '/7/1.png'
-    f.paint(); await pending
-    expect(f.context.api.ready).not.toHaveBeenCalled()
+  it.each(['decode', 'pre-paint', 'show', 'post-paint'] as const)('在 %s 阶段取消或换图，丢弃旧图片的显示或计时回执', async stage => {
+    const paint = frames(), f = fixture(), pending = f.start()
+    if (stage === 'decode') f.cancel()
+    f.decode(); await vi.advanceTimersByTimeAsync(0)
+    if (stage === 'pre-paint') f.cancel()
+    if (stage === 'show') f.options.ready.mockImplementationOnce(async () => { f.cancel() })
+    await paint(); await vi.advanceTimersByTimeAsync(0)
+    if (stage === 'post-paint') f.cancel()
+    await paint(); await pending
+    expect(f.options.painted).not.toHaveBeenCalled()
+    if (stage === 'decode' || stage === 'pre-paint') expect(f.options.ready).not.toHaveBeenCalled()
+  })
+  it('解码失败保留既有失败处理，不显示窗口；诊断失败不影响显示', async () => {
+    const paint = frames(), failed = fixture()
+    failed.options.image.decode.mockRejectedValueOnce(new Error('decode failed'))
+    await failed.start()
+    expect(failed.options.decodeFailed).toHaveBeenCalledOnce()
+    expect(failed.options.ready).not.toHaveBeenCalled()
+    const f = fixture(), pending = f.start()
+    f.options.painted.mockRejectedValueOnce(new Error('diagnostics unavailable'))
+    f.decode(); await vi.advanceTimersByTimeAsync(0); await paint(); await vi.advanceTimersByTimeAsync(0); await paint()
+    await expect(pending).resolves.toBeUndefined()
+    expect(f.options.ready).toHaveBeenCalledOnce()
   })
 })

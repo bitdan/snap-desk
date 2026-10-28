@@ -49,6 +49,13 @@ it('释放冻结截图仅通知截图浮层，真正结束才清理滚动预览�
 })
 
 describe('原生窗口截图 IPC', () => {
+  it('显示与首帧回执绑定会话和图片版本，避免迟到回执操作替换后的图片', async () => {
+    await api.ready(12, 3)
+    expect(invoke).toHaveBeenLastCalledWith('show_capture', { id: 12, revision: 3 })
+    const paint = { loadMs: 4, decodeMs: 2, prePaintMs: 100, postPaintMs: 32, paintSource: 'raf' as const }
+    await api.capturePainted(12, 3, paint)
+    expect(invoke).toHaveBeenLastCalledWith('capture_painted', { id: 12, revision: 3, paint })
+  })
   it('提交会话和候选序号，返回新的冻结画面，不向前端暴露 HWND', async () => {
     const frame = { id: 12, width: 4480, height: 1440, previewRevision: 1, targets: [] }
     invoke.mockResolvedValueOnce(frame)

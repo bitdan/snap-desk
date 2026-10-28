@@ -19,7 +19,7 @@ import AnnotationWorkspace from '@/features/annotations/components/AnnotationWor
 import RecordingAnnotations from '@/features/recording/components/RecordingAnnotations.vue'
 import { annotationToolbarPosition, useFloatingToolbar } from '@/features/annotations/toolbar-layout'
 import CaptureMagnifier from '@/features/capture/components/CaptureMagnifier.vue'
-import { waitForCapturePaint } from '@/features/capture/capture-paint'
+import { presentCaptureImage } from '@/features/capture/capture-paint'
 import { magnifierSample } from '@/features/capture/magnifier'
 import { newerScroll } from '@/features/scroll/scroll-capture'
 import { recordingBitrate, recordingConfig, recordingRegion, type RecordingSelection } from '@/features/recording/recording'
@@ -134,6 +134,8 @@ const viewport = ref({ width: innerWidth, height: innerHeight })
 const annotating = ref(false)
 const screenImage = shallowRef<HTMLImageElement | null>(null)
 const imageReady = ref(false)
+let imageReceivedAt = performance.now()
+watch(imageUrl, () => { imageReceivedAt = performance.now(); imageReady.value = false }, { flush: 'sync' })
 const pointer = ref<Point | null>(null)
 const relativeCoordinates = ref(false)
 const colorCopied = ref(false)
@@ -322,18 +324,13 @@ async function loaded(event: Event) {
   if (!current || image !== screenImage.value) return
   const url = imageUrl.value
   const isCurrent = () => !disposed && frame.value?.id === current.id && imageUrl.value === url && screenImage.value === image
-  try { await image.decode() }
-  catch {
-    if (isCurrent()) await imageFailed()
-    return
+  try {
+    await presentCaptureImage({ image, receivedAt: imageReceivedAt, isCurrent,
+      decoded: () => { imageReady.value = true }, decodeFailed: imageFailed,
+      ready: () => api.ready(current.id, current.previewRevision),
+      painted: paint => api.capturePainted(current.id, current.previewRevision, paint),
+    })
   }
-  if (!isCurrent()) return
-  imageReady.value = true
-  await nextTick()
-  await waitForCapturePaint()
-  // 等待期间可能取消或换图，旧图片绝不能重新唤起窗口。
-  if (!isCurrent()) return
-  try { await api.ready(current.id) }
   catch (e) { if (isCurrent()) error.value = String(e) }
 }
 async function cancel() {

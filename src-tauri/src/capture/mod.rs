@@ -1,8 +1,10 @@
 //! 截图会话：先等待可取消的延时，再冻结桌面画面，最后裁剪并导出。
-use image::{ImageFormat, RgbaImage};
+use image::{
+    codecs::png::{CompressionType, FilterType, PngEncoder},
+    ImageEncoder, RgbaImage,
+};
 use serde::{Deserialize, Serialize};
 use std::{
-    io::Cursor,
     sync::{
         atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering},
         Arc, Mutex,
@@ -16,14 +18,24 @@ use tauri_plugin_clipboard_manager::ClipboardExt;
 pub mod recording;
 pub mod scroll;
 
+pub(crate) mod latency;
 pub mod preview;
+use latency::{elapsed_ms, Latency};
 pub(crate) mod desktop;
 
 /// PNG 原始字节留在会话中，由只读协议传输；元信息事件不再携带整屏 Base64。
 fn preview_png(image: &RgbaImage) -> Result<Arc<Vec<u8>>, String> {
-    let mut png = Cursor::new(Vec::new());
-    image.write_to(&mut png, ImageFormat::Png).map_err(err)?;
-    Ok(Arc::new(png.into_inner()))
+    let mut png = Vec::new();
+    // 预览仅在本机协议内传输，固定 Sub 避免对每行试算多种滤波；导出压缩策略不受影响。
+    PngEncoder::new_with_quality(&mut png, CompressionType::Fast, FilterType::Sub)
+        .write_image(
+            image.as_raw(),
+            image.width(),
+            image.height(),
+            image::ExtendedColorType::Rgba8,
+        )
+        .map_err(err)?;
+    Ok(Arc::new(png))
 }
 
 #[derive(Default)]
@@ -54,7 +66,7 @@ struct Session {
     desktop: crate::capture::desktop::Desktop,
     /// 协议请求只克隆 Arc，离开锁后再复制响应体；取消会话后不接受新的读取。
     preview: Arc<Vec<u8>>,
-    prepared_at: Instant,
+    latency: Latency,
 }
 
 #[derive(Clone, Serialize)]
@@ -178,15 +190,24 @@ pub fn main_window_ready(app: AppHandle, window: WebviewWindow) -> Result<(), St
 /// 按钮、快捷键和托盘共用入口。读取设置与占用截图状态在同一把锁内完成，
 /// 避免“正在保存快捷键”与“恰好开始截图”并发导致状态不一致。
 pub async fn begin(app: AppHandle) -> Result<(), String> {
-    begin_with_mode(app, false).await
+    begin_at(app, Instant::now()).await
+}
+
+/// 快捷键入口在派发异步任务前记录时间，包含运行时排队耗时。
+pub(crate) async fn begin_at(app: AppHandle, requested_at: Instant) -> Result<(), String> {
+    begin_with_mode(app, false, requested_at).await
 }
 
 /// 录屏快捷键复用截图的选区能力，确认范围后再交给录屏设置与采集器。
 pub async fn begin_recording(app: AppHandle) -> Result<(), String> {
-    begin_with_mode(app, true).await
+    begin_with_mode(app, true, Instant::now()).await
 }
 
-async fn begin_with_mode(app: AppHandle, recording: bool) -> Result<(), String> {
+async fn begin_with_mode(
+    app: AppHandle,
+    recording: bool,
+    requested_at: Instant,
+) -> Result<(), String> {
     let state = app.state::<CaptureState>();
     let delay = {
         let settings = app.state::<crate::settings::SettingsState>();
@@ -212,6 +233,7 @@ async fn begin_with_mode(app: AppHandle, recording: bool) -> Result<(), String> 
     // move 将句柄所有权转移给后台闭包；clone 只克隆应用句柄，不复制整个应用。
     let result = tauri::async_runtime::spawn_blocking(move || {
         let state = worker_app.state::<CaptureState>();
+        let delay_started = Instant::now();
         let elapsed = wait_delay(
             Duration::from_secs(u64::from(delay)),
             &state.delay_cancelled,
@@ -232,7 +254,9 @@ async fn begin_with_mode(app: AppHandle, recording: bool) -> Result<(), String> 
             let _ = worker_app.emit_to("main", "capture-result", "已取消延时截图。");
             return Ok(());
         }
-        prepare(&worker_app, recording)
+        let mut latency = Latency::new(requested_at);
+        latency.delay_ms = elapsed_ms(delay_started);
+        prepare(&worker_app, recording, latency)
     })
     .await
     .map_err(err)
@@ -314,8 +338,9 @@ fn hide_remaining(hidden: Option<Instant>, now: Instant) -> Duration {
         .unwrap_or_default()
 }
 
-fn prepare(app: &AppHandle, recording: bool) -> Result<(), String> {
-    let started = Instant::now();
+fn prepare(app: &AppHandle, recording: bool, mut latency: Latency) -> Result<(), String> {
+    let started = latency.started;
+    let hide_started = Instant::now();
     recording::live_annotations::remember_desktop_focus(app);
     if let Some(window) = app.get_webview_window("capture") {
         hide_overlay(app, &window)?;
@@ -336,12 +361,19 @@ fn prepare(app: &AppHandle, recording: bool) -> Result<(), String> {
     if !remaining.is_zero() {
         std::thread::sleep(remaining);
     }
-    // HWND 的隐藏与桌面合成更新并非同一时刻完成。即使 is_visible 已为 false，
-    // 仍需等待本应用已提交的合成更新，再交给 GDI 抓取桌面，避免读到旧窗口表面。
+    latency.hide_ms = elapsed_ms(hide_started);
+    // 仅刚隐藏的本应用窗口需要同步合成；已超过保护期或从未显示蒙层时，
+    // 不再让热截图无条件等待一次 DWM 垂直同步。180ms 隐藏保护仍保留。
+    let dwm_started = Instant::now();
     #[cfg(windows)]
-    unsafe {
-        windows::Win32::Graphics::Dwm::DwmFlush().map_err(err)?;
+    if !remaining.is_zero() {
+        unsafe {
+            windows::Win32::Graphics::Dwm::DwmFlush().map_err(err)?;
+        }
+        latency.dwm_ms = elapsed_ms(dwm_started);
     }
+    #[cfg(not(windows))]
+    let _ = dwm_started;
     let capture_started = Instant::now();
     let (include_cursor, snap) = {
         let settings = app.state::<crate::settings::SettingsState>();
@@ -352,6 +384,9 @@ fn prepare(app: &AppHandle, recording: bool) -> Result<(), String> {
         )
     };
     let mut desktop = crate::capture::desktop::capture(false, include_cursor, recording || snap)?;
+    latency.capture_ms = elapsed_ms(capture_started);
+    let overlay_started = Instant::now();
+    latency.cold = app.get_webview_window("capture").is_none();
     // 必须位于 capture 之后；前端仍通过 current_capture 补读会话，兼容冷启动时
     // capture-ready 事件早于监听器注册的情况，解码完成后才会调用 show_capture。
     let window = ensure_overlay(app)?;
@@ -382,10 +417,10 @@ fn prepare(app: &AppHandle, recording: bool) -> Result<(), String> {
         ))
         .map_err(err)?;
     let image = std::mem::take(&mut desktop.image);
-    let capture_ms = capture_started.elapsed().as_secs_f64() * 1000.0;
+    latency.overlay_ready_ms = elapsed_ms(overlay_started);
     let encode_started = Instant::now();
     let preview = preview_png(&image)?;
-    let encode_ms = encode_started.elapsed().as_secs_f64() * 1000.0;
+    latency.png_ms = elapsed_ms(encode_started);
     let state = app.state::<CaptureState>();
     let id = state.next_id.fetch_add(1, Ordering::SeqCst) + 1;
     let frame = Frame {
@@ -401,15 +436,15 @@ fn prepare(app: &AppHandle, recording: bool) -> Result<(), String> {
         height: image.height(),
         preview_revision: 0,
     };
+    log::debug!("event=capture.prepared module=capture op=cap-{id} hide_ms={:.2} dwm_ms={:.2} capture_ms={:.2} png_ms={:.2} overlay_ready_ms={:.2} duration_ms={:.2} width={} height={} monitors={} cold={} png_bytes={}", latency.hide_ms, latency.dwm_ms, latency.capture_ms, latency.png_ms, latency.overlay_ready_ms, elapsed_ms(started), frame.width, frame.height, frame.displays.len(), u8::from(latency.cold), preview.len());
     *state.session.lock().map_err(err)? = Some(Session {
         frame: frame.clone(),
         image,
         shown: false,
         desktop,
         preview,
-        prepared_at: started,
+        latency,
     });
-    log::debug!("event=capture.prepared module=capture op=cap-{id} capture_ms={capture_ms:.2} encode_ms={encode_ms:.2} duration_ms={:.2}", started.elapsed().as_secs_f64() * 1000.0);
     scroll::chrome::release_recording(app);
     app.emit_to("capture", "capture-ready", &frame)
         .map_err(err)?;
@@ -494,38 +529,44 @@ pub async fn capture_native_window(
                 (session.frame.origin_x, session.frame.origin_y),
             )
         };
+        let started = Instant::now();
+        let hide_started = Instant::now();
         hide_overlay(&app, &window)?;
+        let hide_ms = elapsed_ms(hide_started);
         let result = (|| {
+            let capture_started = Instant::now();
             let (image, x, y) = crate::capture::desktop::native_window(&native, include_cursor)?;
-            let mut guard = state.session.lock().map_err(err)?;
-            let session = guard
-                .as_mut()
-                .filter(|s| s.frame.id == id)
-                .ok_or("截图已过期。")?;
-            let rect = crate::capture::desktop::clipped(
-                x,
-                y,
-                image.width(),
-                image.height(),
-                origin,
-                session.image.dimensions(),
-            )
-            .ok_or("窗口已移出截图范围。")?;
-            if (rect.x, rect.y, rect.width, rect.height) != (old.x, old.y, old.width, old.height) {
-                return Err("窗口位置或尺寸已变化，请重新截图。".into());
-            }
-            // 编码成功后才提交新像素；失败时原会话和选区仍可继续操作。
-            let mut composed = session.image.clone();
-            image::imageops::replace(
-                &mut composed,
-                &image,
-                i64::from(x) - i64::from(origin.0),
-                i64::from(y) - i64::from(origin.1),
-            );
+            let capture_ms = elapsed_ms(capture_started);
+            let (mut composed, revision, clone_ms) = {
+                let guard = state.session.lock().map_err(err)?;
+                let session = guard.as_ref().filter(|s| s.frame.id == id).ok_or("截图已过期。")?;
+                let rect = crate::capture::desktop::clipped(x, y, image.width(), image.height(), origin, session.image.dimensions())
+                    .ok_or("窗口已移出截图范围。")?;
+                if (rect.x, rect.y, rect.width, rect.height) != (old.x, old.y, old.width, old.height) {
+                    return Err("窗口位置或尺寸已变化，请重新截图。".into());
+                }
+                let clone_started = Instant::now();
+                let composed = session.image.clone();
+                (composed, session.frame.preview_revision, elapsed_ms(clone_started))
+            };
+            // 整桌面克隆单独计时；拼接和重新编码放在会话锁外，协议读图不再被 PNG 编码阻塞。
+            // 编码失败时尚未提交任何像素，原图与选区仍可继续操作。
+            let compose_started = Instant::now();
+            image::imageops::replace(&mut composed, &image, i64::from(x) - i64::from(origin.0), i64::from(y) - i64::from(origin.1));
+            let compose_ms = elapsed_ms(compose_started);
+            let png_started = Instant::now();
             let preview = preview_png(&composed)?;
+            let png_ms = elapsed_ms(png_started);
+            let mut guard = state.session.lock().map_err(err)?;
+            let session = guard.as_mut().filter(|s| s.frame.id == id && s.frame.preview_revision == revision).ok_or("截图已过期。")?;
             session.preview = preview;
             session.frame.preview_revision += 1;
             session.image = composed;
+            session.latency = Latency::new(started);
+            session.latency.hide_ms = hide_ms;
+            session.latency.capture_ms = capture_ms;
+            session.latency.png_ms = png_ms;
+            log::debug!("event=capture.native_replaced module=capture op=cap-{id} revision={} hide_ms={hide_ms:.2} capture_ms={capture_ms:.2} clone_ms={clone_ms:.2} compose_ms={compose_ms:.2} png_ms={png_ms:.2} duration_ms={:.2} width={} height={} png_bytes={}", session.frame.preview_revision, elapsed_ms(started), session.frame.width, session.frame.height, session.preview.len());
             Ok(session.frame.clone())
         })();
         // 无论成功失败均恢复窗口；相同 PNG 不会再次触发前端 load，不能依赖它解锁显示。
@@ -589,21 +630,26 @@ fn selected_region(app: &AppHandle, id: u64, rect: Rect) -> Result<(Rect, scroll
 }
 
 #[tauri::command]
-pub fn show_capture(app: AppHandle, window: WebviewWindow, id: u64) -> Result<(), String> {
+pub fn show_capture(
+    app: AppHandle,
+    window: WebviewWindow,
+    id: u64,
+    revision: u64,
+) -> Result<(), String> {
     require_window(&window, "capture")?;
     let state = app.state::<CaptureState>();
     let _operation = Operation::acquire(&state.operation)?;
     let mut guard = state.session.lock().map_err(err)?;
     let session = guard
         .as_mut()
-        .filter(|s| s.frame.id == id)
+        .filter(|s| s.frame.id == id && s.frame.preview_revision == revision)
         .ok_or("截图已过期。")?;
     window.show().map_err(err)?;
     window.set_focus().map_err(err)?;
     if !session.shown {
         log::debug!(
             "event=capture.visible module=capture op=cap-{id} duration_ms={:.2}",
-            session.prepared_at.elapsed().as_secs_f64() * 1000.0
+            elapsed_ms(session.latency.started)
         );
     }
     session.shown = true;
@@ -739,7 +785,11 @@ fn crop(
         .filter(|s| s.frame.id == id)
         .ok_or("截图已过期，请重新截图。")?;
     let rect = rect.validate(session.image.width(), session.image.height())?;
-    crate::shared::annotations::validate(annotations, session.image.width(), session.image.height())?;
+    crate::shared::annotations::validate(
+        annotations,
+        session.image.width(),
+        session.image.height(),
+    )?;
     let mut image =
         image::imageops::crop_imm(&session.image, rect.x, rect.y, rect.width, rect.height)
             .to_image();
@@ -1013,6 +1063,74 @@ pub async fn pin_capture(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 合成桌面只比较编解码和整图复制成本，不冒充真实 F1、DWM 或多显示器实测。
+    #[test]
+    #[ignore = "显式测量 1080p/2K/4K/双1080p 的预览编码与窗口替换成本"]
+    fn preview_latency_matrix() {
+        use image::codecs::png::{CompressionType, FilterType, PngEncoder};
+        use image::ImageEncoder;
+        for (label, width, height) in [
+            ("1080p", 1920, 1080),
+            ("2K", 2560, 1440),
+            ("4K", 3840, 2160),
+            ("dual1080p", 3840, 1080),
+        ] {
+            for noise in [false, true] {
+                let mut seed = 7u32;
+                let image = RgbaImage::from_fn(width, height, |x, y| {
+                    seed ^= seed << 13;
+                    seed ^= seed >> 17;
+                    seed ^= seed << 5;
+                    let n = if noise {
+                        seed as u8
+                    } else {
+                        if y % 24 < 2 && x % 120 < 90 {
+                            40
+                        } else {
+                            240
+                        }
+                    };
+                    image::Rgba([
+                        n,
+                        n.wrapping_add((x / 200) as u8),
+                        n.wrapping_add((y / 100) as u8),
+                        255,
+                    ])
+                });
+                let patch = RgbaImage::from_pixel(640, 480, image::Rgba([30, 40, 50, 255]));
+                let start = Instant::now();
+                let mut composed = image.clone();
+                let clone_ms = elapsed_ms(start);
+                let start = Instant::now();
+                image::imageops::replace(&mut composed, &patch, 100, 100);
+                let compose_ms = elapsed_ms(start);
+                for filter in [FilterType::Adaptive, FilterType::Sub] {
+                    let mut samples = Vec::new();
+                    let mut bytes = Vec::new();
+                    for _ in 0..3 {
+                        bytes.clear();
+                        let start = Instant::now();
+                        PngEncoder::new_with_quality(&mut bytes, CompressionType::Fast, filter)
+                            .write_image(
+                                composed.as_raw(),
+                                width,
+                                height,
+                                image::ExtendedColorType::Rgba8,
+                            )
+                            .unwrap();
+                        samples.push(elapsed_ms(start));
+                    }
+                    samples.sort_by(f64::total_cmp);
+                    let start = Instant::now();
+                    let decoded = image::load_from_memory(&bytes).unwrap().to_rgba8();
+                    let decode_ms = elapsed_ms(start);
+                    assert_eq!(decoded, composed);
+                    println!("PREVIEW {label} noise={noise} filter={filter:?} png_ms={:.2} decode_ms={decode_ms:.2} png_bytes={} clone_ms={clone_ms:.2} compose_ms={compose_ms:.2}", samples[1], bytes.len());
+                }
+            }
+        }
+    }
 
     #[test]
     fn hidden_overlay_only_waits_for_unfinished_composition() {

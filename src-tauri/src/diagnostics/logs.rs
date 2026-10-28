@@ -315,6 +315,12 @@ pub fn sanitize(line: &str) -> Option<Entry> {
                 "completed",
             ]
             .contains(&value),
+            "hide_ms" | "dwm_ms" | "capture_ms" | "png_ms" | "overlay_ready_ms" | "first_paint_ms"
+            | "delay_ms" | "load_ms" | "decode_ms" | "pre_paint_ms" | "post_paint_ms" | "clone_ms" | "compose_ms"
+                if event.starts_with("capture.") => value.len() <= 20 && value.parse::<f64>().is_ok_and(|n| n.is_finite() && n >= 0.0),
+            "paint_source" if event == "capture.interactive" => ["raf", "timeout"].contains(&value),
+            "revision" | "monitors" | "png_bytes" if event.starts_with("capture.") => value.parse::<u64>().is_ok(),
+            "cold" if event.starts_with("capture.") => ["0", "1"].contains(&value),
             "duration_ms" | "inference_ms" | "encoding_ms" | "width" | "height" | "frames"
             | "captured" | "encoded" | "dropped" | "fps" | "lines" | "line" | "column" => {
                 value.len() <= 20
@@ -339,6 +345,18 @@ pub fn sanitize(line: &str) -> Option<Entry> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn capture_latency_preserves_safe_stages_and_rejects_content_and_invalid_times() {
+        let line = "2026-10-28T12:00:00+08:00 [DEBUG] [capture] event=capture.interactive module=capture op=cap-3 hide_ms=0 dwm_ms=1.5 capture_ms=8 png_ms=20 overlay_ready_ms=3 first_paint_ms=140 load_ms=4 decode_ms=2 pre_paint_ms=100 post_paint_ms=32 delay_ms=0 revision=0 width=3840 height=2160 monitors=2 cold=0 png_bytes=123 paint_source=raf image=private";
+        let safe = sanitize(line).unwrap().message;
+        for field in ["hide_ms=0", "dwm_ms=1.5", "capture_ms=8", "png_ms=20", "overlay_ready_ms=3", "first_paint_ms=140", "monitors=2", "paint_source=raf"] { assert!(safe.contains(field)); }
+        assert!(!safe.contains("private"));
+        let invalid = line.replace("decode_ms=2", "decode_ms=NaN").replace("paint_source=raf", "paint_source=private");
+        let safe = sanitize(&invalid).unwrap().message;
+        assert!(!safe.contains("decode_ms"));
+        assert!(!safe.contains("paint_source"));
+        for event in ["capture.prepared", "capture.visible", "capture.native_replaced"] { assert!(sanitize(&line.replace("capture.interactive", event)).is_some()); }
+    }
     #[test]
     fn abnormal_exit_log_preserves_only_numeric_run_identity() {
         let line = "2026-10-23T16:00:00+08:00 [WARN] [app] event=app.previous_exit_unclean module=app previous_started_ms=1792727969001 previous_pid=42 path=private";

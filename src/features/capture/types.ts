@@ -4,3 +4,5 @@ export interface CaptureTarget { rect: Rect; kind: 'window' | 'element'; windowI
 export interface CaptureDisplay { x: number; y: number; width: number; height: number; primary: boolean; scale: number }
 export interface CaptureFrame { originX: number; originY: number; displays: CaptureDisplay[]; targets: CaptureTarget[]; layoutKey: string; id: number; width: number; height: number; previewRevision: number; recording: boolean; snapEnabled?: boolean }
 export type ColorFormat = 'hex' | 'rgb'
+/** 前端区间使用 performance 时钟；首帧总耗时由原生入口到回执计算。 */
+export interface CapturePaint { loadMs: number; decodeMs: number; prePaintMs: number; postPaintMs: number; paintSource: 'raf' | 'timeout' }

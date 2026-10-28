@@ -96,6 +96,7 @@ export const ipcCommands = [
   "recovery_status",
   "recovery_artifact_action",
   "show_capture",
+  "capture_painted",
   "start_capture",
   "start_recording",
   "start_scroll",

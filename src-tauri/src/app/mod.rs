@@ -396,6 +396,7 @@ pub fn run() {
             capture::current_capture,
             capture::capture_native_window,
             capture::show_capture,
+            capture::latency::capture_painted,
             capture::cancel_capture,
             capture::recognize_capture_qr,
             qr::qr_action,
