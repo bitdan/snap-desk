@@ -4,5 +4,3 @@ pub(crate) mod auxiliary_windows;
 pub(crate) mod image_io;
 pub(crate) mod native_i18n;
 pub(crate) mod platform;
-#[cfg(test)]
-pub(crate) mod perf;

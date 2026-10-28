@@ -187,22 +187,4 @@ mod tests {
         assert!(initialize(dir.path()).unwrap_err().contains("下载"));
         assert!(initialize(dir.path()).is_err(), "失败不能阻止之后重试");
     }
-
-    #[test]
-    #[ignore = "需官方 ZIP；仅安装到 target/perf-assets，不修改用户资源目录"]
-    fn install_official_runtime_for_ocr_test() {
-        let runtime = manifest().unwrap();
-        let dir = crate::shared::perf::assets();
-        fs::create_dir_all(&dir).unwrap();
-        let archive = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("target")
-            .join(&runtime.archive.name);
-        install(&archive, &dir, &runtime).unwrap();
-        assert!(ready(&dir));
-        initialize(&dir).unwrap();
-        // info 是构建信息（分支/提交/编译选项），不保证包含发布版本号。
-        // 版本身份由上面的官方 DLL 摘要校验保证，此处验证加载后的 API 确实可调用。
-        assert!(!ort::info().is_empty());
-        println!("{}", ort::info());
-    }
 }

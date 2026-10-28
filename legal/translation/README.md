@@ -1,8 +1,8 @@
 # 模型许可审核材料
 
-此目录故意不提供占位许可证。选择真实 HF commit 后，审核该版本模型卡、上游许可和署名，将完整材料保存为 `en-zh-LICENSE.txt` / `zh-en-LICENSE.txt`。它们会以 `LICENSE.txt` 随对应模型包分发。
+此目录保存固定 HF commit 对应的模型许可和署名材料：`en-zh-LICENSE.txt` / `zh-en-LICENSE.txt`，以 `LICENSE.txt` 随对应模型包分发。更新模型源版本时须同步核对模型卡、上游许可及署名。
 
-已准备的两个固定版本、实际来源和核对范围见 [SOURCE-REVIEW.md](SOURCE-REVIEW.md)。当前记录由 Codex 完成自动化来源核对，明确标识尚无人工复核，不冒用维护者姓名。
+两个固定版本的来源、许可摘要和核对类型见 [reviews.json](reviews.json)。当前记录标识为自动化来源核对，`humanReviewCompleted` 为 `false`，不能视为人工许可审核已完成。
 
 在 `reviews.json` 中按方向加入记录，字段为：
 

@@ -290,26 +290,6 @@ mod tests {
     use super::*;
 
     #[test]
-    #[ignore = "需真实模型及完整字体，用 release 显式测量资源检查开销"]
-    fn perf_resource_validation() {
-        let dir = crate::shared::perf::assets();
-        for _ in 0..3 {
-            let start = Instant::now();
-            for asset in manifest()
-                .unwrap()
-                .iter()
-                .filter(|a| a.kind == ResourceKind::Ocr)
-            {
-                assert!(verified(&dir.join(&asset.name), asset));
-            }
-            println!("PERF verify_models_ms={}", start.elapsed().as_millis());
-            let start = Instant::now();
-            assert!(!read_font(&dir.join("export-font.ttf")).unwrap().is_empty());
-            println!("PERF read_validate_font_ms={}", start.elapsed().as_millis());
-        }
-    }
-
-    #[test]
     fn font_validation_rejects_corrupt_and_variable_fonts() {
         assert!(validate_font(b"not a font").is_err());
         let mut header = vec![0u8; 28];

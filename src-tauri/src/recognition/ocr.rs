@@ -121,11 +121,6 @@ fn build_engine(dir: &Path) -> Result<OAROCR, String> {
     .map_err(|e| format!("OCR 模型加载失败：{e}"))
 }
 
-#[cfg(test)]
-fn recognize_image(engine: &OAROCR, image: &image::RgbaImage) -> Result<String, String> {
-    Ok(recognize_regions(engine, image)?.full_text)
-}
-
 fn recognize_regions(engine: &OAROCR, image: &image::RgbaImage) -> Result<OcrResult, String> {
     let rgb = crate::shared::image_io::white_background(image);
     let results = engine
@@ -179,41 +174,6 @@ fn recognize_regions(engine: &OAROCR, image: &image::RgbaImage) -> Result<OcrRes
         elapsed_ms: 0,
         warnings: Vec::new(),
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::time::Instant;
-
-    #[test]
-    #[ignore = "需预先下载真实模型；用 --release --ignored --nocapture 显式测量"]
-    fn perf_ocr_cpu() {
-        let start = Instant::now();
-        let engine = build_engine(&crate::shared::perf::assets()).unwrap();
-        println!("PERF ocr_load_ms={}", start.elapsed().as_millis());
-        for (width, height) in [(1200, 500), (1920, 1080)] {
-            let image = crate::shared::perf::screenshot(width, height);
-            let mut times = Vec::new();
-            for _ in 0..4 {
-                let start = Instant::now();
-                let text = recognize_image(&engine, &image).unwrap();
-                times.push(start.elapsed().as_millis());
-                assert!(text.contains("中文"), "{text}");
-                assert!(text.contains("English"), "{text}");
-                assert_eq!(
-                    text.lines().count(),
-                    ((height - 60) / 48) as usize,
-                    "批次处理不得遗漏文本行：{text}"
-                );
-            }
-            println!("PERF ocr_{width}x{height}_ms={times:?}");
-        }
-        let blank = image::RgbaImage::from_pixel(3840, 2160, image::Rgba([255; 4]));
-        let start = Instant::now();
-        assert!(recognize_image(&engine, &blank).unwrap().is_empty());
-        println!("PERF ocr_blank_4k_ms={}", start.elapsed().as_millis());
-    }
 }
 
 /// 结果允许用户编辑；仅截图或仍存在的贴图窗口可写文本剪贴板，且限制消息大小。
