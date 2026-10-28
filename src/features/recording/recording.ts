@@ -46,6 +46,8 @@ export interface RecorderConfig {
   source: RecordingSource; region: Rect; fps: RecordingFps; captureCursor: boolean;
   format: RecordingFormat; systemAudio: boolean; microphone: boolean; countdownSeconds: 0 | 3 | 5; encoding: EncodingPreference; quality: RecordingQuality
   inputEffects: InputEffects
+  /** 开始和继续时是否收起主界面；本次录制固定使用确认时的偏好。 */
+  hideMainWindow: boolean
   /** bit/s；null 使用画质预设计算目标码率。 */
   bitrate: number | null
 }
@@ -60,14 +62,14 @@ export function recordingBitrate(value: string | number): number | null {
   if (!Number.isFinite(mbps) || mbps < 1 || mbps > 80) throw new Error('自定义录屏码率需为 1–80 Mbps。')
   return Math.round(mbps * 1_000_000)
 }
-export function recordingConfig(region: Rect, fps: RecordingFps = 60, captureCursor = true, countdownSeconds: 0 | 3 | 5 = 0, encoding: EncodingPreference = 'auto', quality: RecordingQuality = 'balanced', effects: InputEffects = defaultInputEffects(), bitrate: number | null = null, format: RecordingFormat = 'mp4', systemAudio = false, microphone = false): RecorderConfig {
+export function recordingConfig(region: Rect, fps: RecordingFps = 60, captureCursor = true, countdownSeconds: 0 | 3 | 5 = 0, encoding: EncodingPreference = 'auto', quality: RecordingQuality = 'balanced', effects: InputEffects = defaultInputEffects(), bitrate: number | null = null, format: RecordingFormat = 'mp4', systemAudio = false, microphone = false, hideMainWindow = true): RecorderConfig {
   if (!(format === 'gif' ? [10, 20] : [30, 60]).includes(fps)) throw new Error('帧率与录制格式不匹配。')
   // GIF 无音轨；从 MP4 切换后也不能把隐藏的声音偏好发给后端。
   if (format === 'gif') { bitrate = null; encoding = 'software'; systemAudio = false; microphone = false }
   if (bitrate !== null && (!Number.isInteger(bitrate) || bitrate < 1_000_000 || bitrate > 80_000_000)) throw new Error('自定义录屏码率需为 1–80 Mbps。')
   // 拷贝颜色数组，确认选区后改动表单不能改变已提交的配置快照。
   const inputEffects: InputEffects = { ...effects, leftColor: [...effects.leftColor], rightColor: [...effects.rightColor], doubleColor: [...effects.doubleColor] }
-  return { source: 'primaryMonitor', region: { ...region }, fps, captureCursor, format, systemAudio, microphone, countdownSeconds, encoding, quality, inputEffects, bitrate }
+  return { source: 'primaryMonitor', region: { ...region }, fps, captureCursor, format, systemAudio, microphone, countdownSeconds, encoding, quality, inputEffects, bitrate, hideMainWindow }
 }
 /** 与 Rust RecordingView / RecordingAction 保持一致，不使用前端计时推测视频长度。 */
 export type RecordingPhase = 'ready' | 'countdown' | 'recording' | 'paused' | 'encoding' | 'completed' | 'cancelled' | 'failed'

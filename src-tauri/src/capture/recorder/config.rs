@@ -46,6 +46,17 @@ pub enum RecordingQuality {
     High,
 }
 
+/// 按物理分辨率、帧率和画质预设估算编码预算；录制与裁剪共用同一尺度。
+pub(super) fn estimated_bitrate(width: u32, height: u32, fps: u32, quality: RecordingQuality) -> u32 {
+    let weight = match quality {
+        RecordingQuality::Economy => 8,
+        RecordingQuality::Balanced => 13,
+        RecordingQuality::High => 20,
+    };
+    (u64::from(width) * u64::from(height) * u64::from(fps) * weight / 100)
+        .clamp(1_000_000, 80_000_000) as u32
+}
+
 /// 默认关闭；所有样式采用输出视频物理像素，颜色为 RGB，避免前端传任意样式表达式。
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", default, deny_unknown_fields)]
@@ -123,6 +134,13 @@ pub struct RecorderConfig {
     pub format: OutputFormat,
     pub system_audio: bool,
     pub microphone: bool,
+    /// 本次会话开始/恢复时是否隐藏主界面；旧配置保持原有的自动收起行为。
+    #[serde(default = "default_hide_main_window")]
+    pub hide_main_window: bool,
+}
+
+fn default_hide_main_window() -> bool {
+    true
 }
 
 impl RecorderConfig {
@@ -140,6 +158,7 @@ impl RecorderConfig {
             format: OutputFormat::Mp4,
             system_audio: false,
             microphone: false,
+            hide_main_window: true,
         }
     }
 
@@ -152,17 +171,7 @@ impl RecorderConfig {
         if let Some(bitrate) = self.bitrate {
             return bitrate;
         }
-        let weight = match self.quality {
-            RecordingQuality::Economy => 8,
-            RecordingQuality::Balanced => 13,
-            RecordingQuality::High => 20,
-        };
-        (u64::from(self.region.width)
-            * u64::from(self.region.height)
-            * u64::from(self.fps)
-            * weight
-            / 100)
-            .clamp(1_000_000, 80_000_000) as u32
+        estimated_bitrate(self.region.width, self.region.height, self.fps, self.quality)
     }
 
     pub fn validate(&self, size: (u32, u32)) -> Result<(), String> {
@@ -219,6 +228,28 @@ pub struct RecorderCapabilities {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn main_window_preference_keeps_explicit_false_and_defaults_legacy_configs() {
+        let config = RecorderConfig::for_region(Rect {
+            x: 0,
+            y: 0,
+            width: 640,
+            height: 480,
+        });
+        let mut json = serde_json::to_value(config).unwrap();
+        json["hideMainWindow"] = serde_json::json!(false);
+        assert!(
+            !serde_json::from_value::<RecorderConfig>(json.clone())
+                .unwrap()
+                .hide_main_window
+        );
+        json.as_object_mut().unwrap().remove("hideMainWindow");
+        assert!(
+            serde_json::from_value::<RecorderConfig>(json)
+                .unwrap()
+                .hide_main_window
+        );
+    }
     #[test]
     fn source_contract_keeps_legacy_and_accepts_only_known_sources() {
         for source in ["primaryMonitor", "selectedMonitor", "selectedWindow"] {

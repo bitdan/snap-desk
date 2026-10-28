@@ -845,5 +845,9 @@
   "切换到目标软件并按快捷键；测试不会执行截图或录屏。": "Switch to the target app and press shortcuts. The test does not capture or record.",
   "快捷键不可用时，可使用托盘菜单或延时截图。": "If shortcuts fail, use the tray menu or delayed capture.",
   "请先在“识别与翻译”中配置在线服务。": "Set up the online service in OCR & translation first.",
-  "翻译引擎不可用，请重新下载或导入。": "Translation engine unavailable. Download or import it again."
+  "翻译引擎不可用，请重新下载或导入。": "Translation engine unavailable. Download or import it again.",
+  "录屏工具栏尚未就绪。": "The recording toolbar is not ready yet.",
+  "录制时收起主界面": "Hide the main window while recording",
+  "收起主界面": "Hide main window",
+  "操作桌面": "Interact with desktop"
 }

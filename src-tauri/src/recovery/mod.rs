@@ -313,6 +313,25 @@ impl TrackedFile {
     pub fn path(&self) -> &Path {
         &self.value.path
     }
+    /// 系统编码器可能独占打开输出路径，调用前释放本应用的读写句柄。
+    /// 恢复登记与 ACTIVE 占用持续保留；成功后重开句柄供 finalize 同步，失败交给 Drop 清理。
+    pub(crate) fn write_external(
+        &mut self,
+        write: impl FnOnce(&Path) -> Result<(), String>,
+    ) -> Result<(), String> {
+        self.file.take();
+        no_links(self.path())?;
+        write(self.path())?;
+        no_links(self.path())?;
+        self.file = Some(
+            fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(self.path())
+                .map_err(error)?,
+        );
+        Ok(())
+    }
     pub fn finalize(&mut self) -> Result<(), String> {
         self.file_mut().sync_all().map_err(error)?;
         self.value.finalized = true;
@@ -469,6 +488,53 @@ fn stats(value: &Artifact) -> Result<(u64, Option<u64>), String> {
 mod tests {
     use super::*;
     use std::io::Write;
+
+    #[cfg(windows)]
+    #[test]
+    fn external_writer_can_open_exclusively_then_finalize_and_publish() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let registry = root.path().join("registry");
+        let mut output = TrackedFile::new_in(&registry, root.path(), "mp4", "测试裁剪").unwrap();
+        let record = output.record.clone();
+        let id = output.id().to_owned();
+        output.write_external(|path| {
+            assert!(record.exists());
+            assert!(ACTIVE.lock().unwrap().contains(&id));
+            assert!(!read::<Artifact>(&record).unwrap().finalized);
+            let mut exclusive = fs::OpenOptions::new()
+                .write(true)
+                .truncate(true)
+                .share_mode(0)
+                .open(path)
+                .map_err(error)?;
+            exclusive.write_all(b"encoded clip").map_err(error)
+        }).unwrap();
+        output.finalize().unwrap();
+        let target = root.path().join("clip.mp4");
+        output.publish(&target, false).unwrap();
+        assert_eq!(fs::read(target).unwrap(), b"encoded clip");
+        assert!(!record.exists());
+        assert!(!ACTIVE.lock().unwrap().contains(&id));
+    }
+
+    #[test]
+    fn external_writer_failure_cleans_unfinished_output_without_finalizing() {
+        let root = tempfile::tempdir().unwrap();
+        let registry = root.path().join("registry");
+        let mut output = TrackedFile::new_in(&registry, root.path(), "mp4", "测试裁剪").unwrap();
+        let path = output.path().to_owned();
+        let record = output.record.clone();
+        let result = output.write_external(|path| {
+            fs::write(path, b"partial").map_err(error)?;
+            Err("系统裁剪失败".into())
+        });
+        assert_eq!(result.unwrap_err(), "系统裁剪失败");
+        assert!(!read::<Artifact>(&record).unwrap().finalized);
+        drop(output);
+        assert!(!path.exists());
+        assert!(!record.exists());
+    }
 
     #[test]
     fn previous_run_is_read_without_restoring_any_session_and_only_own_marker_clears() {

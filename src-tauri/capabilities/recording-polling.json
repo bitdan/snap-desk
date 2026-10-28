@@ -1,0 +1,10 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "recording-polling",
+  "description": "Allow recording views to query their current window visibility and minimized state for polling.",
+  "windows": ["main", "capture", "recording-controls"],
+  "permissions": [
+    "core:window:allow-is-visible",
+    "core:window:allow-is-minimized"
+  ]
+}

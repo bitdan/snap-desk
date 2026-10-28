@@ -6,7 +6,7 @@ import { DropdownMenuRoot, DropdownMenuTrigger, DropdownMenuPortal, DropdownMenu
 import { annotationTools } from '@/features/annotations/annotation-tools'
 import type { AnnotationTool } from '@/features/annotations/use-annotations'
 
-const props = defineProps<{ name: string; tools: AnnotationTool[]; selected: AnnotationTool; active: boolean; disabled: boolean }>()
+const props = defineProps<{ name: string; tools: AnnotationTool[]; selected: AnnotationTool; active: boolean; disabled: boolean; label?: string }>()
 const emit = defineEmits<{ select: [tool: AnnotationTool] }>()
 const open = ref(false)
 const recent = ref(props.tools[0]!)
@@ -19,7 +19,7 @@ const items = computed(() => props.tools.map(tool => annotationTools.find(item =
 
 <template>
   <div class="tool-group">
-    <button :disabled="disabled" :title="t(current.name)" :aria-label="t(current.name)" :aria-pressed="active && tools.includes(selected)" @click="emit('select', recent)"><component :is="current.icon" :size="18" /></button>
+    <button :disabled="disabled" :title="t(label ?? current.name)" :aria-label="t(label ?? current.name)" :aria-pressed="active && tools.includes(selected)" @click="emit('select', recent)"><component :is="current.icon" :size="18" /></button>
     <DropdownMenuRoot v-if="tools.length > 1" v-model:open="open">
       <DropdownMenuTrigger :disabled="disabled" class="group-trigger" :title="t(name)" :aria-label="t('选择{0}工具', { 0: t(name) })"><ChevronDown :size="12" /></DropdownMenuTrigger>
       <DropdownMenuPortal>

@@ -2,8 +2,8 @@
 //! 原截图窗口移除冻结背景后继续提供交互；窗口排除于采集，标注由编码线程写入 MP4/GIF。
 use super::{frame, Phase, RecordingState};
 use crate::{
-    shared::annotations::{self, Annotation, Point},
     capture::{scroll::Screen, Rect},
+    shared::annotations::{self, Annotation, Point},
 };
 use serde::Serialize;
 use std::sync::{Arc, Mutex};
@@ -20,8 +20,10 @@ pub(in crate::capture) fn set_input_region(
     #[cfg(windows)]
     unsafe {
         use windows::Win32::{
-            Foundation::HWND,
-            Graphics::Gdi::{CreateRectRgn, DeleteObject, SetWindowRgn, HGDIOBJ},
+            Foundation::{HWND, RECT},
+            Graphics::Gdi::{
+                CreateRectRgn, DeleteObject, GetRgnBox, GetWindowRgn, SetWindowRgn, HGDIOBJ,
+            },
         };
         let hwnd = HWND(window.hwnd().map_err(|e| e.to_string())?.0);
         let region = if let Some(rect) = rect {
@@ -43,6 +45,25 @@ pub(in crate::capture) fn set_input_region(
                 let _ = DeleteObject(HGDIOBJ(region.0));
             }
             return Err("无法设置录屏工具栏交互区域。".into());
+        }
+        if let Some(rect) = rect {
+            // 裁剪失败不能静默留下一个可见的全屏输入窗口；由调用方隐藏浮层。
+            let actual = CreateRectRgn(0, 0, 0, 0);
+            if actual.0.is_null() {
+                return Err("无法校验录屏工具栏交互区域。".into());
+            }
+            let mut bounds = RECT::default();
+            let kind = GetWindowRgn(hwnd, actual);
+            GetRgnBox(actual, &mut bounds);
+            let _ = DeleteObject(HGDIOBJ(actual.0));
+            if kind.0 != 2
+                || bounds.left != rect.x as i32
+                || bounds.top != rect.y as i32
+                || bounds.right != (rect.x + rect.width) as i32
+                || bounds.bottom != (rect.y + rect.height) as i32
+            {
+                return Err("录屏工具栏交互区域未生效。".into());
+            }
         }
     }
     #[cfg(not(windows))]
@@ -89,6 +110,8 @@ struct Session {
     screen: Screen,
     region: Rect,
     layer: Arc<Layer>,
+    /// 最近成功测量的工具栏物理像素区域；所有开始/恢复入口共用，不能依赖前端先切模式。
+    toolbar: Option<Rect>,
 }
 #[derive(Default)]
 pub struct LiveAnnotationState {
@@ -193,6 +216,7 @@ pub(super) fn initialize(
         screen: screen.clone(),
         region,
         layer,
+        toolbar: None,
     });
     Ok(())
 }
@@ -307,80 +331,115 @@ pub async fn set_recording_annotation_mode(
     if !matches!(window.label(), "capture" | "recording-controls") {
         return Err("当前窗口无权修改录制标注。".into());
     }
-    tauri::async_runtime::spawn_blocking(move || {
-        require_editing(&app, id)?;
+    tauri::async_runtime::spawn_blocking(move || apply_mode(&app, id, editing, toolbar))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// 开始/恢复属于采集行为，必须让选区内的点击与滚轮返回底下应用，统一覆盖全部控制入口。
+pub(super) fn operate_desktop(app: &AppHandle, id: u64) -> Result<(), String> {
+    let toolbar = {
         let state = app.state::<LiveAnnotationState>();
-        let _write = state.write.lock().map_err(|e| e.to_string())?;
-        let screen = {
-            let state = app.state::<LiveAnnotationState>();
-            let mut session = state.session.lock().map_err(|e| e.to_string())?;
-            let s = session
-                .as_mut()
-                .filter(|s| s.view.id == id)
-                .ok_or("录屏标注会话已过期。")?;
-            if let Some(rect) = toolbar {
-                if rect.width == 0
-                    || rect.height == 0
-                    || u64::from(rect.x) + u64::from(rect.width) > u64::from(s.screen.width)
-                    || u64::from(rect.y) + u64::from(rect.height) > u64::from(s.screen.height)
-                {
-                    return Err("录屏工具栏范围超出显示器。".into());
-                }
-            }
-            s.view.editing = editing;
-            s.screen.clone()
-        };
-        let result = (|| -> Result<(), String> {
-            let overlay = app
-                .get_webview_window(LABEL)
-                .ok_or("截图选区窗口不可用。")?;
-            overlay
-                .set_position(PhysicalPosition::new(screen.x, screen.y))
-                .map_err(|e| e.to_string())?;
-            overlay
-                .set_size(PhysicalSize::new(screen.width, screen.height))
-                .map_err(|e| e.to_string())?;
-            set_input_region(&overlay, if editing { None } else { toolbar })?;
-            overlay
-                .set_ignore_cursor_events(!editing && toolbar.is_none())
-                .map_err(|e| e.to_string())?;
-            if editing || toolbar.is_some() {
-                // 显示前确认排除状态，不能先让窗口参与采集再设置保护。
-                #[cfg(windows)]
-                crate::capture::scroll::chrome::protect_recording_window(&overlay)?;
-                #[cfg(not(windows))]
-                overlay
-                    .set_content_protected(true)
-                    .map_err(|e| e.to_string())?;
-                overlay.show().map_err(|e| e.to_string())?;
-                if editing {
-                    overlay.set_focus().map_err(|e| e.to_string())?;
-                }
-            } else {
-                overlay.hide().map_err(|e| e.to_string())?;
-            }
-            // 显示过程中可能已按全局快捷键停止，不能让迟到的窗口挡住回放。
-            if require_editing(&app, id).is_err() {
-                let _ = overlay.hide();
-            }
-            Ok(())
-        })();
-        if result.is_err() {
-            let current = app
-                .state::<LiveAnnotationState>()
-                .session
-                .lock()
-                .ok()
-                .is_some_and(|session| session.as_ref().is_some_and(|s| s.view.id == id));
-            if current {
-                hide_interaction(&app);
+        let current = state.session.lock().map_err(|e| e.to_string())?;
+        current
+            .as_ref()
+            .filter(|s| s.view.id == id)
+            .and_then(|s| s.toolbar)
+            .ok_or("录屏工具栏尚未就绪。")?
+    };
+    apply_mode(app, id, false, Some(toolbar))
+}
+
+fn apply_mode(
+    app: &AppHandle,
+    id: u64,
+    editing: bool,
+    toolbar: Option<Rect>,
+) -> Result<(), String> {
+    require_editing(app, id)?;
+    let state = app.state::<LiveAnnotationState>();
+    let _write = state.write.lock().map_err(|e| e.to_string())?;
+    let screen = {
+        let state = app.state::<LiveAnnotationState>();
+        let session = state.session.lock().map_err(|e| e.to_string())?;
+        let s = session
+            .as_ref()
+            .filter(|s| s.view.id == id)
+            .ok_or("录屏标注会话已过期。")?;
+        if let Some(rect) = toolbar {
+            if rect.width == 0
+                || rect.height == 0
+                || u64::from(rect.x) + u64::from(rect.width) > u64::from(s.screen.width)
+                || u64::from(rect.y) + u64::from(rect.height) > u64::from(s.screen.height)
+            {
+                return Err("录屏工具栏范围超出显示器。".into());
             }
         }
-        super::notify_changed(&app);
-        result
-    })
-    .await
-    .map_err(|e| e.to_string())?
+        s.screen.clone()
+    };
+    let result = (|| -> Result<(), String> {
+        let overlay = app
+            .get_webview_window(LABEL)
+            .ok_or("截图选区窗口不可用。")?;
+        let position = PhysicalPosition::new(screen.x, screen.y);
+        let size = PhysicalSize::new(screen.width, screen.height);
+        if overlay.outer_position().map_err(|e| e.to_string())? != position {
+            overlay.set_position(position).map_err(|e| e.to_string())?;
+        }
+        if overlay.inner_size().map_err(|e| e.to_string())? != size {
+            overlay.set_size(size).map_err(|e| e.to_string())?;
+        }
+        overlay
+            .set_ignore_cursor_events(!editing && toolbar.is_none())
+            .map_err(|e| e.to_string())?;
+        if editing || toolbar.is_some() {
+            // 显示前确认排除状态，不能先让窗口参与采集再设置保护。
+            #[cfg(windows)]
+            crate::capture::scroll::chrome::protect_recording_window(&overlay)?;
+            #[cfg(not(windows))]
+            overlay
+                .set_content_protected(true)
+                .map_err(|e| e.to_string())?;
+            overlay.show().map_err(|e| e.to_string())?;
+            // Tauri 的窗口操作经 UI 消息队列执行。先同步读取形成屏障，再设置 HWND
+            // 裁剪，避免后续显示/尺寸样式更新覆盖裁剪，使透明窗口重新拦截整个桌面。
+            let _ = overlay.outer_size().map_err(|e| e.to_string())?;
+            set_input_region(&overlay, if editing { None } else { toolbar })?;
+            if editing {
+                overlay.set_focus().map_err(|e| e.to_string())?;
+            }
+        } else {
+            overlay.hide().map_err(|e| e.to_string())?;
+        }
+        crate::capture::scroll::chrome::show_recording_edges(app)?;
+        // 显示过程中可能已按全局快捷键停止，不能让迟到的窗口挡住回放。
+        if require_editing(app, id).is_err() {
+            let _ = overlay.hide();
+            crate::capture::scroll::chrome::hide_recording(app);
+        } else {
+            let mut current = state.session.lock().map_err(|e| e.to_string())?;
+            if let Some(session) = current.as_mut().filter(|s| s.view.id == id) {
+                session.view.editing = editing;
+                if toolbar.is_some() {
+                    session.toolbar = toolbar;
+                }
+            }
+        }
+        Ok(())
+    })();
+    if result.is_err() {
+        let current = app
+            .state::<LiveAnnotationState>()
+            .session
+            .lock()
+            .ok()
+            .is_some_and(|session| session.as_ref().is_some_and(|s| s.view.id == id));
+        if current {
+            hide_interaction(app);
+        }
+    }
+    super::notify_changed(app);
+    result
 }
 
 /// 渲染与提交串行，查询/采集只短暂取得 Arc；旧会话的慢请求不能写入下一次录制。

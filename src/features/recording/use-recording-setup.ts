@@ -9,6 +9,7 @@ export function useRecordingSetup() {
   const recordingEncoding = ref(saved.encoding), recordingQuality = ref(saved.quality)
   const recordingMbps = ref<string | number>(saved.mbps ?? ''), recordingCountdown = ref(saved.countdown)
   const captureCursor = ref(saved.captureCursor), recordingEffects = ref(saved.effects)
+  const hideMainWindow = ref(saved.hideMainWindow)
   // 音频权限和采集意图不从缓存恢复；每次 WebView 启动都需要用户显式开启。
   const recordingSystemAudio = ref(false), recordingMicrophone = ref(false)
   const recordingCapabilities = ref<RecorderCapabilities | null>(null), recordingCapabilityError = ref('')
@@ -26,14 +27,14 @@ export function useRecordingSetup() {
     if (recordingFormat.value === 'gif') saved.gifFps = fps; else saved.mp4Fps = fps
     const mbps = recordingMbps.value === '' ? null : Number(recordingMbps.value)
     saveRecordingPreferences({ ...saved, format: recordingFormat.value, encoding: recordingEncoding.value, quality: recordingQuality.value,
-      mbps, countdown: recordingCountdown.value, captureCursor: captureCursor.value, effects: recordingEffects.value })
+      mbps, countdown: recordingCountdown.value, captureCursor: captureCursor.value, effects: recordingEffects.value, hideMainWindow: hideMainWindow.value })
   }
-  watch([recordingFormat, recordingFps, recordingEncoding, recordingQuality, recordingMbps, recordingCountdown, captureCursor, recordingEffects], () => {
+  watch([recordingFormat, recordingFps, recordingEncoding, recordingQuality, recordingMbps, recordingCountdown, captureCursor, recordingEffects, hideMainWindow], () => {
     clearTimeout(timer); timer = setTimeout(persist, 200)
   }, { deep: true })
   onScopeDispose(persist)
   return { recordingFormat, recordingFps, recordingEncoding, recordingQuality, recordingMbps, recordingCountdown, captureCursor,
-    recordingEffects, recordingSystemAudio, recordingMicrophone, recordingCapabilities, recordingCapabilityError }
+    recordingEffects, recordingSystemAudio, recordingMicrophone, recordingCapabilities, recordingCapabilityError, hideMainWindow }
 }
 
 /** 确认后先交出冻结背景，再在同一 WebView 激活控制条；任何接管失败都取消已准备的会话。 */

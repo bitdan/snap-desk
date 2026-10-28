@@ -46,6 +46,15 @@ beforeEach(() => {
 afterEach(() => { renderer.render(null, root); vi.clearAllTimers(); vi.useRealTimers(); vi.unstubAllGlobals() })
 
 describe('录屏控制条直接进入回放编辑', () => {
+  it('回放窗口尚未显示时先加载成品，不依赖显示前可能丢失的通知', async () => {
+    vi.stubGlobal('document', { visibilityState: 'hidden', addEventListener: vi.fn(), removeEventListener: vi.fn() })
+    await mount()
+    expect(api.currentRecording).toHaveBeenCalledOnce()
+    expect(api.latestRecordingResult).toHaveBeenCalledOnce()
+    expect(editor()?.props['data-editor-id']).toBe(42)
+    await vi.advanceTimersByTimeAsync(20000)
+    expect(api.currentRecording).toHaveBeenCalledOnce()
+  })
   it.each([['ready', 'start'], ['recording', 'pause'], ['paused', 'resume']] as const)('%s 状态支持空格控制', async (phase, action) => {
     api.currentRecording.mockResolvedValue(view(phase))
     await mount()

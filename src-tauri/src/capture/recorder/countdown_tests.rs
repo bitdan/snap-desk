@@ -49,6 +49,7 @@ fn finishing_recording_without_exit_request_keeps_app_alive() {
 
 fn session() -> Session {
     Session {
+        hide_main_window: true,
         view: RecordingView {
             id: 1,
             revision: 1,

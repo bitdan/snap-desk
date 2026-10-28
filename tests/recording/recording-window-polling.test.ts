@@ -10,6 +10,7 @@ vi.mock('@tauri-apps/api/window', () => ({ getCurrentWindow: () => native }))
 vi.mock('../../src/features/recording/events', () => ({ onRecordingChanged: events.subscribe }))
 const root = new MemoryNode('root'), refresh = vi.fn()
 const Component = defineComponent({ setup() { useRecordingPolling(refresh, () => 'recording', vi.fn()); return () => h('div') } })
+const InitialSnapshot = defineComponent({ setup() { useRecordingPolling(refresh, () => 'ready', vi.fn(), { initialSnapshot: true }); return () => h('div') } })
 
 beforeEach(() => {
   vi.useFakeTimers(); vi.resetAllMocks()
@@ -19,6 +20,19 @@ beforeEach(() => {
 })
 afterEach(() => { memoryRenderer.render(null, root); vi.clearAllTimers(); vi.useRealTimers(); vi.unstubAllGlobals() })
 describe('原生窗口可见性与录屏失效事件', () => {
+  it('隐藏时挂载的工具栏先读取首屏快照，后续隐藏轮询仍停止业务查询', async () => {
+    native.isVisible.mockResolvedValue(false)
+    vi.stubGlobal('document', { visibilityState: 'hidden', addEventListener: vi.fn(), removeEventListener: vi.fn() })
+    memoryRenderer.render(h(InitialSnapshot), root); await flushComponent()
+    expect(refresh).toHaveBeenCalledOnce()
+    events.changed!(); await flushComponent()
+    await vi.advanceTimersByTimeAsync(20000)
+    expect(refresh).toHaveBeenCalledOnce()
+    vi.stubGlobal('document', { visibilityState: 'visible', addEventListener: vi.fn(), removeEventListener: vi.fn() })
+    native.isVisible.mockResolvedValue(true)
+    events.changed!(); await flushComponent()
+    expect(refresh).toHaveBeenCalledTimes(2)
+  })
   it('隐藏和最小化窗口不查询业务状态，重新显示后的通知立即同步', async () => {
     native.isVisible.mockResolvedValue(false)
     memoryRenderer.render(h(Component), root); await flushComponent()

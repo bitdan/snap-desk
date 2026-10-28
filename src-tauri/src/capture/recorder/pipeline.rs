@@ -383,7 +383,7 @@ pub(super) fn collect(
         .active
         .store(false, Ordering::SeqCst);
     let _ = app.emit_to("main", "capture-result", &message);
-    // 主界面保持隐藏；成功由录屏窗口接管编辑，取消或失败沿用现有提示。
+    // 不主动改变主界面的显示状态；成功由录屏窗口接管编辑，取消或失败沿用现有提示。
 }
 
 /// Finalize、sync_all 成功才发布；保存失败保留视频与恢复记录，明确取消才清理。
@@ -516,11 +516,6 @@ fn write_video(
     progress(app, "completed", Some(&output));
     // 终态与成品路径由 collect 收尾时一起发布，避免回放读到 Completed 却没有路径。
     Ok(output.to_string_lossy().into_owned())
-}
-
-/// 诊断不触发试录/编码器探测，不采集视频或音频。
-pub(crate) fn diagnostic_summary() -> serde_json::Value {
-    serde_json::json!({"backend":std::env::consts::OS,"captureSupported":capture::supported().is_ok(),"encoderProbed":false,"audioBackend":if cfg!(target_os = "windows") { "wasapi" } else { "unsupported" },"audioProbed":false})
 }
 
 /// 原生编码放在状态锁外；与视频共用 Timeline，暂停不会在成品中留下音频空洞。

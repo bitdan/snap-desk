@@ -485,6 +485,16 @@ pub(crate) fn hide_recording(app: &AppHandle) {
     }
 }
 
+/// 录制选区边框独立于标注画布显示，桌面操作模式裁掉画布后仍保留范围提示。
+pub(in crate::capture) fn show_recording_edges(app: &AppHandle) -> Result<(), String> {
+    for label in &RECORDING_LABELS[1..] {
+        if let Some(window) = window(app, label) {
+            show_window(&window)?;
+        }
+    }
+    Ok(())
+}
+
 /// 结束后仍在原选区回放，工具条紧邻选区，不再居中打开一块独立的编辑界面。
 pub(crate) fn show_recording_preview(app: &AppHandle) -> Result<(), String> {
     let controls = crate::shared::auxiliary_windows::ensure(app, "recording-controls")?;

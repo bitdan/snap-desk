@@ -698,6 +698,8 @@
   "当前窗口无权修改录制标注。": "This window cannot change recording annotations.",
   "录屏标注会话已过期。": "The recording annotation session has expired.",
   "无法设置录屏工具栏交互区域。": "Could not set the recording toolbar input region.",
+  "无法校验录屏工具栏交互区域。": "Could not verify the recording toolbar input region.",
+  "录屏工具栏交互区域未生效。": "The recording toolbar input region was not applied.",
   "录屏工具栏范围超出显示器。": "The recording toolbar extends beyond the display.",
   "选择翻译引擎 ZIP": "Select translation engine ZIP",
   "录屏需要 Windows 10 2004 或更新版本。": "Recording requires Windows 10 2004 or later.",

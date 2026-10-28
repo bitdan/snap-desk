@@ -45,15 +45,26 @@ beforeEach(() => {
   editor = useAnnotations(() => ({ x: 0, y: 0, width: 200, height: 100 }), () => '', () => false)
 })
 afterEach(() => { renderer.render(null, root); vi.unstubAllGlobals() })
-async function mount(collapsible = true, defaultExpanded = false) {
+async function mount(collapsible = true, defaultExpanded = false, pointerLabel?: string, active = true) {
   const Wrapper = { setup() {
     Vue.provide(Vue.ssrContextKey, { modules: new Set() })
-    return () => Vue.h(Toolbar, { editor, active: true, disabled: false, collapsible, defaultExpanded, onTool: editor.setTool }, { actions: () => Vue.h('button', { 'data-action': 'save' }, 'Save') })
+    return () => Vue.h(Toolbar, { editor, active, disabled: false, collapsible, defaultExpanded, pointerLabel, onTool: editor.setTool }, { actions: () => Vue.h('button', { 'data-action': 'save' }, 'Save') })
   } }
   renderer.render(Vue.h(Wrapper), root); await Vue.nextTick()
 }
 
 describe('共享标注工具栏分行与折叠', () => {
+  it('录屏桌面指针在展开和折叠时都显示明确名称与选中状态', async () => {
+    editor.setTool('pen')
+    await mount(true, true, '操作桌面', false)
+    const pointer = row('操作桌面')
+    expect(pointer.props['aria-pressed']).toBe(true)
+    expect(pointer.props['data-annotation-tool']).toBe('edit')
+    row('折叠工具栏').props.onClick(); await Vue.nextTick()
+    const group = all(n => n.type === 'tool-group' && n.props.label === '操作桌面')[0]
+    expect(group.props.active).toBe(true)
+    expect(group.props.selected).toBe('edit')
+  })
   it('清空和撤销在第一行，保存等操作放在第二行', async () => {
     await mount()
     expect(all(n => n.props.role === 'toolbar')).toHaveLength(2)

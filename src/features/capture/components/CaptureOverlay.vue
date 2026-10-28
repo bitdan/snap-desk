@@ -33,6 +33,7 @@ import { readRecentSelection, restoreRecentSelection, writeRecentSelection } fro
 const frame = shallowRef<CaptureFrame | null>(null)
 // 选区确认后仅替换背景和运行状态，继续使用当前 capture WebView，不弹出中间控制窗口。
 const liveRecordingId = ref<number | null>(null)
+const liveAnnotations = ref<InstanceType<typeof RecordingAnnotations> | null>(null)
 watch(liveRecordingId, id => document.documentElement.classList.toggle('recording-live', id !== null), { flush: 'sync' })
 // 只传会话编号与版本；大图通过受限协议读取，URL 不包含本地文件路径。
 const imageUrl = computed(() => frame.value ? `${convertFileSrc(String(frame.value.id), 'capture-image')}/${frame.value.previewRevision}.png` : '')
@@ -119,7 +120,7 @@ async function selectedRecordingRegion() {
   recordingConfirmTrigger.value?.focus()
 }
 const { recordingFormat, recordingFps, recordingEncoding, recordingQuality, recordingMbps, recordingCountdown, captureCursor,
-  recordingEffects, recordingSystemAudio, recordingMicrophone, recordingCapabilities, recordingCapabilityError } = useRecordingSetup()
+  recordingEffects, recordingSystemAudio, recordingMicrophone, recordingCapabilities, recordingCapabilityError, hideMainWindow } = useRecordingSetup()
 const recordingSource = ref<RecordingSelection>('region')
 /** 录屏仅选择屏幕区域或整台显示器，不再置前或绑定应用窗口。 */
 function chooseRecordingSource(value: string) {
@@ -238,11 +239,14 @@ async function startRecording() {
   busy.value = true; error.value = ''
   try {
     const rect = recordingRegion(pixels.value, recordingSource.value, frame.value.displays, { x: frame.value.originX, y: frame.value.originY })
-    const config = recordingConfig(rect, recordingFps.value, captureCursor.value, recordingCountdown.value, recordingEncoding.value, recordingQuality.value, recordingEffects.value, recordingFormat.value === 'gif' ? null : recordingBitrate(recordingMbps.value), recordingFormat.value, recordingSystemAudio.value && !!recordingCapabilities.value?.systemAudio, recordingMicrophone.value && !!recordingCapabilities.value?.microphone)
+    const config = recordingConfig(rect, recordingFps.value, captureCursor.value, recordingCountdown.value, recordingEncoding.value, recordingQuality.value, recordingEffects.value, recordingFormat.value === 'gif' ? null : recordingBitrate(recordingMbps.value), recordingFormat.value, recordingSystemAudio.value && !!recordingCapabilities.value?.systemAudio, recordingMicrophone.value && !!recordingCapabilities.value?.microphone, hideMainWindow.value)
     config.source = 'selectedMonitor'
     await prepareRecordingSession(
       () => api.startRecording(id, rect, config, undefined, editor.history.present),
-      () => api.setRecordingAnnotationMode(id, true),
+      async () => {
+        if (!liveAnnotations.value) throw new Error('录屏工具栏尚未就绪。')
+        await liveAnnotations.value.prepareDesktop()
+      },
       () => api.controlRecording(id, 'cancel'),
       () => { liveRecordingId.value = id; releaseFrame(id) },
     )
@@ -446,7 +450,7 @@ onUnmounted(() => { releaseFrame(); disposed = true; offClosed?.(); off?.(); off
 </script>
 
 <template>
-  <RecordingAnnotations v-if="liveRecordingId !== null" :session-id="liveRecordingId" :initial-editor="editor" @closed="liveRecordingId = null" />
+  <RecordingAnnotations v-if="liveRecordingId !== null" ref="liveAnnotations" :session-id="liveRecordingId" :initial-editor="editor" @closed="liveRecordingId = null" />
   <div v-else-if="scroll" />
   <div v-else class="capture-overlay" @pointerdown="down($event)" @pointermove.capture="drag" @pointerleave="pointer = null" @pointerup="up" @pointercancel="abortGesture(); pointer = null" @contextmenu.prevent="cancel">
     <img v-if="frame" :key="frame.id" ref="screenImage" class="screen-image" :src="imageUrl" crossorigin="anonymous" :alt='t("当前屏幕截图")' draggable="false" @load="loaded" @error="imageFailed" />
@@ -494,7 +498,7 @@ onUnmounted(() => { releaseFrame(); disposed = true; offClosed?.(); off?.(); off
           <button :disabled="busy || !recordingCapabilities?.microphone" :aria-pressed="recordingMicrophone" :title="recordingCapabilities?.microphone ? `${t('录制麦克风')} · ${t(recordingMicrophone ? '已启用' : '已关闭')}` : t('麦克风录制不可用')" :aria-label='t("录制麦克风")' @click="recordingMicrophone = !recordingMicrophone"><component :is="recordingMicrophone ? Mic : MicOff" :size="16" /></button>
         </template>
         </div>
-        <RecordingSetupMenu id="recording-inline-options" :format="recordingFormat" v-model:encoding="recordingEncoding" v-model:quality="recordingQuality" v-model:mbps="recordingMbps" v-model:countdown="recordingCountdown" v-model:effects="recordingEffects" :busy="busy" />
+        <RecordingSetupMenu id="recording-inline-options" :format="recordingFormat" v-model:encoding="recordingEncoding" v-model:quality="recordingQuality" v-model:mbps="recordingMbps" v-model:countdown="recordingCountdown" v-model:effects="recordingEffects" v-model:hide-main-window="hideMainWindow" :busy="busy" />
         <div class="recording-final-actions">
         <button :disabled="busy" :title='t("重新选择录屏范围")' :aria-label='t("重新选择录屏范围")' @click="reselect"><RotateCcw :size="16" /></button>
         <button ref="recordingConfirmTrigger" class="recording-confirm" :disabled="!valid || busy || editor.pending || editor.interacting || !recordingCapabilities?.available" :title="recordingCapabilities?.reason ?? (recordingCapabilityError || (recordingCapabilities ? t('确认范围，进入录制控制条') : t('正在检查录屏能力…')))" @click="startRecording"><Check :size="15" />{{ busy ? t("准备中…") : t("确认范围") }}</button>

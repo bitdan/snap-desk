@@ -1,6 +1,6 @@
 //! Windows 自带 MediaComposition 的精确时间裁剪；音视频作为同一片段重新封装/编码。
 //! 所有 WinRT 对象只在 MTA 阻塞线程内使用，析构顺序保证对象先于运行时释放。
-use super::{check_cancel, TrimRange};
+use super::{check_cancel, trim_bitrate, TrimRange};
 use ::windows::{
     core::HSTRING,
     Foundation::TimeSpan,
@@ -87,11 +87,20 @@ pub(super) fn trim(
         .map_err(native_error)?
         .Append(&clip)
         .map_err(native_error)?;
-    // 复用原 MP4 的 H.264/AAC 编码参数，音轨跟随同一时间片段，避免只裁视频导致错位。
+    // 保持原尺寸、时间节奏和音轨，但不能把静态桌面的低平均码率当作二次编码目标。
     let profile = MediaEncodingProfile::CreateFromFileAsync(&input)
         .map_err(native_error)?
         .join()
         .map_err(native_error)?;
+    let video = profile.Video().map_err(native_error)?;
+    let frame_rate = video.FrameRate().map_err(native_error)?;
+    video.SetBitrate(trim_bitrate(
+        video.Width().map_err(native_error)?,
+        video.Height().map_err(native_error)?,
+        frame_rate.Numerator().map_err(native_error)?,
+        frame_rate.Denominator().map_err(native_error)?,
+        video.Bitrate().map_err(native_error)?,
+    )).map_err(native_error)?;
     let destination = storage(output)?;
     check_cancel(cancel)?;
     let operation = composition

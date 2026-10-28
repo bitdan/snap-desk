@@ -72,7 +72,7 @@ async function refresh() {
   }
   catch (e) { if (!disposed) error.value = String(e) }
 }
-useRecordingPolling(refresh, () => view.value?.phase, e => { if (!disposed) error.value = String(e) }, () => desktop)
+useRecordingPolling(refresh, () => view.value?.phase, e => { if (!disposed) error.value = String(e) }, { enabled: () => desktop })
 async function control(action: RecordingAction) {
   if (!view.value || busy.value) return
   busy.value = true; error.value = ''

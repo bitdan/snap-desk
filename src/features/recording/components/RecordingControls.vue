@@ -65,7 +65,7 @@ async function refresh() {
   view.value = newerRecording(view.value, next)
   if (replay.value && previewSession !== view.value?.id) await loadPreview()
 }
-useRecordingPolling(refresh, () => view.value?.phase, e => { if (!disposed) error.value = String(e) })
+useRecordingPolling(refresh, () => view.value?.phase, e => { if (!disposed) error.value = String(e) }, { initialSnapshot: true })
 async function control(action: RecordingAction) {
   if (!view.value || busy.value) return
   busy.value = true; error.value = ''

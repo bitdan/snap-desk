@@ -73,6 +73,8 @@ pub struct RecordingView {
 
 /// 状态锁仅保护时间轴和帧提交；系统取样/编码在锁外进行，暂停通过代次淘汰旧帧。
 struct Session {
+    /// 在确认录制时固定；开始和继续共用，避免中途改变本次会话的窗口行为。
+    hide_main_window: bool,
     view: RecordingView,
     timeline: Timeline,
     fps_window: stats::FpsWindow,
@@ -211,7 +213,7 @@ pub fn close_completed_preview(app: &AppHandle) {
     if let Some(id) = id { let _ = control(app, Some(id), RecordingAction::Cancel); }
 }
 
-/// 悬浮条暂停保留现场，托盘暂停可展开主页；恢复仅隐藏主页，边框和控制条不收起。
+/// 暂停保留现场；开始和恢复按本次会话偏好处理主界面，边框和控制条不收起。
 pub fn control(app: &AppHandle, id: Option<u64>, action: RecordingAction) -> Result<(), String> {
     let state = app.state::<RecordingState>();
     // 控制动作串行，但窗口操作不得持有状态锁，避免 UI 查询状态时相互等待。
@@ -264,12 +266,16 @@ pub fn control(app: &AppHandle, id: Option<u64>, action: RecordingAction) -> Res
         {
             let session_id = s.view.id;
             let expected_phase = s.view.phase;
+            let hide_main_window = s.hide_main_window;
             drop(guard);
-            if let Some(main) = app.get_webview_window("main") {
-                main.hide().map_err(err)?;
+            live_annotations::operate_desktop(app, session_id)?;
+            if hide_main_window {
+                if let Some(main) = app.get_webview_window("main") {
+                    main.hide().map_err(err)?;
+                }
+                // 仅自动收起时等待桌面合成移除主窗口，再开启计时和取样。
+                std::thread::sleep(Duration::from_millis(250));
             }
-            // 此时仍是待开始/暂停状态；窗口完全移除后才开启计时和取样。
-            std::thread::sleep(Duration::from_millis(250));
             let mut guard = state.0.lock().map_err(err)?;
             let s = guard
                 .as_mut()
@@ -549,6 +555,7 @@ pub async fn start_recording(
         super::hide_overlay(&app, &window)?;
         let recording = app.state::<RecordingState>();
         *recording.0.lock().map_err(err)? = Some(Session {
+            hide_main_window: config.hide_main_window,
             view: RecordingView {
                 id,
                 revision: 1,
@@ -658,6 +665,11 @@ pub async fn start_recording(
     })
     .await
     .map_err(err)?
+}
+
+/// 诊断不触发试录/编码器探测，不采集视频或音频。
+pub(crate) fn diagnostic_summary() -> serde_json::Value {
+    serde_json::json!({"backend":std::env::consts::OS,"captureSupported":capture::supported().is_ok(),"encoderProbed":false,"audioBackend":if cfg!(target_os = "windows") { "wasapi" } else { "unsupported" },"audioProbed":false})
 }
 
 /// 单次取样在状态锁外计时；空取样也统计耗时，不包含 wait_for_frame 的空闲等待。

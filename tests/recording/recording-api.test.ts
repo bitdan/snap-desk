@@ -80,7 +80,8 @@ describe('录屏 IPC 契约', () => {
   it('保持原命令及会话 ID，同时发送配置和物理像素选区', async () => {
     const rect = { x: 13, y: 21, width: 101, height: 99 }
     const effects = { ...defaultInputEffects(), keyboard: true, wheel: true, drag: true }
-    const config = recordingConfig(rect, 60, false, 5, 'software', 'high', effects, 8_500_000, 'mp4', true, true)
+    const config = recordingConfig(rect, 60, false, 5, 'software', 'high', effects, 8_500_000, 'mp4', true, true, false)
+    expect(config.hideMainWindow).toBe(false)
     expect(config.systemAudio && config.microphone).toBe(true)
     expect(config.bitrate).toBe(8_500_000)
     expect(config.countdownSeconds).toBe(5)

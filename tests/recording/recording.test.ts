@@ -104,7 +104,7 @@ describe('录屏会话状态', () => {
     const region = { x: 12, y: 18, width: 101, height: 99 }
     const config = recordingConfig(region, 60, false)
     region.x = 99
-    expect(config).toEqual({ source: 'primaryMonitor', region: { x: 12, y: 18, width: 101, height: 99 }, fps: 60, captureCursor: false, format: 'mp4', systemAudio: false, microphone: false, countdownSeconds: 0, encoding: 'auto', quality: 'balanced', inputEffects: defaultInputEffects(), bitrate: null })
+    expect(config).toEqual({ source: 'primaryMonitor', region: { x: 12, y: 18, width: 101, height: 99 }, fps: 60, captureCursor: false, format: 'mp4', systemAudio: false, microphone: false, countdownSeconds: 0, encoding: 'auto', quality: 'balanced', inputEffects: defaultInputEffects(), bitrate: null, hideMainWindow: true })
     expect(recordingConfig(region).fps).toBe(60)
     expect(recordingConfig(region).captureCursor).toBe(true)
   })

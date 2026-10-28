@@ -6,7 +6,7 @@ import AnnotationToolGroup from '@/features/annotations/components/AnnotationToo
 import { annotationTools, annotationToolGroups } from '@/features/annotations/annotation-tools'
 import { readToolOrder, moveTool, normalizeToolOrder, toolbarOrderKey } from '@/features/annotations/toolbar-order'
 import type { AnnotationEditor, AnnotationTool } from '@/features/annotations/use-annotations'
-const props = defineProps<{ editor: AnnotationEditor; disabled: boolean; active: boolean; collapsible?: boolean; defaultExpanded?: boolean }>()
+const props = defineProps<{ editor: AnnotationEditor; disabled: boolean; active: boolean; collapsible?: boolean; defaultExpanded?: boolean; pointerLabel?: string }>()
 const emit = defineEmits<{ tool: [tool: AnnotationTool]; float: [event: PointerEvent]; resetPosition: [] }>()
 // 顺序在截图和贴图窗口之间共享；存储失败不阻断当前窗口的编辑。
 const order = ref(readToolOrder())
@@ -19,7 +19,10 @@ function toggleExpanded() {
   try { localStorage.setItem(expandedKey, String(expanded.value)) } catch { /* 不阻断工具使用。 */ }
 }
 const orderError = ref('')
-const tools = computed(() => order.value.map(tool => annotationTools.find(item => item.tool === tool)!))
+const tools = computed(() => order.value.map(tool => {
+  const item = annotationTools.find(item => item.tool === tool)!
+  return tool === 'edit' && props.pointerLabel ? { ...item, name: props.pointerLabel } : item
+}))
 // 指针捕获后 hover 仍停在源按钮，单独记录落点才能准确提示将要移动到的位置。
 const sortingTool = ref<AnnotationTool | null>(null)
 const sortingTarget = ref<AnnotationTool | null>(null)
@@ -125,10 +128,10 @@ function value(event: Event) { return (event.target as HTMLInputElement).value }
       <button class="tool-grip" :disabled="locked" :title="t('拖动工具栏；双击恢复位置')" :aria-label="t('拖动工具栏，双击或 Enter 恢复位置')" @pointerdown.stop="emit('float', $event)" @dblclick="emit('resetPosition')" @keydown.enter.stop.prevent="emit('resetPosition')"><GripVertical :size="16" /></button>
       <slot name="leading" />
       <template v-if="collapsible && !expanded">
-        <AnnotationToolGroup v-for="group in annotationToolGroups" :key="group.name" :name="group.name" :tools="group.tools" :selected="editor.tool" :active="active" :disabled="locked" @select="emit('tool', $event)" />
+        <AnnotationToolGroup v-for="group in annotationToolGroups" :key="group.name" :name="group.name" :label="group.tools.includes('edit') ? pointerLabel : undefined" :tools="group.tools" :selected="pointerLabel && group.tools.includes('edit') ? 'edit' : editor.tool" :active="pointerLabel && group.tools.includes('edit') ? !active : active" :disabled="locked" @select="emit('tool', $event)" />
       </template>
       <template v-else>
-        <button v-for="item in tools" :key="item.tool" :disabled="locked" :class="{ 'sorting-source': sortingTool === item.tool, 'sorting-target': sortingTarget === item.tool && sortingTarget !== sortingTool }" :title="t('{0}（拖动排序，Alt+←/→调整顺序）', { 0: t(item.name) })" :data-annotation-tool="item.tool" @pointerdown="startOrder($event, item.tool)" @pointermove="moveOrder" @pointerup="finishOrder" @pointercancel="cancelOrder" @lostpointercapture="cancelOrder" @dragstart.prevent @keydown="orderKey($event, item.tool)" :aria-label="t(item.name)" :aria-pressed="active && editor.tool === item.tool" @click="choose($event, item.tool)"><component :is="item.icon" :size="18" /></button>
+        <button v-for="item in tools" :key="item.tool" :disabled="locked" :class="{ 'sorting-source': sortingTool === item.tool, 'sorting-target': sortingTarget === item.tool && sortingTarget !== sortingTool }" :title="t('{0}（拖动排序，Alt+←/→调整顺序）', { 0: t(item.name) })" :data-annotation-tool="item.tool" @pointerdown="startOrder($event, item.tool)" @pointermove="moveOrder" @pointerup="finishOrder" @pointercancel="cancelOrder" @lostpointercapture="cancelOrder" @dragstart.prevent @keydown="orderKey($event, item.tool)" :aria-label="t(item.name)" :aria-pressed="pointerLabel && item.tool === 'edit' ? !active : active && editor.tool === item.tool" @click="choose($event, item.tool)"><component :is="item.icon" :size="18" /></button>
         <button :disabled="locked" :title='t("恢复默认工具顺序")' :aria-label='t("恢复默认工具顺序")' @click="saveOrder(normalizeToolOrder(null))"><RotateCcw :size="16" /></button>
       </template>
         <button v-if="collapsible" :disabled="locked" :title="expanded ? t('折叠相似工具') : t('展开全部工具（可拖动排序）')" :aria-label="expanded ? t('折叠工具栏') : t('展开工具栏')" :aria-expanded="expanded" :aria-controls="toolsRowId" @click="toggleExpanded"><component :is="expanded ? ChevronUp : ChevronDown" :size="16" /></button>

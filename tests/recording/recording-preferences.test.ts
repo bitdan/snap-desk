@@ -11,7 +11,7 @@ afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers() })
 describe('录屏偏好持久化', () => {
   it('重开后恢复有效偏好，并隔离颜色数组及音频开关', () => {
     const store = storage(), prefs = defaultRecordingPreferences()
-    prefs.effects.keyboard = true; prefs.format = 'gif'; prefs.gifFps = 20
+    prefs.effects.keyboard = true; prefs.format = 'gif'; prefs.gifFps = 20; prefs.hideMainWindow = false
     saveRecordingPreferences({ ...prefs, systemAudio: true, microphone: true } as typeof prefs, store)
     const loaded = readRecordingPreferences(store)
     expect(loaded).toEqual(prefs)
@@ -46,6 +46,19 @@ describe('录屏偏好持久化', () => {
     const second = effectScope(), restored = second.run(useRecordingSetup)!
     expect(restored.recordingSystemAudio.value).toBe(false)
     expect(restored.recordingMicrophone.value).toBe(false)
+    second.stop()
+  })
+  it('收起主界面开关跨会话保留，旧偏好及无效值继续沿用默认行为', async () => {
+    vi.useFakeTimers()
+    const store = storage(); vi.stubGlobal('localStorage', store)
+    expect(normalizeRecordingPreferences({}).hideMainWindow).toBe(true)
+    expect(normalizeRecordingPreferences({ hideMainWindow: 'false' }).hideMainWindow).toBe(true)
+    const first = effectScope(), setup = first.run(useRecordingSetup)!
+    setup.hideMainWindow.value = false; await nextTick(); await vi.advanceTimersByTimeAsync(200)
+    expect(readRecordingPreferences(store).hideMainWindow).toBe(false)
+    first.stop()
+    const second = effectScope(), restored = second.run(useRecordingSetup)!
+    expect(restored.hideMainWindow.value).toBe(false)
     second.stop()
   })
 })

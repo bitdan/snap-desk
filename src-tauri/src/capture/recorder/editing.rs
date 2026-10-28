@@ -292,6 +292,32 @@ fn check_cancel(cancel: &AtomicBool) -> Result<(), String> {
     }
 }
 
+/// 未改变范围时保留原始编码字节；分块检查取消，避免长录像复制期间无法取消。
+fn copy_original(mut input: File, output: &mut File, cancel: &AtomicBool) -> Result<(), String> {
+    let mut buffer = [0u8; 64 * 1024];
+    loop {
+        check_cancel(cancel)?;
+        let length = input.read(&mut buffer).map_err(error)?;
+        if length == 0 {
+            return Ok(());
+        }
+        output.write_all(&buffer[..length]).map_err(error)?;
+    }
+}
+
+/// 原文件可能以低帧率保存静止桌面，平均码率不能用作文字画面的再次压缩预算。
+/// 只提高转码预算，不改变尺寸、帧率或音轨；更高的源码率仍予以保留。
+#[cfg(any(windows, test))]
+fn trim_bitrate(width: u32, height: u32, numerator: u32, denominator: u32, source: u32) -> u32 {
+    let fps = if denominator == 0 {
+        30
+    } else {
+        (u64::from(numerator).div_ceil(u64::from(denominator))).clamp(30, 60) as u32
+    };
+    let budget = super::config::estimated_bitrate(width, height, fps, super::config::RecordingQuality::High);
+    source.max(budget)
+}
+
 #[tauri::command]
 pub async fn trim_recording(
     app: AppHandle,
@@ -352,10 +378,14 @@ pub async fn trim_recording(
             &source.format,
             "录屏裁剪片段",
         )?;
-        if source.format == "gif" {
+        if range.start_ms == 0 && range.end_ms == source.duration_ms {
+            // 保存整段时无需解码和重编码，避免把“另存”变成一次有损画质转换。
+            copy_original(source.file.open()?, output.file_mut(), &cancel)?;
+        } else if source.format == "gif" {
             trim_gif(source.file.open()?, output.path(), &range, &cancel)?;
         } else {
-            trim_mp4(&source.file.path, output.path(), &range, &cancel)?;
+            // MediaComposition 会独占打开输出文件，不能同时持有 TrackedFile 的读写句柄。
+            output.write_external(|path| trim_mp4(&source.file.path, path, &range, &cancel))?;
         }
         check_cancel(&cancel)?;
         source.file.open()?;
@@ -623,6 +653,42 @@ mod tests {
     use super::*;
 
     #[test]
+    fn full_export_preserves_encoded_bytes_and_checks_cancellation() {
+        let root = tempfile::tempdir().unwrap();
+        let catalog = tempfile::tempdir().unwrap();
+        let source = root.path().join("source.mp4");
+        let bytes: Vec<u8> = (0..150_000).map(|index| (index % 251) as u8).collect();
+        fs::write(&source, &bytes).unwrap();
+        let mut pending = crate::recovery::TrackedFile::new_in(
+            catalog.path(), root.path(), "mp4", "整段另存",
+        ).unwrap();
+        copy_original(File::open(&source).unwrap(), pending.file_mut(), &AtomicBool::new(false)).unwrap();
+        pending.finalize().unwrap();
+        let target = root.path().join("saved.mp4");
+        pending.publish(&target, false).unwrap();
+        assert_eq!(fs::read(&target).unwrap(), bytes);
+        assert_eq!(fs::read(&source).unwrap(), bytes);
+
+        let mut cancelled = crate::recovery::TrackedFile::new_in(
+            catalog.path(), root.path(), "mp4", "取消另存",
+        ).unwrap();
+        let cancelled_path = cancelled.path().to_owned();
+        assert!(copy_original(File::open(&source).unwrap(), cancelled.file_mut(), &AtomicBool::new(true)).is_err());
+        assert_eq!(fs::metadata(&cancelled_path).unwrap().len(), 0);
+        drop(cancelled);
+        assert!(!cancelled_path.exists());
+    }
+
+    #[test]
+    fn trim_budget_does_not_reuse_sparse_recording_average_bitrate() {
+        // 实际问题文件约 8.4 FPS、0.48 Mbps；转码至少提供同尺寸高清 30 FPS 的预算。
+        assert_eq!(trim_bitrate(1352, 628, 10_000_000, 1_188_777, 481_937), 5_094_336);
+        assert_eq!(trim_bitrate(1920, 1080, 60, 1, 30_000_000), 30_000_000);
+        assert_eq!(trim_bitrate(1920, 1080, 30_000, 1001, 0), 12_441_600);
+        assert_eq!(trim_bitrate(1920, 1080, 0, 0, 0), 12_441_600);
+    }
+
+    #[test]
     fn ranges_validate_duration_minimum_and_gif_precision() {
         for range in [
             TrimRange {
@@ -806,8 +872,9 @@ mod tests {
             frame::BgraImage,
         };
         let root = tempfile::tempdir().unwrap();
+        let catalog = tempfile::tempdir().unwrap();
         let source = root.path().join("source.mp4");
-        let output = root.path().join("extensionless-output");
+        let output = root.path().join("trimmed.mp4");
         let mut writer = encoder::create(
             &source,
             64,
@@ -827,17 +894,20 @@ mod tests {
         writer.finish(20_000_000).unwrap();
         drop(writer);
         let original = fs::read(&source).unwrap();
-        File::create(&output).unwrap();
-        trim_mp4(
-            &source,
-            &output,
-            &TrimRange {
-                start_ms: 500,
-                end_ms: 1500,
-            },
-            &AtomicBool::new(false),
-        )
-        .unwrap();
+        // 与真实保存流程共用恢复登记、独占转码和发布，不能预先关闭输出绕过句柄冲突。
+        let mut pending = crate::recovery::TrackedFile::new_in(
+            catalog.path(), root.path(), "mp4", "测试裁剪",
+        ).unwrap();
+        pending.write_external(|path| {
+            trim_mp4(
+                &source,
+                path,
+                &TrimRange { start_ms: 500, end_ms: 1500 },
+                &AtomicBool::new(false),
+            )
+        }).unwrap();
+        pending.finalize().unwrap();
+        pending.publish(&output, false).unwrap();
         let duration = mp4_duration(&output).unwrap();
         assert!((950..=1050).contains(&duration));
         assert_eq!(fs::read(&source).unwrap(), original);

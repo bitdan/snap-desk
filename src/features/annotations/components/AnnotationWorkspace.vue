@@ -9,7 +9,7 @@ import AnnotationToolbar from '@/features/annotations/components/AnnotationToolb
 defineProps<{
   editor: AnnotationEditor; width: number; height: number; bounds: Rect
   surfaceVisible: boolean; toolbarVisible: boolean; enabled: boolean; active: boolean; disabled: boolean
-  surfaceStyle?: StyleValue; toolbarStyle?: StyleValue; outlined?: boolean; defaultExpanded?: boolean
+  surfaceStyle?: StyleValue; toolbarStyle?: StyleValue; outlined?: boolean; defaultExpanded?: boolean; pointerLabel?: string
 }>()
 const emit = defineEmits<{
   tool: [tool: AnnotationTool]; float: [event: PointerEvent]; resetPosition: []
@@ -19,7 +19,10 @@ const emit = defineEmits<{
 const toolbar = ref<HTMLElement | null>(null)
 watch(toolbar, element => emit('toolbarElement', element), { flush: 'post' })
 function activate(event: Event) {
-  if ((event.target as Element).closest('.annotation-drawing-row, .annotation-options')) emit('activate')
+  // 折叠工具的菜单通过 Portal 绘制在工具栏外，打开前恢复完整输入区域。
+  // 普通工具点击由 tool 事件切换，不能在捕获阶段提前激活后又被当作重复点击关闭。
+  if (event.type === 'keydown' && !['Enter', ' ', 'ArrowDown', 'ArrowUp'].includes((event as KeyboardEvent).key)) return
+  if ((event.target as Element).closest('[aria-haspopup="menu"]')) emit('activate')
 }
 </script>
 
@@ -28,7 +31,7 @@ function activate(event: Event) {
     <AnnotationSurface :editor="editor" :width="width" :height="height" :bounds="bounds" :enabled="enabled" />
   </div>
   <div v-if="toolbarVisible" ref="toolbar" class="capture-toolbar annotation-toolbar annotation-workspace-toolbar" :style="toolbarStyle" @pointerdown.capture="activate" @keydown.capture="activate" @pointerdown.stop @contextmenu.stop.prevent>
-    <AnnotationToolbar collapsible :default-expanded="defaultExpanded" :editor="editor" :disabled="disabled" :active="active" @tool="emit('tool', $event)" @float="emit('float', $event)" @reset-position="emit('resetPosition')">
+    <AnnotationToolbar collapsible :default-expanded="defaultExpanded" :pointer-label="pointerLabel" :editor="editor" :disabled="disabled" :active="active" @tool="emit('tool', $event)" @float="emit('float', $event)" @reset-position="emit('resetPosition')">
       <template #leading><slot name="leading" /></template>
       <template #actions><slot name="actions" /></template>
       <template #options><slot name="options" /></template>
