@@ -289,7 +289,7 @@ pub(crate) fn render_live(image: &mut RgbaImage, shapes: &[Annotation]) -> Resul
 }
 
 /// 滤镜临时图最长边限制为 1024；只在实际使用滤镜时分配，不影响普通线条标注的快速路径。
-fn live_filter(frame: &RgbaImage, s: &Annotation) -> Result<RgbaImage, String> {
+pub(crate) fn live_filter(frame: &RgbaImage, s: &Annotation) -> Result<RgbaImage, String> {
     use image::imageops::{self, FilterType};
     let x = (s.start.x.floor().max(0.0) as u32).min(frame.width() - 1);
     let y = (s.start.y.floor().max(0.0) as u32).min(frame.height() - 1);

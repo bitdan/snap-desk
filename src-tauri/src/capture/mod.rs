@@ -316,12 +316,12 @@ fn hide_remaining(hidden: Option<Instant>, now: Instant) -> Duration {
 
 fn prepare(app: &AppHandle, recording: bool) -> Result<(), String> {
     let started = Instant::now();
+    recording::live_annotations::remember_desktop_focus(app);
     if let Some(window) = app.get_webview_window("capture") {
         hide_overlay(app, &window)?;
         // 录制复用过的窗口可能处于鼠标穿透/捕获排除状态；新截图恢复普通交互。
         window.set_ignore_cursor_events(false).map_err(err)?;
         window.set_content_protected(false).map_err(err)?;
-        recording::live_annotations::set_input_region(&window, None)?;
     }
     // 旧回放属于捕获排除窗口，先真正收起再截图；部分桌面截图路径会把可见的排除窗口画成黑矩形。
     let replay_visible = app

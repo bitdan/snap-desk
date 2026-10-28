@@ -248,3 +248,8 @@ export function useAnnotations(bounds: () => Rect, imageUrl: () => string, disab
   return Object.assign(state, { textBox, beginTextResize, begin, drag, finish, finishText, abort, reset, setTool, select, remove, clear, style, travel, key })
 }
 export type AnnotationEditor = ReturnType<typeof useAnnotations>
+
+/** 工具栏只依赖编辑状态和编辑动作；跨窗口宿主可以转发到同一个画布编辑器。 */
+export type AnnotationToolbarEditor = Pick<AnnotationEditor,
+  'history' | 'tool' | 'selected' | 'pending' | 'interacting' | 'error' | 'color' | 'width' | 'opacity' |
+  'magnification' | 'text' | 'fontSize' | 'fontFamily' | 'style' | 'travel' | 'remove' | 'clear'>

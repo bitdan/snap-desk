@@ -5,8 +5,8 @@ import { Eraser, Undo2, Redo2, Trash2, GripVertical, RotateCcw, ChevronUp, Chevr
 import AnnotationToolGroup from '@/features/annotations/components/AnnotationToolGroup.vue'
 import { annotationTools, annotationToolGroups } from '@/features/annotations/annotation-tools'
 import { readToolOrder, moveTool, normalizeToolOrder, toolbarOrderKey } from '@/features/annotations/toolbar-order'
-import type { AnnotationEditor, AnnotationTool } from '@/features/annotations/use-annotations'
-const props = defineProps<{ editor: AnnotationEditor; disabled: boolean; active: boolean; collapsible?: boolean; defaultExpanded?: boolean; pointerLabel?: string }>()
+import type { AnnotationToolbarEditor, AnnotationTool } from '@/features/annotations/use-annotations'
+const props = defineProps<{ editor: AnnotationToolbarEditor; disabled: boolean; active: boolean; collapsible?: boolean; defaultExpanded?: boolean; pointerLabel?: string }>()
 const emit = defineEmits<{ tool: [tool: AnnotationTool]; float: [event: PointerEvent]; resetPosition: [] }>()
 // 顺序在截图和贴图窗口之间共享；存储失败不阻断当前窗口的编辑。
 const order = ref(readToolOrder())
@@ -120,6 +120,7 @@ const numberMode = computed(() => (props.editor.history.present[props.editor.sel
 const spotlightMode = computed(() => (props.editor.history.present[props.editor.selected]?.kind ?? props.editor.tool) === 'spotlight')
 const magnifyMode = computed(() => (props.editor.history.present[props.editor.selected]?.kind ?? props.editor.tool) === 'magnify')
 function value(event: Event) { return (event.target as HTMLInputElement).value }
+function fontFamily(event: Event) { return value(event) as 'sans' | 'serif' | 'mono' }
 </script>
 
 <template>
@@ -155,7 +156,7 @@ function value(event: Event) { return (event.target as HTMLInputElement).value }
       <input v-if="editor.selected >= 0" class="annotation-text" :aria-label='t("修改标注文字")' :placeholder='t("修改选中文字")' maxlength="500" :value="editor.text" :disabled="locked" @change="editor.style({ text: value($event) })" />
       <span v-else class="annotation-hint">{{ t("点击图片输入文字；Enter 完成，Shift+Enter 换行，Esc 取消") }}</span>
       <label>{{ t("字号") }} <input type="number" min="8" max="128" :value="editor.fontSize" :disabled="locked" @change="editor.style({ fontSize: Math.min(128, Math.max(8, Number(value($event)) || 24)) })" /></label>
-      <select :aria-label='t("字体")' :value="editor.fontFamily" :disabled="locked" @change="editor.style({ fontFamily: value($event) as 'sans' | 'serif' | 'mono' })"><option value="sans">{{ t("无衬线") }}</option><option value="serif">{{ t("衬线") }}</option><option value="mono">{{ t("等宽") }}</option></select>
+      <select :aria-label='t("字体")' :value="editor.fontFamily" :disabled="locked" @change="editor.style({ fontFamily: fontFamily($event) })"><option value="sans">{{ t("无衬线") }}</option><option value="serif">{{ t("衬线") }}</option><option value="mono">{{ t("等宽") }}</option></select>
       </template>
       <span v-else class="annotation-hint">{{ editor.tool === 'erase' ? t("拖动擦除已有标注并露出底图；可撤销") : spotlightMode ? t("拖框保留亮区，框外覆盖遮罩") : magnifyMode ? t("拖框放大中心底图；移动后重新取样") : numberMode ? t("点击连续放置序号；选择 / 编辑可移动和缩放") : editor.tool === 'polyline' ? t("逐点点击，Enter 完成") : t("选择箭头指针可二次编辑") }}</span>
     </div>

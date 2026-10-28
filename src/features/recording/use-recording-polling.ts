@@ -6,13 +6,13 @@ import { createRecordingPoller, recordingPollInterval } from './polling'
 import type { RecordingPhase } from './recording'
 
 /** 每个窗口独立管理订阅和计时器；重新显示后先取快照，事件丢失仍有低频校准。 */
-export function useRecordingPolling(refresh: () => Promise<void>, phase: () => RecordingPhase | undefined, onError: (error: unknown) => void, options: { enabled?: () => boolean; initialSnapshot?: boolean } = {}) {
+export function useRecordingPolling(refresh: () => Promise<void>, phase: () => RecordingPhase | undefined, onError: (error: unknown) => void, options: { enabled?: () => boolean; initialSnapshot?: boolean; intervalMs?: () => number } = {}) {
   let disposed = false
   let initialSnapshot = options.initialSnapshot === true
   const disposers: (() => void)[] = []
   const nativeWindow = isTauri() ? getCurrentWindow() : null
   const poller = createRecordingPoller({
-    refresh, interval: () => recordingPollInterval(phase()), onError,
+    refresh, interval: () => options.intervalMs?.() ?? recordingPollInterval(phase()), onError,
     visible: async () => {
       if (options.enabled && !options.enabled()) return false
       // 录屏接管和回放窗口在隐藏时挂载，必须先取得快照才能渲染首屏。

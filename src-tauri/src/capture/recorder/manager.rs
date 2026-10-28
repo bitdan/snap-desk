@@ -6,6 +6,9 @@ use std::{
     sync::mpsc::{self, TrySendError},
 };
 mod audio;
+mod annotation_track;
+mod annotation_layer;
+pub mod project;
 mod capture;
 mod compositor;
 mod config;
@@ -181,6 +184,7 @@ pub fn request_stop(app: &AppHandle, cancel: bool) -> bool {
     };
     s.stop_requested(cancel);
     drop(guard);
+    live_annotations::hide_interaction(app);
     notify_changed(app);
     true
 }
@@ -268,7 +272,6 @@ pub fn control(app: &AppHandle, id: Option<u64>, action: RecordingAction) -> Res
             let expected_phase = s.view.phase;
             let hide_main_window = s.hide_main_window;
             drop(guard);
-            live_annotations::operate_desktop(app, session_id)?;
             if hide_main_window {
                 if let Some(main) = app.get_webview_window("main") {
                     main.hide().map_err(err)?;
@@ -295,6 +298,7 @@ pub fn control(app: &AppHandle, id: Option<u64>, action: RecordingAction) -> Res
             s.stop_requested(matches!(action, RecordingAction::Cancel));
             drop(guard);
             live_annotations::hide_interaction(app);
+            // 控制窗继续显示封装进度，完成后原位切换预览；停止请求不能迟到隐藏预览。
             notify_changed(app);
             return Ok(());
         }

@@ -148,3 +148,31 @@ mod tests {
         assert!(media_path(&executable).is_err());
     }
 }
+
+/// 用户选择项目文件后按同目录固定命名定位视频，前端不能指定任意媒体路径。
+#[tauri::command]
+pub async fn open_recording_project(app: AppHandle, window: WebviewWindow) -> Result<Option<RecordingResult>,String> {
+    crate::capture::require_window(&window,"main")?;
+    tauri::async_runtime::spawn_blocking(move || {
+        use tauri_plugin_dialog::DialogExt;
+        if app.state::<super::RecordingState>().0.lock().map_err(|e|e.to_string())?.as_ref().is_some_and(|s|super::active(s.view.phase)) { return Err("录制期间不能打开其他项目。".into()); }
+        let selected=app.dialog().file().set_parent(&window).set_title(crate::shared::native_i18n::text(&app,"打开录屏项目"))
+            .add_filter("Snap Desk", &["json"]).blocking_pick_file();
+        let Some(selected)=selected else { return Ok(None); };
+        let selected=selected.into_path().map_err(|e|e.to_string())?;
+        crate::recovery::no_links(&selected)?;
+        if std::fs::metadata(&selected).map_err(|e|e.to_string())?.len()>64*1024*1024 { return Err("项目文件过大。".into()); }
+        let project:super::project::RecordingProject=serde_json::from_slice(&std::fs::read(&selected).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;
+        project.validate()?;
+        let stem=selected.file_name().and_then(|s|s.to_str()).and_then(|s|s.strip_suffix(".snapdesk.json")).ok_or("请选择 .snapdesk.json 项目文件。")?;
+        let video=selected.with_file_name(format!("{stem}.{}",project.format));
+        media_path(&video)?;
+        media_path(&super::project::source_path(&video))?;
+        let recording=app.state::<super::RecordingState>();
+        let current=recording.0.lock().map_err(|e|e.to_string())?;
+        if current.as_ref().is_some_and(|s|super::active(s.view.phase)) { return Err("录屏已开始，不能切换项目。".into()); }
+        remember(&app,&video);
+        let result=app.state::<ResultState>().0.lock().map_err(|e|e.to_string())?.clone();
+        Ok(result)
+    }).await.map_err(|e|e.to_string())?
+}

@@ -4,13 +4,23 @@ import { clientComponent, MemoryNode as Node, memoryRenderer as renderer } from 
 import { createRenderer, h, nextTick, provide, ssrContextKey } from 'vue'
 import type { RecordingView } from '../../src/features/recording/recording'
 
-const api = vi.hoisted(() => ({ currentRecording: vi.fn(), latestRecordingResult: vi.fn(), controlRecording: vi.fn(), selectRecordingArea: vi.fn(), setRecordingAnnotationMode: vi.fn() }))
+const api = vi.hoisted(() => ({ currentRecording: vi.fn(), latestRecordingResult: vi.fn(), controlRecording: vi.fn(), selectRecordingArea: vi.fn(), setRecordingAnnotationMode: vi.fn(), updateRecordingAnnotations: vi.fn(), recordingAnnotations: vi.fn(), setRecordingAnnotationTools: vi.fn(), recordingAnnotationEditorAction: vi.fn() }))
 const closed = vi.hoisted(() => ({ subscribe: vi.fn(), callback: undefined as undefined | ((id: number) => void), off: vi.fn() }))
 vi.mock('../../src/services/api', () => ({ api, onRecordingPreviewClosed: closed.subscribe }))
 vi.mock('../../src/features/recording/components/RecordingEditor.vue', async () => {
   const { defineComponent, h } = await import('vue')
   return { default: defineComponent({ props: { resultId: Number, disabled: Boolean, floating: Boolean, layout: Object, frameRate: Number }, emits: ['close', 'rerecord'],
     setup: (props, { emit }) => () => h('div', { 'data-editor-id': props.resultId, 'data-floating': props.floating, onClick: () => emit('close') }, [h('button', { 'data-rerecord': true, onClick: () => emit('rerecord') })]) }) }
+})
+vi.mock('../../src/features/annotations/components/AnnotationToolbar.vue', async importOriginal => {
+  const actual=await importOriginal<typeof import('../../src/features/annotations/components/AnnotationToolbar.vue')>()
+  const helper=await import('../helpers/component-host')
+  return {default:helper.clientComponent(actual.default,new URL('../../src/features/annotations/components/AnnotationToolbar.vue',import.meta.url))}
+})
+vi.mock('../../src/features/annotations/components/ArrowTextIcon.vue', async importOriginal => {
+  const actual=await importOriginal<typeof import('../../src/features/annotations/components/ArrowTextIcon.vue')>()
+  const helper=await import('../helpers/component-host')
+  return {default:helper.clientComponent(actual.default,new URL('../../src/features/annotations/components/ArrowTextIcon.vue',import.meta.url))}
 })
 import RecordingControls from '../../src/features/recording/components/RecordingControls.vue'
 // Vitest 的 Node 管线保留真实 setup，模板另编译为客户端 render 供内存宿主执行。
@@ -36,7 +46,9 @@ function editor() { return find(node => node.props['data-editor-id'] !== undefin
 
 beforeEach(() => {
   vi.useFakeTimers(); vi.resetAllMocks()
+  vi.stubGlobal('localStorage', {getItem:()=>null,setItem:vi.fn()})
   vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn() })
+  api.recordingAnnotations.mockResolvedValue(null)
   api.currentRecording.mockResolvedValue(view('completed'))
   api.latestRecordingResult.mockResolvedValue({ id: 42, path: 'D:/video.mp4', filename: 'video.mp4' })
   api.controlRecording.mockResolvedValue(undefined)
@@ -46,6 +58,97 @@ beforeEach(() => {
 afterEach(() => { renderer.render(null, root); vi.clearAllTimers(); vi.useRealTimers(); vi.unstubAllGlobals() })
 
 describe('录屏控制条直接进入回放编辑', () => {
+  it.each(['ready', 'countdown', 'recording', 'paused'] as const)('%s 阶段通过独立控制条进入标注', async phase => {
+    api.currentRecording.mockResolvedValue(view(phase))
+    await mount()
+    const annotate = find(node => node.props['aria-label'] === '录制中标注')!
+    expect(annotate.props.disabled).toBe(false)
+    ;(annotate.props.onClick as () => void)(); await flush()
+    expect(api.setRecordingAnnotationMode).toHaveBeenCalledWith(7, true)
+    expect(api.controlRecording).not.toHaveBeenCalled()
+  })
+  it('标注窗口打开失败时显示错误并允许重试', async () => {
+    api.currentRecording.mockResolvedValue(view('recording'))
+    api.setRecordingAnnotationMode.mockRejectedValueOnce(new Error('标注窗口不可用'))
+    await mount()
+    const annotate = find(node => node.props['aria-label'] === '录制中标注')!
+    ;(annotate.props.onClick as () => void)(); await flush()
+    expect(find(node => node.props.role === 'alert')?.text).toContain('标注窗口不可用')
+    expect(annotate.props.disabled).toBe(false)
+  })
+  it('独立工具窗可设置保留时间，完成绘制不改变录屏状态', async () => {
+    api.currentRecording.mockResolvedValue(view('recording'))
+    api.recordingAnnotations.mockResolvedValue({id:7,revision:0,editing:true})
+    await mount()
+    const lifetime=find(node=>node.props['aria-label']==='标注保留时间')!
+    ;(lifetime.props.onChange as (event:unknown)=>void)({target:{value:'3000'}}); await flush()
+    expect(api.setRecordingAnnotationTools).toHaveBeenCalledWith(7,expect.objectContaining({lifetimeMs:3000}))
+    const finish=find(node=>node.props['aria-label']==='完成标注')!
+    ;(finish.props.onClick as ()=>void)(); await flush()
+    expect(api.setRecordingAnnotationMode).toHaveBeenCalledWith(7,false)
+    expect(api.controlRecording).not.toHaveBeenCalled()
+  })
+  it('直接复用截图标注工具栏，图形、样式和撤销都交给画布', async () => {
+    api.currentRecording.mockResolvedValue(view('recording'))
+    api.recordingAnnotations.mockResolvedValue({id:7,revision:0,editing:true,editor:{ready:true,selected:-1,canUndo:true,canRedo:false,text:'',error:'',pending:false,interacting:false}})
+    await mount()
+    const arrow=find(node=>node.props['data-annotation-tool']==='arrow')!
+    expect(arrow).toBeDefined()
+    expect(find(node=>node.type==='select'&&node.props['aria-label']==='标注工具')).toBeUndefined()
+    ;(arrow.props.onClick as (event:unknown)=>void)({detail:0}); await flush()
+    expect(api.recordingAnnotationEditorAction).toHaveBeenCalledWith(7,{kind:'tool',tool:'arrow'})
+    const color=find(node=>node.type==='input'&&node.props.type==='color')!
+    ;(color.props.onChange as (event:unknown)=>void)({target:{value:'#123456'}});await flush()
+    expect(api.recordingAnnotationEditorAction).toHaveBeenCalledWith(7,{kind:'style',style:{color:'#123456'}})
+    const undo=find(node=>node.props['aria-label']==='撤销')!
+    expect(undo.props.disabled).toBe(false)
+    ;(undo.props.onClick as ()=>void)();await flush()
+    expect(api.recordingAnnotationEditorAction).toHaveBeenCalledWith(7,{kind:'undo'})
+  })
+  it('工具窗的撤销快捷键也转发到同一个画布编辑器',async()=>{
+    api.currentRecording.mockResolvedValue(view('recording'))
+    api.recordingAnnotations.mockResolvedValue({id:7,revision:0,editing:true})
+    await mount()
+    const handler=vi.mocked(window.addEventListener).mock.calls.find(call=>call[0]==='keydown')![1] as (e:KeyboardEvent)=>void
+    const event={key:'z',ctrlKey:true,preventDefault:vi.fn(),target:{closest:()=>null}} as unknown as KeyboardEvent
+    handler(event);await flush()
+    expect(event.preventDefault).toHaveBeenCalled()
+    expect(api.recordingAnnotationEditorAction).toHaveBeenCalledWith(7,{kind:'undo'})
+    expect(api.controlRecording).not.toHaveBeenCalled()
+  })
+  it('工具窗绘制时 Esc 先完成标注，不停止录屏', async () => {
+    api.currentRecording.mockResolvedValue(view('recording'))
+    api.recordingAnnotations.mockResolvedValue({id:7,revision:0,editing:true})
+    await mount()
+    const handler=vi.mocked(window.addEventListener).mock.calls.find(call=>call[0]==='keydown')![1] as (e:KeyboardEvent)=>void
+    handler({key:'Escape',preventDefault:vi.fn()} as unknown as KeyboardEvent); await flush()
+    expect(api.setRecordingAnnotationMode).toHaveBeenCalledWith(7,false)
+    expect(api.controlRecording).not.toHaveBeenCalled()
+  })
+  it('控制条清空标注时不改变录屏阶段', async () => {
+    api.currentRecording.mockResolvedValue(view('recording'))
+    await mount()
+    const clear = find(node => node.props['aria-label'] === '清空标注')!
+    ;(clear.props.onClick as () => void)(); await flush()
+    expect(api.recordingAnnotationEditorAction).toHaveBeenCalledWith(7,{kind:'clear'})
+    expect(api.controlRecording).not.toHaveBeenCalled()
+    expect(api.setRecordingAnnotationMode).not.toHaveBeenCalled()
+  })
+  it('同一控制窗从录制经过封装进入预览编辑，无需重新挂载', async () => {
+    api.currentRecording.mockResolvedValue(view('recording'))
+    await mount()
+    expect(editor()).toBeUndefined()
+    api.currentRecording.mockResolvedValue({ ...view('encoding'), revision: 2 })
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(editor()).toBeUndefined()
+    api.currentRecording.mockResolvedValue({ ...view('completed'), revision: 3 })
+    await vi.advanceTimersByTimeAsync(10000)
+    expect(editor()?.props['data-editor-id']).toBe(42)
+    await vi.advanceTimersByTimeAsync(10000)
+    expect(editor()?.props['data-editor-id']).toBe(42)
+    expect(api.latestRecordingResult).toHaveBeenCalledOnce()
+    expect(api.controlRecording).not.toHaveBeenCalled()
+  })
   it('回放窗口尚未显示时先加载成品，不依赖显示前可能丢失的通知', async () => {
     vi.stubGlobal('document', { visibilityState: 'hidden', addEventListener: vi.fn(), removeEventListener: vi.fn() })
     await mount()

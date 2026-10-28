@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { useRecordingPolling } from '@/features/recording/use-recording-polling'
 import { t, te } from '@/shared/i18n/i18n'
-import { onMounted, onUnmounted, ref, watch } from 'vue'
+import { nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import RecordingEditor from '@/features/recording/components/RecordingEditor.vue'
 import Button from '@/shared/ui/button/Button.vue'
 import { api, desktop } from '@/services/api'
@@ -37,6 +37,14 @@ async function loadResult() {
     if (result.value?.id !== next?.id) resultMessage.value = ''
     result.value = next
   }
+}
+async function openProject() {
+  if (busy.value || recordingActive(view.value)) return
+  busy.value=true; error.value=''
+  try {
+    const next=await api.openRecordingProject()
+    if (next && !disposed) { result.value=next; await nextTick(); editorOpen.value=true }
+  } catch(e) { if(!disposed) error.value=String(e) } finally { busy.value=false }
 }
 async function resultAction(action: RecordingResultAction) {
   if (!result.value || resultBusy.value) return
@@ -107,6 +115,7 @@ onUnmounted(() => { disposed = true })
 
 <template>
   <section>
+    <Button class="mb-3" variant="outline" :disabled="busy || recordingActive(view)" @click="openProject">{{ t("打开录屏项目") }}</Button>
     <div v-if="error" class="notice error" role="alert">{{ te(error) }}</div>
     <p v-if="recoveredPath" class="notice break-all" role="status">{{ t("已重新导出：") }}{{ recoveredPath }}</p>
     <div v-if="result" class="settings-card mb-3">

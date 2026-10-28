@@ -8,18 +8,24 @@ import { api } from '@/services/api'
 import { recordingClipTime, recordingTrimRange, moveRecordingTrim, recordingFrameTime, commitRecordingTrim, travelRecordingTrim, type RecordingEditorView, type RecordingTrimExport, type RecordingTrimHistory, type RecordingTrimRange } from '@/features/recording/recording-editor'
 import type { RecordingReplayLayout, RecordingReplayRegion } from '@/features/recording/recording'
 
+import RecordingProjectTracks from './RecordingProjectTracks.vue'
+import RecordingProjectPreview from './RecordingProjectPreview.vue'
+import { prepareRecordingRaster, type RecordingProject, type TimedAnnotation } from '../recording-annotations'
 const props = withDefaults(defineProps<{ resultId: number; disabled: boolean; floating?: boolean; layout?: RecordingReplayLayout | null; frameRate?: number }>(), { floating: false, frameRate: 30 })
 const emit = defineEmits<{ close: []; rerecord: [] }>()
 const info = ref<RecordingEditorView | null>(null), exported = ref<RecordingTrimExport | null>(null)
 const video = ref<HTMLVideoElement | null>(null), stage = ref<HTMLElement | null>(null)
+const showTracks=ref(false), projectDirty=ref(false), projectSaving=ref(false)
+const projectDraft=ref<RecordingProject | null>(null)
 const loading = ref(false), busy = ref(false), cancelling = ref(false), ready = ref(false), playing = ref(false)
 const error = ref(''), message = ref(''), previewError = ref('')
 const start = ref('0.000'), end = ref('0.000'), currentMs = ref(0)
 const speed = ref(1), muted = ref(false), loop = ref(false)
 const outputPreview = ref(false), outputVersion = ref(0)
 const history = ref<RecordingTrimHistory>({ past: [], present: { startMs: 0, endMs: 0 }, future: [] })
+let videoFrameHandle: number | undefined
 let disposed = false, selectedPlayback = false, loadingVersion = 0
-const previewUrl = computed(() => info.value ? `${convertFileSrc(String(info.value.token), 'recording')}/${outputPreview.value ? 'output' : 'source'}?v=${outputVersion.value}` : '')
+const previewUrl = computed(() => info.value ? `${convertFileSrc(String(info.value.token), 'recording')}/${outputPreview.value ? 'output' : showTracks.value && info.value.project && info.value.format === 'mp4' ? 'clean' : 'source'}?v=${outputVersion.value}` : '')
 const previewAvailable = computed(() => outputPreview.value ? exported.value?.previewAvailable : info.value?.previewAvailable)
 const duration = computed(() => outputPreview.value ? exported.value?.durationMs ?? 0 : info.value?.durationMs ?? 0)
 const range = computed(() => {
@@ -34,7 +40,7 @@ const rangeError = computed(() => {
 })
 const playbackRange = computed(() => outputPreview.value ? { startMs: 0, endMs: duration.value } : range.value)
 const canPlay = computed(() => info.value?.format === 'mp4' && ready.value && !!playbackRange.value && !busy.value && !props.disabled)
-const editLocked = computed(() => busy.value || props.disabled || outputPreview.value || !info.value)
+const editLocked = computed(() => projectSaving.value || busy.value || props.disabled || outputPreview.value || !info.value)
 const regionStyle = (region?: RecordingReplayRegion) => region ? { left: `${region.left}%`, top: `${region.top}%`, width: `${region.width}%`, height: `${region.height}%` } : undefined
 const videoStyle = computed(() => props.floating ? regionStyle(props.layout?.video) : undefined)
 const toolsStyle = computed(() => props.floating ? regionStyle(props.layout?.toolbar) : undefined)
@@ -52,19 +58,47 @@ async function load() {
     if (info.value) { await api.closeRecordingEditor(info.value.token); info.value = null }
     const next = await api.prepareRecordingEditor(props.resultId)
     if (disposed || version !== loadingVersion) { await api.closeRecordingEditor(next.token); return }
-    info.value = next; setRange({ startMs: 0, endMs: next.durationMs })
+    info.value = next; projectDraft.value=next.project ?? null; projectDirty.value=false; showTracks.value=false; setRange({ startMs: 0, endMs: next.durationMs })
     history.value = { past: [], present: { startMs: 0, endMs: next.durationMs }, future: [] }
     exported.value = null; outputPreview.value = false
     await nextTick(); if (!disposed) stage.value?.focus()
   } catch (e) { if (!disposed) error.value = String(e) }
   finally { if (!disposed) loading.value = false }
 }
+function updateProject(annotations:TimedAnnotation[]) {
+  if (!projectDraft.value || editLocked.value) return
+  projectDraft.value={...projectDraft.value,annotations}; projectDirty.value=true
+}
+async function saveProject() {
+  if (!info.value || !projectDraft.value || projectSaving.value || busy.value) return
+  projectSaving.value=true; error.value=''
+  try {
+    const crop={x:0,y:0,width:projectDraft.value.width,height:projectDraft.value.height}
+    const annotations=await Promise.all(projectDraft.value.annotations.map(async track=>({ ...track,
+      shape:['text','number'].includes(track.shape.kind) ? await prepareRecordingRaster(track.shape,'',crop,false) : track.shape })))
+    const next=await api.saveRecordingProject(info.value.token,annotations)
+    if (!disposed && info.value) { info.value.project=next; projectDraft.value=next; projectDirty.value=false }
+  } catch(e) { if(!disposed) error.value=String(e) } finally { projectSaving.value=false }
+}
+function projectSeek(ms:number) {
+  stopPreview(); currentMs.value=ms
+  if(video.value) video.value.currentTime=ms/1000
+}
 function stopPreview() { selectedPlayback = false; video.value?.pause(); playing.value = false }
 watch(previewUrl, () => { stopPreview(); ready.value = false; previewError.value = ''; currentMs.value = 0 })
 watch(speed, value => { if (video.value) video.value.playbackRate = value })
 watch(() => props.disabled, value => { if (value) stopPreview() })
+function frameClock() {
+  const media=video.value
+  if (disposed || !media?.requestVideoFrameCallback) return
+  videoFrameHandle=media.requestVideoFrameCallback((_now,metadata)=>{
+    if(!disposed) { currentMs.value=Math.round(metadata.mediaTime*1000); frameClock() }
+  })
+}
 function loaded() {
   ready.value = true
+  if(videoFrameHandle!==undefined) video.value?.cancelVideoFrameCallback?.(videoFrameHandle)
+  frameClock()
   if (video.value) { video.value.playbackRate = speed.value; video.value.muted = muted.value }
 }
 function timeUpdate() {
@@ -147,6 +181,7 @@ async function moveWindow(event: PointerEvent) {
   try { await getCurrentWindow().startDragging() } catch (e) { error.value = String(e) }
 }
 async function save() {
+  if(projectDirty.value) { await saveProject(); if(projectDirty.value) return }
   if (!info.value || !range.value || editLocked.value) return
   const token = info.value.token
   stopPreview(); busy.value = true; error.value = ''; message.value = ''
@@ -166,7 +201,8 @@ async function cancel() {
 }
 onMounted(() => { void load() })
 onBeforeUnmount(() => {
-  disposed = true; loadingVersion++; stopPreview()
+  disposed = true; loadingVersion++
+  if(videoFrameHandle!==undefined) video.value?.cancelVideoFrameCallback?.(videoFrameHandle); stopPreview()
   const media = video.value
   if (media) { media.removeAttribute('src'); media.load() }
   if (info.value) void api.closeRecordingEditor(info.value.token).catch(() => {})
@@ -179,8 +215,9 @@ onBeforeUnmount(() => {
       <video v-if="info?.format === 'mp4' && previewAvailable" ref="video" :src="previewUrl" preload="metadata" playsinline @loadedmetadata="loaded" @timeupdate="timeUpdate" @play="playing = true" @pause="playing = false" @ended="ended" @click="togglePlayback" @error="previewError = '应用内无法解码此视频，可关闭预览后使用系统播放器。'" />
       <img v-else-if="info?.format === 'gif' && previewAvailable" :src="previewUrl" :alt="outputPreview ? t('裁剪后的 GIF 动画') : t('原 GIF 动画')" @error="previewError = 'GIF 预览加载失败，可使用系统播放器；原文件仍可另存裁剪。'" />
       <span v-else class="editor-stage-message">{{ loading ? t('正在读取录屏时长…') : info ? t('GIF 超过应用内预览大小限制，仍可选择时间并另存片段。') : t('录屏预览与裁剪') }}</span>
+      <RecordingProjectPreview v-if="showTracks && projectDraft && info?.format === 'mp4' && !outputPreview" :project="projectDraft" :current-ms="currentMs" />
     </div>
-    <div class="editor-tools" :style="toolsStyle">
+    <div class="editor-tools" :class="{ 'with-project': showTracks && projectDraft && !outputPreview }" :style="toolsStyle">
       <div class="editor-timeline">
         <div class="timeline-base" /><div class="timeline-selection" :style="selectedStyle" />
         <input class="timeline-seek" type="range" min="0" :max="duration" step="1" :value="currentMs" :disabled="!canPlay" :aria-label='t("播放进度")' @input="seek" />
@@ -211,13 +248,18 @@ onBeforeUnmount(() => {
         <span>—</span>
         <label>{{ t('结束（秒）') }}<input :value="end" type="number" min="0" :max="(info?.durationMs ?? 0) / 1000" :step="info?.format === 'gif' ? 0.01 : 0.001" :disabled="editLocked" @input="setTime($event, 'end')" @change="commitRange" /></label>
         <span v-if="range" class="clip-duration">{{ t('所选片段') }} {{ recordingClipTime(range.endMs - range.startMs) }}</span>
+        <button v-if="info?.project && !outputPreview" :disabled="busy || projectSaving" :aria-pressed="showTracks" @click="stopPreview(); showTracks=!showTracks">{{ t('标注轨道') }}</button>
+        <button v-if="projectDirty" :disabled="busy || projectSaving" @click="saveProject">{{ t('保存标注项目') }}</button>
         <span class="transport-space" /><span class="format-tag">{{ info?.format.toUpperCase() }}</span>
         <button v-if="exported?.previewAvailable" :disabled="busy" @click="stopPreview(); outputPreview = !outputPreview">{{ outputPreview ? t('返回原片预览') : t('预览裁剪结果') }}</button>
       </div>
+      <RecordingProjectTracks v-if="showTracks && projectDraft && !outputPreview" :project="projectDraft" :current-ms="currentMs" :disabled="editLocked" @update="updateProject" @seek="projectSeek" />
       <div class="editor-feedback" :class="{ 'editor-error': error || previewError || rangeError, 'editor-success': message && !error && !previewError && !rangeError }" :title="te(error || previewError || rangeError) || (exported?.path ?? '')" :role="error || previewError || rangeError ? 'alert' : 'status'">
         <template v-if="busy">{{ t('正在裁剪并另存…') }} <button :disabled="cancelling" @click="cancel">{{ cancelling ? t('正在取消…') : t('取消裁剪') }}</button></template>
         <template v-else-if="error || previewError || rangeError">{{ te(error || previewError || rangeError) }}</template>
         <template v-else-if="message"><Check v-if="message === '片段已另存，原录屏保留。'" :size="12" class="feedback-check" aria-hidden="true" />{{ t(message) }}</template>
+        <template v-else-if="showTracks && info?.format === 'gif'">{{ t('GIF 标注修改请在另存后预览结果。') }}</template>
+        <template v-else-if="showTracks && projectDraft?.annotations.some(track => ['mosaic', 'blur', 'magnify'].includes(track.shape.kind))">{{ t('滤镜按实时视频画面处理，编辑时显示范围。') }}</template>
         <template v-else-if="info?.format === 'gif'">{{ t('GIF 播放整段动画，裁剪时间精确到 0.01 秒。') }}</template>
         <template v-else>{{ t('拖动蓝色端点保留片段 · 空格播放 · 方向键逐帧 · [ / ] 标记起止') }}</template>
         <button v-if="!info && !loading" @click="load">{{ t('重新读取') }}</button>
@@ -233,9 +275,10 @@ onBeforeUnmount(() => {
 .editor-stage:focus-visible { border-color:#2563eb; box-shadow:inset 0 0 0 1px #93c5fd; }
 .editor-stage video, .editor-stage img { width:100%; height:100%; display:block; object-fit:contain; }
 .editor-stage-message { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:#e4e4e7; padding:16px; }
+.editor-tools.with-project { grid-template-rows:24px 32px 24px minmax(0,1fr) 16px; }
 .editor-tools { padding:6px; background:#fff; border:1px solid #d8dee4; border-radius:6px; display:grid; grid-template-rows:24px 32px 24px minmax(16px, 1fr); gap:4px; box-shadow:0 2px 8px #0002; }
-.floating .editor-stage { position:absolute; left:0; top:0; width:100%; height:calc(100% - 136px); }
-.floating .editor-tools { position:absolute; left:0; bottom:0; width:100%; height:128px; }
+.floating .editor-stage { position:absolute; left:0; top:0; width:100%; height:calc(100% - 328px); }
+.floating .editor-tools { position:absolute; left:0; bottom:0; width:100%; height:320px; }
 .editor-timeline { position:relative; margin:0 12px; min-width:0; }
 .timeline-base, .timeline-selection { position:absolute; top:9px; height:6px; border-radius:3px; background:#d8dee4; }
 .timeline-base { left:0; right:0; }

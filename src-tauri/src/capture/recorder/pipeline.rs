@@ -43,6 +43,7 @@ pub(super) fn collect(
             compositor.set_origin((screen.x, screen.y));
             let mut base: Option<frame::BgraImage> = None;
             let mut base_dirty = false;
+            let mut annotation_animation = false;
             let collected = (|| -> Result<(), String> {
                 loop {
                     let (running, generation) = {
@@ -58,13 +59,19 @@ pub(super) fn collect(
                         // 不按录制时长自动停止；停止、取消和采集/编码异常仍走统一收尾。
                         (s.view.phase == Phase::Recording, s.timeline.generation)
                     };
+                    let animated = live_annotations::has_timed_annotations(&app, id);
+                    if animated != annotation_animation && !config.input_effects.enabled() {
+                        base=None; base_dirty=false;
+                        if running && animated { backend.refresh()?; }
+                    }
+                    annotation_animation=animated;
                     if effects_generation != Some(generation) || !running {
                         // 先停止并 join 消息线程，再清缓存；恢复使用新监听器，不继承按住状态。
                         listener = None;
                         compositor.clear();
                         base = None;
                         base_dirty = false;
-                        if running && config.input_effects.enabled() {
+                        if running && (config.input_effects.enabled() || annotation_animation) {
                             backend.refresh()?;
                         }
                         effects_generation = Some(generation);
@@ -94,13 +101,13 @@ pub(super) fn collect(
                     }
                     if running {
                         waiting_since.get_or_insert_with(Instant::now);
-                        if config.input_effects.enabled() {
-                            if listener.is_none() {
+                        if config.input_effects.enabled() || annotation_animation {
+                            if config.input_effects.enabled() && listener.is_none() {
                                 listener = Some(input::Listener::start(config.input_effects)?);
                             }
                             let frame = measured_capture(&state, id, backend.as_mut())?;
                             compositor.set_origin(backend.desktop_origin()?);
-                            let events = listener.as_ref().unwrap().drain()?;
+                            let events = if let Some(listener)=listener.as_ref() { listener.drain()? } else { Vec::new() };
                             // 先取完源事件，再取 QPC，避免给未来事件分配更早的视频时间戳。
                             let now = capture::now();
                             let projected = {
@@ -152,7 +159,8 @@ pub(super) fn collect(
                                     }
                                 }
                                 if let Some(clean) = base.as_ref() {
-                                    let needed = base_dirty || compositor.needs_frame();
+                                    // 静态桌面的淡出复用最近一帧干净底图，不重建 WGC 会话。
+                                    let needed = base_dirty || compositor.needs_frame() || annotation_animation;
                                     let accepted = needed
                                         && timeline::accept_sample(
                                             &mut last_sample,
@@ -261,7 +269,7 @@ pub(super) fn collect(
                             }
                         }
                         // 从未收到有效帧时不能无限等待；已有帧的静态桌面允许无新帧。
-                        if (if config.input_effects.enabled() {
+                        if (if config.input_effects.enabled() || annotation_animation {
                             base.is_none()
                         } else {
                             last_sample.is_none()
@@ -276,7 +284,7 @@ pub(super) fn collect(
                     if running {
                         // Raw Input 独立消息线程不会触发 WGC；特效模式按帧率限制最长等待，
                         // 静态画面也能及时消费输入，并在动画结束后提交一帧干净底图。
-                        let timeout = if config.input_effects.enabled() {
+                        let timeout = if config.input_effects.enabled() || annotation_animation {
                             Duration::from_nanos(1_000_000_000 / u64::from(config.fps))
                         } else {
                             Duration::from_millis(50)
@@ -372,12 +380,14 @@ pub(super) fn collect(
         }
     }
     notify_changed(&app);
-    chrome::release_recording(&app);
-    // 按需创建回放窗口，成功后切换为回放/裁剪窗口，成功后无需到主界面寻找录像。
+    // 成功时只释放边框；控制窗原位进入回放，不能先销毁再立即复用同一标签。
     if completed {
+        chrome::release_recording_edges(&app);
         if let Err(error) = chrome::show_recording_preview(&app) {
             super::report_error(&app, format!("无法显示录屏回放：{error}"));
         }
+    } else {
+        chrome::release_recording(&app);
     }
     app.state::<CaptureState>()
         .active
@@ -398,6 +408,8 @@ fn write_video(
 ) -> Result<String, String> {
     let mut recovery = recovery::Pending::new(app, id, &root, config.format)?;
     let pending = recovery.path();
+    let mut source_recovery = recovery::Pending::new(app, id, &root, config.format)?;
+    let source_pending = source_recovery.path();
     progress(app, "recording", Some(&pending));
     let mut encoder = encoder::create(
         &pending,
@@ -409,6 +421,16 @@ fn write_video(
         config.format,
         config.system_audio || config.microphone,
     )?;
+    let mut source_encoder = encoder::create(&source_pending, config.region.width, config.region.height, config.fps,
+        config.target_bitrate(), config.encoding, config.format, config.system_audio || config.microphone)
+        .or_else(|first| {
+            // 部分显卡仅允许一个硬件编码会话；干净原片按既有自动偏好回退软件。
+            if config.encoding==config::EncodingPreference::Auto {
+                encoder::create(&source_pending,config.region.width,config.region.height,config.fps,
+                    config.target_bitrate(),config::EncodingPreference::Software,config.format,config.system_audio||config.microphone)
+                    .map_err(|second|format!("干净原片编码初始化失败：{first}；软件回退失败：{second}"))
+            } else { Err(first) }
+        })?;
     let state = app.state::<RecordingState>();
     let encoder_kind = encoder.kind();
     {
@@ -425,7 +447,7 @@ fn write_video(
         }
         if let Some(worker) = audio.as_mut() {
             // 音频独立于 WGC 新帧；静态桌面和暂停期间仍排空已采集数据。
-            pump_audio(worker, &mut mixer, encoder.as_mut(), &state, id, false)?;
+            pump_audio(worker, &mut mixer, encoder.as_mut(), source_encoder.as_mut(), &state, id, false)?;
         }
         let frame = match receiver.recv_timeout(Duration::from_millis(10)) {
             Ok(frame) => frame,
@@ -451,9 +473,10 @@ fn write_video(
         }
         let encoding_started = Instant::now();
         // 标注层只绘制一次；每帧在编码前混合，确保准备阶段的标注真正进入成品。
+        source_encoder.push(&frame.image, frame.pts)?;
         let mut image = frame.image;
         if let Some(layer) = &frame.annotations {
-            layer.apply(&mut image)?;
+            layer.apply(&mut image, frame.pts)?;
         }
         encoder.push(&image, frame.pts)?;
         progress(app, "encoding", Some(&pending));
@@ -462,7 +485,7 @@ fn write_video(
         if let Some(s) = guard.as_mut().filter(|s| s.view.id == id) {
             s.view.frames += 1;
             s.view.encoding_millis += encoding_millis;
-            s.view.stats.nv12_output_bytes = encoder.converted_bytes();
+            s.view.stats.nv12_output_bytes = encoder.converted_bytes() + source_encoder.converted_bytes();
             // push 期间仍可暂停；旧代次已提交帧计入累计值，但不污染恢复后的窗口。
             if frame.generation == s.timeline.generation {
                 s.fps_window.submitted(frame.pts);
@@ -484,11 +507,15 @@ fn write_video(
     if let Some(worker) = audio.as_mut() {
         // 停止设备并 join 后再取尾包；停止时间之后的样本会被 Timeline 裁掉。
         worker.stop()?;
-        pump_audio(worker, &mut mixer, encoder.as_mut(), &state, id, true)?;
+        pump_audio(worker, &mut mixer, encoder.as_mut(), source_encoder.as_mut(), &state, id, true)?;
     }
     recovery.stage("finalizing", false)?;
     progress(app, "finalizing", Some(&pending));
     encoder.finish(end)?;
+    source_encoder.finish(end)?;
+    source_recovery.stage("syncing", true)?;
+    drop(source_encoder);
+    fs::OpenOptions::new().write(true).open(&source_pending).map_err(err)?.sync_all().map_err(err)?;
     // 释放 MF 文件句柄后才能同步/重命名；取消期间仍由临时目录负责清理。
     drop(encoder);
     recovery.stage("syncing", true)?;
@@ -510,6 +537,19 @@ fn write_video(
     // 最后确认取消；发布和取消共用状态锁，失败时 Pending 保留完整视频。
     let output = recovery.output(&root);
     progress(app, "publishing", Some(&pending));
+    let clean_output = project::source_path(&output);
+    output::publish(&source_pending, &clean_output)?;
+    source_recovery.published(&clean_output);
+    // 手动清除会结束轨道而不是删除历史；因此已录帧与后期项目保持同一语义。
+    let duration_ms=(end.max(0) as u64 / 10_000).max(1);
+    let annotations=live_annotations::project_tracks(app,id)?.into_iter().filter_map(|mut track| {
+        let last=track.end_ms.unwrap_or(duration_ms).min(duration_ms);
+        if track.start_ms >= last { return None; }
+        if track.end_ms.is_none_or(|end| end > duration_ms) { track.fade_out_ms=0; }
+        track.end_ms=Some(last); Some(track)
+    }).collect();
+    project::save(&output,&project::RecordingProject { version:1,width:config.region.width,height:config.region.height,
+        fps:config.fps,duration_ms,format:config.format.extension().into(),annotations })?;
     output::publish(&pending, &output)?;
     recovery.published(&output);
     result::remember_with_layout(app, &output, chrome::recording_preview_layout(app));
@@ -523,6 +563,7 @@ fn pump_audio(
     worker: &mut audio::Worker,
     mixer: &mut audio::Mixer,
     encoder: &mut dyn encoder::Encoder,
+    source_encoder: &mut dyn encoder::Encoder,
     state: &RecordingState,
     id: u64,
     finishing: bool,
@@ -565,6 +606,8 @@ fn pump_audio(
         }
         encoder.advance_video(packet.pts + packet.duration)?;
         encoder.push_audio(&packet)?;
+        source_encoder.advance_video(packet.pts + packet.duration)?;
+        source_encoder.push_audio(&packet)?;
     }
     Ok(())
 }

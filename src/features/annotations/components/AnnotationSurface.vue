@@ -2,11 +2,11 @@
 import { t } from '@/shared/i18n/i18n'
 import AnnotationStack from '@/features/annotations/components/AnnotationStack'
 import { computed, nextTick, ref, useId, watch } from 'vue'
-import { shapePath, shapeBounds, isRaster } from '@/features/annotations/annotations'
+import { shapePath, shapeBounds, isRaster, type Annotation } from '@/features/annotations/annotations'
 import type { AnnotationEditor } from '@/features/annotations/use-annotations'
 import type { Point, Rect, Handle } from '@/shared/geometry/selection'
 
-const props = defineProps<{ editor: AnnotationEditor; width: number; height: number; bounds: Rect; enabled: boolean }>()
+const props = defineProps<{ editor: AnnotationEditor; presentation?: Annotation[]; preserveAspectRatio?: string; width: number; height: number; bounds: Rect; enabled: boolean }>()
 const clipId = `annotation-${useId().replaceAll(':', '')}`
 const textInput = ref<HTMLTextAreaElement | null>(null)
 const textBox = computed(() => props.editor.textBox())
@@ -37,14 +37,15 @@ function textKey(event: KeyboardEvent) {
 }
 const shapes = computed(() => {
   const e = props.editor
-  if (!e.draft) return e.history.present
-  return e.selected >= 0 ? e.history.present.map((s, i) => i === e.selected ? e.draft! : s) : [...e.history.present, ...(e.arrowDraft ? [e.arrowDraft] : []), e.draft]
+  if (!e.draft) return props.presentation ?? e.history.present
+  const present = props.presentation ?? e.history.present
+  return e.selected >= 0 ? present.map((s, i) => i === e.selected ? e.draft! : s) : [...present, ...(e.arrowDraft ? [e.arrowDraft] : []), e.draft]
 })
 // 擦除仅作用于之前的图层，之后新增的标注仍可覆盖擦除区域。
 const erasures = computed(() => shapes.value.map((shape, index) => ({ shape, index })).filter(item => item.shape.kind === 'erase'))
 const chosen = computed(() => props.editor.selected >= 0 ? shapes.value[props.editor.selected] : null)
-const spotlights = computed(() => shapes.value.filter(s => s.kind === 'spotlight'))
-const spotlightIndex = computed(() => shapes.value.findIndex(s => s.kind === 'spotlight'))
+const spotlights = computed(() => shapes.value.filter(s => s.kind === 'spotlight' && (s.opacity ?? 1) > 0))
+const spotlightIndex = computed(() => shapes.value.findIndex(s => s.kind === 'spotlight' && (s.opacity ?? 1) > 0))
 const spotlightMaskId = `${clipId}-spotlight`
 const handles = computed(() => {
   const s = chosen.value
@@ -82,7 +83,7 @@ async function up() {
 </script>
 
 <template>
-  <svg class="annotation-surface" :class="{ enabled }" :viewBox="`0 0 ${width} ${height}`" preserveAspectRatio="none"
+  <svg class="annotation-surface" :class="{ enabled }" :viewBox="`0 0 ${width} ${height}`" :preserveAspectRatio="preserveAspectRatio ?? 'none'"
     @pointerdown.stop="down" @pointermove.stop="editor.drag(point($event))" @pointerup.stop="up" @pointercancel.stop="!editor.pending && editor.abort()" @contextmenu.stop.prevent="!editor.pending && editor.abort()">
     <defs>
       <clipPath :id="clipId"><rect :x="bounds.x" :y="bounds.y" :width="bounds.width" :height="bounds.height" /></clipPath>
@@ -93,7 +94,7 @@ async function up() {
       </mask>
       <mask v-for="item in erasures" :id="`${clipId}-erase-${item.index}`" :key="item.index" maskUnits="userSpaceOnUse" :x="bounds.x" :y="bounds.y" :width="bounds.width" :height="bounds.height" style="mask-type: luminance">
         <rect :x="bounds.x" :y="bounds.y" :width="bounds.width" :height="bounds.height" fill="white" />
-        <path :d="shapePath(item.shape)" stroke="black" :stroke-width="item.shape.width" fill="none" stroke-linecap="round" stroke-linejoin="round" />
+        <path :d="shapePath(item.shape)" :opacity="item.shape.opacity ?? 1" stroke="black" :stroke-width="item.shape.width" fill="none" stroke-linecap="round" stroke-linejoin="round" />
       </mask>
     </defs>
     <g :clip-path="`url(#${clipId})`">
@@ -103,7 +104,7 @@ async function up() {
           <rect v-if="index === spotlightIndex" :x="bounds.x" :y="bounds.y" :width="bounds.width" :height="bounds.height" :mask="`url(#${spotlightMaskId})`" :fill="s.color" :opacity="s.opacity ?? 1" />
         </template>
         <image v-else-if="isRaster(s) && s.raster" :href="`data:image/png;base64,${s.raster}`" :x="shapeBounds(s).x" :y="shapeBounds(s).y" :width="shapeBounds(s).width" :height="shapeBounds(s).height" preserveAspectRatio="none" :opacity="s.opacity ?? 1" />
-        <rect v-else-if="isRaster(s)" :x="shapeBounds(s).x" :y="shapeBounds(s).y" :width="shapeBounds(s).width" :height="shapeBounds(s).height" fill="#94a3b844" stroke="#8b5cf6" vector-effect="non-scaling-stroke" />
+        <rect v-else-if="isRaster(s)" :opacity="s.opacity ?? 1" :x="shapeBounds(s).x" :y="shapeBounds(s).y" :width="shapeBounds(s).width" :height="shapeBounds(s).height" fill="#94a3b844" stroke="#8b5cf6" vector-effect="non-scaling-stroke" />
         <path v-else-if="s.kind !== 'erase'" :d="shapePath(s)" :stroke="s.color" :stroke-width="s.width" :opacity="s.opacity ?? 1" fill="none" stroke-linecap="round" stroke-linejoin="round" />
       </AnnotationStack>
     </g>

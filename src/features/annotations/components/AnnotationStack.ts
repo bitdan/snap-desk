@@ -11,6 +11,7 @@ export default defineComponent({
     return () => {
       let layers: VNode[] = []
       props.shapes.forEach((s, index) => {
+        if ((s.opacity ?? 1) <= 0) return
         if (s.kind === 'erase') layers = [h('g', { mask: `url(#${props.maskPrefix}-erase-${index})` }, layers)]
         else layers.push(...(slots.default?.({ s, index }) ?? []))
       })

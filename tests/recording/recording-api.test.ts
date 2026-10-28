@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { defaultRecordingAnnotationTools } from '../../src/features/recording/recording-annotations'
 import { defaultInputEffects, recordingConfig } from '../../src/features/recording/recording'
 import { defaultSettings } from '../../src/features/settings/settings'
 
@@ -15,11 +16,31 @@ describe('录屏 IPC 契约', () => {
     expect(invoke).toHaveBeenLastCalledWith('current_recording_annotations', { knownRevision: 3 })
     await api.setRecordingAnnotationMode(42, true)
     expect(invoke).toHaveBeenLastCalledWith('set_recording_annotation_mode', { id: 42, editing: true })
-    const toolbar = { x: 10, y: 800, width: 800, height: 120 }
-    await api.setRecordingAnnotationMode(42, false, toolbar)
-    expect(invoke).toHaveBeenLastCalledWith('set_recording_annotation_mode', { id: 42, editing: false, toolbar })
+    await api.setRecordingAnnotationMode(42, false)
+    expect(invoke).toHaveBeenLastCalledWith('set_recording_annotation_mode', { id: 42, editing: false })
     await api.updateRecordingAnnotations(42, [])
-    expect(invoke).toHaveBeenLastCalledWith('update_recording_annotations', { id: 42, shapes: [] })
+    expect(invoke).toHaveBeenLastCalledWith('update_recording_annotations', { id: 42, shapes: [], knownRevision: null })
+  })
+  it('工具和项目命令使用会话 ID 或编辑 token，不向后端发送文件路径', async()=>{
+    const tools=defaultRecordingAnnotationTools()
+    await api.setRecordingAnnotationTools(42,tools)
+    expect(invoke).toHaveBeenLastCalledWith('set_recording_annotation_tools',{id:42,tools})
+    await api.saveRecordingProject(9,[])
+    expect(invoke).toHaveBeenLastCalledWith('save_recording_project',{token:9,annotations:[]})
+    await api.updateRecordingAnnotations(42, [], 3)
+    expect(invoke).toHaveBeenLastCalledWith('update_recording_annotations',{id:42,shapes:[],knownRevision:3})
+    await api.openRecordingProject()
+    expect(invoke).toHaveBeenLastCalledWith('open_recording_project',undefined)
+  })
+  it('共享编辑器的动作、状态和确认均限定会话及请求编号',async()=>{
+    await api.recordingAnnotationEditorAction(42,{kind:'style',style:{color:'#123456'}})
+    expect(invoke).toHaveBeenLastCalledWith('recording_annotation_editor_action',{id:42,action:{kind:'style',style:{color:'#123456'}}})
+    const status={ready:true,selected:0,pending:false,interacting:false,canUndo:true,canRedo:false,text:'',error:''}
+    const tools=defaultRecordingAnnotationTools()
+    await api.publishRecordingAnnotationEditor(42,status,tools)
+    expect(invoke).toHaveBeenLastCalledWith('publish_recording_annotation_editor',{id:42,editor:status,tools})
+    await api.finishRecordingAnnotationEditorAction(42,3,null)
+    expect(invoke).toHaveBeenLastCalledWith('finish_recording_annotation_editor_action',{id:42,requestId:3,error:null})
   })
   it('准备阶段的标注连同截图坐标提交，保留窗口来源参数', async () => {
     const rect = { x: 100, y: 50, width: 600, height: 400 }

@@ -71,6 +71,8 @@ struct Source {
     format: String,
     duration_ms: u64,
     output: Option<MediaFile>,
+    project: Option<super::project::RecordingProject>,
+    clean: Option<MediaFile>,
 }
 #[derive(Default)]
 struct Editor {
@@ -90,6 +92,7 @@ pub struct EditorView {
     format: String,
     duration_ms: u64,
     preview_available: bool,
+    project: Option<super::project::RecordingProject>,
 }
 
 /// 原生解析最近结果并读取真实时长；前端提供的文件路径和时长不作为依据。
@@ -135,6 +138,8 @@ pub async fn prepare_recording_editor(
             return Err("录屏过短，无法裁剪。".into());
         }
         let preview_available = format != "gif" || file.length <= MAX_FULL_RESPONSE;
+        let project = super::project::load(&file.path)?;
+        let clean = if project.is_some() { Some(MediaFile::new(super::project::source_path(&file.path))?) } else { None };
         let state = app.state::<EditState>();
         let mut editor = state.0.lock().map_err(error)?;
         if editor.generation != token {
@@ -146,16 +151,37 @@ pub async fn prepare_recording_editor(
             format: format.clone(),
             duration_ms,
             output: None,
+            project: project.clone(),
+            clean,
         });
         Ok(EditorView {
             token,
             format,
             duration_ms,
             preview_available,
+            project,
         })
     })
     .await
     .map_err(error)?
+}
+
+/// 在当前编辑 token 下原子保存轨道；只改项目数据，不覆盖干净原片或既有成品。
+#[tauri::command]
+pub async fn save_recording_project(app: AppHandle, window: WebviewWindow, token: u64, annotations: Vec<super::annotation_track::TimedAnnotation>) -> Result<super::project::RecordingProject, String> {
+    require_editor_window(&window)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let state=app.state::<EditState>();
+        let mut editor=state.0.lock().map_err(error)?;
+        if editor.active.is_some() { return Err("导出期间不能修改标注项目。".into()); }
+        let source=editor.source.as_mut().filter(|s| s.token==token).ok_or("编辑器已过期。")?;
+        source.clean.as_ref().ok_or("旧录像没有干净原片，不能无损修改标注。")?.open()?;
+        let mut project=source.project.clone().ok_or("此录像没有标注项目。")?;
+        project.annotations=annotations;
+        super::project::save(&source.file.path,&project)?;
+        source.project=Some(project.clone());
+        Ok(project)
+    }).await.map_err(error)?
 }
 
 /// 取消标志由 GIF 帧循环和系统转码轮询观察；不在 UI 线程等待媒体编码。
@@ -378,7 +404,21 @@ pub async fn trim_recording(
             &source.format,
             "录屏裁剪片段",
         )?;
-        if range.start_ms == 0 && range.end_ms == source.duration_ms {
+        if let (Some(project),Some(clean))=(&source.project,&source.clean) {
+            clean.open()?;
+            if project.annotations.is_empty() {
+                // 删除全部标注后可直接使用干净原片；整片另存不再进行有损重编码。
+                if range.start_ms==0 && range.end_ms==source.duration_ms {
+                    copy_original(clean.open()?,output.file_mut(),&cancel)?;
+                } else if source.format=="gif" {
+                    trim_gif(clean.open()?,output.path(),&range,&cancel)?;
+                } else {
+                    output.write_external(|path|trim_mp4(&clean.path,path,&range,&cancel))?;
+                }
+            } else {
+                output.write_external(|path| super::project::export(&clean.path,path,project,range.start_ms,range.end_ms.min(project.duration_ms),&cancel))?;
+            }
+        } else if range.start_ms == 0 && range.end_ms == source.duration_ms {
             // 保存整段时无需解码和重编码，避免把“另存”变成一次有损画质转换。
             copy_original(source.file.open()?, output.file_mut(), &cancel)?;
         } else if source.format == "gif" {
@@ -577,6 +617,7 @@ pub fn preview(app: &AppHandle, main: bool, request: Request<Vec<u8>>) -> Respon
             .ok_or("stale")?;
         let file = match parts[2] {
             "source" => source.file.clone(),
+            "clean" => source.clean.clone().ok_or("missing")?,
             "output" => source.output.clone().ok_or("missing")?,
             _ => return Err("invalid".into()),
         };

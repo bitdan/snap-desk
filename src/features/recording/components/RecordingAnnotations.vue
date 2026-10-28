@@ -1,44 +1,26 @@
 <script setup lang="ts">
+import { recordingPollInterval } from '../polling'
 import { useRecordingPolling } from '@/features/recording/use-recording-polling'
 import { handleEscape } from '@/shared/ui/escape'
-import { computed, nextTick, onMounted, onUnmounted, ref, unref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { listen } from '@tauri-apps/api/event'
-import { Pause, Play, Square } from 'lucide-vue-next'
 import { api } from '@/services/api'
 import { t, te } from '@/shared/i18n/i18n'
-import { recordingTime, recordingSpaceAction, type RecordingView, type RecordingAction } from '@/features/recording/recording'
-import { prepareRecordingRaster, recordingToolbarRegion, type RecordingAnnotationView } from '@/features/recording/recording-annotations'
-import { useAnnotations, type AnnotationEditor, type AnnotationTool } from '@/features/annotations/use-annotations'
-import { annotationToolbarPosition, useFloatingToolbar } from '@/features/annotations/toolbar-layout'
+import type { RecordingView } from '@/features/recording/recording'
+import { prepareRecordingRaster, annotationAlpha, type RecordingAnnotationView, type RecordingAnnotationEditorRequest, type RecordingAnnotationTools, type RecordingAnnotationEditorStatus } from '@/features/recording/recording-annotations'
+import { useAnnotations, type AnnotationEditor } from '@/features/annotations/use-annotations'
 import AnnotationWorkspace from '@/features/annotations/components/AnnotationWorkspace.vue'
-import type { Rect } from '@/shared/geometry/selection'
 
 const props = defineProps<{ sessionId?: number; initialEditor?: AnnotationEditor }>()
 const emit = defineEmits<{ closed: [] }>()
 const view = ref<RecordingAnnotationView | null>(null)
 const recording = ref<RecordingView | null>(null)
 const busy = ref(false), error = ref('')
-const toolbar = ref<HTMLElement | null>(null)
-const { style: toolbarStyle, start: floatToolbar, reset: resetToolbar } = useFloatingToolbar(toolbar)
-const viewport = ref({ x: 0, y: 0, width: innerWidth, height: innerHeight })
-const toolbarSize = ref({ width: 800, height: 80 })
-watch(toolbar, (element, _, cleanup) => {
-  if (!element) return
-  const observer = new ResizeObserver(() => { toolbarSize.value = { width: element.offsetWidth, height: element.offsetHeight } })
-  observer.observe(element); cleanup(() => observer.disconnect())
-})
-const defaultToolbarStyle = computed(() => {
-  const v = view.value, display = viewport.value
-  if (!v) return {}
-  const sx = display.width / v.viewportWidth, sy = display.height / v.viewportHeight
-  return annotationToolbarPosition({ x: v.x * sx, y: v.y * sy, width: v.width * sx, height: v.height * sy }, display, toolbarSize.value)
-})
-function resized() { viewport.value = { x: 0, y: 0, width: innerWidth, height: innerHeight } }
 const bounds = computed(() => ({ x: 0, y: 0, width: view.value?.width ?? 1, height: view.value?.height ?? 1 }))
 const editor = useAnnotations(() => bounds.value, () => '', () => busy.value || !view.value, async shapes => {
   const id = view.value?.id
   if (id === undefined) throw new Error('录制已结束。')
-  const next = await api.updateRecordingAnnotations(id, shapes)
+  const next = await api.updateRecordingAnnotations(id, shapes, view.value?.revision)
   if (!disposed && view.value?.id === id) view.value = { ...view.value, ...next }
 }, prepareRecordingRaster)
 const stage = computed(() => {
@@ -46,10 +28,15 @@ const stage = computed(() => {
   return v ? { left: `${100 * v.x / v.viewportWidth}%`, top: `${100 * v.y / v.viewportHeight}%`,
     width: `${100 * v.width / v.viewportWidth}%`, height: `${100 * v.height / v.viewportHeight}%` } : {}
 })
-const locked = computed(() => busy.value || editor.pending || editor.interacting)
 let disposed = false, closedThrough = -1
 let operation = 0
 let off: (() => void) | undefined
+let offEditorAction: (() => void) | undefined
+const editorConnected=ref(false)
+let executingAction=false
+let publishing:Promise<void>|null=null
+let queuedEditor:ReturnType<typeof editorSnapshot>|null=null
+let publishedEditor=''
 /** 只在首次加载/外部版本变化时重置历史，轮询不能打断正在画的一笔或撤销栈。 */
 async function poll() {
   const known = view.value
@@ -58,136 +45,115 @@ async function poll() {
     const [next, status] = await Promise.all([api.recordingAnnotations(known?.revision), api.currentRecording()])
     if (disposed || epoch !== operation) return
     recording.value = status
+    let inheritedTools=false
     if (!next || next.id <= closedThrough || (props.sessionId !== undefined && next.id !== props.sessionId)) { view.value = null; editor.reset() }
     else if (!view.value || next.id !== view.value.id) {
-      appliedMode = ''
       view.value = next; editor.reset(next.shapes ?? []); editor.setTool(props.initialEditor?.tool ?? 'edit'); error.value = ''
+      inheritedTools=!!props.initialEditor
       if (props.initialEditor) for (const key of ['color', 'width', 'opacity', 'magnification', 'fontSize', 'fontFamily'] as const) {
         Object.assign(editor, { [key]: props.initialEditor[key] })
       }
     } else {
       // 提交期间的查询可能返回旧版本，不可覆盖刚保存的版本或模式。
-      if (next.revision >= view.value.revision && !busy.value && !editor.pending) {
-        if (next.revision !== view.value.revision) editor.reset(next.shapes ?? [])
-        view.value = next
+      if (next.revision >= view.value.revision && !busy.value && !editor.pending && !executingAction) {
+        const changed=next.revision !== view.value.revision
+        if (changed) editor.reset(next.shapes ?? [])
+        view.value = { ...next, tracks: next.tracks ?? (changed ? [] : view.value.tracks) }
         if (!next.editing) { editor.abort(); editor.selected = -1 }
       }
     }
+    const tools = view.value?.tools
+    if (tools && !inheritedTools && !editor.interacting && !editor.pending && !publishing && !executingAction) {
+      if (editor.tool !== tools.tool) editor.setTool(tools.tool)
+      for (const key of ['color', 'width', 'opacity', 'magnification', 'fontSize', 'fontFamily'] as const) Object.assign(editor, { [key]: tools[key] })
+    }
   } catch (e) { if (!disposed) error.value = String(e) }
 }
-useRecordingPolling(poll, () => recording.value?.phase, e => { if (!disposed) error.value = String(e) }, { initialSnapshot: true })
-let activation: Promise<void> | null = null
-// 原生模式请求按顺序执行，旧的工具栏裁剪不能晚于恢复绘制而重新截断画布。
-let modeQueue = Promise.resolve()
-let appliedMode = ''
-function setMode(id: number, editing: boolean, region?: Rect, deduplicate = false) {
-  const signature = JSON.stringify([id, editing, region])
-  const request = modeQueue.then(async () => {
-    if (disposed || view.value?.id !== id) return
-    // set_size 可能再次触发 resize，同一裁剪不重复提交以免形成窗口更新循环。
-    if (deduplicate && appliedMode === signature) return
-    await api.setRecordingAnnotationMode(id, editing, region)
-    // 切换过程中发出的查询也可能仍读取旧模式，完成后让这些快照全部失效。
-    operation++
-    appliedMode = signature
-  })
-  modeQueue = request.catch(() => {})
-  return request
+/** 截图工具栏读取这个编辑器的状态，工具条窗口不创建第二份撤销栈。 */
+function editorSnapshot() {
+  if (!view.value || !editorConnected.value) return null
+  const tools:RecordingAnnotationTools={...view.value.tools,tool:editor.tool,color:editor.color,width:editor.width,
+    opacity:editor.opacity,fontSize:editor.fontSize,fontFamily:editor.fontFamily,magnification:editor.magnification}
+  const status:RecordingAnnotationEditorStatus={ready:true,selected:editor.selected,pending:editor.pending,
+    interacting:editor.interacting,canUndo:!!editor.history.past.length,canRedo:!!editor.history.future.length,
+    text:editor.text,error:editor.error}
+  return{id:view.value.id,status,tools}
 }
-function toolbarRegion() {
-  if (!view.value || !toolbar.value) throw new Error('录屏工具栏尚未就绪。')
-  return recordingToolbarRegion(toolbar.value.getBoundingClientRect(), viewport.value,
-    { width: view.value.viewportWidth, height: view.value.viewportHeight })
+function publishEditor():Promise<void> {
+  queuedEditor=editorSnapshot()
+  if(publishing) return publishing
+  publishing=(async()=>{
+    while(queuedEditor && !disposed) {
+      const next=queuedEditor; queuedEditor=null
+      const signature=JSON.stringify(next)
+      if(signature===publishedEditor) continue
+      await api.publishRecordingAnnotationEditor(next.id,next.status,next.tools)
+      publishedEditor=signature
+    }
+  })().finally(()=>{publishing=null})
+  return publishing
 }
-/** 保留工具栏的原生命中区域，其余桌面交还给正在录制的应用。 */
+watch(()=>JSON.stringify(editorSnapshot()),()=>{
+  void publishEditor().catch(e=>{if(!disposed && view.value) error.value=String(e)})
+},{flush:'post'})
+/** 所有编辑命令都在画布的原始 useAnnotations 实例执行，沿用截图工具的历史和样式逻辑。 */
+async function editorAction(request:RecordingAnnotationEditorRequest) {
+  let failure:string|null=null
+  let started=false
+  try {
+    if(disposed || view.value?.id!==request.id) throw new Error('录屏标注会话已过期。')
+    if(executingAction || editor.pending || editor.interacting) throw new Error('请先完成当前标注。')
+    executingAction=true; started=true; operation++; editor.error=''
+    const action=request.action
+    if(action.kind==='tool') editor.setTool(action.tool)
+    else if(action.kind==='style') await editor.style(action.style)
+    else if(action.kind==='undo' || action.kind==='redo') await editor.travel(action.kind)
+    else if(action.kind==='remove') await editor.remove()
+    else if(action.kind==='clear') await editor.clear()
+    if(editor.error) throw new Error(editor.error)
+    await publishEditor()
+  } catch(e) { failure=String(e) }
+  finally {
+    if(started) {executingAction=false; operation++}
+    await api.finishRecordingAnnotationEditorAction(request.id,request.requestId,failure).catch(()=>{})
+  }
+}
+useRecordingPolling(poll, () => recording.value?.phase, e => { if (!disposed) error.value = String(e) }, { initialSnapshot: true, intervalMs: () => view.value?.tracks?.some(track => track.endMs !== null && track.endMs > view.value!.mediaTimeMs) ? 33 : recordingPollInterval(recording.value?.phase) })
+// 绘制工具位于另一原生窗口；画布只接收绘图事件和展示同一份图形。
 async function desktop() {
   if (!view.value) return
-  const id = view.value.id
-  await nextTick()
-  await setMode(id, false, toolbarRegion())
-  if (view.value?.id === id) { view.value.editing = false; editor.abort(); editor.selected = -1 }
+  const id=view.value.id
+  await api.setRecordingAnnotationMode(id, false)
+  operation++
+  if (view.value?.id===id) { view.value.editing=false; editor.abort(); editor.selected=-1 }
 }
-/** 由截图宿主在确认范围后调用：先渲染真实工具栏，再以桌面操作模式显示原生窗口。 */
 async function prepareDesktop() {
-  await poll()
-  await nextTick()
+  await poll(); await nextTick()
   if (!view.value) throw new Error(error.value || '录屏工具栏尚未就绪。')
   await desktop()
 }
 defineExpose({ prepareDesktop })
 async function deactivate() {
-  if (locked.value || activation) return
-  operation++; busy.value = true; error.value = ''
-  try { await desktop() }
-  catch (e) { error.value = String(e) }
-  finally { busy.value = false }
+  if (busy.value || editor.pending) return
+  editor.abort(); busy.value=true; error.value=''; operation++
+  try { await desktop() } catch(e) { error.value=String(e) } finally { busy.value=false }
 }
-// 样式行、错误提示、DPI 和工具栏位置变化后同步裁剪，避免按钮被旧区域截掉。
-watch([() => view.value?.editing, toolbar, toolbarSize, viewport, defaultToolbarStyle, () => unref(toolbarStyle)], async () => {
-  // 首次接管由宿主等工具栏渲染完成后发起，不能用 initialize 的临时状态抢先操作窗口。
-  if (!appliedMode || !view.value || view.value.editing || activation) return
-  const id = view.value.id
-  try {
-    await nextTick()
-    if (view.value?.id !== id || view.value.editing || activation) return
-    await setMode(id, false, toolbarRegion(), true)
-  }
-  catch (e) { if (!disposed) error.value = String(e) }
-}, { flush: 'post' })
-/** 在原工具栏直接选工具即可恢复绘制；桌面操作期间不另开一块控制界面。 */
-async function activate() {
-  if (!view.value || view.value.editing || busy.value) return
-  if (!activation) {
-    operation++
-    const id = view.value.id
-    activation = setMode(id, true).then(() => {
-      if (view.value?.id === id) view.value.editing = true
-    }).catch(e => { error.value = String(e) }).finally(() => { activation = null })
-  }
-  await activation
-}
-/** 重复点击当前工具即可退出绘制，不再增加单独的桌面操作按钮。 */
-async function chooseTool(tool: AnnotationTool) {
-  // 录屏中的指针直接操作原应用；截图和贴图仍由原宿主将 edit 用于编辑标注。
-  if (tool === 'edit') { await deactivate(); if (!view.value?.editing) editor.setTool('edit'); return }
-  if (view.value?.editing && editor.tool === tool) { await deactivate(); return }
-  await activate()
-  if (view.value?.editing) editor.setTool(tool)
-}
-function moveToolbar(event: PointerEvent) { floatToolbar(event) }
-async function control(action: RecordingAction) {
-  if (!view.value || locked.value) return
-  operation++
-  busy.value = true; error.value = ''
-  try {
-    const id = view.value.id
-    // 开始/继续录制默认操作桌面；只有显式选择标注工具才拦截全屏输入。
-    if (action === 'start' || action === 'resume') await desktop()
-    await api.controlRecording(id, action)
-    if (action === 'stop' || action === 'cancel') {
-      // 原生停止会同时隐藏交互窗口；本地清除整套工具栏，迟到轮询不能重新挂回。
-      closedThrough = Math.max(closedThrough, id); view.value = null; editor.reset(); emit('closed')
-    } else {
-      const next = await api.currentRecording()
-      if (!disposed && view.value?.id === next?.id) recording.value = next
-    }
-  }
-  catch (e) { error.value = String(e) }
-  finally { busy.value = false }
-}
+/** 透明度只来自原生媒体时钟，绝不修改历史中的原始颜色或透明度。 */
+const presentation = computed(() => editor.history.present.map((shape, index) => {
+  const track=view.value?.tracks?.find(track => track.order === index)
+  return track ? { ...shape, opacity: (shape.opacity ?? 1) * annotationAlpha(track, view.value?.mediaTimeMs ?? 0) } : shape
+}))
 function key(event: KeyboardEvent) {
+  if (!view.value?.editing || event.defaultPrevented || event.isComposing || event.keyCode === 229) return
   if (handleEscape(event, () => {
     if (busy.value || editor.pending) return
-    editor.abort(); void control(recording.value?.phase === 'ready' || recording.value?.phase === 'countdown' ? 'cancel' : 'stop')
+    editor.abort(); void deactivate()
   })) return
-  if (event.defaultPrevented || event.isComposing || event.keyCode === 229) return
-  const action = recordingSpaceAction(event, recording.value?.phase)
-  if (action) { event.preventDefault(); void control(action); return }
-  if (editor.key(event)) return
+  // 标注键盘只编辑标注；空格和 Esc 不再隐式控制录屏生命周期。
+  editor.key(event)
 }
 onMounted(async () => {
   window.addEventListener('keydown', key)
-  window.addEventListener('resize', resized)
   try {
     const release = await listen<number>('recording-annotations-closed', event => {
       closedThrough = Math.max(closedThrough, event.payload)
@@ -196,31 +162,24 @@ onMounted(async () => {
     })
     if (disposed) { release(); return }
     off = release
+    const releaseEditor=await listen<RecordingAnnotationEditorRequest>('recording-annotation-editor-action',event=>{void editorAction(event.payload)})
+    if(disposed) {releaseEditor();return}
+    offEditorAction=releaseEditor; editorConnected.value=true
   } catch (e) { error.value = String(e) }
 })
-onUnmounted(() => { disposed = true; off?.(); window.removeEventListener('keydown', key); window.removeEventListener('resize', resized) })
+onUnmounted(() => { disposed = true; off?.(); offEditorAction?.(); window.removeEventListener('keydown', key) })
 </script>
 
 <template>
   <main v-if="view" class="live-annotations" :aria-label="t('录制中标注')">
-    <AnnotationWorkspace :key="view.id" default-expanded :pointer-label="t('操作桌面')" :editor="editor" :width="view.width" :height="view.height" :bounds="bounds" :surface-visible="view.editing" :toolbar-visible="true" :enabled="view.editing && !busy" :active="view.editing" :disabled="busy" :surface-style="stage" :outlined="view.editing" :toolbar-style="[defaultToolbarStyle, toolbarStyle]" @toolbar-element="toolbar = $event" @activate="activate" @tool="chooseTool" @float="moveToolbar" @reset-position="resetToolbar">
-        <template #leading><span class="recording-time">● {{ recordingTime(recording?.seconds ?? 0) }}</span></template>
-        <template #actions>
-          <button v-if="recording?.phase === 'ready'" :disabled="locked" :title="t('开始录制')" @click="control('start')"><Play :size="16" />{{ t('开始录制') }}</button>
-          <button v-else :disabled="locked || !recording || !['recording', 'paused'].includes(recording.phase)" :title="t(recording?.phase === 'paused' ? '继续录制' : '暂停录制')" @click="control(recording?.phase === 'paused' ? 'resume' : 'pause')"><Play v-if="recording?.phase === 'paused'" :size="16" /><Pause v-else :size="16" /></button>
-          <button :disabled="locked || !recording || !['recording', 'paused'].includes(recording.phase)" :title="t('结束录制并编辑')" @click="control('stop')"><Square :size="16" /></button>
-        </template>
-      <template #footer>
-      <p v-if="error || editor.error" role="alert">{{ te(error || editor.error) }}</p>
-      <p v-else-if="['mosaic', 'blur', 'magnify'].includes(editor.tool)" role="status">{{ t('滤镜按实时视频画面处理，编辑时显示范围。') }}</p>
-      </template>
-    </AnnotationWorkspace>
+    <AnnotationWorkspace :key="view.id" :editor="editor" :presentation="presentation" :width="view.width" :height="view.height" :bounds="bounds" :surface-visible="view.editing || presentation.some(shape => (shape.opacity ?? 1) > 0)" :toolbar-visible="false" :enabled="view.editing && !busy" :active="view.editing" :disabled="busy" :surface-style="stage" :outlined="false" />
+    <p v-if="view.editing && (error || editor.error)" class="annotation-error" role="alert">{{ te(error || editor.error) }}</p>
   </main>
 </template>
 
 <style scoped>
 .live-annotations { position: fixed; inset: 0; background: transparent; font-size: 13px; }
-.recording-time { color: #dc2626; font-variant-numeric: tabular-nums; white-space: nowrap; }
 p { margin: 4px; font-size: 12px; }
 [role=alert] { color: #b91c1c; }
+.annotation-error { position:absolute; bottom:8px; left:8px; background:#fff; padding:4px 8px; pointer-events:none; }
 </style>

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, watch, type StyleValue } from 'vue'
+import type { Annotation } from '@/features/annotations/annotations'
 import type { Rect } from '@/shared/geometry/selection'
 import type { AnnotationEditor, AnnotationTool } from '@/features/annotations/use-annotations'
 import AnnotationSurface from '@/features/annotations/components/AnnotationSurface.vue'
@@ -7,6 +8,7 @@ import AnnotationToolbar from '@/features/annotations/components/AnnotationToolb
 
 /** 截图和实时录制共用编辑页面，宿主只提供背景、坐标及保存/录制动作。 */
 defineProps<{
+  presentation?: Annotation[]
   editor: AnnotationEditor; width: number; height: number; bounds: Rect
   surfaceVisible: boolean; toolbarVisible: boolean; enabled: boolean; active: boolean; disabled: boolean
   surfaceStyle?: StyleValue; toolbarStyle?: StyleValue; outlined?: boolean; defaultExpanded?: boolean; pointerLabel?: string
@@ -28,7 +30,7 @@ function activate(event: Event) {
 
 <template>
   <div v-if="surfaceVisible" class="annotation-workspace-stage" :class="{ outlined }" :style="surfaceStyle">
-    <AnnotationSurface :editor="editor" :width="width" :height="height" :bounds="bounds" :enabled="enabled" />
+    <AnnotationSurface :editor="editor" :presentation="presentation" :width="width" :height="height" :bounds="bounds" :enabled="enabled" />
   </div>
   <div v-if="toolbarVisible" ref="toolbar" class="capture-toolbar annotation-toolbar annotation-workspace-toolbar" :style="toolbarStyle" @pointerdown.capture="activate" @keydown.capture="activate" @pointerdown.stop @contextmenu.stop.prevent>
     <AnnotationToolbar collapsible :default-expanded="defaultExpanded" :pointer-label="pointerLabel" :editor="editor" :disabled="disabled" :active="active" @tool="emit('tool', $event)" @float="emit('float', $event)" @reset-position="emit('resetPosition')">

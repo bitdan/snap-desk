@@ -63,7 +63,7 @@ pub(crate) struct RecordingPreviewState(Mutex<Option<ReplayLayout>>);
 fn replay_layout(screen: &Screen, rect: Rect) -> ReplayLayout {
     let scale = f64::from_bits(screen.scale);
     let gap = (8.0 * scale).round() as u32;
-    let toolbar_h = ((128.0 * scale).round() as u32)
+    let toolbar_h = ((320.0 * scale).round() as u32)
         .min(screen.height.saturating_sub(1))
         .max(1);
     let toolbar_w = rect
@@ -301,9 +301,8 @@ pub(in crate::capture) fn place_recording(
         app,
         screen,
         rect,
-        // 实时控制已由 capture 承担，录屏期间只创建四条边框。
-        &RECORDING_LABELS[1..],
-        &layout_with_controls(screen, rect, 480.0)[2..],
+        &RECORDING_LABELS,
+        &layout_with_controls(screen, rect, 640.0)[1..],
         true,
     );
     if result.is_err() {
@@ -485,7 +484,25 @@ pub(crate) fn hide_recording(app: &AppHandle) {
     }
 }
 
-/// 录制选区边框独立于标注画布显示，桌面操作模式裁掉画布后仍保留范围提示。
+/// 绘图工具放在独立控制窗；窗口尺寸仍使用屏幕物理像素，兼容负坐标和 DPI。
+pub(in crate::capture) fn place_recording_controls(app: &AppHandle, screen: &Screen, rect: Rect, editing: bool) -> Result<(), String> {
+    let controls = window(app, "recording-controls").ok_or("录屏控制条不可用。")?;
+    let base = layout_with_controls(screen, rect, if editing {960.0} else {640.0})[1];
+    let h = ((if editing { 192.0 } else { 48.0 }) * f64::from_bits(screen.scale)).round() as u32;
+    let h = h.min(screen.height).max(1);
+    controls.set_size(PhysicalSize::new(base.w, h)).map_err(err)?;
+    controls.set_position(PhysicalPosition::new(screen.x + base.x, screen.y + base.y.min((screen.height-h) as i32))).map_err(err)?;
+    Ok(())
+}
+
+/// 桌面模式仅显示已按选区定位的小型控制窗，不复用回放尺寸。
+pub(in crate::capture) fn show_recording_controls(app: &AppHandle) -> Result<(), String> {
+    let controls = window(app, "recording-controls").ok_or("录屏控制条不可用。")?;
+    show_window(&controls)?;
+    controls.set_always_on_top(true).map_err(err)
+}
+
+/// 录制选区边框独立于标注画布显示，桌面操作模式隐藏画布后仍保留范围提示。
 pub(in crate::capture) fn show_recording_edges(app: &AppHandle) -> Result<(), String> {
     for label in &RECORDING_LABELS[1..] {
         if let Some(window) = window(app, label) {
@@ -530,6 +547,11 @@ pub(crate) fn hide(app: &AppHandle) {
 pub(crate) fn release(app: &AppHandle) {
     for label in LABELS { crate::shared::auxiliary_windows::release(app, label); }
 }
+/// 完成录制后保留控制 WebView，原位切换为预览，避免销毁与同标签重建竞态。
+pub(in crate::capture) fn release_recording_edges(app: &AppHandle) {
+    for label in &RECORDING_LABELS[1..] { crate::shared::auxiliary_windows::release(app, label); }
+}
+
 pub(crate) fn release_recording(app: &AppHandle) {
     for label in RECORDING_LABELS { crate::shared::auxiliary_windows::release(app, label); }
 }

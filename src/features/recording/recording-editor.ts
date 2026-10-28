@@ -1,5 +1,6 @@
+import type { RecordingProject } from './recording-annotations'
 /** 与原生录屏编辑器契约一致：毫秒整数，路径只展示，所有动作按原生 token 执行。 */
-export interface RecordingEditorView { token: number; format: 'mp4' | 'gif'; durationMs: number; previewAvailable: boolean }
+export interface RecordingEditorView { token: number; format: 'mp4' | 'gif'; durationMs: number; previewAvailable: boolean; project?: RecordingProject | null }
 export interface RecordingTrimRange { startMs: number; endMs: number }
 export interface RecordingTrimExport { path: string; durationMs: number; previewAvailable: boolean }
 
