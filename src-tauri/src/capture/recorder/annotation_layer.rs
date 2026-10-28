@@ -21,6 +21,8 @@ pub enum Paint {
     Filter(Annotation),
 }
 impl Layer {
+    /// 无时间轴的构造入口仅供合成回归测试使用；实际录屏统一使用 timed。
+    #[cfg(test)]
     pub(super) fn new(shapes: &[Annotation], width: u32, height: u32) -> Result<Self, String> {
         annotations::validate_live(shapes, width, height)?;
         Self::compiled(shapes, width, height)
