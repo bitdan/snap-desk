@@ -3,15 +3,24 @@ import { computed, nextTick, onMounted, onUnmounted, ref, shallowRef, watch, typ
 import type { ClipboardItem } from '@/features/clipboard/clipboard'
 import { rowAt, rowOffsets, visibleRows } from '@/shared/collections/virtual-list'
 
-const props = defineProps<{ items: ClipboardItem[] }>()
+const props = defineProps<{ items: ClipboardItem[]; layout?: 'list' | 'grid' }>()
 const viewport = ref<HTMLElement | null>(null)
 const top = ref(0), height = ref(500)
+const width = ref(0)
+const columns = computed(() => props.layout === 'grid' ? Math.max(1, Math.floor((width.value + 8) / 248)) : 1)
 const measured = shallowRef(new Map<number, number>())
-const offsets = computed(() => rowOffsets(props.items.map(item => measured.value.get(item.id) ?? (item.kind === 'image' ? 140 : item.kind === 'file' ? 136 : 78))))
+// 网格按整行虚拟化，行高由整行最高卡片决定；不为历史总量创建全部 DOM。
+const groups = computed(() => {
+  const result: ClipboardItem[][] = []
+  for (let i = 0; i < props.items.length; i += columns.value) result.push(props.items.slice(i, i + columns.value))
+  return result
+})
+const offsets = computed(() => rowOffsets(groups.value.map(group => measured.value.get(group[0].id)
+  ?? (props.layout === 'grid' ? 224 : group[0].kind === 'image' ? 140 : group[0].kind === 'file' ? 136 : 78))))
 const range = computed(() => visibleRows(offsets.value, top.value, height.value))
-const rows = computed(() => props.items.slice(range.value.start, range.value.end))
+const rows = computed(() => groups.value.slice(range.value.start, range.value.end))
 const elements = new Map<number, HTMLElement>()
-let observer: ResizeObserver | undefined, width = 0, disposed = false
+let observer: ResizeObserver | undefined, disposed = false
 function scroll() { top.value = viewport.value?.scrollTop ?? 0 }
 /** 动态插槽/缩略图高度变化后保留视口首行位置，避免上方测量值改变引起跳动。 */
 function measure(entries: ResizeObserverEntry[]) {
@@ -22,7 +31,7 @@ function measure(entries: ResizeObserverEntry[]) {
   const container = entries.find(entry => entry.target === viewport.value)
   if (container) {
     height.value = container.contentRect.height
-    if (width !== container.contentRect.width) { width = container.contentRect.width; next.clear(); changed = true }
+    if (width.value !== container.contentRect.width) { width.value = container.contentRect.width; next.clear(); changed = true }
   }
   for (const entry of entries) {
     if (entry.target !== viewport.value) {
@@ -33,7 +42,7 @@ function measure(entries: ResizeObserverEntry[]) {
   }
   if (!changed) return
   measured.value = next
-  const adjusted = offsets.value[anchor] + inset
+  const adjusted = offsets.value[Math.min(anchor, Math.max(0, offsets.value.length - 2))] + inset
   if (viewport.value && Math.abs(adjusted - top.value) > 0.5) {
     // 先更新占位高度，再写 scrollTop，避免浏览器按旧滚动范围截断新的位置。
     top.value = adjusted
@@ -53,15 +62,18 @@ function observeRow(id: number, value: Element | ComponentPublicInstance | null)
 async function focusIndex(index: number) {
   const root = viewport.value
   if (!root || !props.items[index]) return
-  const start = offsets.value[index], end = offsets.value[index + 1]
+  const group = Math.floor(index / columns.value)
+  const start = offsets.value[group], end = offsets.value[group + 1]
   if (start < root.scrollTop) root.scrollTop = start
   else if (end > root.scrollTop + root.clientHeight) root.scrollTop = end - root.clientHeight
   scroll(); await nextTick()
   if (disposed) return
-  const row = elements.get(props.items[index]?.id)?.querySelector<HTMLElement>('.history-item')
+  const row = elements.get(props.items[group * columns.value]?.id)
+    ?.querySelector<HTMLElement>(`[data-history-index="${index}"] .history-item`)
   row?.focus({ preventScroll: true }); row?.scrollIntoView({ block: 'nearest' }); scroll()
 }
 function resetScroll() { if (viewport.value) viewport.value.scrollTop = 0; top.value = 0 }
+watch([() => props.layout, columns], () => { measured.value = new Map(); resetScroll() })
 watch(() => props.items, items => {
   const ids = new Set(items.map(item => item.id))
   measured.value = new Map([...measured.value].filter(([id]) => ids.has(id)))
@@ -72,16 +84,20 @@ onMounted(() => {
   elements.forEach(element => observer!.observe(element))
 })
 onUnmounted(() => { disposed = true; observer?.disconnect(); elements.clear() })
-defineExpose({ focusIndex, resetScroll })
+defineExpose({ focusIndex, resetScroll, columns })
 </script>
 
 <template>
-  <div ref="viewport" class="history-list" style="overflow-anchor:none" @scroll.passive="scroll">
+  <div ref="viewport" class="history-list" :class="{ 'is-grid': layout === 'grid' }" style="overflow-anchor:none" @scroll.passive="scroll">
     <div aria-hidden="true" :style="{ height: `${range.before}px` }" />
-    <div v-for="(item, index) in rows" :key="item.id" :ref="element => observeRow(item.id, element)" :data-history-id="item.id" :data-history-index="range.start + index">
-      <slot :item="item" />
+    <div v-for="(group, rowIndex) in rows" :key="group[0].id" :ref="element => observeRow(group[0].id, element)" :data-history-id="group[0].id" class="history-virtual-row" :style="{ display: 'grid', gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`, gap: '8px' }">
+      <div v-for="(item, column) in group" :key="item.id" :data-history-index="(range.start + rowIndex) * columns + column"><slot :item="item" /></div>
     </div>
     <div aria-hidden="true" :style="{ height: `${range.after}px` }" />
     <slot name="footer" />
   </div>
 </template>
+
+<style scoped>
+.history-list.is-grid .history-virtual-row { padding-bottom:8px; }
+</style>

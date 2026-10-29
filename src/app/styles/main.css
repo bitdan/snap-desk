@@ -54,7 +54,6 @@ kbd { display: inline-block; border: 1px solid #d8dee4; border-bottom-width: 2px
 .capture-panel-heading p { margin-top: 5px; color: #6e7781; font-size: 12px; }
 .capture-panel-heading kbd { margin-left: auto; }
 .capture-controls { padding: 14px 22px; background: #f6f8fa; border-top: 1px solid #e8eaed; display: flex; align-items: center; gap: 12px; font-size: 13px; }
-.capture-controls button { margin-left: auto; }
 .capture-controls select, .setting-row select { border: 1px solid #d8dee4; border-radius: 4px; padding: 6px 10px; background: white; }
 .scope-note { display: flex; gap: 8px; color: #6e7781; font-size: 12px; margin-top: 20px; align-items: center; line-height: 1.7; }
 .scope-note svg { flex-shrink: 0; }

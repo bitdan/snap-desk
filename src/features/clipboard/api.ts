@@ -7,6 +7,7 @@ export const clipboardApi = {
   clipboardList: (query: ClipboardQuery) => invoke<ClipboardPage>('clipboard_list', { query }),
   clipboardText: (id: number) => invoke<string>('clipboard_get_text', { id }),
   clipboardThumbnail: (id: number) => invoke<string>('clipboard_get_thumbnail', { id }),
+  clipboardImage: (id: number) => invoke<string>('clipboard_get_image', { id }),
   clipboardRestore: (id: number) => invoke<void>('clipboard_restore', { id }),
   clipboardPin: (id: number) => invoke<void>('clipboard_pin_item', { id }),
   clipboardFavorite: (id: number, favorite: boolean) => invoke<void>('clipboard_set_favorite', { id, favorite }),

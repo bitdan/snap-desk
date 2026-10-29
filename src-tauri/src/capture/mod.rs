@@ -1031,6 +1031,18 @@ pub async fn pin_capture(
         let state = app.state::<CaptureState>();
         let _operation = Operation::acquire(&state.operation)?;
         let cropped = crop(&app, id, rect, &[])?;
+        // 选区是虚拟桌面截图内的物理坐标，加回桌面原点才能覆盖到原屏幕位置。
+        let image_origin = {
+            let session = state.session.lock().map_err(err)?;
+            let session = session.as_ref().filter(|s| s.frame.id == id)
+                .ok_or("截图已过期，请重新截图。")?;
+            tauri::PhysicalPosition::new(
+                i32::try_from(i64::from(session.frame.origin_x) + i64::from(rect.x))
+                    .map_err(|_| "贴图横坐标超出范围。")?,
+                i32::try_from(i64::from(session.frame.origin_y) + i64::from(rect.y))
+                    .map_err(|_| "贴图纵坐标超出范围。")?,
+            )
+        };
         // 贴图保存裁剪后的底图与独立图形；将屏幕坐标平移为贴图局部像素坐标。
         let mut annotations = annotations;
         for shape in &mut annotations {
@@ -1042,7 +1054,7 @@ pub async fn pin_capture(
                 p.y -= f64::from(rect.y);
             }
         }
-        let pin = crate::pins::create(&app, cropped, annotations)?;
+        let pin = crate::pins::create(&app, cropped, annotations, Some(image_origin))?;
         if let Err(error) = pin.show() {
             let _ = pin.destroy();
             return Err(err(error));

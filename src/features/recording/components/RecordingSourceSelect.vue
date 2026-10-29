@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { handleEscape } from '@/shared/ui/escape'
+import { useEscapeLayer } from '@/shared/ui/use-escape-layer'
 import { computed, nextTick, ref, watch } from 'vue'
 import { Check, ChevronDown, Monitor, Scan } from 'lucide-vue-next'
 import { DropdownMenuRoot, DropdownMenuTrigger, DropdownMenuPortal, DropdownMenuContent, DropdownMenuItem } from 'reka-ui'
@@ -6,6 +8,8 @@ import { t } from '@/shared/i18n/i18n'
 const props = defineProps<{ value: 'region' | 'display'; disabled: boolean }>()
 const emit = defineEmits<{ select: [value: string] }>()
 const open = ref(false)
+useEscapeLayer(() => open.value, () => { open.value = false })
+function dismissKey(event: KeyboardEvent) { handleEscape(event, () => { open.value = false }) }
 const label = computed(() => t(props.value === 'display' ? '显示器' : '选区'))
 watch(() => props.disabled, value => { if (value) open.value = false })
 async function choose(value: string) {
@@ -22,7 +26,7 @@ async function choose(value: string) {
       <Monitor v-if="value === 'display'" :size="16" /><Scan v-else :size="16" /><span>{{ label }}</span><ChevronDown :size="12" />
     </DropdownMenuTrigger>
     <DropdownMenuPortal>
-      <DropdownMenuContent class="recording-source-menu" side="top" align="start" :side-offset="6" :collision-padding="8" :aria-label="t('录制范围')" @pointerdown.stop @pointermove.stop @keydown.stop @contextmenu.stop.prevent>
+      <DropdownMenuContent class="recording-source-menu" side="top" align="start" :side-offset="6" :collision-padding="8" :aria-label="t('录制范围')" @pointerdown.stop @pointermove.stop @keydown.stop="dismissKey" @contextmenu.stop.prevent>
         <DropdownMenuItem class="recording-source-item" :aria-selected="value === 'region'" @select="choose('region')"><Scan :size="16" /><span>{{ t('选区') }}</span><Check v-if="value === 'region'" :size="14" class="source-check" /></DropdownMenuItem>
         <DropdownMenuItem class="recording-source-item" :aria-selected="value === 'display'" @select="choose('display')"><Monitor :size="16" /><span>{{ t('显示器') }}</span><Check v-if="value === 'display'" :size="14" class="source-check" /></DropdownMenuItem>
       </DropdownMenuContent>

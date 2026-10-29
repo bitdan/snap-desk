@@ -17,7 +17,7 @@ use std::{
     },
 };
 use tauri::{
-    AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, WebviewUrl, WebviewWindow,
+    AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindow,
     WebviewWindowBuilder,
 };
 use tauri_plugin_clipboard_manager::ClipboardExt;
@@ -49,6 +49,26 @@ impl PinLayout {
     /// 与前端使用相同短边下限，原生命令也不能把小图缩成不可见的小点。
     fn minimum_zoom(&self, width: u32, height: u32, scale: f64) -> f64 {
         (self.min_visible_side * scale / f64::from(width.min(height).max(1))).max(0.1)
+    }
+    /// 图片首像素到窗口原点的物理距离；与前端 padding 取整规则一致。
+    fn image_inset(&self, scale: f64) -> i32 {
+        ((self.padding + self.border) * scale).round() as i32
+    }
+
+    /// 原位贴图不按工作区裁小窗口，避免底栏挤占选区或将大图缩放、居中。
+    fn source_bounds(
+        &self, origin: PhysicalPosition<i32>, width: u32, height: u32, scale: f64, zoom: f64,
+    ) -> (PhysicalPosition<i32>, PhysicalSize<u32>) {
+        let inset = self.image_inset(scale);
+        let width = (f64::from(width) * zoom).max(self.min_image_width * scale);
+        let height = (f64::from(height) * zoom).max(self.min_image_height * scale);
+        (
+            PhysicalPosition::new(origin.x - inset, origin.y - inset),
+            PhysicalSize::new(
+                (width + f64::from(inset) * 2.0).ceil() as u32,
+                (height + f64::from(inset) * 2.0 + (self.gap + self.expanded_height) * scale).ceil() as u32,
+            ),
+        )
     }
     fn chrome_height(&self, expanded: bool) -> f64 {
         self.padding * 2.0
@@ -367,7 +387,10 @@ pub fn create(
     app: &AppHandle,
     image: RgbaImage,
     annotations: Vec<crate::shared::annotations::Annotation>,
+    image_origin: Option<PhysicalPosition<i32>>,
 ) -> Result<WebviewWindow, String> {
+    #[cfg(windows)]
+    let _dpi = crate::capture::desktop::PhysicalDpi::enter()?;
     crate::shared::annotations::validate(&annotations, image.width(), image.height())?;
     let state = app.state::<PinState>();
     let _operation = Operation::acquire(&state)?;
@@ -376,10 +399,10 @@ pub fn create(
         let used = images.values().map(Pin::retained_pixels).sum();
         validate_capacity(image.width(), image.height(), images.len(), used)?;
     }
-    let monitor = app
-        .primary_monitor()
-        .map_err(err)?
-        .ok_or("无法获取显示器信息。")?;
+    let monitor = match image_origin {
+        Some(origin) => app.monitor_from_point(f64::from(origin.x), f64::from(origin.y)),
+        None => app.primary_monitor(),
+    }.map_err(err)?.ok_or("无法获取显示器信息。")?;
     let layout = PinLayout::load();
     // 不再额外裁掉 20% 工作区：能完整显示的选区不应被迫出现滚动条。
     let max_width = f64::from(monitor.work_area().size.width) / monitor.scale_factor();
@@ -433,6 +456,27 @@ pub fn create(
     let builder = builder.transparent(true);
     match builder.build() {
         Ok(window) => {
+            if let Some(origin) = image_origin {
+                // 先进入来源显示器再读取实际 DPI；移动、定尺寸均在隐藏期间完成。
+                // 屏幕坐标允许为负，不将副屏选区钳制到主屏工作区。
+                let placed = (|| -> Result<(), String> {
+                    window.set_position(origin).map_err(err)?;
+                    let scale = window.scale_factor().map_err(err)?;
+                    let images = state.images.lock().map_err(err)?;
+                    let pin = images.get(&label).ok_or("贴图已关闭。")?;
+                    let (position, size) = layout.source_bounds(
+                        origin, pin.image.width(), pin.image.height(), scale, pin.view.zoom,
+                    );
+                    drop(images);
+                    window.set_position(position).map_err(err)?;
+                    window.set_size(size).map_err(err)
+                })();
+                if let Err(error) = placed {
+                    let _ = window.destroy();
+                    state.images.lock().map_err(err)?.remove(&label);
+                    return Err(error);
+                }
+            }
             if let Ok(images) = state.images.lock() {
                 log_retained(&images, "created");
             }
@@ -464,7 +508,7 @@ pub(crate) fn create_visible(
     image: RgbaImage,
     annotations: Vec<crate::shared::annotations::Annotation>,
 ) -> Result<(), String> {
-    let pin = create(app, image, annotations)?;
+    let pin = create(app, image, annotations, None)?;
     if let Err(error) = pin.show().and_then(|_| pin.set_focus()) {
         let _ = pin.destroy();
         return Err(err(error));
@@ -882,12 +926,22 @@ pub async fn set_pin_view(
                 - (height * scale).ceil(),
         );
         window.set_always_on_top(view.topmost).map_err(err)?;
-        if let Err(error) = window
-            .set_size(LogicalSize::new(width, height))
-            .and_then(|_| {
+        // 置顶、锁定和透明度不能顺带重排原位贴图；旋转改变图像宽高时仍需重新适配。
+        let normal_size = LogicalSize::new(width, height).to_physical::<u32>(scale);
+        let source_size = layout.source_bounds(
+            PhysicalPosition::new(0, 0), pin.image.width(), pin.image.height(), scale, view.zoom,
+        ).1;
+        let needs_resize = view.zoom != pin.view.zoom
+            || view.toolbar_expanded != pin.view.toolbar_expanded
+            || (old_size != normal_size && old_size != source_size);
+        let resized = if needs_resize {
+            window.set_size(LogicalSize::new(width, height)).and_then(|_| {
                 window.set_position(PhysicalPosition::new(x.round() as i32, y.round() as i32))
             })
-        {
+        } else {
+            Ok(())
+        };
+        if let Err(error) = resized {
             let mut failures = Vec::new();
             for result in [
                 window.set_size(old_size),
@@ -1201,6 +1255,30 @@ pub async fn pin_action(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn capture_pin_keeps_image_origin_on_primary_negative_and_scaled_displays() {
+        let layout = PinLayout::load();
+        for scale in [1.0, 1.25, 1.5, 1.75, 2.0] {
+            for origin in [
+                PhysicalPosition::new(0, 0),
+                PhysicalPosition::new(320, 180),
+                PhysicalPosition::new(-1920, -600),
+            ] {
+                let inset = layout.image_inset(scale);
+                let (position, size) = layout.source_bounds(origin, 1233, 626, scale, 1.0);
+                assert_eq!(position.x + inset, origin.x);
+                assert_eq!(position.y + inset, origin.y);
+                assert_eq!(size.width - inset as u32 * 2, 1233);
+                assert!(f64::from(size.height) >= 626.0 + f64::from(inset) * 2.0
+                    + (layout.gap + layout.expanded_height) * scale);
+            }
+        }
+        // 小图在最小窗口内也从左上角开始，不因原生最小尺寸额外居中。
+        let origin = PhysicalPosition::new(-10, 15);
+        let (position, _) = layout.source_bounds(origin, 60, 40, 1.5, 1.0);
+        assert_eq!(position.x + layout.image_inset(1.5), origin.x);
+        assert_eq!(position.y + layout.image_inset(1.5), origin.y);
+    }
     #[test]
     fn known_pixel_revision_skips_image_payload_and_new_revision_refreshes_it() {
         let mut pin = grouped_pin("");

@@ -1,11 +1,11 @@
 <script setup lang="ts">
-import { handleEscape } from '@/shared/ui/escape'
+import { handleWindowEscape as handleEscape } from '@/shared/ui/escape'
 import { useAutoSave } from '@/shared/ui/use-auto-save'
 import SelectControl from '@/shared/ui/SelectControl.vue'
 import { updateSettings } from '@/features/settings/settings-write'
 import { t, te } from '@/shared/i18n/i18n'
 import { computed, defineAsyncComponent, onMounted, onUnmounted, ref } from 'vue'
-import { Camera, Keyboard, Info, Scan, PanelLeftClose, Pin, Video, Folder, CircleHelp, Settings as SettingsIcon, FileText, Check } from 'lucide-vue-next'
+import { Camera, Timer, Keyboard, Info, Scan, PanelLeftClose, Pin, Video, Folder, CircleHelp, Settings as SettingsIcon, FileText, Check } from 'lucide-vue-next'
 const DiagnosticsSettings = defineAsyncComponent(() => import('@/features/diagnostics/components/DiagnosticsSettings.vue'))
 const GeneralSettings = defineAsyncComponent(() => import('@/features/settings/components/GeneralSettings.vue'))
 const AiProviderSettings = defineAsyncComponent(() => import('@/features/recognition/components/AiProviderSettings.vue'))
@@ -195,11 +195,13 @@ onUnmounted(() => { disposed = true; window.removeEventListener('keydown', key);
         <OnboardingGuide v-if="onboarding && status" :settings="status.settings" :busy="completingOnboarding" @complete="completeOnboarding" @navigate="page = $event" />
         <template v-if="page === '截图'">
           <section class="capture-panel" :aria-label='t("截图操作")'>
-            <div class="capture-controls"><kbd v-if="status?.settings.shortcutsEnabled && status.settings.shortcuts.capture">{{ status.settings.shortcuts.capture }}</kbd>
-              <label for="quick-delay">{{ t('延时') }}</label>
-              <!-- 主页使用同一设置保存接口，确保按钮、托盘和快捷键的延时一致。 -->
-              <SelectControl id="quick-delay" :model-value="status?.settings.delaySeconds ?? 0" :options="[{ value: 0, label: t('无延时') }, { value: 3, label: t('3 秒') }, { value: 5, label: t('5 秒') }]" :disabled="locked" @update:model-value="changeDelay" />
-              <Button :disabled="locked" @click="start"><Camera :size="16" />{{ remaining > 0 ? `${remaining} ${t('秒后截图')}` : pending ? t('正在准备…') : t('开始截图') }}</Button>
+            <div class="capture-controls">
+              <div class="capture-delay">
+                <label for="quick-delay"><Timer :size="16" aria-hidden="true" />{{ t('延时') }}</label>
+                <!-- 主页使用同一设置保存接口，确保按钮、托盘和快捷键的延时一致。 -->
+                <SelectControl id="quick-delay" :model-value="status?.settings.delaySeconds ?? 0" :options="[{ value: 0, label: t('无延时') }, { value: 3, label: t('3 秒') }, { value: 5, label: t('5 秒') }]" :disabled="locked" @update:model-value="changeDelay" />
+              </div>
+              <Button class="capture-start" :disabled="locked" @click="start"><Camera :size="16" aria-hidden="true" />{{ remaining > 0 ? `${remaining} ${t('秒后截图')}` : pending ? t('正在准备…') : t('开始截图') }}</Button>
             </div>
           </section>
 

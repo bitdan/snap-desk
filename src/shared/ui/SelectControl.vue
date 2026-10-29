@@ -1,5 +1,7 @@
 <script setup lang="ts" generic="T extends string | number | null">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
+import { handleEscape } from './escape'
+import { useEscapeLayer } from './use-escape-layer'
 import { Check, ChevronDown, ChevronUp } from 'lucide-vue-next'
 import { SelectRoot, SelectTrigger, SelectPortal, SelectContent, SelectViewport, SelectItem, SelectItemText, SelectItemIndicator, SelectScrollUpButton, SelectScrollDownButton } from 'reka-ui'
 
@@ -7,6 +9,19 @@ defineOptions({ inheritAttrs: false })
 const props = defineProps<{ modelValue: T; options: { value: T; label: string; disabled?: boolean }[]; disabled?: boolean }>()
 const emit = defineEmits<{ 'update:modelValue': [value: T]; openChange: [open: boolean] }>()
 const selected = computed(() => props.options.findIndex(option => option.value === props.modelValue))
+const open = ref(false)
+function setOpen(value: boolean) {
+  if (open.value === value) return
+  open.value = value; emit('openChange', value)
+}
+useEscapeLayer(() => open.value, () => setOpen(false))
+function triggerKey(event: KeyboardEvent) {
+  // 收起状态的 Esc 交给所在弹层或窗口；其他按键仍保留控件原有的隔离行为。
+  if (!open.value && event.key === 'Escape') return
+  event.stopPropagation()
+  handleEscape(event, () => setOpen(false))
+}
+function menuKey(event: KeyboardEvent) { handleEscape(event, () => setOpen(false)) }
 // 菜单内部只传索引，保留 0、空字符串和 null 的领域语义。
 function choose(value: unknown) {
   if (typeof value !== 'string' || !/^\d+$/.test(value)) return
@@ -16,12 +31,12 @@ function choose(value: unknown) {
 </script>
 
 <template>
-  <SelectRoot :model-value="selected < 0 ? undefined : String(selected)" :disabled="disabled" @update:model-value="choose" @update:open="emit('openChange', $event)">
-    <SelectTrigger v-bind="$attrs" class="select-trigger" @pointerdown.stop @keydown.stop @contextmenu.stop>
+  <SelectRoot :open="open" :model-value="selected < 0 ? undefined : String(selected)" :disabled="disabled" @update:model-value="choose" @update:open="setOpen">
+    <SelectTrigger v-bind="$attrs" class="select-trigger" @pointerdown.stop @keydown="triggerKey" @contextmenu.stop>
       <span class="select-label">{{ options[selected]?.label ?? String(modelValue ?? '') }}</span><ChevronDown :size="14" aria-hidden="true" />
     </SelectTrigger>
     <SelectPortal>
-      <SelectContent class="select-menu" position="popper" :side-offset="5" :collision-padding="8" @pointerdown.stop @pointermove.stop @keydown.stop @contextmenu.stop>
+      <SelectContent class="select-menu" position="popper" :side-offset="5" :collision-padding="8" @pointerdown.stop @pointermove.stop @keydown.stop="menuKey" @contextmenu.stop>
         <SelectScrollUpButton class="select-scroll"><ChevronUp :size="14" /></SelectScrollUpButton>
         <SelectViewport class="select-viewport">
           <SelectItem v-for="(option, index) in options" :key="index" :value="String(index)" :disabled="option.disabled" class="select-item">

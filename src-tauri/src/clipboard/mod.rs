@@ -102,6 +102,34 @@ pub async fn clipboard_get_thumbnail(
     .await
 }
 #[tauri::command]
+/// 双击预览按历史 ID 读取原始 PNG；不接受路径，也不改写系统剪贴板。
+pub async fn clipboard_get_image(
+    app: AppHandle,
+    window: WebviewWindow,
+    id: i64,
+) -> Result<String, String> {
+    work(app, window, move |_, s| {
+        let d = s.data()?;
+        let _guard = d.operation.lock().map_err(|_| "历史存储忙碌。")?;
+        let stored = d.repo.get(id)?;
+        if stored.item.kind != Kind::Image {
+            return Err("此条目不是图片。".into());
+        }
+        let path = d.blobs.path(&stored.blob.ok_or("历史图片损坏。")?)?;
+        use std::io::Read;
+        // 1600 万像素的 PNG 允许编码开销，但损坏的文件不能无限读入 WebView。
+        const LIMIT: u64 = 72 * 1024 * 1024;
+        let mut bytes = Vec::new();
+        std::fs::File::open(path).map_err(|_| "历史图片不可用。")?
+            .take(LIMIT + 1).read_to_end(&mut bytes).map_err(|_| "历史图片读取失败。")?;
+        if bytes.len() as u64 > LIMIT {
+            return Err("历史图片大小异常。".into());
+        }
+        Ok(format!("data:image/png;base64,{}", STANDARD.encode(bytes)))
+    }).await
+}
+
+#[tauri::command]
 pub async fn clipboard_restore(
     app: AppHandle,
     window: WebviewWindow,

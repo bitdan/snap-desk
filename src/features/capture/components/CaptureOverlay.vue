@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import SelectControl from '@/shared/ui/SelectControl.vue'
-import { handleEscape } from '@/shared/ui/escape'
+import { handleWindowEscape as handleEscape } from '@/shared/ui/escape'
 import { t, te } from '@/shared/i18n/i18n'
 import { convertFileSrc } from '@tauri-apps/api/core'
 import ScrollCaptureIcon from '@/features/scroll/components/ScrollCaptureIcon.vue'

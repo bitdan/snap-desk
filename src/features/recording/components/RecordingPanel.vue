@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { useRecordingPolling } from '@/features/recording/use-recording-polling'
+import { useEscapeLayer } from '@/shared/ui/use-escape-layer'
 import { t, te } from '@/shared/i18n/i18n'
 import { onMounted, onUnmounted, ref } from 'vue'
 import RecordingPreferences from './RecordingPreferences.vue'
@@ -28,6 +29,7 @@ const changingDirectory = ref(false)
 const recoveries = ref<RecoverableRecording[]>([])
 const recoveredPath = ref('')
 const discardId = ref<string | null>(null)
+useEscapeLayer(() => discardId.value !== null, () => { if (!busy.value) discardId.value = null })
 async function discardRecovery(id: string) {
   if (busy.value || changingDirectory.value || recordingActive(view.value)) return
   busy.value = true; error.value = ''

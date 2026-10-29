@@ -29,7 +29,11 @@
 .app-shell :is(button,input,select,textarea):focus-visible { outline:2px solid var(--desk-accent); outline-offset:3px; }
 .app-shell button.inline-flex { border-radius:6px; gap:6px; font-weight:500; }
 .app-shell button.inline-flex:disabled { opacity:.45; }
-.app-shell .capture-controls { background:transparent; padding:0 0 16px; gap:12px; }
+.app-shell .capture-controls { justify-content:flex-start; background:transparent; padding:0 0 16px; gap:12px; }
+.app-shell .capture-delay { display:flex; align-items:center; gap:8px; }
+.app-shell .capture-delay label { display:inline-flex; align-items:center; gap:6px; color:var(--desk-muted); white-space:nowrap; }
+.app-shell .capture-delay .select-trigger { min-width:112px; min-height:36px; }
+.app-shell .capture-controls .capture-start { margin-left:auto; min-width:128px; min-height:36px; padding:6px 16px; }
 .app-shell .capture-panel { border-color:var(--desk-border); }
 .app-shell .tool-actionbar { display:flex; align-items:center; flex-wrap:wrap; gap:12px; justify-content:space-between; padding:0 0 16px; margin-bottom:16px; border-bottom:1px solid var(--desk-border); }
 .app-shell .tool-context { color:var(--desk-muted); font-size:12px; }

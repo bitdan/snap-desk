@@ -715,5 +715,9 @@
   "没有可贴图的文字。": "No text available to pin.",
   "文字贴图最多支持 1 MiB 文本，请分段贴图。": "Text pins support up to 1 MiB of text. Split it into smaller parts.",
   "剪贴板没有可读取的图片或文字。": "No readable image or text on the clipboard.",
-  "请选择文字或图片贴图。": "Choose text or an image to pin."
+  "请选择文字或图片贴图。": "Choose text or an image to pin.",
+  "历史图片损坏。": "The clipboard image is damaged.",
+  "历史图片不可用。": "The clipboard image is unavailable.",
+  "历史图片读取失败。": "Failed to read the clipboard image.",
+  "历史图片大小异常。": "The clipboard image size is invalid."
 }

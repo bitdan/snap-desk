@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useRecordingPolling } from '@/features/recording/use-recording-polling'
-import { handleEscape } from '@/shared/ui/escape'
+import { handleWindowEscape as handleEscape } from '@/shared/ui/escape'
 import { t, te } from '@/shared/i18n/i18n'
 import { onMounted, onUnmounted, ref } from 'vue'
 import { Pause, Play, Square, X, Pencil, Trash2 } from 'lucide-vue-next'

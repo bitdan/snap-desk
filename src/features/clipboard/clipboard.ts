@@ -23,6 +23,17 @@ export interface ClipboardExportResult { status: 'saved' | 'cancelled'; outputPa
 export function toggleSelection(ids: number[], id: number): number[] {
   return ids.includes(id) ? ids.filter(value => value !== id) : ids.length < 100 ? [...ids, id] : ids
 }
+
+export interface ClipboardSelectionGesture { toggle?: boolean; range?: boolean }
+/** 内容单击替换选择；复选框/Ctrl 保留顺序多选，Shift 按当前筛选列表连续选择。 */
+export function selectClipboardItems(ids: number[], id: number, ordered: number[], anchor: number | null, gesture: ClipboardSelectionGesture): number[] {
+  if (gesture.range && anchor !== null && ordered.includes(anchor) && ordered.includes(id)) {
+    const start = ordered.indexOf(anchor), end = ordered.indexOf(id)
+    const range = ordered.slice(Math.min(start, end), Math.max(start, end) + 1)
+    return [...new Set([...(gesture.toggle ? ids : []), ...range])].slice(0, 100)
+  }
+  return gesture.toggle ? toggleSelection(ids, id) : [id]
+}
 export function reorderSelection(ids: number[], from: number, to: number): number[] {
   if (!Number.isInteger(from) || !Number.isInteger(to) || from < 0 || to < 0 || from >= ids.length || to >= ids.length) return [...ids]
   const result = [...ids]; const [id] = result.splice(from, 1); result.splice(to, 0, id); return result

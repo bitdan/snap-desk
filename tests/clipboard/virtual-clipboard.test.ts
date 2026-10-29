@@ -32,6 +32,8 @@ class ElementNode {
   constructor(public tag: string) {}
   querySelector(selector: string): ElementNode | undefined {
     for (const child of this.children) {
+      const match = selector.match(/^\[data-history-index="(\d+)"\] (.+)$/)
+      if (match && child.dataset.historyIndex === match[1]) return child.querySelector(match[2])
       if (selector === '.history-item' && child.className === 'history-item') return child
       const nested = child.querySelector(selector)
       if (nested) return nested
@@ -40,12 +42,17 @@ class ElementNode {
 }
 afterEach(() => vi.unstubAllGlobals())
 
-it('mounts a bounded range and moves keyboard focus to an unmounted final row', async () => {
+it.each(['list', 'grid'] as const)('%s mounts a bounded range and focuses an unmounted item', async layout => {
   vi.stubGlobal('HTMLElement', ElementNode)
   const disconnect = vi.fn()
-  vi.stubGlobal('ResizeObserver', class { observe = vi.fn(); unobserve = vi.fn(); disconnect = disconnect })
+  let resized!: (entries: unknown[]) => void
+  vi.stubGlobal('ResizeObserver', class {
+    constructor(callback: typeof resized) { resized = callback }
+    observe = vi.fn(); unobserve = vi.fn(); disconnect = disconnect
+  })
   const renderer = createRenderer<ElementNode, ElementNode>({
-    createElement: tag => new ElementNode(tag),
+    // 原生 DOM 不会被 ref 代理；内存宿主同样保持 ResizeObserver target 的对象身份。
+    createElement: tag => Vue.markRaw(new ElementNode(tag)),
     createText: () => new ElementNode('text'), createComment: () => new ElementNode('comment'),
     setText: () => {}, setElementText: () => {},
     parentNode: node => node.parent,
@@ -64,22 +71,30 @@ it('mounts a bounded range and moves keyboard focus to an unmounted final row', 
     },
   })
   const items = ref(Array.from({ length: 5000 }, (_, id) => ({ id, kind: id % 2 ? 'image' : 'text' } as ClipboardItem)))
-  const list = ref<{ focusIndex(index: number): Promise<void>; resetScroll(): void } | null>(null)
-  const app = renderer.createApp({ setup: () => () => h(VirtualClipboardList, { ref: list, items: items.value }, {
+  const list = ref<{ focusIndex(index: number): Promise<void>; resetScroll(): void; columns: number } | null>(null)
+  const mode = ref(layout)
+  const app = renderer.createApp({ setup: () => () => h(VirtualClipboardList, { ref: list, items: items.value, layout: mode.value }, {
     default: ({ item }: { item: ClipboardItem }) => h('article', { class: 'history-item', 'data-id': item.id }),
   }) })
   const host = new ElementNode('host')
   app.mount(host)
   try {
     const viewport = host.children[0]
+    resized([{ target: viewport, contentRect: { width: 992, height: 300 } }])
+    await nextTick()
+    expect(list.value!.columns).toBe(layout === 'grid' ? 4 : 1)
     const rows = () => viewport.children.filter(node => node.dataset.historyId !== undefined)
     expect(rows().length).toBeLessThan(20)
     expect(rows().some(row => row.dataset.historyId === '4999')).toBe(false)
     await list.value!.focusIndex(4999)
     expect(rows().length).toBeLessThan(20)
-    expect(rows().find(row => row.dataset.historyId === '4999')!.querySelector('.history-item')!.focus).toHaveBeenCalled()
+    const item = (index: number) => rows().map(row => row.querySelector(`[data-history-index="${index}"] .history-item`)).find(Boolean)!
+    expect(item(4999).focus).toHaveBeenCalled()
     await list.value!.focusIndex(4998)
-    expect(rows().find(row => row.dataset.historyId === '4998')!.querySelector('.history-item')!.focus).toHaveBeenCalled()
+    expect(item(4998).focus).toHaveBeenCalled()
+    mode.value = layout === 'grid' ? 'list' : 'grid'
+    await nextTick()
+    expect(list.value!.columns).toBe(layout === 'grid' ? 1 : 4)
     list.value!.resetScroll()
     items.value = items.value.slice(0, 40)
     await nextTick()

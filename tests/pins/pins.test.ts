@@ -1,8 +1,21 @@
 import { describe, expect, it } from 'vitest'
 import layout from '../../src/features/pins/pin-layout.json'
-import { defaultPinAppearance, pinAppearanceStyle, validatePinAppearance, canEditPin, minimumZoom, pinDisplaySize, stepZoom } from '../../src/features/pins/pins'
+import { defaultPinAppearance, pinAppearanceStyle, validatePinAppearance, canEditPin, minimumZoom, pinDisplaySize, pinImagePadding, stepZoom } from '../../src/features/pins/pins'
 
 describe('pin display controls', () => {
+  it('matches the native image inset at fractional DPI without shifting the first image pixel', () => {
+    for (const pixelRatio of [1, 1.25, 1.5, 1.75, 2]) {
+      const inset = (pinImagePadding(pixelRatio) + layout.border) * pixelRatio
+      expect(inset).toBeCloseTo(Math.round((layout.padding + layout.border) * pixelRatio))
+      const viewportWidth = (1233 + Math.round(inset) * 2) / pixelRatio
+      const viewportHeight = (626 + Math.round(inset) * 2) / pixelRatio + layout.gap + layout.expandedHeight
+      const size = pinDisplaySize(1233, 626, 1, viewportWidth, viewportHeight, true, pixelRatio)
+      expect(size.imageWidth * pixelRatio).toBeCloseTo(1233)
+      expect(size.imageHeight * pixelRatio).toBeCloseTo(626)
+      expect(size.stageWidth).toBeCloseTo(size.imageWidth + layout.border * 2)
+      expect(size.stageHeight).toBeCloseTo(size.imageHeight + layout.border * 2)
+    }
+  })
   it('100% maps selected image pixels to screen pixels at Windows display scales', () => {
     for (const pixelRatio of [1, 1.25, 1.5, 2]) {
       const size = pinDisplaySize(1063, 788, 1, 1600, 1200, true, pixelRatio)

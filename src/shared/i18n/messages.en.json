@@ -949,5 +949,20 @@
   "移动到分组": "Move to group",
   "批量操作": "Batch actions",
   "边框颜色": "Border color",
-  "边框颜色需为六位十六进制颜色。": "Border color must be a six-digit hexadecimal color."
+  "边框颜色需为六位十六进制颜色。": "Border color must be a six-digit hexadecimal color.",
+  "单击选中 · Ctrl 多选 · Shift 连选 · 双击图片预览，文本复制": "Click to select · Ctrl for multiple · Shift for range · Double-click images to preview, text to copy",
+  "{0}，回车打开，空格选择，右键操作": "{0}; Enter to open, Space to select, right-click for actions",
+  "选择条目 {0}，双击预览图片": "Select entry {0}; double-click to preview image",
+  "显示方式": "View mode",
+  "列表视图": "List view",
+  "网格视图": "Grid view",
+  "图片预览": "Image preview",
+  "关闭图片预览": "Close image preview",
+  "历史图片原图": "Original clipboard image",
+  "历史图片预览失败。": "Could not display the clipboard image.",
+  "文字预览": "Text preview",
+  "Esc 关闭": "Esc to close",
+  "历史完整文字": "Full clipboard text",
+  "选择条目 {0}，双击预览": "Select entry {0}; double-click to preview",
+  "单击选中 · Ctrl 多选 · Shift 连选 · 双击文字或图片预览 · Ctrl+C 复制": "Click to select · Ctrl for multiple · Shift for range · Double-click text or images to preview · Ctrl+C to copy"
 }

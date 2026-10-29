@@ -1,6 +1,11 @@
 import type { PinView, PinAppearance } from '@/features/pins/types'
 import layout from '@/features/pins/pin-layout.json'
 
+/** 与原生窗口定位共用物理像素取整；125% / 150% DPI 下首像素也落在整数屏幕坐标。 */
+export function pinImagePadding(pixelRatio = 1): number {
+  return Math.round((layout.padding + layout.border) * pixelRatio) / pixelRatio - layout.border
+}
+
 /** 保持宽高比，短边至少 20 个逻辑像素；原图不足 20px 时也不能豁免。 */
 export function minimumZoom(width: number, height: number, pixelRatio = 1): number {
   return Math.max(0.1, layout.minVisibleSide * pixelRatio / Math.max(1, Math.min(width, height)))
@@ -12,8 +17,9 @@ export function pinDisplaySize(width: number, height: number, zoom: number, view
   const scale = Math.max(zoom, minimumZoom(width, height, pixelRatio)) / pixelRatio
   const imageWidth = width * scale, imageHeight = height * scale
   const border = layout.border * 2
-  const availableWidth = viewportWidth - layout.padding * 2
-  const availableHeight = viewportHeight - layout.padding * 2 - layout.gap - (expanded ? layout.expandedHeight : layout.collapsedHeight)
+  const padding = pinImagePadding(pixelRatio)
+  const availableWidth = viewportWidth - padding * 2
+  const availableHeight = viewportHeight - padding * 2 - layout.gap - (expanded ? layout.expandedHeight : layout.collapsedHeight)
   return {
     imageWidth, imageHeight,
     stageWidth: Math.max(layout.minVisibleSide + border, Math.min(imageWidth + border, availableWidth)),

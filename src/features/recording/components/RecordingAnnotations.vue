@@ -2,7 +2,7 @@
 import SelectControl from '@/shared/ui/SelectControl.vue'
 import { recordingPollInterval } from '../polling'
 import { useRecordingPolling } from '@/features/recording/use-recording-polling'
-import { handleEscape } from '@/shared/ui/escape'
+import { handleWindowEscape as handleEscape } from '@/shared/ui/escape'
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { listen } from '@tauri-apps/api/event'
 import { api } from '@/services/api'

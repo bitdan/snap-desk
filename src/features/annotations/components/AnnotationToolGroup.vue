@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { handleEscape } from '@/shared/ui/escape'
+import { useEscapeLayer } from '@/shared/ui/use-escape-layer'
 import { t } from '@/shared/i18n/i18n'
 import { computed, ref, watch } from 'vue'
 import { Check, ChevronDown } from 'lucide-vue-next'
@@ -9,6 +11,8 @@ import type { AnnotationTool } from '@/features/annotations/use-annotations'
 const props = defineProps<{ name: string; tools: AnnotationTool[]; selected: AnnotationTool; active: boolean; disabled: boolean; label?: string }>()
 const emit = defineEmits<{ select: [tool: AnnotationTool] }>()
 const open = ref(false)
+useEscapeLayer(() => open.value, () => { open.value = false })
+function dismissKey(event: KeyboardEvent) { handleEscape(event, () => { open.value = false }) }
 const recent = ref(props.tools[0]!)
 // 每组记住最后使用的工具；二次点击主按钮可以直接继续使用。
 watch(() => props.selected, tool => { if (props.tools.includes(tool)) recent.value = tool }, { immediate: true })
@@ -24,7 +28,7 @@ const items = computed(() => props.tools.map(tool => annotationTools.find(item =
       <DropdownMenuTrigger :disabled="disabled" class="group-trigger" :title="t(name)" :aria-label="t('选择{0}工具', { 0: t(name) })"><ChevronDown :size="12" /></DropdownMenuTrigger>
       <DropdownMenuPortal>
         <!-- Portal 避开工具行的滚动裁剪；菜单自行处理焦点、方向键、Esc 和屏幕边缘避让。 -->
-        <DropdownMenuContent class="annotation-group-menu" side="bottom" align="start" :side-offset="8" :collision-padding="8" :aria-label="t(name)" @pointerdown.stop @pointermove.stop @contextmenu.stop.prevent @keydown.stop>
+        <DropdownMenuContent class="annotation-group-menu" side="bottom" align="start" :side-offset="8" :collision-padding="8" :aria-label="t(name)" @pointerdown.stop @pointermove.stop @contextmenu.stop.prevent @keydown.stop="dismissKey">
           <DropdownMenuItem v-for="item in items" :key="item.tool" class="annotation-group-item" :disabled="disabled" @select="open = false; emit('select', item.tool)">
             <component :is="item.icon" :size="16" /><span>{{ t(item.name) }}</span><Check v-if="active && selected === item.tool" :size="14" class="chosen" aria-hidden="true" />
           </DropdownMenuItem>

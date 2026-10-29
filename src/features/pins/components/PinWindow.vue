@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import SelectControl from '@/shared/ui/SelectControl.vue'
-import { handleEscape } from '@/shared/ui/escape'
+import { handleWindowEscape as handleEscape } from '@/shared/ui/escape'
+import { useEscapeLayer } from '@/shared/ui/use-escape-layer'
 import { t, te } from '@/shared/i18n/i18n'
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { Pin, PinOff, Lock, Unlock, Minus, Plus, Copy, Save, EyeOff, X, ChevronDown, ChevronUp, Move, Undo2, Redo2, Trash2 } from 'lucide-vue-next'
@@ -13,7 +14,7 @@ import { annotationTools } from '@/features/annotations/annotation-tools'
 import { api, onPinVisibility } from '@/services/api'
 import { usePinImage } from '@/features/pins/pin-image'
 import type { PinView, PinAction, PinTransform } from '@/features/pins/types'
-import { canEditPin, minimumZoom, pinDisplaySize, stepZoom, defaultPinAppearance, pinAppearanceStyle } from '@/features/pins/pins'
+import { canEditPin, minimumZoom, pinDisplaySize, pinImagePadding, stepZoom, defaultPinAppearance, pinAppearanceStyle } from '@/features/pins/pins'
 import { onPinAppearance } from '@/features/pins/events'
 import layout from '@/features/pins/pin-layout.json'
 
@@ -69,6 +70,7 @@ const display = computed(() => pinDisplaySize(frame.value?.width ?? 20, frame.va
 const focused = ref(document.hasFocus())
 const annotating = ref(false)
 const contextMenu = ref<{ x: number; y: number } | null>(null)
+useEscapeLayer(() => contextMenu.value !== null, () => closeMenu(true))
 const menuElement = ref<HTMLElement | null>(null)
 let menuTrigger: HTMLElement | null = null
 const bounds = computed(() => ({ x: 0, y: 0, width: frame.value?.width ?? 0, height: frame.value?.height ?? 0 }))
@@ -78,7 +80,7 @@ const editor = useAnnotations(() => bounds.value, () => frame.value?.dataUrl ?? 
 })
 // 图片和底栏是两个网格区域；阴影占用外边距，底栏不再浮在图片上。
 const shellStyle = computed(() => ({
-  padding: `${layout.padding}px`, gap: `${layout.gap}px`,
+  padding: `${pinImagePadding(viewport.value.pixelRatio)}px`, gap: `${layout.gap}px`,
   // 显式限定列宽；长工具栏不能撑大隐式网格列，把居中的图片推到窗口外。
   gridTemplateColumns: 'minmax(0, 1fr)',
   gridTemplateRows: `minmax(${layout.minVisibleSide + layout.border * 2}px, 1fr) ${controls.value ? layout.expandedHeight : layout.collapsedHeight}px`,
@@ -155,7 +157,8 @@ function dismissMenu(event: PointerEvent) {
   if (!menuElement.value?.contains(event.target as Node)) closeMenu()
 }
 function menuKey(event: KeyboardEvent) {
-  if (event.key === 'Escape' || event.key === 'Tab') { event.preventDefault(); closeMenu(true); return }
+  if (handleEscape(event, () => closeMenu(true))) return
+  if (event.key === 'Tab') { event.preventDefault(); closeMenu(true); return }
   if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return
   event.preventDefault()
   const buttons = Array.from(menuElement.value?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)') ?? [])
@@ -200,7 +203,7 @@ async function opacity(event: Event) {
   input.value = String(Math.round((frame.value?.view.opacity ?? 1) * 100))
 }
 function key(event: KeyboardEvent) {
-  if (contextMenu.value) return
+  if (contextMenu.value) { handleEscape(event, () => closeMenu(true)); return }
   if (recognitionMode.value) {
     // 子面板处理过的 Esc 已 preventDefault；焦点意外落到外层时也只关面板。
     handleEscape(event, closeRecognition)
@@ -324,7 +327,7 @@ function closeOnResize() {
 
 <style scoped>
 .pin-shell { position: fixed; inset: 0; display: grid; justify-items: center; color: #374151; user-select: none; }
-.pin-stage { grid-row: 1; min-width: 0; min-height: 0; align-self: center; overflow: auto; border-style: solid; border-color: #a1a1aa; transition: border-color .12s, box-shadow .12s, border-radius .12s; }
+.pin-stage { grid-row: 1; min-width: 0; min-height: 0; align-self: start; justify-self: start; overflow: auto; border-style: solid; border-color: #a1a1aa; transition: border-color .12s, box-shadow .12s, border-radius .12s; }
 .pin-stage:focus-visible { outline:2px solid #3264df; outline-offset:2px; }
 .pin-canvas { display: flex; align-items: center; justify-content: center; min-width: 100%; min-height: 100%; width: max-content; height: max-content; }
 .pin-canvas img { flex: none; max-width: none; }

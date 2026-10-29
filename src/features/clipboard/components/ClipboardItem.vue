@@ -4,9 +4,14 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { ContextMenuRoot, ContextMenuTrigger, ContextMenuPortal, ContextMenuContent, ContextMenuItem, ContextMenuSeparator } from 'reka-ui'
 import { Copy, Star, Pin, Trash2, File, FileText, FileImage, FileArchive, FileCode, FileSpreadsheet, FileVideo, FileAudio, AppWindow, Folder } from 'lucide-vue-next'
 import { clipboardThumbnails } from '@/features/clipboard/clipboard-thumbnails'
-import type { ClipboardItem } from '@/features/clipboard/clipboard'
+import type { ClipboardItem, ClipboardSelectionGesture } from '@/features/clipboard/clipboard'
+import { handleEscape } from '@/shared/ui/escape'
+import { useEscapeLayer } from '@/shared/ui/use-escape-layer'
 const props = defineProps<{ item: ClipboardItem; selected: boolean; busy: boolean }>()
-const emit = defineEmits<{ select: []; restore: []; favorite: []; pin: []; delete: [] }>()
+const emit = defineEmits<{ select: [gesture?: ClipboardSelectionGesture]; preview: []; restore: []; favorite: []; pin: []; delete: [] }>()
+const menuOpen = ref(false)
+useEscapeLayer(() => menuOpen.value, () => { menuOpen.value = false })
+function menuKey(event: KeyboardEvent) { handleEscape(event, () => { menuOpen.value = false }) }
 // 根据扩展名提供类型图标，不读取源文件；没有扩展名时用通用图标，避免把文件误判为目录。
 const fileTypes = [
   { extensions: ['txt', 'md', 'log', 'rtf', 'doc', 'docx', 'odt', 'pdf'], icon: FileText, color: '#57606a' },
@@ -24,13 +29,20 @@ const visibleFiles = computed(() => (props.item.filePaths ?? []).slice(0, 4).map
   const type = fileTypes.find(type => type.extensions.includes(extension))
   return { path, name, icon: /[\\/]$/.test(path) ? Folder : type?.icon ?? File, color: type?.color ?? '#71717a' }
 }))
-/** 回车与双击复用右键菜单的复制接口；空格和复选框仍负责批量选择。 */
+/** 文字和图片回车/双击预览，Ctrl+C 复制；空格和复选框保留批量选择。 */
+function open() {
+  if (props.busy) return
+  if (props.item.kind === 'image' || props.item.kind === 'text') emit('preview')
+  else emit('restore')
+}
 function key(event: KeyboardEvent) {
   if (props.busy || event.repeat || event.isComposing || (event.target as HTMLElement).matches('input')) return
-  if (event.key === 'Enter' || ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'c')) {
+  if (event.key === 'Enter') {
+    event.preventDefault(); event.stopPropagation(); open()
+  } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'c') {
     event.preventDefault(); event.stopPropagation(); emit('restore')
-  } else if (event.key === ' ' && event.target === event.currentTarget) {
-    event.preventDefault(); emit('select')
+  } else if (event.key === ' ') {
+    event.preventDefault(); emit('select', { toggle: true })
   }
 }
 const root = ref<HTMLElement>(); const thumbnail = ref(''); const error = ref('')
@@ -38,7 +50,7 @@ const root = ref<HTMLElement>(); const thumbnail = ref(''); const error = ref(''
 function select(event: MouseEvent) {
   if (props.busy) return
   root.value?.focus({ preventScroll: true })
-  if (event.detail < 2) emit('select')
+  if (event.detail < 2) emit('select', { toggle: event.ctrlKey || event.metaKey, range: event.shiftKey })
 }
 let observer: IntersectionObserver | undefined; let disposed = false
 let request: AbortController | undefined
@@ -60,16 +72,16 @@ onMounted(() => {
 onUnmounted(() => { disposed = true; request?.abort(); observer?.disconnect(); thumbnail.value = '' })
 </script>
 <template>
-  <ContextMenuRoot>
+  <ContextMenuRoot v-model:open="menuOpen">
     <ContextMenuTrigger as-child :disabled="busy">
-      <article ref="root" class="history-item" :class="{ 'is-selected': selected }" tabindex="0" :aria-label="t('{0}，回车复制，空格选择，右键操作', { 0: item.kind === 'image' ? t('图片') : item.preview.slice(0, 80) })" @keydown="key" @click.self="select">
-        <input type="checkbox" :checked="selected" :disabled="busy" :aria-label="t('选择条目 {0}', { 0: item.id })" @change="$emit('select')" />
-        <button class="history-content" :disabled="busy" :aria-pressed="selected" :aria-label="t('选择条目 {0}，双击复制', { 0: item.id })" @click="select" @dblclick="emit('restore')">
-          <img v-if="thumbnail" :src="thumbnail" :alt='t("历史图片缩略图")' />
+      <article ref="root" class="history-item" :class="{ 'is-selected': selected }" tabindex="0" :aria-label="t('{0}，回车打开，空格选择，右键操作', { 0: item.kind === 'image' ? t('图片') : item.preview.slice(0, 80) })" @keydown="key" @click.self="select">
+        <input type="checkbox" :checked="selected" :disabled="busy" :aria-label="t('选择条目 {0}', { 0: item.id })" @change="emit('select', { toggle: true })" />
+        <button class="history-content" :disabled="busy" :aria-pressed="selected" :aria-label="t(item.kind === 'file' ? '选择条目 {0}，双击复制' : '选择条目 {0}，双击预览', { 0: item.id })" @click="select" @dblclick="open">
+          <img v-if="thumbnail" :src="thumbnail" :alt='t("历史图片缩略图")' draggable="false" />
           <span v-else-if="item.kind === 'image'" class="history-image-placeholder">{{ te(error) || t("图片 {0} × {1}", { 0: item.width, 1: item.height }) }}</span>
           <span v-else-if="item.kind === 'file'" class="history-files">
             <span v-for="(file, index) in visibleFiles" :key="index" class="history-file-row" :title="file.path"><component :is="file.icon" :size="18" :style="{ color: file.color }" aria-hidden="true" /><span class="history-file-name">{{ file.name }}</span></span>
-            <span v-if="(item.filePaths?.length ?? 0) > visibleFiles.length" class="history-file-more">{{ t("另有") }} {{ item.filePaths!.length - visibleFiles.length }} {{ t("项") }}</span>
+            <span v-if="(item.filePaths?.length ?? 0) > visibleFiles.length" class="history-file-more">{{ t("另有") }} {{ (item.filePaths?.length ?? 0) - visibleFiles.length }} {{ t("项") }}</span>
           </span>
           <span v-else class="history-text">{{ item.preview }}</span>
           <span class="history-meta"><span>{{ localizedDate(item.lastSeenAt) }} · {{ item.seenCount }} {{ t("次") }}</span><span>{{ item.favorite ? '★ ' : '' }}{{ item.kind === 'image' ? `${item.width} × ${item.height}` : item.kind === 'file' ? t("{0} 项 · 文件引用", { 0: item.filePaths?.length ?? 0 }) : `${item.byteSize} B` }}</span></span>
@@ -78,7 +90,7 @@ onUnmounted(() => { disposed = true; request?.abort(); observer?.disconnect(); t
     </ContextMenuTrigger>
     <!-- 复用菜单组件处理定位、边缘避让、点击外部关闭及键盘导航。 -->
     <ContextMenuPortal>
-      <ContextMenuContent class="history-context-menu" :collision-padding="8" :aria-label='t("历史条目操作")'>
+      <ContextMenuContent class="history-context-menu" :collision-padding="8" :aria-label='t("历史条目操作")' @keydown.stop="menuKey">
         <ContextMenuItem :disabled="busy" @select="$emit('restore')"><Copy :size="15" />{{ t("复制") }}</ContextMenuItem>
         <ContextMenuItem v-if="item.kind === 'image' || item.kind === 'text'" :disabled="busy" @select="$emit('pin')"><Pin :size="15" />{{ t("悬浮贴图") }}</ContextMenuItem>
         <ContextMenuSeparator class="history-menu-separator" />

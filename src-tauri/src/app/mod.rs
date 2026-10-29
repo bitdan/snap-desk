@@ -352,6 +352,7 @@ pub fn run() {
             clipboard::clipboard_list,
             clipboard::clipboard_get_text,
             clipboard::clipboard_get_thumbnail,
+            clipboard::clipboard_get_image,
             clipboard::clipboard_restore,
             clipboard::clipboard_pin_item,
             clipboard::clipboard_set_favorite,

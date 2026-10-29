@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { handleEscape } from '@/shared/ui/escape'
+import { handleWindowEscape as handleEscape } from '@/shared/ui/escape'
 import { t, te } from '@/shared/i18n/i18n'
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { Save, X, AlertCircle } from 'lucide-vue-next'

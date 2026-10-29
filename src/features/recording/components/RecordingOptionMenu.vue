@@ -1,9 +1,13 @@
 <script setup lang="ts">
+import { handleEscape } from '@/shared/ui/escape'
+import { useEscapeLayer } from '@/shared/ui/use-escape-layer'
 import { ref, watch } from 'vue'
 import { ChevronDown } from 'lucide-vue-next'
 import { PopoverRoot, PopoverTrigger, PopoverPortal, PopoverContent } from 'reka-ui'
 const props = defineProps<{ label: string; disabled: boolean; status?: string; active?: boolean; wide?: boolean }>()
 const open = ref(false)
+useEscapeLayer(() => open.value, () => { open.value = false })
+function dismissKey(event: KeyboardEvent) { handleEscape(event, () => { open.value = false }) }
 watch(() => props.disabled, disabled => { if (disabled) open.value = false })
 </script>
 
@@ -12,7 +16,7 @@ watch(() => props.disabled, disabled => { if (disabled) open.value = false })
     <PopoverTrigger class="recording-option-trigger" :class="{ 'option-active': active }" :disabled="disabled" :aria-label="status ? `${label} · ${status}` : label" :title="label">{{ label }}<span v-if="status" class="recording-option-status">{{ status }}</span><ChevronDown :size="12" /></PopoverTrigger>
     <PopoverPortal>
       <!-- Portal 避免被单行工具栏裁剪；Esc 仅关闭当前选项菜单。 -->
-      <PopoverContent class="recording-option-popup" :class="{ 'recording-option-popup-wide': wide }" side="top" align="start" :side-offset="6" :collision-padding="8" :aria-label="label" @pointerdown.stop @pointermove.stop @keydown.stop @contextmenu.stop.prevent>
+      <PopoverContent class="recording-option-popup" :class="{ 'recording-option-popup-wide': wide }" side="top" align="start" :side-offset="6" :collision-padding="8" :aria-label="label" @pointerdown.stop @pointermove.stop @keydown.stop="dismissKey" @contextmenu.stop.prevent>
         <slot />
       </PopoverContent>
     </PopoverPortal>

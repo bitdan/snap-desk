@@ -1,12 +1,23 @@
 import { describe, expect, it, vi } from 'vitest'
 import { defaultSettings, validateShortcuts } from '../../src/features/settings/settings'
-import { defaultClipboardSettings, reorderSelection, toggleSelection } from '../../src/features/clipboard/clipboard'
+import { defaultClipboardSettings, reorderSelection, toggleSelection, selectClipboardItems } from '../../src/features/clipboard/clipboard'
 const mocks = vi.hoisted(() => ({ invoke: vi.fn(), listen: vi.fn() }))
 vi.mock('@tauri-apps/api/core', () => ({ invoke: mocks.invoke, isTauri: () => true }))
 vi.mock('@tauri-apps/api/event', () => ({ listen: mocks.listen }))
 import { api, onClipboardChanged, onClipboardError, onClipboardState, onClipboardOpen } from '../../src/services/api'
 
 describe('历史配置及选择顺序', () => {
+  it('普通单击替换且重复点击不取消，Ctrl 切换，Shift 按可见顺序连选', () => {
+    const order = [9, 7, 5, 3, 1]
+    expect(selectClipboardItems([9, 7], 5, order, 7, {})).toEqual([5])
+    expect(selectClipboardItems([5], 5, order, 5, {})).toEqual([5])
+    expect(selectClipboardItems([9], 5, order, 9, { toggle: true })).toEqual([9, 5])
+    expect(selectClipboardItems([9, 5], 5, order, 9, { toggle: true })).toEqual([9])
+    expect(selectClipboardItems([9], 1, order, 7, { range: true })).toEqual([7, 5, 3, 1])
+    expect(selectClipboardItems([9], 1, order, 5, { range: true, toggle: true })).toEqual([9, 5, 3, 1])
+    expect(selectClipboardItems([9], 1, order, 100, { range: true })).toEqual([1])
+    expect(selectClipboardItems([], 150, Array.from({ length: 150 }, (_, i) => i + 1), 1, { range: true })).toHaveLength(100)
+  })
   it('默认关闭，不共享可变配置，历史键参加冲突检测', () => {
     const settings = defaultSettings()
     expect(settings.clipboard.enabled).toBe(false)
@@ -29,6 +40,8 @@ describe('历史配置及选择顺序', () => {
 })
 describe('历史 IPC 契约', () => {
   it('查询、操作与导出只提交类型化参数和 ID', async () => {
+    await api.clipboardImage(9)
+    expect(mocks.invoke).toHaveBeenLastCalledWith('clipboard_get_image', { id: 9 })
     await api.clipboardList({ keyword: '中文%', kind: 'text', limit: 40, cursor: '123:9' })
     expect(mocks.invoke).toHaveBeenLastCalledWith('clipboard_list', { query: { keyword: '中文%', kind: 'text', limit: 40, cursor: '123:9' } })
     await api.clipboardList({ keyword: 'report.pdf', kind: 'file', limit: 40 })
