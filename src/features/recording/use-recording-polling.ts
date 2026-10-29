@@ -15,7 +15,7 @@ export function useRecordingPolling(refresh: () => Promise<void>, phase: () => R
     refresh, interval: () => options.intervalMs?.() ?? recordingPollInterval(phase()), onError,
     visible: async () => {
       if (options.enabled && !options.enabled()) return false
-      // 录屏接管和回放窗口在隐藏时挂载，必须先取得快照才能渲染首屏。
+      // 录屏控制窗口在隐藏时挂载，必须先取得快照才能渲染首屏。
       // 仅首次绕过可见性；之后隐藏窗口仍停止业务查询，不依赖可能错过的显示事件。
       if (initialSnapshot) { initialSnapshot = false; return true }
       if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return false

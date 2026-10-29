@@ -45,23 +45,14 @@ pub fn run() {
         .manage(capture::recording::RecordingState::default())
         .manage(capture::recording::live_annotations::LiveAnnotationState::default())
         .manage(capture::recording::result::ResultState::default())
-        .manage(capture::recording::editing::EditState::default())
         .manage(capture::recording::ExitState::default())
         .manage(pins::PinState::default())
-        .manage(capture::scroll::chrome::RecordingPreviewState::default())
         // 截图图片仅允许截图 WebView 读取；异步协议避免大响应复制占用 UI 线程。
         .register_asynchronous_uri_scheme_protocol("capture-image", |context, request, responder| {
             let app = context.app_handle().clone();
             let allowed = context.webview_label() == "capture";
             tauri::async_runtime::spawn_blocking(move || {
                 responder.respond(capture::preview::serve(&app.state::<CaptureState>(), allowed, request));
-            });
-        })
-        .register_asynchronous_uri_scheme_protocol("recording", |context, request, responder| {
-            let app = context.app_handle().clone();
-            let main = matches!(context.webview_label(), "main" | "recording-controls");
-            tauri::async_runtime::spawn_blocking(move || {
-                responder.respond(capture::recording::editing::preview(&app, main, request));
             });
         })
         .plugin(
@@ -314,7 +305,7 @@ pub fn run() {
                     if window.label() == "recording-controls" {
                         let app = window.app_handle().clone();
                         tauri::async_runtime::spawn_blocking(move || {
-                            capture::recording::close_completed_preview(&app);
+                            capture::recording::close_completed_controls(&app);
                         });
                     }
                 } else if window.label() == "main" {
@@ -409,10 +400,6 @@ pub fn run() {
             capture::scroll::session::control_scroll,
             capture::recording::start_recording,
             capture::recording::current_recording,
-            capture::recording::editing::prepare_recording_editor,
-            capture::recording::editing::close_recording_editor,
-            capture::recording::editing::trim_recording,
-            capture::recording::editing::cancel_recording_trim,
             capture::recording::result::latest_recording_result,
             capture::recording::result::recording_result_action,
             capture::recording::recovery::recoverable_recordings,
@@ -424,12 +411,11 @@ pub fn run() {
             capture::recording::control_recording,
             capture::recording::live_annotations::current_recording_annotations,
             capture::recording::live_annotations::set_recording_annotation_mode,
+            capture::recording::live_annotations::set_recording_annotation_regions,
             capture::recording::live_annotations::set_recording_annotation_tools,
             capture::recording::live_annotations::recording_annotation_editor_action,
             capture::recording::live_annotations::finish_recording_annotation_editor_action,
             capture::recording::live_annotations::publish_recording_annotation_editor,
-            capture::recording::editing::save_recording_project,
-            capture::recording::result::open_recording_project,
             capture::recording::live_annotations::update_recording_annotations,
             pins::pin_clipboard,
             pins::pin_file,
@@ -452,7 +438,6 @@ pub fn run() {
             // 录屏的退出流程完成后才收到 Exit；等待历史在途写入释放。
             if matches!(event, tauri::RunEvent::Exit) {
                 log::info!("event=app.exiting module=app");
-                capture::recording::editing::shutdown(app);
                 resource_lifecycle::shutdown(app);
                 translation::cancel_all(app);
                 local_translation::shutdown(app);

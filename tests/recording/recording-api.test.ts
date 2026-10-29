@@ -21,16 +21,12 @@ describe('录屏 IPC 契约', () => {
     await api.updateRecordingAnnotations(42, [])
     expect(invoke).toHaveBeenLastCalledWith('update_recording_annotations', { id: 42, shapes: [], knownRevision: null })
   })
-  it('工具和项目命令使用会话 ID 或编辑 token，不向后端发送文件路径', async()=>{
+  it('标注工具命令使用会话 ID，不向后端发送文件路径', async()=>{
     const tools=defaultRecordingAnnotationTools()
     await api.setRecordingAnnotationTools(42,tools)
     expect(invoke).toHaveBeenLastCalledWith('set_recording_annotation_tools',{id:42,tools})
-    await api.saveRecordingProject(9,[])
-    expect(invoke).toHaveBeenLastCalledWith('save_recording_project',{token:9,annotations:[]})
     await api.updateRecordingAnnotations(42, [], 3)
     expect(invoke).toHaveBeenLastCalledWith('update_recording_annotations',{id:42,shapes:[],knownRevision:3})
-    await api.openRecordingProject()
-    expect(invoke).toHaveBeenLastCalledWith('open_recording_project',undefined)
   })
   it('共享编辑器的动作、状态和确认均限定会话及请求编号',async()=>{
     await api.recordingAnnotationEditorAction(42,{kind:'style',style:{color:'#123456'}})

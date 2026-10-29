@@ -60,9 +60,6 @@ pub(crate) fn release(app: &AppHandle, label: &str) {
     let Ok(_operation) = state.operation.lock() else { return };
     if let Some(window) = app.get_webview_window(label) {
         if state.policy == Policy::LazyRelease {
-            if label == "recording-controls" {
-                crate::capture::recording::editing::release_window(app, label);
-            }
             if window.destroy().is_err() {
                 // 销毁失败也先收起，避免异常辅助窗口挡住桌面；记录固定事件，不写用户内容。
                 let _ = window.hide();

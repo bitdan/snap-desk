@@ -124,8 +124,10 @@ impl MediaFoundation {
         let height = (height + 1) & !1;
         unsafe {
             let mut attributes = None;
-            MFCreateAttributes(&mut attributes, 2)?;
+            MFCreateAttributes(&mut attributes, 3)?;
             let attributes = attributes.unwrap();
+            // 临时输出路径不一定有扩展名；显式声明 MP4 容器，避免系统根据文件名猜测格式。
+            attributes.SetGUID(&MF_TRANSCODE_CONTAINERTYPE, &MFTranscodeContainerType_MPEG4)?;
             // 采集线程负责节奏；写入线程不按播放速度限流，拥堵由有界队列丢帧。
             attributes.SetUINT32(&MF_SINK_WRITER_DISABLE_THROTTLING, 1)?;
             attributes.SetUINT32(
@@ -392,10 +394,12 @@ mod tests {
 
     /// 合成音频验证真实 AAC/H.264 封装，不访问用户设备；需要 Windows 媒体组件。
     #[test]
-    fn aac_and_static_video_are_muxed_with_monotonic_timestamps() {
+    fn extensionless_output_muxes_aac_and_static_video_with_monotonic_timestamps() {
         use super::super::Encoder;
         let root = tempfile::tempdir().unwrap();
-        let path = root.path().join("audio-video.mp4");
+        // 与恢复中心的另存临时文件一致，不允许依赖 .mp4 后缀才能初始化容器。
+        let path = root.path().join("snapdesk-pending-audio-video");
+        assert!(path.extension().is_none());
         let mut encoder = MediaFoundation::new(&path, 64, 64, 30, 1_000_000,
             EncodingPreference::Software, true).unwrap();
         encoder.push(&BgraImage::new(64, 64), 0).unwrap();

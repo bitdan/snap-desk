@@ -1,7 +1,0 @@
-{
-  "$schema": "../gen/schemas/desktop-schema.json",
-  "identifier": "recording-editor",
-  "description": "Allow the recording replay move handle to drag its existing window.",
-  "windows": ["recording-controls"],
-  "permissions": ["core:window:allow-start-dragging"]
-}

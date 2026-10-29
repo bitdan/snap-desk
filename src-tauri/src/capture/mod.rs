@@ -348,12 +348,12 @@ fn prepare(app: &AppHandle, recording: bool, mut latency: Latency) -> Result<(),
         window.set_ignore_cursor_events(false).map_err(err)?;
         window.set_content_protected(false).map_err(err)?;
     }
-    // 旧回放属于捕获排除窗口，先真正收起再截图；部分桌面截图路径会把可见的排除窗口画成黑矩形。
-    let replay_visible = app
+    // 旧控制条属于捕获排除窗口，先真正收起再截图；部分桌面截图路径会把可见的排除窗口画成黑矩形。
+    let controls_visible = app
         .get_webview_window("recording-controls")
         .is_some_and(|window| window.is_visible().unwrap_or(false));
-    recording::dismiss_completed_preview(app);
-    if replay_visible {
+    recording::dismiss_completed_controls(app);
+    if controls_visible {
         *app.state::<CaptureState>().hidden_at.lock().map_err(err)? = Some(Instant::now());
     }
     // 已经隐藏超过 180ms 的常驻蒙层不再固定等待；刚关闭后立刻重截仍等待剩余时间。

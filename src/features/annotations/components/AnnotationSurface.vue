@@ -55,7 +55,15 @@ const handles = computed(() => {
   return [ ['nw', 0, 0], ['n', .5, 0], ['ne', 1, 0], ['e', 1, .5], ['se', 1, 1], ['s', .5, 1], ['sw', 0, 1], ['w', 0, .5] ].map(([name, x, y]) => ({ name: String(name), x: b.x + Number(x) * b.width, y: b.y + Number(y) * b.height }))
 })
 function point(event: PointerEvent): Point {
-  const box = (event.currentTarget as SVGSVGElement).getBoundingClientRect()
+  const svg = event.currentTarget as SVGSVGElement
+  // 录后预览使用 meet 保留视频比例；逆矩阵同时扣除黑边和缩放，不能按整个容器拉伸坐标。
+  const matrix = svg.getScreenCTM?.()
+  if (matrix) {
+    const point = svg.createSVGPoint(); point.x = event.clientX; point.y = event.clientY
+    const local = point.matrixTransform(matrix.inverse())
+    return { x: local.x, y: local.y }
+  }
+  const box = svg.getBoundingClientRect()
   return { x: (event.clientX - box.left) * props.width / box.width, y: (event.clientY - box.top) * props.height / box.height }
 }
 function down(event: PointerEvent) {
@@ -73,7 +81,9 @@ function down(event: PointerEvent) {
   if (p.x < b.x || p.y < b.y || p.x > b.x + b.width || p.y > b.y + b.height) return
   const handle = (event.target as Element).getAttribute('data-handle') as Handle | 'start' | 'end' | null
   const svg = event.currentTarget as SVGSVGElement
-  props.editor.begin(p, 6 * props.width / svg.getBoundingClientRect().width, handle ?? undefined)
+  const matrix = svg.getScreenCTM?.()
+  const scale = matrix ? Math.hypot(matrix.a, matrix.b) : svg.getBoundingClientRect().width / props.width
+  props.editor.begin(p, 6 / Math.max(Number.EPSILON, scale), handle ?? undefined)
   if (props.editor.interacting && !props.editor.textEditing) svg.setPointerCapture(event.pointerId)
 }
 async function up() {

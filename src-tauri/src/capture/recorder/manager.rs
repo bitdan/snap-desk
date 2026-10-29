@@ -8,14 +8,12 @@ use std::{
 mod audio;
 mod annotation_track;
 mod annotation_layer;
-pub mod project;
 mod capture;
 mod compositor;
 mod config;
 #[cfg(test)]
 #[path = "countdown_tests.rs"]
 mod countdown_tests;
-pub mod editing;
 mod encoder;
 mod frame;
 mod gif;
@@ -199,9 +197,9 @@ pub enum RecordingAction {
     Cancel,
 }
 
-/// Alt+F4 只关闭已经完成的回放，不能意外中止仍在录制/封装的视频。
-pub fn dismiss_completed_preview(app: &AppHandle) {
-    // 进入新框选前暂时隐藏；截图成功才销毁，失败仍能返回原回放。
+/// Alt+F4 只关闭已经结束的控制条，不能意外中止仍在录制/封装的视频。
+pub fn dismiss_completed_controls(app: &AppHandle) {
+    // 进入新框选前隐藏上一轮已经结束的控制条。
     let state = app.state::<RecordingState>();
     let completed = state.0.lock().ok().is_some_and(|guard| {
         guard.as_ref().is_some_and(|s| !active(s.view.phase))
@@ -209,8 +207,8 @@ pub fn dismiss_completed_preview(app: &AppHandle) {
     if completed { chrome::hide_recording(app); }
 }
 
-/// Alt+F4 明确关闭回放；与新框选前的临时隐藏分开处理。
-pub fn close_completed_preview(app: &AppHandle) {
+/// Alt+F4 关闭已经结束的控制条，成品文件不受影响。
+pub fn close_completed_controls(app: &AppHandle) {
     let id = app.state::<RecordingState>().0.lock().ok().and_then(|guard| {
         guard.as_ref().filter(|s| !active(s.view.phase)).map(|s| s.view.id)
     });
@@ -230,12 +228,9 @@ pub fn control(app: &AppHandle, id: Option<u64>, action: RecordingAction) -> Res
     // 已完成/取消的同会话停止动作幂等；旧 ID 不能触及新会话。
     if !active(s.view.phase) {
         if matches!(action, RecordingAction::Cancel) {
-            // 完成后的关闭只收起回放，不删除已保存的录像；旧会话 ID 仍在上方校验。
-            let closed_id = s.view.id;
+            // 完成后的关闭只收起控制条，不删除已保存的录像；旧会话 ID 仍在上方校验。
             drop(guard);
             chrome::hide_recording(app);
-            // 保留模式通知前端卸载播放器；释放模式还会销毁整个 WebView。
-            let _ = app.emit_to("recording-controls", "recording-preview-closed", closed_id);
             chrome::release_recording(app);
             return Ok(());
         }

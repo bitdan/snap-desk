@@ -97,12 +97,19 @@ describe('共享标注工具栏分行与折叠', () => {
     expect(all(n => n.props['data-annotation-tool'], row('标注工具'))).toHaveLength(annotationTools.length)
     expect(all(n => n.props['aria-label'] === '清空标注', row('标注工具'))).toHaveLength(1)
   })
-  it('录制默认展开覆盖此前的折叠偏好，仍可主动收起', async () => {
+  it('宿主默认展开尊重此前保存的折叠偏好', async () => {
     storage.getItem.mockReturnValue('false')
     await mount(true, true)
+    expect(all(n => n.type === 'tool-group')).toHaveLength(7)
+    expect(row('展开工具栏').props['aria-expanded']).toBe(false)
+  })
+  it('首次使用遵循宿主默认值，跨窗口变更同步展开状态', async () => {
+    await mount(true, true)
     expect(all(n => n.props['data-annotation-tool'])).toHaveLength(annotationTools.length)
-    expect(row('折叠工具栏').props['aria-expanded']).toBe(true)
-    row('折叠工具栏').props.onClick(); await Vue.nextTick()
+    storage.getItem.mockReturnValue('false')
+    const sync = vi.mocked(window.addEventListener).mock.calls.find(call => call[0] === 'storage')![1] as (event: StorageEvent) => void
+    sync({ key: 'snap-desk.capture-toolbar-expanded.v1' } as StorageEvent)
+    await Vue.nextTick()
     expect(all(n => n.type === 'tool-group')).toHaveLength(7)
   })
 })

@@ -1,8 +1,7 @@
 <script setup lang="ts">
 import { useRecordingPolling } from '@/features/recording/use-recording-polling'
 import { t, te } from '@/shared/i18n/i18n'
-import { nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
-import RecordingEditor from '@/features/recording/components/RecordingEditor.vue'
+import { onMounted, onUnmounted, ref } from 'vue'
 import Button from '@/shared/ui/button/Button.vue'
 import { api, desktop } from '@/services/api'
 import type { RecoverableRecording, RecordingResult, RecordingResultAction } from '@/features/recording/recording'
@@ -25,8 +24,6 @@ async function discardRecovery(id: string) {
   finally { busy.value = false }
 }
 const result = ref<RecordingResult | null>(null)
-const editorOpen = ref(false)
-watch(() => result.value?.id, () => { editorOpen.value = false })
 const resultBusy = ref(false)
 const resultMessage = ref('')
 async function loadResult() {
@@ -38,21 +35,13 @@ async function loadResult() {
     result.value = next
   }
 }
-async function openProject() {
-  if (busy.value || recordingActive(view.value)) return
-  busy.value=true; error.value=''
-  try {
-    const next=await api.openRecordingProject()
-    if (next && !disposed) { result.value=next; await nextTick(); editorOpen.value=true }
-  } catch(e) { if(!disposed) error.value=String(e) } finally { busy.value=false }
-}
 async function resultAction(action: RecordingResultAction) {
   if (!result.value || resultBusy.value) return
   const id = result.value.id
   resultBusy.value = true; error.value = ''; resultMessage.value = ''
   try {
     await api.recordingResultAction(id, action)
-    if (result.value?.id === id) resultMessage.value = action === 'copyPath' ? '路径已复制。' : action === 'preview' ? '已请求系统播放器打开录屏。' : '已打开保存目录。'
+    if (result.value?.id === id) resultMessage.value = action === 'copyPath' ? '路径已复制。' : '已打开保存目录。'
   } catch (e) { error.value = String(e) }
   finally { resultBusy.value = false }
 }
@@ -115,7 +104,6 @@ onUnmounted(() => { disposed = true })
 
 <template>
   <section>
-    <Button class="mb-3" variant="outline" :disabled="busy || recordingActive(view)" @click="openProject">{{ t("打开录屏项目") }}</Button>
     <div v-if="error" class="notice error" role="alert">{{ te(error) }}</div>
     <p v-if="recoveredPath" class="notice break-all" role="status">{{ t("已重新导出：") }}{{ recoveredPath }}</p>
     <div v-if="result" class="settings-card mb-3">
@@ -123,12 +111,9 @@ onUnmounted(() => { disposed = true })
       <p class="py-2 break-all font-medium">{{ result.filename }}</p>
       <p class="break-all text-xs text-zinc-500">{{ result.path }}</p>
       <div class="flex flex-wrap gap-2 py-4">
-        <Button v-if="!editorOpen" :disabled="resultBusy || recordingActive(view)" @click="editorOpen = true">{{ t("预览与裁剪") }}</Button>
-        <Button variant="outline" :disabled="resultBusy || recordingActive(view)" :title='t("使用系统默认播放器打开 MP4 / GIF")' @click="resultAction('preview')">{{ t("预览（系统播放器）") }}</Button>
         <Button variant="outline" :disabled="resultBusy" @click="resultAction('openDirectory')">{{ t("打开目录") }}</Button>
         <Button variant="ghost" :disabled="resultBusy" @click="resultAction('copyPath')">{{ t("复制路径") }}</Button>
       </div>
-      <RecordingEditor v-if="editorOpen" :key="result.id" :result-id="result.id" :disabled="recordingActive(view)" @close="editorOpen = false" />
       <p v-if="resultMessage" class="text-sm pb-3" role="status">{{ t(resultMessage) }}</p>
     </div>
     <div class="mb-3">

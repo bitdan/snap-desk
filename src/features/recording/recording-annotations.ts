@@ -20,7 +20,6 @@ export const prepareRecordingRaster: typeof prepareRaster = async (shape, url, c
 
 /** 时间全部来自 Rust 媒体 PTS，暂停期间不推进。 */
 export interface TimedAnnotation { id: string; shape: Annotation; startMs: number; endMs: number | null; fadeOutMs: number; order: number }
-export interface RecordingProject { version: number; width: number; height: number; fps: number; durationMs: number; format: 'mp4' | 'gif'; annotations: TimedAnnotation[] }
 export interface RecordingAnnotationTools {
   tool: AnnotationTool; color: string; width: number; opacity: number; fontSize: number; fontFamily: 'sans' | 'serif' | 'mono'; magnification: number; lifetimeMs: number; fadeOutMs: number
 }

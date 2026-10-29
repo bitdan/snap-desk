@@ -74,5 +74,5 @@ export function useFloatingToolbar(element: Ref<HTMLElement | null>) {
   function reset() { end(); position.value = null }
   window.addEventListener('resize', resized)
   onUnmounted(() => { end(); window.removeEventListener('resize', resized) })
-  return { style, start, reset }
+  return { style, start, reset, size, viewport }
 }

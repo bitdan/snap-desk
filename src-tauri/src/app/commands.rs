@@ -57,15 +57,6 @@ pub(super) async fn open_project_homepage(window: WebviewWindow) -> Result<(), S
 /// 主窗口的录屏按钮直接进入录屏框选，复用全局录屏动作的采集入口。
 #[tauri::command]
 pub(super) async fn select_recording_area(app: AppHandle, window: WebviewWindow) -> Result<(), String> {
-    // 回放工具条的“重新录制”与主窗口共用框选入口；其他辅助窗口仍不能触发。
-    if !matches!(window.label(), "main" | "recording-controls") {
-        return Err("当前窗口无权选择录屏范围。".into());
-    }
-    let from_replay = window.label() == "recording-controls";
-    let result = capture::begin_recording(app.clone()).await;
-    if result.is_err() && from_replay {
-        // 重新框选失败时回到原选区，已保存的成品仍可继续编辑。
-        let _ = capture::scroll::chrome::show_recording_preview(&app);
-    }
-    result
+    require_window(&window, "main")?;
+    capture::begin_recording(app).await
 }

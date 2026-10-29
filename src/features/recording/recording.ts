@@ -81,10 +81,8 @@ export function recordingSpaceAction(event: KeyboardEvent, phase?: RecordingPhas
   return phase === 'ready' ? 'start' : phase === 'recording' ? 'pause' : phase === 'paused' ? 'resume' : null
 }
 /** 本次运行最近一次成功导出，包含恢复导出；路径只供展示，操作只传 ID。 */
-export interface RecordingReplayRegion { left: number; top: number; width: number; height: number }
-export interface RecordingReplayLayout { x: number; y: number; width: number; height: number; video: RecordingReplayRegion; toolbar: RecordingReplayRegion }
-export interface RecordingResult { id: number; path: string; filename: string; replayLayout?: RecordingReplayLayout | null }
-export type RecordingResultAction = 'preview' | 'openDirectory' | 'copyPath'
+export interface RecordingResult { id: number; path: string; filename: string }
+export type RecordingResultAction = 'openDirectory' | 'copyPath'
 /** 与 Rust RecordingStats 一致，耗时为累计毫秒；空取样不是丢帧。 */
 export interface RecordingDiagnostics {
   capturePolls: number; capturedFrames: number; captureMillis: number;

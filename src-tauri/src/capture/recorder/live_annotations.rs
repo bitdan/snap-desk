@@ -1,5 +1,7 @@
 //! 录制中的标注：桌面浮层只负责交互，编码帧使用各自持有的不可变标注快照。
-//! 绘制时接收输入，展示时整窗穿透；控制条独立，标注快照由编码线程写入 MP4/GIF。
+//! 绘制时仅选区和浮动工具栏接收输入，展示时整窗穿透；标注快照由编码线程写入 MP4/GIF。
+#[path = "live_annotation_regions.rs"]
+mod input_regions;
 use super::annotation_track::TimedAnnotation;
 use super::{annotation_layer::Layer, Phase, RecordingState};
 use crate::{
@@ -373,6 +375,11 @@ pub(crate) fn hide_interaction(app: &AppHandle) {
         if let Err(error) = window.hide() {
             log::warn!("event=recording.overlay_hide_failed module=recording error={error}");
         }
+        if let Err(error) = input_regions::reset(&window) {
+            log::warn!(
+                "event=recording.overlay_region_reset_failed module=recording error={error}"
+            );
+        }
         // 同步查询确认隐藏已经处理；停止路径尽力收尾，异常留给诊断日志。
         match window.is_visible() {
             Ok(false) => {}
@@ -400,6 +407,56 @@ fn require_editing(app: &AppHandle, id: u64) -> Result<(), String> {
     }
 }
 
+/// 前端按实际视口比例转为物理像素；首区域为标注栏，录制控制紧邻其上方，组成框下的两行。
+/// 原生补上选区，拒绝越界和旧会话的迟到布局。
+#[tauri::command]
+pub async fn set_recording_annotation_regions(
+    app: AppHandle,
+    window: WebviewWindow,
+    id: u64,
+    regions: Vec<Rect>,
+) -> Result<(), String> {
+    crate::capture::require_window(&window, LABEL)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<LiveAnnotationState>();
+        let _write = state.write.lock().map_err(|e| e.to_string())?;
+        require_editing(&app, id)?;
+        let current = state.session.lock().map_err(|e| e.to_string())?;
+        let session = current
+            .as_ref()
+            .filter(|s| s.view.id == id)
+            .ok_or("录屏标注会话已过期。")?;
+        // 完成标注后不允许迟到的 ResizeObserver 重新扩展窗口。
+        if !session.view.editing {
+            return Ok(());
+        }
+        if regions.len() > 12 {
+            return Err("录屏标注交互区域过多。".into());
+        }
+        let mut rectangles = vec![Rect {
+            x: session.view.x.max(0) as u32,
+            y: session.view.y.max(0) as u32,
+            width: session.view.width,
+            height: session.view.height,
+        }];
+        let toolbar = regions.first().copied();
+        for region in regions {
+            rectangles.push(region.validate(session.screen.width, session.screen.height)?);
+        }
+        let screen = session.screen.clone();
+        drop(current);
+        input_regions::set(&window, &rectangles)?;
+        if let Some(toolbar) = toolbar {
+            crate::capture::scroll::chrome::place_recording_controls_above_toolbar(
+                &app, &screen, toolbar,
+            )?;
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 pub fn current_recording_annotations(
     app: AppHandle,
@@ -425,7 +482,7 @@ pub fn current_recording_annotations(
         }))
 }
 
-/// 绘制时画布接收输入；完成后只展示标注，整窗穿透，控制始终由独立小窗口承担。
+/// 绘制时画布和浮动工具栏接收输入；完成后整窗穿透，录制控制仍由独立小窗口承担。
 #[tauri::command]
 pub async fn set_recording_annotation_mode(
     app: AppHandle,
@@ -450,17 +507,6 @@ fn media_time(app: &AppHandle) -> Result<u64, String> {
     }))
 }
 
-pub(super) fn project_tracks(app: &AppHandle, id: u64) -> Result<Vec<TimedAnnotation>, String> {
-    let state = app.state::<LiveAnnotationState>();
-    let current = state.session.lock().map_err(|e| e.to_string())?;
-    Ok(current
-        .as_ref()
-        .filter(|s| s.view.id == id)
-        .ok_or("录屏标注会话已过期。")?
-        .history
-        .clone())
-}
-
 #[tauri::command]
 pub async fn set_recording_annotation_tools(
     app: AppHandle,
@@ -468,7 +514,9 @@ pub async fn set_recording_annotation_tools(
     id: u64,
     tools: AnnotationTools,
 ) -> Result<(), String> {
-    crate::capture::require_window(&window, "recording-controls")?;
+    if !matches!(window.label(), "capture" | "recording-controls") {
+        return Err("当前窗口无权修改录制标注工具。".into());
+    }
     tools.validate()?;
     tauri::async_runtime::spawn_blocking(move || {
         require_editing(&app, id)?;
@@ -724,7 +772,7 @@ fn apply_mode(app: &AppHandle, id: u64, editing: bool) -> Result<(), String> {
     let state = app.state::<LiveAnnotationState>();
     let _write = state.write.lock().map_err(|e| e.to_string())?;
     require_editing(app, id)?;
-    let (screen, has_shapes, region) = {
+    let (screen, has_shapes, region, drawing_region) = {
         let current = state.session.lock().map_err(|e| e.to_string())?;
         let session = current
             .as_ref()
@@ -734,6 +782,12 @@ fn apply_mode(app: &AppHandle, id: u64, editing: bool) -> Result<(), String> {
             session.screen.clone(),
             !session.view.shapes.is_empty(),
             session.region,
+            Rect {
+                x: session.view.x.max(0) as u32,
+                y: session.view.y.max(0) as u32,
+                width: session.view.width,
+                height: session.view.height,
+            },
         )
     };
     remember_desktop_focus(app);
@@ -741,10 +795,16 @@ fn apply_mode(app: &AppHandle, id: u64, editing: bool) -> Result<(), String> {
         let overlay = app
             .get_webview_window(LABEL)
             .ok_or("截图选区窗口不可用。")?;
-        // 只使用整窗穿透，不裁剪命中区域；展示标注不接收点击、滚轮或键盘焦点。
+        // 首帧仅开放选区；前端量取工具栏和 Portal 菜单后扩展区域，不能短暂拦截整屏。
+        if editing {
+            input_regions::set(&overlay, &[drawing_region])?;
+        }
         overlay
             .set_ignore_cursor_events(!editing)
             .map_err(|e| e.to_string())?;
+        if !editing {
+            input_regions::reset(&overlay)?;
+        }
         if editing || has_shapes {
             overlay
                 .set_position(PhysicalPosition::new(screen.x, screen.y))
@@ -781,7 +841,7 @@ fn apply_mode(app: &AppHandle, id: u64, editing: bool) -> Result<(), String> {
             overlay.set_focus().map_err(|e| e.to_string())?;
         }
         // 标注不替代录屏控制；显示顺序保证小控制条始终位于画布上方。
-        crate::capture::scroll::chrome::place_recording_controls(app, &screen, region, editing)?;
+        crate::capture::scroll::chrome::place_recording_controls(app, &screen, region)?;
         crate::capture::scroll::chrome::show_recording_controls(app)?;
         if !editing {
             restore_desktop_focus(app);

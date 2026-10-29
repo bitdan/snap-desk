@@ -10,12 +10,19 @@ import type { RecordingView } from '@/features/recording/recording'
 import { prepareRecordingRaster, annotationAlpha, type RecordingAnnotationView, type RecordingAnnotationEditorRequest, type RecordingAnnotationTools, type RecordingAnnotationEditorStatus } from '@/features/recording/recording-annotations'
 import { useAnnotations, type AnnotationEditor } from '@/features/annotations/use-annotations'
 import AnnotationWorkspace from '@/features/annotations/components/AnnotationWorkspace.vue'
+import { useRecordingAnnotationLayout } from '../use-recording-annotation-layout'
+import type { AnnotationTool } from '@/features/annotations/use-annotations'
 
 const props = defineProps<{ sessionId?: number; initialEditor?: AnnotationEditor }>()
 const emit = defineEmits<{ closed: [] }>()
 const view = ref<RecordingAnnotationView | null>(null)
 const recording = ref<RecordingView | null>(null)
 const busy = ref(false), error = ref('')
+const toolbar = ref<HTMLElement | null>(null)
+const layout = useRecordingAnnotationLayout(view, toolbar, async failure => {
+  // 裁剪失败时退回桌面模式，不能留下覆盖桌面的不可操作透明窗口。
+  await deactivate(); error.value = String(failure); editor.error = String(failure)
+})
 const bounds = computed(() => ({ x: 0, y: 0, width: view.value?.width ?? 1, height: view.value?.height ?? 1 }))
 const editor = useAnnotations(() => bounds.value, () => '', () => busy.value || !view.value, async shapes => {
   const id = view.value?.id
@@ -94,6 +101,7 @@ function publishEditor():Promise<void> {
   return publishing
 }
 watch(()=>JSON.stringify(editorSnapshot()),()=>{
+  operation++
   void publishEditor().catch(e=>{if(!disposed && view.value) error.value=String(e)})
 },{flush:'post'})
 /** 所有编辑命令都在画布的原始 useAnnotations 实例执行，沿用截图工具的历史和样式逻辑。 */
@@ -119,7 +127,7 @@ async function editorAction(request:RecordingAnnotationEditorRequest) {
   }
 }
 useRecordingPolling(poll, () => recording.value?.phase, e => { if (!disposed) error.value = String(e) }, { initialSnapshot: true, intervalMs: () => view.value?.tracks?.some(track => track.endMs !== null && track.endMs > view.value!.mediaTimeMs) ? 33 : recordingPollInterval(recording.value?.phase) })
-// 绘制工具位于另一原生窗口；画布只接收绘图事件和展示同一份图形。
+// 完成标注后整窗穿透，独立录制控制条仍可重新进入绘制。
 async function desktop() {
   if (!view.value) return
   const id=view.value.id
@@ -137,6 +145,19 @@ async function deactivate() {
   if (busy.value || editor.pending) return
   editor.abort(); busy.value=true; error.value=''; operation++
   try { await desktop() } catch(e) { error.value=String(e) } finally { busy.value=false }
+}
+function chooseTool(tool: AnnotationTool) { if (!busy.value) editor.setTool(tool) }
+async function setTiming(event: Event, field: 'lifetimeMs' | 'fadeOutMs') {
+  if (!view.value || busy.value || editor.pending || editor.interacting) return
+  const id = view.value.id
+  const input = event.target as HTMLInputElement
+  const tools = { ...(editorSnapshot()?.tools ?? view.value.tools), [field]: field === 'lifetimeMs' ? Number(input.value) : input.checked ? 500 : 0 }
+  busy.value = true; error.value = ''; operation++
+  try {
+    await api.setRecordingAnnotationTools(id, tools)
+    if (view.value?.id === id) view.value.tools = tools
+  } catch (e) { error.value = String(e) }
+  finally { busy.value = false; operation++ }
 }
 /** 透明度只来自原生媒体时钟，绝不修改历史中的原始颜色或透明度。 */
 const presentation = computed(() => editor.history.present.map((shape, index) => {
@@ -172,8 +193,15 @@ onUnmounted(() => { disposed = true; off?.(); offEditorAction?.(); window.remove
 
 <template>
   <main v-if="view" class="live-annotations" :aria-label="t('录制中标注')">
-    <AnnotationWorkspace :key="view.id" :editor="editor" :presentation="presentation" :width="view.width" :height="view.height" :bounds="bounds" :surface-visible="view.editing || presentation.some(shape => (shape.opacity ?? 1) > 0)" :toolbar-visible="false" :enabled="view.editing && !busy" :active="view.editing" :disabled="busy" :surface-style="stage" :outlined="false" />
-    <p v-if="view.editing && (error || editor.error)" class="annotation-error" role="alert">{{ te(error || editor.error) }}</p>
+    <AnnotationWorkspace :key="view.id" :editor="editor" :presentation="presentation" :width="view.width" :height="view.height" :bounds="bounds" :surface-visible="view.editing || presentation.some(shape => (shape.opacity ?? 1) > 0)" :toolbar-visible="view.editing" :enabled="view.editing && !busy" :active="view.editing" :disabled="busy" :surface-style="stage" :toolbar-style="layout.style.value" :outlined="false"
+      @toolbar-element="toolbar = $event" @tool="chooseTool" @float="layout.start" @reset-position="layout.reset">
+      <template #actions>
+        <label>{{ t('保留时间') }} <select :value="view.tools.lifetimeMs" :disabled="busy || editor.pending || editor.interacting" :aria-label="t('标注保留时间')" @change="setTiming($event, 'lifetimeMs')"><option :value="0">{{ t('手动清除') }}</option><option :value="3000">{{ t('3 秒') }}</option><option :value="5000">{{ t('5 秒') }}</option></select></label>
+        <label><input type="checkbox" :checked="view.tools.fadeOutMs > 0" :disabled="busy || editor.pending || editor.interacting || !view.tools.lifetimeMs" @change="setTiming($event, 'fadeOutMs')" />{{ t('自动淡出') }}</label>
+        <button :disabled="busy || editor.pending" :aria-label="t('完成标注')" @click="deactivate">{{ t('完成标注') }}</button>
+      </template>
+      <template #footer><p v-if="error || editor.error" class="annotation-error" role="alert">{{ te(error || editor.error) }}</p></template>
+    </AnnotationWorkspace>
   </main>
 </template>
 
@@ -181,5 +209,5 @@ onUnmounted(() => { disposed = true; off?.(); offEditorAction?.(); window.remove
 .live-annotations { position: fixed; inset: 0; background: transparent; font-size: 13px; }
 p { margin: 4px; font-size: 12px; }
 [role=alert] { color: #b91c1c; }
-.annotation-error { position:absolute; bottom:8px; left:8px; background:#fff; padding:4px 8px; pointer-events:none; }
+.annotation-error { max-width:100%; margin:0; overflow-wrap:anywhere; pointer-events:none; }
 </style>

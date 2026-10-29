@@ -7,6 +7,10 @@ export type AnnotationTool = 'edit' | 'eraser' | 'arrow-text' | Annotation['kind
 /** 截图/贴图共用编辑状态。一次拖动只提交一次历史，保存失败不改历史也不丢失原图形。 */
 export function useAnnotations(bounds: () => Rect, imageUrl: () => string, disabled: () => boolean, persist?: (shapes: Annotation[]) => Promise<void>, rasterizer: typeof prepareRaster = prepareRaster) {
   const state = reactive({ history: emptyHistory(), tool: 'edit' as AnnotationTool, selected: -1,
+    // 工具栏读取能力快照，不依赖撤销栈结构；录屏可直接映射画布回传状态。
+    get shapes(): Annotation[] { return this.history.present },
+    get canUndo(): boolean { return this.history.past.length > 0 },
+    get canRedo(): boolean { return this.history.future.length > 0 },
     draft: null as Annotation | null, arrowDraft: null as Annotation | null, pending: false, interacting: false, textEditing: false, textFrame: null as Rect | null, textAutoHeight: true, error: '',
     color: '#ef4444', width: 3, opacity: 1, magnification: 2, text: '', fontSize: 24, fontFamily: 'sans' as NonNullable<Annotation['fontFamily']> })
   let gesture: { start: Point; shape: Annotation; mode: 'draw' | 'move' | Handle | 'start' | 'end' } | null = null
@@ -251,5 +255,5 @@ export type AnnotationEditor = ReturnType<typeof useAnnotations>
 
 /** 工具栏只依赖编辑状态和编辑动作；跨窗口宿主可以转发到同一个画布编辑器。 */
 export type AnnotationToolbarEditor = Pick<AnnotationEditor,
-  'history' | 'tool' | 'selected' | 'pending' | 'interacting' | 'error' | 'color' | 'width' | 'opacity' |
+  'shapes' | 'canUndo' | 'canRedo' | 'tool' | 'selected' | 'pending' | 'interacting' | 'error' | 'color' | 'width' | 'opacity' |
   'magnification' | 'text' | 'fontSize' | 'fontFamily' | 'style' | 'travel' | 'remove' | 'clear'>

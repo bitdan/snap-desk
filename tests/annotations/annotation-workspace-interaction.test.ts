@@ -11,6 +11,11 @@ vi.mock('../../src/features/annotations/components/AnnotationSurface.vue', async
   const { defineComponent, h } = await import('vue')
   return { default: defineComponent({ setup: () => () => h('surface-stub') }) }
 })
+vi.mock('../../src/features/annotations/components/AnnotationToolbarHost.vue', async importOriginal => {
+  const actual = await importOriginal<typeof import('../../src/features/annotations/components/AnnotationToolbarHost.vue')>()
+  const helper = await import('../helpers/component-host')
+  return { default: helper.clientComponent(actual.default, new URL('../../src/features/annotations/components/AnnotationToolbarHost.vue', import.meta.url)) }
+})
 import Workspace from '../../src/features/annotations/components/AnnotationWorkspace.vue'
 const AnnotationWorkspace = clientComponent(Workspace, new URL('../../src/features/annotations/components/AnnotationWorkspace.vue', import.meta.url))
 const root = new MemoryNode('root')

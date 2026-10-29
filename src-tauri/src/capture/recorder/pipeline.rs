@@ -336,7 +336,6 @@ pub(super) fn collect(
     };
     live_annotations::clear(&app, id);
     let mut message = String::new();
-    let mut completed = false;
     if let Ok(mut guard) = state.0.lock() {
         if let Some(s) = guard.as_mut().filter(|s| s.view.id == id) {
             s.freeze();
@@ -371,7 +370,6 @@ pub(super) fn collect(
             };
             log::log!(level, "event=recording.finished module=recording op=rec-{id} result={outcome} duration_ms={} captured={} encoded={} dropped={} encoding_ms={}",
                 (s.view.seconds * 1000.0) as u64, s.view.stats.captured_frames, s.view.frames, s.view.dropped_frames, s.view.encoding_millis);
-            completed = phase == Phase::Completed;
             message = text.clone();
             s.view.phase = phase;
             s.view.message = text;
@@ -380,20 +378,13 @@ pub(super) fn collect(
         }
     }
     notify_changed(&app);
-    // 成功时只释放边框；控制窗原位进入回放，不能先销毁再立即复用同一标签。
-    if completed {
-        chrome::release_recording_edges(&app);
-        if let Err(error) = chrome::show_recording_preview(&app) {
-            super::report_error(&app, format!("无法显示录屏回放：{error}"));
-        }
-    } else {
-        chrome::release_recording(&app);
-    }
+    // 成功后直接保留已经发布的成品，所有终态都收起录制交互窗口。
+    chrome::release_recording(&app);
     app.state::<CaptureState>()
         .active
         .store(false, Ordering::SeqCst);
     let _ = app.emit_to("main", "capture-result", &message);
-    // 不主动改变主界面的显示状态；成功由录屏窗口接管编辑，取消或失败沿用现有提示。
+    // 不主动改变主界面的显示状态；结果通过录屏页的最近完成记录查看。
 }
 
 /// Finalize、sync_all 成功才发布；保存失败保留视频与恢复记录，明确取消才清理。
@@ -408,8 +399,6 @@ fn write_video(
 ) -> Result<String, String> {
     let mut recovery = recovery::Pending::new(app, id, &root, config.format)?;
     let pending = recovery.path();
-    let mut source_recovery = recovery::Pending::new(app, id, &root, config.format)?;
-    let source_pending = source_recovery.path();
     progress(app, "recording", Some(&pending));
     let mut encoder = encoder::create(
         &pending,
@@ -421,16 +410,6 @@ fn write_video(
         config.format,
         config.system_audio || config.microphone,
     )?;
-    let mut source_encoder = encoder::create(&source_pending, config.region.width, config.region.height, config.fps,
-        config.target_bitrate(), config.encoding, config.format, config.system_audio || config.microphone)
-        .or_else(|first| {
-            // 部分显卡仅允许一个硬件编码会话；干净原片按既有自动偏好回退软件。
-            if config.encoding==config::EncodingPreference::Auto {
-                encoder::create(&source_pending,config.region.width,config.region.height,config.fps,
-                    config.target_bitrate(),config::EncodingPreference::Software,config.format,config.system_audio||config.microphone)
-                    .map_err(|second|format!("干净原片编码初始化失败：{first}；软件回退失败：{second}"))
-            } else { Err(first) }
-        })?;
     let state = app.state::<RecordingState>();
     let encoder_kind = encoder.kind();
     {
@@ -447,7 +426,7 @@ fn write_video(
         }
         if let Some(worker) = audio.as_mut() {
             // 音频独立于 WGC 新帧；静态桌面和暂停期间仍排空已采集数据。
-            pump_audio(worker, &mut mixer, encoder.as_mut(), source_encoder.as_mut(), &state, id, false)?;
+            pump_audio(worker, &mut mixer, encoder.as_mut(), &state, id, false)?;
         }
         let frame = match receiver.recv_timeout(Duration::from_millis(10)) {
             Ok(frame) => frame,
@@ -473,7 +452,6 @@ fn write_video(
         }
         let encoding_started = Instant::now();
         // 标注层只绘制一次；每帧在编码前混合，确保准备阶段的标注真正进入成品。
-        source_encoder.push(&frame.image, frame.pts)?;
         let mut image = frame.image;
         if let Some(layer) = &frame.annotations {
             layer.apply(&mut image, frame.pts)?;
@@ -485,7 +463,7 @@ fn write_video(
         if let Some(s) = guard.as_mut().filter(|s| s.view.id == id) {
             s.view.frames += 1;
             s.view.encoding_millis += encoding_millis;
-            s.view.stats.nv12_output_bytes = encoder.converted_bytes() + source_encoder.converted_bytes();
+            s.view.stats.nv12_output_bytes = encoder.converted_bytes();
             // push 期间仍可暂停；旧代次已提交帧计入累计值，但不污染恢复后的窗口。
             if frame.generation == s.timeline.generation {
                 s.fps_window.submitted(frame.pts);
@@ -507,15 +485,11 @@ fn write_video(
     if let Some(worker) = audio.as_mut() {
         // 停止设备并 join 后再取尾包；停止时间之后的样本会被 Timeline 裁掉。
         worker.stop()?;
-        pump_audio(worker, &mut mixer, encoder.as_mut(), source_encoder.as_mut(), &state, id, true)?;
+        pump_audio(worker, &mut mixer, encoder.as_mut(), &state, id, true)?;
     }
     recovery.stage("finalizing", false)?;
     progress(app, "finalizing", Some(&pending));
     encoder.finish(end)?;
-    source_encoder.finish(end)?;
-    source_recovery.stage("syncing", true)?;
-    drop(source_encoder);
-    fs::OpenOptions::new().write(true).open(&source_pending).map_err(err)?.sync_all().map_err(err)?;
     // 释放 MF 文件句柄后才能同步/重命名；取消期间仍由临时目录负责清理。
     drop(encoder);
     recovery.stage("syncing", true)?;
@@ -537,24 +511,11 @@ fn write_video(
     // 最后确认取消；发布和取消共用状态锁，失败时 Pending 保留完整视频。
     let output = recovery.output(&root);
     progress(app, "publishing", Some(&pending));
-    let clean_output = project::source_path(&output);
-    output::publish(&source_pending, &clean_output)?;
-    source_recovery.published(&clean_output);
-    // 手动清除会结束轨道而不是删除历史；因此已录帧与后期项目保持同一语义。
-    let duration_ms=(end.max(0) as u64 / 10_000).max(1);
-    let annotations=live_annotations::project_tracks(app,id)?.into_iter().filter_map(|mut track| {
-        let last=track.end_ms.unwrap_or(duration_ms).min(duration_ms);
-        if track.start_ms >= last { return None; }
-        if track.end_ms.is_none_or(|end| end > duration_ms) { track.fade_out_ms=0; }
-        track.end_ms=Some(last); Some(track)
-    }).collect();
-    project::save(&output,&project::RecordingProject { version:1,width:config.region.width,height:config.region.height,
-        fps:config.fps,duration_ms,format:config.format.extension().into(),annotations })?;
     output::publish(&pending, &output)?;
     recovery.published(&output);
-    result::remember_with_layout(app, &output, chrome::recording_preview_layout(app));
+    result::remember(app, &output);
     progress(app, "completed", Some(&output));
-    // 终态与成品路径由 collect 收尾时一起发布，避免回放读到 Completed 却没有路径。
+    // 终态与成品路径由 collect 收尾时一起发布，确保完成通知携带已经保存的路径。
     Ok(output.to_string_lossy().into_owned())
 }
 
@@ -563,7 +524,6 @@ fn pump_audio(
     worker: &mut audio::Worker,
     mixer: &mut audio::Mixer,
     encoder: &mut dyn encoder::Encoder,
-    source_encoder: &mut dyn encoder::Encoder,
     state: &RecordingState,
     id: u64,
     finishing: bool,
@@ -606,8 +566,6 @@ fn pump_audio(
         }
         encoder.advance_video(packet.pts + packet.duration)?;
         encoder.push_audio(&packet)?;
-        source_encoder.advance_video(packet.pts + packet.duration)?;
-        source_encoder.push_audio(&packet)?;
     }
     Ok(())
 }

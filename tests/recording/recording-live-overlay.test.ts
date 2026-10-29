@@ -4,11 +4,11 @@ import { clientComponent, MemoryNode as Node, memoryRenderer as renderer } from 
 import { defaultRecordingAnnotationTools } from '../../src/features/recording/recording-annotations'
 import type { AnnotationEditor } from '../../src/features/annotations/use-annotations'
 
-const api = vi.hoisted(() => ({ recordingAnnotations: vi.fn(), currentRecording: vi.fn(), updateRecordingAnnotations: vi.fn(), setRecordingAnnotationMode: vi.fn(), controlRecording: vi.fn(), publishRecordingAnnotationEditor: vi.fn(), finishRecordingAnnotationEditorAction: vi.fn() }))
+const api = vi.hoisted(() => ({ recordingAnnotations: vi.fn(), currentRecording: vi.fn(), updateRecordingAnnotations: vi.fn(), setRecordingAnnotationMode: vi.fn(), setRecordingAnnotationTools: vi.fn(), controlRecording: vi.fn(), publishRecordingAnnotationEditor: vi.fn(), finishRecordingAnnotationEditorAction: vi.fn() }))
 const events = vi.hoisted(() => ({ closed: undefined as undefined | ((event: { payload: number }) => void), off: vi.fn(), editor: undefined as undefined | ((event: {payload: import('../../src/features/recording/recording-annotations').RecordingAnnotationEditorRequest}) => void) }))
 vi.mock('../../src/services/api', () => ({ api }))
 vi.mock('@tauri-apps/api/event', () => ({ listen: async (name: string, cb: typeof events.closed) => { if(name==='recording-annotations-closed') events.closed=cb; else events.editor=cb as unknown as typeof events.editor; return events.off } }))
-vi.mock('../../src/features/annotations/toolbar-layout', () => ({ useFloatingToolbar: () => ({ style: {}, start: vi.fn(), reset: vi.fn() }), annotationToolbarPosition: () => ({}) }))
+vi.mock('../../src/features/recording/use-recording-annotation-layout', () => ({ useRecordingAnnotationLayout: () => ({ style: {value:{}}, start: vi.fn(), reset: vi.fn() }) }))
 vi.mock('../../src/features/annotations/components/AnnotationWorkspace.vue', async () => {
   const { defineComponent, h, onMounted } = await import('vue')
   return { default: defineComponent({ props: ['editor', 'toolbarVisible', 'defaultExpanded', 'active', 'surfaceVisible', 'pointerLabel', 'enabled', 'presentation'], emits: ['toolbarElement', 'tool'], setup: (props, { slots, emit }) => {
@@ -87,12 +87,24 @@ describe('独立的录屏标注层', () => {
   })
   it('标注工具栏只负责标注，不再放置另一套录屏按钮', async () => {
     await mount()
-    expect(workspace()?.props.toolbarVisible).toBe(false)
-    expect(find(n => n.type === 'button')).toBeUndefined()
+    expect(workspace()?.props.toolbarVisible).toBe(true)
+    expect(find(n => n.props['aria-label'] === '完成标注')).toBeDefined()
     for (const label of ['开始录制', '暂停录制', '结束录制并编辑']) {
       expect(find(n => n.type === 'button' && n.props.title === label)).toBeUndefined()
     }
     press(' '); await flush()
+    expect(api.controlRecording).not.toHaveBeenCalled()
+  })
+  it('浮动工具栏直接使用原画布编辑器，时间设置与完成操作不改变录制状态', async () => {
+    await mount()
+    workspace()!.props.onChoose(); await flush()
+    expect(editor().tool).toBe('arrow')
+    const lifetime = find(n => n.props['aria-label'] === '标注保留时间')!
+    lifetime.props.onChange({target:{value:'5000'}}); await flush()
+    expect(api.setRecordingAnnotationTools).toHaveBeenCalledWith(7,expect.objectContaining({lifetimeMs:5000}))
+    const finish = find(n => n.props['aria-label'] === '完成标注')!
+    finish.props.onClick(); await flush()
+    expect(api.setRecordingAnnotationMode).toHaveBeenCalledWith(7,false)
     expect(api.controlRecording).not.toHaveBeenCalled()
   })
   it('Esc 完成标注并交还桌面输入，不结束录屏', async () => {
@@ -154,7 +166,7 @@ describe('独立的录屏标注层', () => {
     api.recordingAnnotations.mockResolvedValue({...initial,tools:{...defaultRecordingAnnotationTools(),tool:'arrow',color:'#123456',width:8}})
     await mount()
     expect(editor().tool).toBe('arrow'); expect(editor().color).toBe('#123456'); expect(editor().width).toBe(8)
-    expect(workspace()?.props.toolbarVisible).toBe(false)
+    expect(workspace()?.props.toolbarVisible).toBe(true)
   })
   it('截图工具的荧光笔默认样式直接用于录屏，不维护第二套默认值',async()=>{
     await mount()

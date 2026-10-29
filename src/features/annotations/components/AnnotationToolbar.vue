@@ -6,13 +6,19 @@ import AnnotationToolGroup from '@/features/annotations/components/AnnotationToo
 import { annotationTools, annotationToolGroups } from '@/features/annotations/annotation-tools'
 import { readToolOrder, moveTool, normalizeToolOrder, toolbarOrderKey } from '@/features/annotations/toolbar-order'
 import type { AnnotationToolbarEditor, AnnotationTool } from '@/features/annotations/use-annotations'
-const props = defineProps<{ editor: AnnotationToolbarEditor; disabled: boolean; active: boolean; collapsible?: boolean; defaultExpanded?: boolean; pointerLabel?: string }>()
+const props = defineProps<{ editor: AnnotationToolbarEditor; disabled: boolean; active: boolean; collapsible?: boolean; defaultExpanded?: boolean; pointerLabel?: string; movable?: boolean }>()
 const emit = defineEmits<{ tool: [tool: AnnotationTool]; float: [event: PointerEvent]; resetPosition: [] }>()
 // 顺序在截图和贴图窗口之间共享；存储失败不阻断当前窗口的编辑。
 const order = ref(readToolOrder())
 // 截图与录制共享折叠偏好；展开直接替换同一行，避免重复显示两套工具。
 const expandedKey = 'snap-desk.capture-toolbar-expanded.v1'
-const expanded = ref(props.defaultExpanded || (() => { try { return localStorage.getItem(expandedKey) === 'true' } catch { return false } })())
+const expanded = ref((() => {
+  try {
+    const saved = localStorage.getItem(expandedKey)
+    if (saved === 'true' || saved === 'false') return saved === 'true'
+  } catch { /* 存储不可用时采用宿主默认值。 */ }
+  return props.defaultExpanded ?? false
+})())
 const toolsRowId = `annotation-tools-${useId().replaceAll(':', '')}`
 function toggleExpanded() {
   expanded.value = !expanded.value
@@ -104,6 +110,9 @@ function orderKey(event: KeyboardEvent, tool: AnnotationTool) {
 }
 function syncOrder(event: StorageEvent) {
   if (event.key === toolbarOrderKey || event.key === null) order.value = readToolOrder()
+  if (event.key === expandedKey || event.key === null) {
+    try { expanded.value = localStorage.getItem(expandedKey) === 'true' } catch { /* 保留当前展开状态。 */ }
+  }
 }
 window.addEventListener('storage', syncOrder)
 window.addEventListener('blur', blurOrder)
@@ -114,11 +123,11 @@ onUnmounted(() => {
 })
 
 const locked = computed(() => props.disabled || props.editor.pending || props.editor.interacting)
-const textMode = computed(() => ['text', 'arrow-text'].includes(props.editor.tool) || props.editor.history.present[props.editor.selected]?.kind === 'text')
-const filterMode = computed(() => ['mosaic', 'blur', 'erase'].includes(props.editor.history.present[props.editor.selected]?.kind ?? props.editor.tool))
-const numberMode = computed(() => (props.editor.history.present[props.editor.selected]?.kind ?? props.editor.tool) === 'number')
-const spotlightMode = computed(() => (props.editor.history.present[props.editor.selected]?.kind ?? props.editor.tool) === 'spotlight')
-const magnifyMode = computed(() => (props.editor.history.present[props.editor.selected]?.kind ?? props.editor.tool) === 'magnify')
+const textMode = computed(() => ['text', 'arrow-text'].includes(props.editor.tool) || props.editor.shapes[props.editor.selected]?.kind === 'text')
+const filterMode = computed(() => ['mosaic', 'blur', 'erase'].includes(props.editor.shapes[props.editor.selected]?.kind ?? props.editor.tool))
+const numberMode = computed(() => (props.editor.shapes[props.editor.selected]?.kind ?? props.editor.tool) === 'number')
+const spotlightMode = computed(() => (props.editor.shapes[props.editor.selected]?.kind ?? props.editor.tool) === 'spotlight')
+const magnifyMode = computed(() => (props.editor.shapes[props.editor.selected]?.kind ?? props.editor.tool) === 'magnify')
 function value(event: Event) { return (event.target as HTMLInputElement).value }
 function fontFamily(event: Event) { return value(event) as 'sans' | 'serif' | 'mono' }
 </script>
@@ -126,7 +135,7 @@ function fontFamily(event: Event) { return value(event) as 'sans' | 'serif' | 'm
 <template>
   <div class="annotation-tools" @pointerdown.stop @contextmenu.stop.prevent>
     <div :id="toolsRowId" class="annotation-tool-row annotation-drawing-row" role="toolbar" :aria-label="t('标注工具')">
-      <button class="tool-grip" :disabled="locked" :title="t('拖动工具栏；双击恢复位置')" :aria-label="t('拖动工具栏，双击或 Enter 恢复位置')" @pointerdown.stop="emit('float', $event)" @dblclick="emit('resetPosition')" @keydown.enter.stop.prevent="emit('resetPosition')"><GripVertical :size="16" /></button>
+      <button v-if="movable !== false" class="tool-grip" :disabled="locked" :title="t('拖动工具栏；双击恢复位置')" :aria-label="t('拖动工具栏，双击或 Enter 恢复位置')" @pointerdown.stop="emit('float', $event)" @dblclick="emit('resetPosition')" @keydown.enter.stop.prevent="emit('resetPosition')"><GripVertical :size="16" /></button>
       <slot name="leading" />
       <template v-if="collapsible && !expanded">
         <AnnotationToolGroup v-for="group in annotationToolGroups" :key="group.name" :name="group.name" :label="group.tools.includes('edit') ? pointerLabel : undefined" :tools="group.tools" :selected="pointerLabel && group.tools.includes('edit') ? 'edit' : editor.tool" :active="pointerLabel && group.tools.includes('edit') ? !active : active" :disabled="locked" @select="emit('tool', $event)" />
@@ -137,13 +146,13 @@ function fontFamily(event: Event) { return value(event) as 'sans' | 'serif' | 'm
       </template>
         <button v-if="collapsible" :disabled="locked" :title="expanded ? t('折叠相似工具') : t('展开全部工具（可拖动排序）')" :aria-label="expanded ? t('折叠工具栏') : t('展开工具栏')" :aria-expanded="expanded" :aria-controls="toolsRowId" @click="toggleExpanded"><component :is="expanded ? ChevronUp : ChevronDown" :size="16" /></button>
       <span class="tool-divider" />
-        <button :disabled="locked || !editor.history.past.length" :title='t("撤销 Ctrl/⌘+Z")' :aria-label='t("撤销")' @click="editor.travel('undo')"><Undo2 :size="16" /></button>
-        <button :disabled="locked || !editor.history.future.length" :title='t("重做 Ctrl/⌘+Shift+Z")' :aria-label='t("重做")' @click="editor.travel('redo')"><Redo2 :size="16" /></button>
+        <button :disabled="locked || !editor.canUndo" :title='t("撤销 Ctrl/⌘+Z")' :aria-label='t("撤销")' @click="editor.travel('undo')"><Undo2 :size="16" /></button>
+        <button :disabled="locked || !editor.canRedo" :title='t("重做 Ctrl/⌘+Shift+Z")' :aria-label='t("重做")' @click="editor.travel('redo')"><Redo2 :size="16" /></button>
         <button :disabled="locked || editor.selected < 0" :title='t("删除选中标注 Delete")' :aria-label='t("删除选中标注")' @click="editor.remove"><Trash2 :size="16" /></button>
 
-      <button :disabled="locked || !editor.history.present.length" :title="t('清空标注，可撤销恢复')" :aria-label="t('清空标注')" @click="editor.clear"><Eraser :size="16" /><span>{{ t('清空') }}</span></button>
+      <button :disabled="locked || !editor.shapes.length" :title="t('清空标注，可撤销恢复')" :aria-label="t('清空标注')" @click="editor.clear"><Eraser :size="16" /><span>{{ t('清空') }}</span></button>
     </div>
-    <div class="annotation-tool-row annotation-action-row" role="toolbar" :aria-label="t('标注操作')">
+    <div v-if="$slots.actions" class="annotation-tool-row annotation-action-row" role="toolbar" :aria-label="t('标注操作')">
 
       <slot name="actions" />
     </div>
