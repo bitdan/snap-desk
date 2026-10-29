@@ -16,6 +16,10 @@ use tauri_plugin_dialog::DialogExt;
 #[path = "windows_clipboard.rs"]
 mod windows_clipboard;
 
+/// 专项基准只构造系统载荷，不替换开发者当前剪贴板。
+#[cfg(all(test, windows))]
+pub(crate) fn clipboard_bitmap_for_benchmark(image: &RgbaImage) -> Result<Vec<u8>, String> { windows_clipboard::benchmark_dib(image) }
+
 /// 保留原始 RGBA 像素，不把窗口缩放或透明度混入导出图片。
 pub fn copy(app: &AppHandle, image: &RgbaImage) -> Result<(), String> {
     #[cfg(target_os = "windows")]

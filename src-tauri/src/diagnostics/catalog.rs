@@ -48,6 +48,7 @@ pub const EVENTS: &[&str] = &[
     "recording.started",
     "scroll.archive_failed",
     "scroll.finished",
+    "scroll.export",
     "scroll.match",
     "scroll.match_candidate",
     "scroll.match_retry",

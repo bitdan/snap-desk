@@ -185,6 +185,7 @@ fn complete(app: &AppHandle, id: u64, message: &str) -> Result<(), String> {
         s.clone()
     };
     // 快照只克隆 Arc；整图分配与像素复制不占状态锁。
+    let compose_started = Instant::now();
     let mut image = snapshot.stitch.compose();
     if matches!(snapshot.background, ExportBackground::White) {
         for pixel in image.pixels_mut() {
@@ -193,10 +194,12 @@ fn complete(app: &AppHandle, id: u64, message: &str) -> Result<(), String> {
             }
         }
     }
+    let compose_ms = compose_started.elapsed().as_secs_f64() * 1000.0;
     let result = view(&snapshot, false)?;
     if state.scroll_cancel.load(Ordering::SeqCst) {
         return close_session(app, id);
     }
+    let mut png_ms = 0.0;
     let saved = (|| -> Result<std::path::PathBuf, String> {
         let root = app
             .path()
@@ -205,15 +208,21 @@ fn complete(app: &AppHandle, id: u64, message: &str) -> Result<(), String> {
             .join("scroll-results");
         std::fs::create_dir_all(&root).map_err(err)?;
         let mut file = crate::recovery::TrackedFile::new(app, &root, "png", "滚动截图导出")?;
+        let png_started = Instant::now();
         image
             .write_to(file.file_mut(), ImageFormat::Png)
             .map_err(err)?;
+        png_ms = png_started.elapsed().as_secs_f64() * 1000.0;
         file.finalize()?;
         let path = root.join(format!("scroll-{}.png", file.id()));
         file.publish(&path, false)?;
         Ok(path)
     })();
+    let clipboard_started = Instant::now();
     let copied = crate::shared::image_io::copy(app, &image);
+    // 实际复制包含 PNG/DIB 准备及系统剪贴板重试；只记录数值，不记录输出路径或图像。
+    log::debug!("event=scroll.export module=scroll op=scroll-{id} compose_ms={compose_ms:.2} png_ms={png_ms:.2} clipboard_ms={:.2} rgba_bytes={} width={} height={} frames={}",
+        clipboard_started.elapsed().as_secs_f64()*1000.0, image.as_raw().len(), image.width(), image.height(), snapshot.stitch.count());
     // 两种输出都失败时保留内存会话，调用方自动重试；不假报完成。
     if let (Err(save), Err(copy)) = (&saved, &copied) {
         return Err(format!("保存失败：{save}；复制失败：{copy}"));

@@ -871,5 +871,7 @@
   "淡出（毫秒）": "Fade out (ms)",
   "保存标注项目": "Save annotations",
   "打开录屏项目": "Open recording project",
-  "GIF 标注修改请在另存后预览结果。": "Save a new copy to preview annotation changes in the GIF."
+  "GIF 标注修改请在另存后预览结果。": "Save a new copy to preview annotation changes in the GIF.",
+  "贴图图片缓存已失效，请重新显示贴图。": "The pinned image cache is unavailable. Show the pin again.",
+  "贴图版本超出限制。": "The pinned image revision limit was reached."
 }

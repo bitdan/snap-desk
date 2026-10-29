@@ -5,6 +5,9 @@ use tauri::{AppHandle, Manager};
 
 static WRITER: Mutex<()> = Mutex::new(());
 
+#[cfg(test)]
+pub(super) fn benchmark_dib(image: &RgbaImage) -> Result<Vec<u8>, String> { dib(image) }
+
 /// CF_DIBV5 使用正高度、从底向上的 BGRA；保留 alpha，兼容常见图片粘贴目标。
 fn dib(image: &RgbaImage) -> Result<Vec<u8>, String> {
     let (width, height) = image.dimensions();

@@ -23,6 +23,9 @@ mod regression_tests;
 #[cfg(test)]
 #[path = "mosaic_tests.rs"]
 mod tests;
+#[cfg(test)]
+#[path = "benchmarks.rs"]
+mod benchmarks;
 
 #[derive(Clone)]
 struct Tile {

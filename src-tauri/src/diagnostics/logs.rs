@@ -318,6 +318,8 @@ pub fn sanitize(line: &str) -> Option<Entry> {
             "hide_ms" | "dwm_ms" | "capture_ms" | "png_ms" | "overlay_ready_ms" | "first_paint_ms"
             | "delay_ms" | "load_ms" | "decode_ms" | "pre_paint_ms" | "post_paint_ms" | "clone_ms" | "compose_ms"
                 if event.starts_with("capture.") => value.len() <= 20 && value.parse::<f64>().is_ok_and(|n| n.is_finite() && n >= 0.0),
+            "compose_ms" | "png_ms" | "clipboard_ms" if event == "scroll.export" => value.len() <= 20 && value.parse::<f64>().is_ok_and(|n| n.is_finite() && n >= 0.0),
+            "rgba_bytes" if event == "scroll.export" => value.parse::<u64>().is_ok(),
             "paint_source" if event == "capture.interactive" => ["raf", "timeout"].contains(&value),
             "revision" | "monitors" | "png_bytes" if event.starts_with("capture.") => value.parse::<u64>().is_ok(),
             "cold" if event.starts_with("capture.") => ["0", "1"].contains(&value),

@@ -9,14 +9,18 @@ import AnnotationToolbar from '@/features/annotations/components/AnnotationToolb
 import { useFloatingToolbar } from '@/features/annotations/toolbar-layout'
 import { useAnnotations, type AnnotationTool } from '@/features/annotations/use-annotations'
 import { annotationTools } from '@/features/annotations/annotation-tools'
-import { api } from '@/services/api'
-import type { PinFrame, PinView, PinAction, PinTransform } from '@/features/pins/types'
+import { api, onPinVisibility } from '@/services/api'
+import { usePinImage } from '@/features/pins/pin-image'
+import type { PinView, PinAction, PinTransform } from '@/features/pins/types'
 import { canEditPin, minimumZoom, pinDisplaySize, stepZoom } from '@/features/pins/pins'
 import layout from '@/features/pins/pin-layout.json'
 
 const toolbar = ref<HTMLElement | null>(null)
 const { style: floatingToolbarStyle, start: floatToolbar, reset: resetToolbarPosition } = useFloatingToolbar(toolbar)
-const frame = ref<PinFrame | null>(null)
+const imageSession = usePinImage(knownRevision => api.currentPin(knownRevision))
+const { frame } = imageSession
+let offVisibility: (() => void) | undefined
+let disposed = false
 const busy = ref(false)
 const recognitionMode = ref<'ocr' | 'qr' | 'translate' | null>(null)
 let recognitionTrigger: HTMLElement | null = null
@@ -86,7 +90,13 @@ async function run(task: () => Promise<void>) {
   try { await task() } catch (e) { error.value = String(e) }
   finally { busy.value = false }
 }
-async function load() { await run(async () => { frame.value = await api.currentPin(); editor.reset(frame.value.annotations) }) }
+async function load() { await run(async () => { if (await imageSession.refresh()) editor.reset(frame.value!.annotations) }) }
+async function pinVisibility(visible: boolean) {
+  imageSession.visibility(visible)
+  if (!visible) { recognitionMode.value = null; closeMenu(); hideControls(); return }
+  try { if (await imageSession.refresh()) editor.reset(frame.value!.annotations) }
+  catch (e) { if (!disposed) error.value = String(e) }
+}
 async function setView(patch: Partial<PinView>) {
   if (!frame.value) return
   await run(async () => { frame.value!.view = await api.setPinView({ ...frame.value!.view, ...patch }) })
@@ -141,7 +151,7 @@ async function action(value: PinAction) {
 async function transform(value: PinTransform) {
   if (!editable.value) return
   await run(async () => {
-    frame.value = await api.transformPin(value)
+    if (!imageSession.replace(await api.transformPin(value)) || !frame.value) return
     editor.reset(frame.value.annotations)
     // 旋转可能交换宽高，按现有比例重新适配窗口；像素结果已由 Rust 合成。
     frame.value.view = await api.setPinView(frame.value.view)
@@ -197,14 +207,20 @@ function key(event: KeyboardEvent) {
   else if (key === '+' || key === '=') { event.preventDefault(); zoom(1) }
   else if (key === '-') { event.preventDefault(); zoom(-1) }
 }
-onMounted(() => {
+onMounted(async () => {
   window.addEventListener('pointerdown', dismissMenu)
   window.addEventListener('resize', closeOnResize)
   window.addEventListener('keydown', key)
   window.addEventListener('focus', updateFocus); window.addEventListener('blur', updateFocus)
-  updateFocus(); void load()
+  updateFocus()
+  try {
+    offVisibility = await onPinVisibility(visible => { void pinVisibility(visible) })
+    if (disposed) { offVisibility(); return }
+    await load()
+  } catch (e) { if (!disposed) error.value = String(e) }
 })
 onUnmounted(() => {
+  disposed = true; offVisibility?.(); imageSession.dispose()
   clearTimeout(controlsHideTimer)
   window.removeEventListener('pointerdown', dismissMenu)
   window.removeEventListener('resize', closeOnResize)
@@ -222,7 +238,7 @@ function closeOnResize() {
     <div class="pin-stage" :inert="!!recognitionMode" tabindex="0" :aria-label='t("贴图，右键编辑标注")' :style="stageStyle" @pointerenter="keepControlsVisible" @pointerleave="scheduleControlsHide" @pointerdown="drag" @wheel.prevent="wheel" @contextmenu.capture="openMenu">
       <div v-if="frame" class="pin-canvas">
         <div class="pin-image-content" :style="{ width: `${display.imageWidth}px`, height: `${display.imageHeight}px`, opacity: frame.view.opacity }">
-          <img :src="frame.dataUrl" :alt='t("桌面贴图")' draggable="false" @error="error = '贴图预览加载失败，可关闭后重新贴图。'" />
+          <img v-if="frame.dataUrl" :src="frame.dataUrl" :alt='t("桌面贴图")' draggable="false" @error="error = '贴图预览加载失败，可关闭后重新贴图。'" />
           <AnnotationSurface :editor="editor" :width="frame.width" :height="frame.height" :bounds="bounds" :enabled="annotating && !busy && !frame.view.locked" />
         </div>
       </div>

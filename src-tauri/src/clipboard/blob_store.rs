@@ -12,6 +12,15 @@ pub struct BlobStore {
     root: PathBuf,
 }
 
+/// 直接借用原图生成等比缩略图，不为 DynamicImage 的所有权接口复制整张 RGBA。
+fn thumbnail(image: &RgbaImage) -> RgbaImage {
+    let scale =
+        (240.0 / f64::from(image.width().max(1))).min(160.0 / f64::from(image.height().max(1)));
+    let width = (f64::from(image.width()) * scale).round().max(1.0) as u32;
+    let height = (f64::from(image.height()) * scale).round().max(1.0) as u32;
+    image::imageops::thumbnail(image, width, height)
+}
+
 /// 数据库提交前持有本次写入；失败或提前返回时只回收新文件，不触碰既有素材。
 pub struct SavedBlob {
     pub blob: String,
@@ -40,6 +49,18 @@ mod tests {
         repository::NewItem,
     };
     use super::*;
+    #[test]
+    fn borrowed_thumbnail_preserves_existing_size_pixels_and_alpha() {
+        for (width, height) in [(2, 2), (601, 199), (199, 601), (1, 400), (1920, 1080)] {
+            let image = RgbaImage::from_fn(width, height, |x, y| {
+                image::Rgba([x as u8, y as u8, (x ^ y) as u8, x.wrapping_mul(y) as u8])
+            });
+            let expected = image::DynamicImage::ImageRgba8(image.clone())
+                .thumbnail(240, 160)
+                .to_rgba8();
+            assert_eq!(thumbnail(&image), expected);
+        }
+    }
     #[test]
     fn rollback_only_removes_new_files_including_partial_save() {
         let dir = tempfile::tempdir().unwrap();
@@ -178,9 +199,7 @@ impl BlobStore {
             bytes: 0,
             created: Vec::new(),
         };
-        let thumb = image::DynamicImage::ImageRgba8(image.clone())
-            .thumbnail(240, 160)
-            .to_rgba8();
+        let thumb = thumbnail(image);
         let mut refs = Vec::new();
         for (folder, ext, format, pixels) in [
             ("images", "png", ImageFormat::Png, image),

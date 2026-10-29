@@ -1,5 +1,7 @@
 //! 内存贴图与独立窗口。原图保留用于恢复，所有导出取当前处理后的像素。
 //! 窗口标签由 Rust 生成；贴图窗口只能操作自身，主窗口只能执行明确的管理动作。
+#[cfg(test)]
+mod benchmarks;
 pub(crate) mod content;
 
 use base64::{engine::general_purpose::STANDARD, Engine};
@@ -85,6 +87,8 @@ pub struct PinState {
 struct Pin {
     /// 二维码仅属于当前贴图；关闭释放，图片变换后失效。
     qr_result: Option<crate::recognition::qr::QrResult>,
+    /// 只在像素变化时递增；视图和标注更新不要求重新编码底图。
+    revision: u64,
     original: Arc<RgbaImage>,
     image: Arc<RgbaImage>,
     view: PinView,
@@ -194,6 +198,7 @@ impl PinView {
 #[serde(rename_all = "camelCase")]
 pub struct PinFrame {
     label: String,
+    revision: u64,
     width: u32,
     height: u32,
     data_url: String,
@@ -230,6 +235,17 @@ impl Drop for Operation<'_> {
 fn err(e: impl std::fmt::Display) -> String {
     e.to_string()
 }
+fn set_visible(window: &WebviewWindow, visible: bool) -> Result<(), tauri::Error> {
+    if visible {
+        window.show()?;
+    } else {
+        window.hide()?;
+    }
+    window
+        .app_handle()
+        .emit_to(window.label(), "pin-visibility", visible)
+}
+
 fn changed(app: &AppHandle) {
     let _ = app.emit_to("main", "pins-changed", ());
 }
@@ -246,19 +262,26 @@ fn own(app: &AppHandle, window: &WebviewWindow) -> Result<Pin, String> {
         .cloned()
         .ok_or_else(|| "贴图已关闭或当前窗口无权访问。".into())
 }
-fn frame(label: &str, pin: &Pin) -> Result<PinFrame, String> {
-    let mut png = Cursor::new(Vec::new());
-    pin.image
-        .write_to(&mut png, image::ImageFormat::Png)
-        .map_err(err)?;
-    // 直接写入最终字符串，避免 base64 临时字符串与 format! 结果同时驻留。
-    let png = png.into_inner();
-    let prefix = "data:image/png;base64,";
-    let mut data_url = String::with_capacity(prefix.len() + png.len().div_ceil(3) * 4);
-    data_url.push_str(prefix);
-    STANDARD.encode_string(&png, &mut data_url);
+fn frame(label: &str, pin: &Pin, known_revision: Option<u64>) -> Result<PinFrame, String> {
+    // 客户端仍持有此版本时仅更新元信息；不在 Rust 再常驻一份 Base64 缓存。
+    let data_url = if known_revision == Some(pin.revision) {
+        String::new()
+    } else {
+        let mut png = Cursor::new(Vec::new());
+        pin.image
+            .write_to(&mut png, image::ImageFormat::Png)
+            .map_err(err)?;
+        // 直接写入最终字符串，避免 base64 临时字符串与 format! 结果同时驻留。
+        let png = png.into_inner();
+        let prefix = "data:image/png;base64,";
+        let mut data_url = String::with_capacity(prefix.len() + png.len().div_ceil(3) * 4);
+        data_url.push_str(prefix);
+        STANDARD.encode_string(&png, &mut data_url);
+        data_url
+    };
     Ok(PinFrame {
         label: label.into(),
+        revision: pin.revision,
         width: pin.image.width(),
         height: pin.image.height(),
         data_url,
@@ -332,6 +355,7 @@ pub fn create(
         label.clone(),
         Pin {
             qr_result: None,
+            revision: 0,
             original: image.clone(),
             image,
             original_annotations: annotations.clone(),
@@ -417,8 +441,10 @@ pub async fn pin_file(app: AppHandle, window: WebviewWindow) -> Result<bool, Str
                             &["png", "jpg", "jpeg", "webp"],
                         )
                         .blocking_pick_file();
-                    path.map(|path| crate::pins::content::read_image(&path.into_path().map_err(err)?))
-                        .transpose()
+                    path.map(|path| {
+                        crate::pins::content::read_image(&path.into_path().map_err(err)?)
+                    })
+                    .transpose()
                 },
                 |image| {
                     if image.is_some() {
@@ -491,8 +517,10 @@ pub async fn recognize_pin_qr(
     static NEXT_RESULT: AtomicU64 = AtomicU64::new(1);
     let image = own(&app, &window)?.image;
     tauri::async_runtime::spawn_blocking(move || {
-        let result =
-            crate::recognition::qr::QrResult::from_image(NEXT_RESULT.fetch_add(1, Ordering::Relaxed), &image)?;
+        let result = crate::recognition::qr::QrResult::from_image(
+            NEXT_RESULT.fetch_add(1, Ordering::Relaxed),
+            &image,
+        )?;
         let state = app.state::<PinState>();
         let mut images = state.images.lock().map_err(err)?;
         commit_pin_qr(&mut images, window.label(), &image, result.clone())?;
@@ -533,10 +561,16 @@ pub async fn pin_qr_action(
 }
 
 #[tauri::command]
-pub async fn current_pin(app: AppHandle, window: WebviewWindow) -> Result<PinFrame, String> {
-    tauri::async_runtime::spawn_blocking(move || frame(window.label(), &own(&app, &window)?))
-        .await
-        .map_err(err)?
+pub async fn current_pin(
+    app: AppHandle,
+    window: WebviewWindow,
+    known_revision: Option<u64>,
+) -> Result<PinFrame, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        frame(window.label(), &own(&app, &window)?, known_revision)
+    })
+    .await
+    .map_err(err)?
 }
 
 /// 前端每完成一次编辑就同步结构化标注；锁定/导出中不允许覆盖，错误时保留旧数据。
@@ -627,8 +661,8 @@ pub async fn manage_pins(
         for label in labels {
             if let Some(pin) = app.get_webview_window(&label) {
                 let result = match action {
-                    ManageAction::Show => pin.show().and_then(|_| pin.set_focus()),
-                    ManageAction::Hide => pin.hide(),
+                    ManageAction::Show => set_visible(&pin, true).and_then(|_| pin.set_focus()),
+                    ManageAction::Hide => set_visible(&pin, false),
                     ManageAction::Close => pin.destroy(),
                 };
                 if let Err(e) = result {
@@ -953,8 +987,13 @@ pub async fn transform_pin(
         }
         pin.qr_result = None;
         pin.image = pin.transformed_image(action);
-        crate::shared::annotations::validate(&pin.annotations, pin.image.width(), pin.image.height())?;
-        let result = frame(window.label(), &pin)?;
+        crate::shared::annotations::validate(
+            &pin.annotations,
+            pin.image.width(),
+            pin.image.height(),
+        )?;
+        pin.revision = pin.revision.checked_add(1).ok_or("贴图版本超出限制。")?;
+        let result = frame(window.label(), &pin, None)?;
         commit_transformed_pin(&mut *state.images.lock().map_err(err)?, window.label(), pin)?;
         if let Ok(images) = state.images.lock() {
             log_retained(&images, "transformed");
@@ -991,7 +1030,7 @@ fn with_hidden_pins<T>(
             .filter(|w| w.label().starts_with("pin-"))
         {
             if pin.is_visible().map_err(err)? {
-                pin.hide().map_err(err)?;
+                set_visible(&pin, false).map_err(err)?;
                 hidden.push(pin);
             }
         }
@@ -999,7 +1038,7 @@ fn with_hidden_pins<T>(
     })();
     let mut restore_errors = Vec::new();
     for pin in hidden {
-        if let Err(error) = pin.show() {
+        if let Err(error) = set_visible(&pin, true) {
             restore_errors.push(format!("{}: {error}", pin.label()));
         }
     }
@@ -1061,7 +1100,7 @@ pub async fn pin_action(
         match action {
             PinAction::Copy => crate::shared::image_io::copy(&app, &composed(&pin)?)?,
             PinAction::Save => return save_with_hidden_pins(&app, Some(&window), &composed(&pin)?),
-            PinAction::Hide => window.hide().map_err(err)?,
+            PinAction::Hide => set_visible(&window, false).map_err(err)?,
             PinAction::Close => window.destroy().map_err(err)?,
         }
         changed(&app);
@@ -1074,6 +1113,19 @@ pub async fn pin_action(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn known_pixel_revision_skips_image_payload_and_new_revision_refreshes_it() {
+        let mut pin = grouped_pin("");
+        let initial = frame("pin-1", &pin, None).unwrap();
+        assert!(initial.data_url.starts_with("data:image/png;base64,"));
+        assert!(frame("pin-1", &pin, Some(0)).unwrap().data_url.is_empty());
+        pin.view.zoom = 2.0;
+        let metadata = frame("pin-1", &pin, Some(0)).unwrap();
+        assert_eq!(metadata.view.zoom, 2.0);
+        assert!(metadata.data_url.is_empty());
+        pin.revision += 1;
+        assert!(!frame("pin-1", &pin, Some(0)).unwrap().data_url.is_empty());
+    }
     #[test]
     fn qr_results_stay_with_the_unchanged_live_pin() {
         let mut images = BTreeMap::from([
@@ -1166,6 +1218,7 @@ mod tests {
         let image = Arc::new(RgbaImage::new(1, 1));
         Pin {
             qr_result: None,
+            revision: 0,
             original: image.clone(),
             image,
             view: PinView::default(),
@@ -1212,17 +1265,19 @@ mod tests {
             image::Rgba([x as u8 * 80, y as u8 * 60, 20, 255])
         });
         pixels.write_to(&mut png, image::ImageFormat::Png).unwrap();
-        let lens: crate::shared::annotations::Annotation = serde_json::from_value(serde_json::json!({
-            "kind":"magnify", "start":{"x":10,"y":5}, "end":{"x":30,"y":25},
-            "color":"#ff0000", "width":3, "magnification":3,
-            "raster":STANDARD.encode(png.into_inner())
-        }))
-        .unwrap();
-        let spotlight: crate::shared::annotations::Annotation = serde_json::from_value(serde_json::json!({
-            "kind":"spotlight", "start":{"x":10,"y":5}, "end":{"x":30,"y":25},
-            "color":"#000000", "width":3, "opacity":0.7
-        }))
-        .unwrap();
+        let lens: crate::shared::annotations::Annotation =
+            serde_json::from_value(serde_json::json!({
+                "kind":"magnify", "start":{"x":10,"y":5}, "end":{"x":30,"y":25},
+                "color":"#ff0000", "width":3, "magnification":3,
+                "raster":STANDARD.encode(png.into_inner())
+            }))
+            .unwrap();
+        let spotlight: crate::shared::annotations::Annotation =
+            serde_json::from_value(serde_json::json!({
+                "kind":"spotlight", "start":{"x":10,"y":5}, "end":{"x":30,"y":25},
+                "color":"#000000", "width":3, "opacity":0.7
+            }))
+            .unwrap();
         let source = vec![lens, spotlight];
         let rotated = transform_annotations(&source, 100, 50, Transform::RotateRight).unwrap();
         crate::shared::annotations::validate(&rotated, 50, 100).unwrap();
@@ -1272,6 +1327,7 @@ mod tests {
         let image = Arc::new(RgbaImage::new(30, 30));
         let pin = Pin {
             qr_result: None,
+            revision: 0,
             original: image.clone(),
             image,
             view: PinView::default(),

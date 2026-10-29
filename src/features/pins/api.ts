@@ -8,7 +8,7 @@ export const pinsApi = {
   pin: (id: number, rect: Rect, annotations: Annotation[]) => invoke<void>('pin_capture', { id, rect, annotations }),
   pinClipboard: () => invoke<void>('pin_clipboard'),
   pinFile: () => invoke<boolean>('pin_file'),
-  currentPin: () => invoke<PinFrame>('current_pin'),
+  currentPin: (knownRevision: number | null = null) => invoke<PinFrame>('current_pin', { knownRevision }),
   setPinAnnotations: (annotations: Annotation[]) => invoke<void>('set_pin_annotations', { annotations }),
   listPins: () => invoke<PinSummary[]>('list_pins'),
   managePins: (action: PinManageAction, label: string | null = null, group: string | null = null) => invoke<void>('manage_pins', { action, label, group }),
