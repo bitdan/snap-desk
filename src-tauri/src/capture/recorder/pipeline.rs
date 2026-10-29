@@ -441,7 +441,20 @@ fn write_video(
         }
         let frame = match receiver.recv_timeout(Duration::from_millis(10)) {
             Ok(frame) => frame,
-            Err(mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                // 没有音轨时也推进静止画面，避免长录屏把全部补帧积压到停止导出。
+                // 只推进已经过的媒体时间，暂停期间 elapsed 保持不变。
+                if audio.is_none() {
+                    let end = state.0.lock().map_err(err)?
+                        .as_ref()
+                        .filter(|s| s.view.id == id && !s.cancel)
+                        .map(|s| s.timeline.elapsed(capture::now()));
+                    if let Some(end) = end {
+                        encoder.advance_video(end)?;
+                    }
+                }
+                continue;
+            }
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
         };
         {

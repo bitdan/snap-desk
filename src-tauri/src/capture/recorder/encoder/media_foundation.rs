@@ -47,6 +47,10 @@ pub struct MediaFoundation {
     input_size: u32,
     converted_bytes: u64,
     original: (u32, u32),
+    /// 100 ns；静止桌面复用像素，但仍按目标帧率提交短样本。
+    frame_duration: i64,
+    /// 区分乱序采集帧与因静态补帧而稍晚到达的有效帧。
+    source_time: Option<i64>,
     /// 每帧拥有独立 MF 缓冲；待下一帧到达后才确定持续时间，不借用 CPU 图像。
     pending: Option<(i64, IMFMediaBuffer)>,
     // 包括 pending 在内的全部 COM 对象均先于 MF / COM 运行时释放。
@@ -167,19 +171,35 @@ impl MediaFoundation {
                 input_size: width * height * 3 / 2,
                 converted_bytes: 0,
                 original,
+                frame_duration: (10_000_000 / i64::from(fps.max(1))).max(1),
+                source_time: None,
                 pending: None,
             })
         }
     }
 
     fn write(&self, buffer: &IMFMediaBuffer, time: i64, duration: i64) -> WinResult<()> {
-        unsafe {
-            let sample = MFCreateSample()?;
-            sample.AddBuffer(buffer)?;
-            sample.SetSampleTime(time)?;
-            sample.SetSampleDuration(duration)?;
-            self.writer.WriteSample(self.stream, &sample)
+        // WGC 仅在桌面变化时给帧；不能把几秒静止区间作为一个 H.264 样本。
+        // 复用只读 NV12 缓冲，补齐媒体时间轴，无需重新转换或复制整幅图像。
+        let mut offset = 0;
+        while offset < duration {
+            // 合并不足 1ms 的尾数，避免 MP4 时间刻度把尾帧舍入成零时长。
+            let remaining = duration - offset;
+            let span = if remaining <= self.frame_duration + 10_000 {
+                remaining
+            } else {
+                self.frame_duration
+            };
+            unsafe {
+                let sample = MFCreateSample()?;
+                sample.AddBuffer(buffer)?;
+                sample.SetSampleTime(time + offset)?;
+                sample.SetSampleDuration(span)?;
+                self.writer.WriteSample(self.stream, &sample)?;
+            }
+            offset += span;
         }
+        Ok(())
     }
 
     fn finish(&self) -> WinResult<()> {
@@ -223,8 +243,8 @@ unsafe fn media_type(
 impl super::Encoder for MediaFoundation {
     fn advance_video(&mut self, end: i64) -> Result<(), String> {
         if let Some((time, buffer)) = self.pending.take() {
-            // 每 100 ms 最多复用一次已转换的画面。MF 只读持有缓冲，无须重复 NV12 转换。
-            // 留下同一缓冲作为后续静态区间底图，避免只录一帧时音轨无限堆积。
+            // 每 100 ms 推进一次，再按目标帧率提交短样本；MF 只读持有缓冲，无须重复转换。
+            // 留下同一缓冲作为后续静态区间底图，同时避免音轨堆积和停止时集中补帧。
             if end - time >= 1_000_000 {
                 self.write(&buffer, time, end - time).map_err(native_error)?;
                 self.pending = Some((end, buffer));
@@ -314,24 +334,24 @@ impl super::Encoder for MediaFoundation {
         if image.dimensions() != self.original {
             return Err("编码帧尺寸发生变化。".into());
         }
+        if self.source_time.is_some_and(|time| pts <= time) {
+            return Err("编码时间戳必须严格递增。".into());
+        }
+        let converted = converted_buffer(image)?;
         if let Some((time, buffer)) = self.pending.take() {
             if pts <= time {
-                if self.audio_stream.is_some() {
-                    // 静态补帧已推进到此刻；迟到画面从尚未提交的位置起生效，不倒写时间戳。
-                    self.pending = Some((time, converted_buffer(image)?));
-                    self.converted_bytes += u64::from(self.input_size);
-                    return Ok(());
-                }
-                self.pending = Some((time, buffer));
-                return Err("编码时间戳必须严格递增。".into());
+                // 有声/无声录屏都可能先推进静止画面；有效新帧从尚未提交处生效。
+                self.pending = Some((time, converted));
+            } else {
+                self.write(&buffer, time, pts - time)
+                    .map_err(native_error)?;
+                self.pending = Some((pts, converted));
             }
-            self.write(&buffer, time, pts - time)
-                .map_err(native_error)?;
-            self.pending = Some((pts, converted_buffer(image)?));
         } else {
             // 首帧覆盖开始到首次采集之间的短间隔，输出时长与有效录制时间一致。
-            self.pending = Some((0, converted_buffer(image)?));
+            self.pending = Some((0, converted));
         }
+        self.source_time = Some(pts);
         self.converted_bytes += u64::from(self.input_size);
         Ok(())
     }
@@ -354,6 +374,57 @@ impl super::Encoder for MediaFoundation {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 重现短录屏只有几帧的输入：成品从零时刻可解码，静止区间保持短样本。
+    #[test]
+    fn sparse_silent_capture_has_visible_first_frame_and_bounded_sample_durations() {
+        use super::super::Encoder;
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("sparse.mp4");
+        let mut encoder = MediaFoundation::new(
+            &path, 64, 64, 30, 1_000_000, EncodingPreference::Software, false,
+        ).unwrap();
+        let mut image = BgraImage::new(64, 64);
+        image.data.fill(255);
+        encoder.push(&image, 0).unwrap();
+        encoder.advance_video(2_000_000).unwrap();
+        // 模拟静止补帧刚推进后，采集队列中稍早的有效帧到达；不应报乱序错误。
+        encoder.push(&image, 1_900_000).unwrap();
+        assert!(encoder.push(&image, 1_800_000).is_err());
+        encoder.push(&image, 50_000_000).unwrap();
+        Encoder::finish(&mut encoder, 51_000_000).unwrap();
+        drop(encoder);
+
+        let _runtime = Runtime::new().unwrap();
+        unsafe {
+            let reader = MFCreateSourceReaderFromURL(&HSTRING::from(path.as_os_str()), None).unwrap();
+            let stream = MF_SOURCE_READER_FIRST_VIDEO_STREAM.0 as u32;
+            let decoded = MFCreateMediaType().unwrap();
+            decoded.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Video).unwrap();
+            decoded.SetGUID(&MF_MT_SUBTYPE, &MFVideoFormat_NV12).unwrap();
+            reader.SetCurrentMediaType(stream, None, &decoded).unwrap();
+            let (mut count, mut end) = (0, 0);
+            loop {
+                let (mut flags, mut pts, mut sample) = (0, 0, None);
+                reader.ReadSample(stream, 0, None, Some(&mut flags), Some(&mut pts), Some(&mut sample)).unwrap();
+                if flags & MF_SOURCE_READERF_ENDOFSTREAM.0 as u32 != 0 { break; }
+                if let Some(sample) = sample {
+                    if count == 0 {
+                        assert_eq!(pts, 0);
+                        let pixels = bytes(&sample.ConvertToContiguousBuffer().unwrap());
+                        assert!(pixels[..64 * 64].iter().all(|value| *value > 200));
+                    }
+                    let duration = sample.GetSampleDuration().unwrap();
+                    assert!(duration > 0 && duration <= 350_000);
+                    assert!((pts - end).abs() <= 1_000);
+                    end = pts + duration;
+                    count += 1;
+                }
+            }
+            assert!(count >= 150);
+            assert!((end - 51_000_000).abs() <= 1_000);
+        }
+    }
 
     fn bytes(buffer: &IMFMediaBuffer) -> Vec<u8> {
         unsafe {

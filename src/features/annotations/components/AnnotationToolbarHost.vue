@@ -35,10 +35,10 @@ function activate(event: Event) {
 </template>
 
 <style scoped>
-.capture-toolbar.annotation-workspace-toolbar { position: absolute; z-index: 5; display: flex; flex-direction: column; gap: 4px; width: max-content; max-width: calc(100vw - 16px); padding: 5px; border: 1px solid #d4d4d8; border-radius: 6px; background: #fff; color: #24292f; box-shadow: 0 4px 16px #0003; cursor: default; font: 13px 'Segoe UI', 'Microsoft YaHei', sans-serif; }
+.capture-toolbar.annotation-workspace-toolbar { position: absolute; z-index: 5; display: flex; flex-direction: column; gap: 4px; width: max-content; max-width: calc(100vw - 16px); padding: 5px; border: 1px solid #d4d4d8; border-radius: 6px; background: #f6f7f8; color: #24292f; box-shadow: 0 4px 16px #0003; cursor: default; font: 13px 'Segoe UI', 'Microsoft YaHei', sans-serif; }
 .capture-toolbar.annotation-workspace-toolbar.embedded { position: relative; width: 100%; max-width: 100%; box-sizing: border-box; box-shadow: none; }
 .annotation-workspace-toolbar :deep(.annotation-tools) { width: max-content; max-width: 100%; }
-.annotation-workspace-toolbar :deep(button) { display: inline-flex; flex: none; align-items: center; justify-content: center; gap: 4px; height: 28px; min-width: 28px; padding: 3px 6px; border: 0; border-radius: 5px; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+.annotation-workspace-toolbar :deep(button) { display: inline-flex; flex: none; align-items: center; justify-content: center; gap: 4px; height: 32px; min-width: 32px; padding: 3px 6px; border: 0; border-radius: 5px; background: transparent; color: inherit; font: inherit; cursor: pointer; }
 .annotation-workspace-toolbar :deep(button:hover:enabled) { background: #eff6ff; }
 .annotation-workspace-toolbar :deep(button:disabled) { opacity: .45; cursor: default; }
 .annotation-workspace-toolbar :deep(button:focus-visible) { outline: 2px solid #2563eb; outline-offset: -2px; }

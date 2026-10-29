@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import layout from '../../src/features/pins/pin-layout.json'
 import { defaultPinAppearance, pinAppearanceStyle, validatePinAppearance, canEditPin, minimumZoom, pinDisplaySize, stepZoom } from '../../src/features/pins/pins'
 
 describe('pin display controls', () => {
@@ -18,7 +19,7 @@ describe('pin display controls', () => {
       for (const zoom of [1, 0.5, 0.1]) {
         const size = pinDisplaySize(1116, 558, zoom, 266, 290, expanded)
         expect(size.stageWidth).toBeLessThanOrEqual(242)
-        expect(size.stageHeight).toBeLessThanOrEqual(expanded ? 162 : 222)
+        expect(size.stageHeight).toBeLessThanOrEqual(290 - layout.padding * 2 - layout.gap - (expanded ? layout.expandedHeight : layout.collapsedHeight))
         expect(size.stageWidth).toBeGreaterThanOrEqual(22)
         expect(size.stageHeight).toBeGreaterThanOrEqual(22)
       }

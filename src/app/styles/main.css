@@ -7,9 +7,9 @@ html.capture-window.recording-live, html.capture-window.recording-live body, htm
 
 .annotation-preview { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 .capture-toolbar.annotation-toolbar { flex-direction: column; width: max-content; max-width: calc(100vw - 16px); background: #fff; color: #3f3f46; border-color: #d4d4d8; }
-.capture-toolbar.annotation-toolbar button { flex-shrink: 0; height: 28px; padding: 3px 6px; gap: 4px; }
-.capture-toolbar.annotation-toolbar button:hover { background: #f3f0ff; }
-.capture-toolbar.annotation-toolbar button[aria-pressed=true] { color: #7c3aed; background: #ede9fe; }
+.capture-toolbar.annotation-toolbar button { flex-shrink: 0; height: 32px; padding: 3px 6px; gap: 4px; }
+.capture-toolbar.annotation-toolbar button:hover { background: #eff6ff; }
+.capture-toolbar.annotation-toolbar button[aria-pressed=true] { color: #2563eb; background: #dbeafe; }
 .capture-toolbar.annotation-toolbar .copy-button { color: white; background: #2563eb; }
 .annotation-toolbar .tool-row { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
 .annotation-toolbar .tool-active { background: #2563eb; }

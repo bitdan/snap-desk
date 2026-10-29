@@ -2,7 +2,7 @@
 import SelectControl from '@/shared/ui/SelectControl.vue'
 import { handleEscape } from '@/shared/ui/escape'
 import { t, te } from '@/shared/i18n/i18n'
-import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { Pin, PinOff, Lock, Unlock, Minus, Plus, Copy, Save, EyeOff, X, ChevronDown, ChevronUp, Move, Undo2, Redo2, Trash2 } from 'lucide-vue-next'
 import PinRecognition from '@/features/recognition/components/PinRecognition.vue'
 import AnnotationSurface from '@/features/annotations/components/AnnotationSurface.vue'
@@ -21,6 +21,12 @@ const toolbar = ref<HTMLElement | null>(null)
 const { style: floatingToolbarStyle, start: floatToolbar, reset: resetToolbarPosition } = useFloatingToolbar(toolbar)
 const imageSession = usePinImage(knownRevision => api.currentPin(knownRevision))
 const { frame } = imageSession
+// 首次 IPC 和图片解码完成前不绘制 20px 占位边框，避免贴图看起来先缩小再展开。
+const imageReady = ref(false)
+watch(() => frame.value?.dataUrl, () => { imageReady.value = false }, { flush: 'sync' })
+function imageLoaded(event: Event) {
+  imageReady.value = !!frame.value?.dataUrl && (event.currentTarget as HTMLImageElement).src === frame.value.dataUrl
+}
 const appearance = ref(defaultPinAppearance())
 let appearanceRevision = 0
 let offAppearance: (() => void) | undefined
@@ -249,11 +255,11 @@ function closeOnResize() {
 </script>
 
 <template>
-  <div class="pin-shell" :class="{ 'is-focused': focused, 'controls-visible': controlsHovered }" :style="shellStyle" @pointerleave="hideControls" @contextmenu.prevent>
-    <div class="pin-stage" :inert="!!recognitionMode" tabindex="0" :aria-label='t("贴图，右键编辑标注")' :style="[stageStyle, pinAppearanceStyle(appearance, display.stageWidth, display.stageHeight, frame?.view.opacity ?? 1, focused)]" @pointerenter="keepControlsVisible" @pointerleave="scheduleControlsHide" @pointerdown="drag" @wheel.prevent="wheel" @contextmenu.capture="openMenu">
+  <div class="pin-shell" :class="{ 'is-focused': focused, 'controls-visible': controlsHovered || !!error || !!message }" :style="shellStyle" @pointerleave="hideControls" @contextmenu.prevent>
+    <div v-show="imageReady" class="pin-stage" :inert="!!recognitionMode" tabindex="0" :aria-label='t("贴图，右键编辑标注")' :style="[stageStyle, pinAppearanceStyle(appearance, display.stageWidth, display.stageHeight, frame?.view.opacity ?? 1, focused)]" @pointerenter="keepControlsVisible" @pointerleave="scheduleControlsHide" @pointerdown="drag" @wheel.prevent="wheel" @contextmenu.capture="openMenu">
       <div v-if="frame" class="pin-canvas">
         <div class="pin-image-content" :style="{ width: `${display.imageWidth}px`, height: `${display.imageHeight}px`, opacity: frame.view.opacity }">
-          <img v-if="frame.dataUrl" :src="frame.dataUrl" :alt='t("桌面贴图")' draggable="false" @error="error = '贴图预览加载失败，可关闭后重新贴图。'" />
+          <img v-if="frame.dataUrl" :src="frame.dataUrl" :alt='t("桌面贴图")' draggable="false" @load="imageLoaded" @error="error = '贴图预览加载失败，可关闭后重新贴图。'" />
           <AnnotationSurface :editor="editor" :width="frame.width" :height="frame.height" :bounds="bounds" :enabled="annotating && !busy && !frame.view.locked" />
         </div>
       </div>
@@ -318,27 +324,27 @@ function closeOnResize() {
 
 <style scoped>
 .pin-shell { position: fixed; inset: 0; display: grid; justify-items: center; color: #374151; user-select: none; }
-.pin-stage { min-width: 0; min-height: 0; align-self: center; overflow: auto; border-style: solid; border-color: #a1a1aa; transition: border-color .12s, box-shadow .12s, border-radius .12s; }
+.pin-stage { grid-row: 1; min-width: 0; min-height: 0; align-self: center; overflow: auto; border-style: solid; border-color: #a1a1aa; transition: border-color .12s, box-shadow .12s, border-radius .12s; }
 .pin-stage:focus-visible { outline:2px solid #3264df; outline-offset:2px; }
 .pin-canvas { display: flex; align-items: center; justify-content: center; min-width: 100%; min-height: 100%; width: max-content; height: max-content; }
 .pin-canvas img { flex: none; max-width: none; }
 .pin-image-content { position: relative; flex: none; }
 .pin-image-content img { display: block; width: 100%; height: 100%; }
-.pin-controls { min-width: 0; width: max-content; max-width: 100%; height: 100%; justify-self: end; overflow: hidden; padding: 4px 6px; border: 1px solid #d4d4d8; border-radius: 7px; background: #fffffff5; box-shadow: 0 2px 6px #0002; font-size: 11px; }
+.pin-controls { grid-row: 2; min-width: 0; width: max-content; max-width: 100%; height: 100%; justify-self: center; overflow: auto; scrollbar-width: thin; padding: 4px 6px; border: 1px solid #d4d4d8; border-radius: 7px; background: #fffffff5; box-shadow: 0 2px 6px #0002; font: 13px 'Segoe UI', 'Microsoft YaHei', sans-serif; }
 /* 隐藏时保留底栏占位，避免图片跳动；键盘焦点仍可唤出工具。 */
 .pin-shell:not(.controls-visible):not(:has(:focus-visible)) .pin-controls:not(.floating) { visibility: hidden; pointer-events: none; }
 .pin-row { display: flex; align-items: center; gap: 3px; height: 34px; overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; white-space: nowrap; }
 .pin-row > * { flex-shrink: 0; }
-.pin-controls button { display: inline-flex; align-items: center; justify-content: center; gap: 4px; height: 26px; min-width: 26px; padding: 3px 5px; border-radius: 4px; }
-.pin-controls button:hover { background: #f3f0ff; }
+.pin-controls button { display: inline-flex; align-items: center; justify-content: center; gap: 4px; height: 32px; min-width: 32px; padding: 3px 5px; border-radius: 4px; }
+.pin-controls button:hover { background: #eff6ff; }
 .pin-controls button:disabled { opacity: .45; }
-.pin-controls button[aria-pressed=true] { color: #7c3aed; background: #ede9fe; }
-.pin-controls button:focus-visible, .pin-controls select:focus-visible { outline: 2px solid #a78bfa; outline-offset: -2px; }
+.pin-controls button[aria-pressed=true] { color: #2563eb; background: #dbeafe; }
+.pin-controls button:focus-visible, .pin-controls select:focus-visible { outline: 2px solid #2563eb; outline-offset: -2px; }
 .pin-divider { height: 14px; width: 1px; background: #e4e4e7; margin: 0 3px; }
-.pin-options { gap: 10px; }
+.pin-options { gap: 8px; min-height: 36px; }
 .pin-options select { background: transparent; max-width: 100px; height: 26px; }
 .pin-opacity { display: flex; align-items: center; gap: 4px; }
-.pin-opacity input { width: 64px; accent-color: #8b5cf6; }
+.pin-opacity input { width: 64px; accent-color: #2563eb; }
 .pin-dimensions { color: #71717a; }
 .pin-status { line-height: 16px; margin: 0; font-size: 10px; color: #71717a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pin-error { color: #b91c1c; }
@@ -347,10 +353,14 @@ function closeOnResize() {
 .pin-toggle { flex-shrink: 0; }
 .pin-context-menu { position: fixed; z-index: 20; width: 278px; max-width: calc(100vw - 8px); max-height: calc(100vh - 8px); overflow-y: auto; padding: 5px; border: 1px solid #e4e4e7; border-radius: 8px; background: #fff; box-shadow: 0 4px 18px #0003; font-size: 12px; }
 .context-annotation-tools { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 2px; }
-.pin-context-menu button[aria-checked=true] { color: #7c3aed; background: #ede9fe; }
+.pin-context-menu button[aria-checked=true] { color: #2563eb; background: #dbeafe; }
 .pin-context-menu button { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 30px; padding: 5px 8px; border-radius: 4px; text-align: left; }
-.pin-context-menu button:hover:not(:disabled), .pin-context-menu button:focus-visible { background: #f3f0ff; color: #7c3aed; outline: none; }
+.pin-context-menu button:hover:not(:disabled), .pin-context-menu button:focus-visible { background: #eff6ff; color: #2563eb; outline: none; }
 .pin-context-menu button:disabled { opacity: .4; }
 .pin-context-menu button span { margin-left: auto; color: #a1a1aa; font-size: 10px; }
 .pin-context-menu [role=separator] { height: 1px; background: #e4e4e7; margin: 4px; }
+/* 透明窗口仅给工具区着色，保留图片周围的透明边距。 */
+:global([data-theme=dark]) .pin-controls, :global([data-theme=dark]) .pin-context-menu { background: #20252c; color: #e6edf3; border-color: #39424e; }
+:global([data-theme=dark]) .pin-controls button:hover:enabled, :global([data-theme=dark]) .pin-context-menu button:hover:enabled { background: #303f56; }
+:global([data-theme=dark]) .pin-controls button[aria-pressed=true] { background: #303f56; color: #93c5fd; }
 </style>

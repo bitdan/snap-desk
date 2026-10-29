@@ -176,14 +176,14 @@ function value(event: Event) { return (event.target as HTMLInputElement).value }
 </template>
 
 <style scoped>
-.annotation-tools { min-width: 0; max-width: 100%; font-size: 12px; color:#24292f; background:#fff; border-radius:5px; }
-.annotation-tool-row { display: flex; align-items: center; gap: 3px; min-height: 34px; white-space: nowrap; overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; }
+.annotation-tools { min-width: 0; max-width: 100%; font: 13px 'Segoe UI', 'Microsoft YaHei', sans-serif; color:#24292f; background:#f6f7f8; border-radius:5px; }
+.annotation-tool-row { display: flex; align-items: center; gap: 3px; min-height: 36px; white-space: nowrap; overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; }
 .annotation-tool-row > * { flex-shrink: 0; }
-.annotation-tools :deep(button), .annotation-tools select { display: inline-flex; align-items: center; justify-content: center; height: 28px; padding: 3px 6px; border-radius: 5px; color: inherit; background: transparent; }
-.annotation-tools :deep(button) { min-width: 28px; position: relative; }
-.annotation-tools :deep(button:hover:not(:disabled)) { background: #f3f0ff; }
-.annotation-tools :deep(button[aria-pressed=true]) { color: #7c3aed; background: #ede9fe; }
-.annotation-tools :deep(:focus-visible) { outline: 2px solid #a78bfa; outline-offset: -2px; }
+.annotation-tools :deep(button), .annotation-tools select { display: inline-flex; align-items: center; justify-content: center; height: 32px; padding: 3px 6px; border-radius: 5px; color: inherit; background: transparent; }
+.annotation-tools :deep(button) { border: 0; gap: 4px; font: inherit; min-width: 32px; position: relative; }
+.annotation-tools :deep(button:hover:not(:disabled)) { background: #eff6ff; }
+.annotation-tools :deep(button[aria-pressed=true]) { color: #2563eb; background: #dbeafe; }
+.annotation-tools :deep(:focus-visible) { outline: 2px solid #2563eb; outline-offset: -2px; }
 [data-annotation-tool] { touch-action: none; user-select: none; }
 .sorting-source { opacity: .55; }
 .sorting-target { outline: 2px solid #2563eb; outline-offset: -2px; }
@@ -193,13 +193,15 @@ function value(event: Event) { return (event.target as HTMLInputElement).value }
 .annotation-action-row { border-top:1px solid #e1e4e8; padding-top:3px; }
 .annotation-options { gap: 10px; border-top: 1px solid #f4f4f5; }
 .annotation-tools label { display: inline-flex; align-items: center; gap: 3px; }
-.annotation-tools input { color: #374151; background: white; border: 1px solid #d4d4d8; border-radius: 3px; height: 24px; }
+.annotation-tools input { color: #374151; background: white; border: 1px solid #d4d4d8; border-radius: 3px; height: 28px; }
 .annotation-tools input[type=color] { width: 28px; padding: 1px; }
 .annotation-tools input[type=number] { width: 44px; }
 .annotation-text { width: 190px; padding: 2px 6px; }
 .annotation-tools :deep(button:disabled), .annotation-tools input:disabled, .annotation-tools select:disabled { opacity: .45; }
-.annotation-hint { font-size: 10px; color: #71717a; }
+.annotation-hint { font-size: 12px; color: #57606a; }
 .annotation-error { color: #e11d48; line-height: 16px; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 :global([data-theme=dark]) .annotation-tools { background:#20252c; color:#e6edf3; }
 :global([data-theme=dark]) .annotation-tools input, :global([data-theme=dark]) .annotation-tools select { background:#181b20; color:#e6edf3; border-color:#39424e; }
+:global([data-theme=dark]) .annotation-tools :deep(button:hover:enabled) { background: #303f56; }
+:global([data-theme=dark]) .annotation-tools :deep(button[aria-pressed=true]) { color: #93c5fd; background: #303f56; }
 </style>
