@@ -377,7 +377,7 @@ pub async fn clipboard_export(
             )
             .map_err(|_| "已有素材正在导出，请完成或取消当前保存对话框。")?;
         let _export = ExportGuard(&service.exporting);
-        let temp = crate::recovery::Workspace::temporary(
+        let temp = crate::shared::export_staging::Workspace::temporary(
             &app,
             "剪贴板导出快照",
             (0..options.ids.len()).map(|i| format!("{i}.png")).collect(),
@@ -437,7 +437,7 @@ pub async fn clipboard_export(
                 })
                 .collect();
             let staging =
-                crate::recovery::Workspace::new(&app, &parent, "剪贴板独立文件批次", names)?;
+                crate::shared::export_staging::Workspace::new(&app, &parent, "剪贴板独立文件批次", names)?;
             for (index, item) in items.iter().enumerate() {
                 let path = staging.path().join(format!(
                     "{:03}.{}",
@@ -485,7 +485,7 @@ pub async fn clipboard_export(
             }
             directory = path.parent().ok_or("导出路径无效。")?.to_path_buf();
             let mut file =
-                crate::recovery::TrackedFile::new(&app, &directory, ext, "剪贴板组合导出")?;
+                crate::shared::export_staging::TrackedFile::new(&app, &directory, ext, "剪贴板组合导出")?;
             if options.mode == Mode::Pdf {
                 pdf_with_font(&items, &options, file.file_mut(), &font_bytes)?;
             } else {

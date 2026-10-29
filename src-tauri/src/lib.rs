@@ -5,7 +5,6 @@ mod clipboard;
 mod diagnostics;
 mod pins;
 mod recognition;
-mod recovery;
 mod resources;
 mod settings;
 mod shared;

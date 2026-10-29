@@ -207,7 +207,7 @@ fn complete(app: &AppHandle, id: u64, message: &str) -> Result<(), String> {
             .map_err(err)?
             .join("scroll-results");
         std::fs::create_dir_all(&root).map_err(err)?;
-        let mut file = crate::recovery::TrackedFile::new(app, &root, "png", "滚动截图导出")?;
+        let mut file = crate::shared::export_staging::TrackedFile::new(app, &root, "png", "滚动截图导出")?;
         let png_started = Instant::now();
         image
             .write_to(file.file_mut(), ImageFormat::Png)

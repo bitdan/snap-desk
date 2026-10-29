@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { defaultRecordingAnnotationTools } from '../../src/features/recording/recording-annotations'
+import { defaultRecordingAnnotationTools } from '../helpers/recording-fixtures'
 import { defaultInputEffects, recordingConfig } from '../../src/features/recording/recording'
 import { defaultSettings } from '../../src/features/settings/settings'
 

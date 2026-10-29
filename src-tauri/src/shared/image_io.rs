@@ -195,7 +195,7 @@ pub fn save(app: &AppHandle, image: &RgbaImage) -> Result<bool, String> {
     let path = path.into_path().map_err(|e| e.to_string())?;
     validate_extension(&path, settings.format)?;
     let parent = path.parent().ok_or("保存路径无效。")?;
-    let mut temporary = crate::recovery::TrackedFile::new(
+    let mut temporary = crate::shared::export_staging::TrackedFile::new(
         app,
         parent,
         settings.format.extension(),

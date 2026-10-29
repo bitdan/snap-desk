@@ -23,18 +23,10 @@ export interface TimedAnnotation { id: string; shape: Annotation; startMs: numbe
 export interface RecordingAnnotationTools {
   tool: AnnotationTool; color: string; width: number; opacity: number; fontSize: number; fontFamily: 'sans' | 'serif' | 'mono'; magnification: number; lifetimeMs: number; fadeOutMs: number
 }
-export const defaultRecordingAnnotationTools = (): RecordingAnnotationTools => ({ tool: 'pen', color: '#ef4444', width: 3, opacity: 1, fontSize: 24, fontFamily: 'sans', magnification: 2, lifetimeMs: 0, fadeOutMs: 500 })
 export function annotationAlpha(track: TimedAnnotation, ms: number): number {
   if (ms < track.startMs || (track.endMs !== null && ms >= track.endMs)) return 0
   return track.endMs !== null && track.fadeOutMs > 0 ? Math.min(1, (track.endMs - ms) / Math.max(1, Math.min(track.fadeOutMs, track.endMs - track.startMs))) : 1
 }
-export function annotationsAt(tracks: TimedAnnotation[], ms: number): Annotation[] {
-  return [...tracks].sort((a, b) => a.order - b.order).flatMap(track => {
-    const alpha = annotationAlpha(track, ms)
-    return alpha <= 0 ? [] : [{ ...track.shape, opacity: (track.shape.opacity ?? 1) * alpha }]
-  })
-}
-
 export interface RecordingAnnotationEditorStatus { ready: boolean; selected: number; pending: boolean; interacting: boolean; canUndo: boolean; canRedo: boolean; text: string; error: string }
 export type RecordingAnnotationEditorAction = { kind: 'tool'; tool: AnnotationTool } | { kind: 'style'; style: Parameters<AnnotationEditor['style']>[0] } | { kind: 'undo' | 'redo' | 'remove' | 'clear' }
 export interface RecordingAnnotationEditorRequest { id: number; requestId: number; action: RecordingAnnotationEditorAction }

@@ -11,6 +11,7 @@ use tauri::{AppHandle, Manager, WebviewWindow};
 use tauri_plugin_dialog::DialogExt;
 
 const IDS: [&str; 2] = ["opus-mt-en-zh-int8", "opus-mt-zh-en-int8"];
+static STATUS: resources::status_cache::StatusCache<LocalStatus> = resources::status_cache::StatusCache::new();
 const FILES: [&str; 8] = [
     "model.bin",
     "config.json",
@@ -220,7 +221,7 @@ pub fn verified_directory(app: &AppHandle, id: &str) -> Result<PathBuf, String> 
     verify(&dir, &pack)?;
     Ok(dir)
 }
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelStatus {
     model_id: String,
@@ -229,7 +230,7 @@ pub struct ModelStatus {
     revision: Option<String>,
     download_bytes: u64,
 }
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LocalStatus {
     runtime_ready: bool,
@@ -237,6 +238,10 @@ pub struct LocalStatus {
     models: Vec<ModelStatus>,
 }
 fn status(app: &AppHandle) -> Result<LocalStatus, String> {
+    STATUS.read(&resources::directory(app)?, || check_status(app))
+}
+
+fn check_status(app: &AppHandle) -> Result<LocalStatus, String> {
     let catalog = catalog()?;
     let models = IDS
         .iter()

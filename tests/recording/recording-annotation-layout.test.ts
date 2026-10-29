@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { effectScope, nextTick, ref, shallowRef } from 'vue'
 import { recordingInputRect, useRecordingAnnotationLayout } from '../../src/features/recording/use-recording-annotation-layout'
-import { defaultRecordingAnnotationTools, type RecordingAnnotationView } from '../../src/features/recording/recording-annotations'
+import type { RecordingAnnotationView } from '../../src/features/recording/recording-annotations'
+import { defaultRecordingAnnotationTools } from '../helpers/recording-fixtures'
 
 const lifecycle = vi.hoisted(() => ({ mount: [] as (() => void)[], cleanup: [] as (() => void)[] }))
 const api = vi.hoisted(() => ({ setRecordingAnnotationRegions: vi.fn() }))

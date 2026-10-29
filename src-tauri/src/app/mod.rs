@@ -3,7 +3,7 @@ mod actions;
 mod commands;
 
 use actions::{trigger, trigger_pin, trigger_recording};
-use crate::{capture, clipboard, diagnostics, pins, recovery as recovery_center, resources, settings};
+use crate::{capture, clipboard, diagnostics, pins, resources, settings};
 use crate::recognition::{ocr, qr, translation, local_translation, translation_models};
 use crate::settings::{autostart, shortcut_probe, storage};
 use crate::resources::lifecycle as resource_lifecycle;
@@ -126,7 +126,6 @@ pub fn run() {
         .setup(|app| {
             diagnostics::runtime::install_panic_hook();
             log::info!("event=app.starting module=app version={} platform={}", app.package_info().version, std::env::consts::OS);
-            recovery_center::initialize(app.handle());
             settings::initialize(app.handle()).map_err(|error| {
                 log::error!("event=app.initialize_failed module=app code=SETTINGS_INIT_FAILED");
                 error
@@ -380,8 +379,6 @@ pub fn run() {
             settings::set_shortcuts_enabled,
             settings::set_shortcut_editing,
             shortcut_probe::probe_shortcuts,
-            recovery_center::recovery_status,
-            recovery_center::recovery_artifact_action,
             capture::cancel_pending_capture,
             capture::start_capture,
             capture::current_capture,
@@ -442,7 +439,6 @@ pub fn run() {
                 translation::cancel_all(app);
                 local_translation::shutdown(app);
                 app.state::<clipboard::Service>().shutdown();
-                recovery_center::shutdown(app);
             }
         });
 }

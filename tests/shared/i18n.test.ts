@@ -10,7 +10,6 @@ import { annotationTools, annotationToolGroups } from '../../src/features/annota
 import { targetLanguages } from '../../src/features/recognition/ai'
 import { exportFilenamePreview, shortcutActions } from '../../src/features/settings/settings'
 import { encoderLabels, recordingAudioStatus, recordingLabels } from '../../src/features/recording/recording'
-import { recoverySummary } from '../../src/features/recovery/recovery-center'
 
 afterEach(() => { appearance.value.language = 'zh-CN' })
 const han = (value: string) => /\p{Script=Han}/u.test(value)
@@ -53,7 +52,6 @@ describe('application language coverage', () => {
     for (const label of labels) if (label !== '简体中文') expect(han(t(label)), label).toBe(false)
     expect(recordingAudioStatus({ systemAudio: true, microphone: true })).toBe('System audio + Microphone')
     expect(recordingAudioStatus({ systemAudio: false, microphone: false })).toBe('Silent')
-    expect(recoverySummary([{ bytes: null } as never])).toBe('1 items · 0 B, 1 items with unknown size')
     expect(exportFilenamePreview({ filenamePrefix: '图片-时间戳', includeDimensions: true, format: 'png', jpegQuality: 90, rememberDirectory: true }))
       .toBe('图片-时间戳-timestamp-1920x1080.png')
     expect(localizedDate(0)).toBe(new Date(0).toLocaleString('en-US'))

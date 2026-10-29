@@ -5,7 +5,6 @@ import { recognitionApi } from '@/features/recognition/api'
 import { clipboardApi } from '@/features/clipboard/api'
 import { recordingApi } from '@/features/recording/api'
 import { settingsApi } from '@/features/settings/api'
-import { recoveryApi } from '@/features/recovery/api'
 import { captureApi } from '@/features/capture/api'
 import { pinsApi } from '@/features/pins/api'
 import { scrollApi } from '@/features/scroll/api'
@@ -32,7 +31,6 @@ export const api = {
   ...clipboardApi,
   ...recordingApi,
   ...settingsApi,
-  ...recoveryApi,
   ...captureApi,
   ...pinsApi,
   ...scrollApi,

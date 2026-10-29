@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { annotationAlpha, annotationsAt, prepareRecordingRaster, type TimedAnnotation } from '../../src/features/recording/recording-annotations'
+import { annotationAlpha, prepareRecordingRaster, type TimedAnnotation } from '../../src/features/recording/recording-annotations'
 import { useAnnotations } from '../../src/features/annotations/use-annotations'
 import type { Annotation } from '../../src/features/annotations/annotations'
 
@@ -41,10 +41,10 @@ describe('录制中的标注', () => {
 describe('标注媒体时间轨道', () => {
   const track:TimedAnnotation={id:'a-1',shape:{kind:'rectangle',start:{x:0,y:0},end:{x:10,y:10},color:'#ff0000',width:2,opacity:.5},startMs:1000,endMs:4000,fadeOutMs:500,order:0}
   it('起止采用半开区间，淡出不改变原形状',()=>{
-    expect(annotationsAt([track],999)).toEqual([])
+    expect(annotationAlpha(track,999)).toBe(0)
     expect(annotationAlpha(track,1000)).toBe(1)
-    expect(annotationsAt([track],3750)[0].opacity).toBe(.25)
-    expect(annotationsAt([track],4000)).toEqual([])
+    expect(annotationAlpha(track,3750)).toBe(.5)
+    expect(annotationAlpha(track,4000)).toBe(0)
     expect(track.shape.opacity).toBe(.5)
   })
   it('永久标注不会依赖系统墙钟，短片段淡出不超过片段长度',()=>{

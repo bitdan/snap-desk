@@ -1,6 +1,7 @@
 //! 用户主动下载 OCR 引擎、模型和字体；资源存入可写的数据目录，绝不写安装目录。
 //! 临时文件经过大小、摘要校验后原子替换，失败不破坏已有文件。
 pub(crate) mod lifecycle;
+pub(crate) mod status_cache;
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -15,6 +16,7 @@ use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
 use tauri_plugin_dialog::DialogExt;
 
 static OPERATION: Mutex<()> = Mutex::new(());
+static STATUS: status_cache::StatusCache<ResourceStatus> = status_cache::StatusCache::new();
 const MAX_FONT: u64 = 64 * 1024 * 1024;
 
 /// 前端只能选择资源类别，下载地址、文件名和摘要由内置清单决定。
@@ -36,7 +38,7 @@ pub(crate) struct Asset {
 }
 
 /// 设置页展示的实际可用状态，不把“文件存在”直接当作“资源已就绪”。
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResourceStatus {
     directory: String,
@@ -130,6 +132,10 @@ pub fn ocr_paths(app: &AppHandle) -> Result<PathBuf, String> {
 }
 
 fn status(app: &AppHandle) -> Result<ResourceStatus, String> {
+    STATUS.read(&directory(app)?, || check_status(app))
+}
+
+fn check_status(app: &AppHandle) -> Result<ResourceStatus, String> {
     let dir = directory(app)?;
     let models_ready = manifest()?
         .iter()

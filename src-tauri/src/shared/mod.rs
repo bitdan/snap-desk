@@ -2,6 +2,7 @@
 pub(crate) mod annotations;
 pub(crate) mod auxiliary_windows;
 pub(crate) mod image_io;
+pub(crate) mod export_staging;
 pub(crate) mod native_i18n;
 pub(crate) mod platform;
 #[cfg(test)]

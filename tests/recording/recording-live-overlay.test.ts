@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as Vue from 'vue'
 import { clientComponent, MemoryNode as Node, memoryRenderer as renderer } from '../helpers/component-host'
-import { defaultRecordingAnnotationTools } from '../../src/features/recording/recording-annotations'
+import { defaultRecordingAnnotationTools } from '../helpers/recording-fixtures'
 import type { AnnotationEditor } from '../../src/features/annotations/use-annotations'
 
 const api = vi.hoisted(() => ({ recordingAnnotations: vi.fn(), currentRecording: vi.fn(), updateRecordingAnnotations: vi.fn(), setRecordingAnnotationMode: vi.fn(), setRecordingAnnotationTools: vi.fn(), controlRecording: vi.fn(), publishRecordingAnnotationEditor: vi.fn(), finishRecordingAnnotationEditorAction: vi.fn() }))

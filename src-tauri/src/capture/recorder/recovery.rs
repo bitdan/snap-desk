@@ -19,7 +19,7 @@ fn validate_id(id: &str) -> Result<(), String> {
 fn source_path(value: &Recoverable, id: &str) -> Result<PathBuf, String> {
     validate_id(id)?;
     let source = PathBuf::from(&value.path);
-    crate::recovery::no_links(&source)?;
+    crate::shared::export_staging::no_links(&source)?;
     if value.id != id
         || !source.is_absolute()
         || source
@@ -103,7 +103,7 @@ fn catalog(app: &AppHandle) -> Result<PathBuf, String> {
         .map_err(err)?
         .join("recording-recovery");
     fs::create_dir_all(&path).map_err(err)?;
-    crate::recovery::no_links(&path)?;
+    crate::shared::export_staging::no_links(&path)?;
     Ok(path)
 }
 fn store(path: &Path, value: &Recoverable) -> Result<(), String> {
@@ -252,7 +252,7 @@ fn export(
         Some("gif") => "gif",
         _ => return Err("不支持的录制文件格式。".into()),
     };
-    let mut target = crate::recovery::TrackedFile::new_in(
+    let mut target = crate::shared::export_staging::TrackedFile::new_in(
         registry,
         destination,
         extension,
@@ -289,7 +289,7 @@ pub async fn recoverable_recordings(
         .map_err(err)?
 }
 
-/// 恢复中心与录屏页共用同一目录扫描；损坏记录计数，不能静默报告“没有残留”。
+/// 录屏页查询已登记的录制文件；损坏记录单独计数，避免静默报告“没有残留”。
 pub(crate) fn entries(app: &AppHandle) -> Result<(Vec<RecoveryEntry>, usize), String> {
     let active = ACTIVE.lock().map_err(err)?;
     let mut items = Vec::new();
@@ -299,7 +299,7 @@ pub(crate) fn entries(app: &AppHandle) -> Result<(Vec<RecoveryEntry>, usize), St
         if path.extension().is_none_or(|e| e != "json") {
             continue;
         }
-        let Ok(value) = crate::recovery::read::<Recoverable>(&path) else {
+        let Ok(value) = crate::shared::export_staging::read::<Recoverable>(&path) else {
             unreadable += 1;
             continue;
         };
@@ -338,7 +338,7 @@ pub async fn retry_recording_export(
         drop(active);
         let result = (|| {
             let record = catalog(&app)?.join(format!("{id}.json"));
-            let mut value: Recoverable = crate::recovery::read(&record)?;
+            let mut value: Recoverable = crate::shared::export_staging::read(&record)?;
             let source = source_path(&value, &id)?;
             if let Some(path) = value.exported.as_ref() {
                 if fs::metadata(path).is_ok_and(|m| m.is_file() && m.len() > 0) {
@@ -355,7 +355,7 @@ pub async fn retry_recording_export(
             let output = export(
                 &source,
                 &output::prepare(&app)?,
-                &crate::recovery::catalog(&app)?,
+                &crate::shared::export_staging::catalog(&app)?,
                 |path| progress(&app, "retry-export", Some(path)),
             )?;
             value.exported = Some(output.to_string_lossy().into_owned());
@@ -396,7 +396,7 @@ pub async fn discard_recording_recovery(
         drop(active);
         let result = (|| {
             let record = catalog(&app)?.join(format!("{id}.json"));
-            let value: Recoverable = crate::recovery::read(&record)?;
+            let value: Recoverable = crate::shared::export_staging::read(&record)?;
             discard_source(&value, &id)?;
             // 文件或空目录清理失败时保留记录，下次仍可发现和重试。
             fs::remove_file(record).map_err(err)

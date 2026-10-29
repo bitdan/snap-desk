@@ -6,7 +6,7 @@ import { parse } from '@vue/compiler-sfc'
 
 const projectRoot = fileURLToPath(new URL('../', import.meta.url))
 const frontendLayers = new Set(['app', 'features', 'services', 'shared'])
-const nativeDomains = new Set(['app', 'capture', 'clipboard', 'diagnostics', 'pins', 'recognition', 'recovery', 'resources', 'settings', 'shared'])
+const nativeDomains = new Set(['app', 'capture', 'clipboard', 'diagnostics', 'pins', 'recognition', 'resources', 'settings', 'shared'])
 const slash = value => value.replaceAll('\\', '/')
 
 function files(directory) {

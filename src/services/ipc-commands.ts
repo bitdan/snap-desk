@@ -88,8 +88,6 @@ export const ipcCommands = [
   "set_shortcut_editing",
   "set_shortcuts_enabled",
   "probe_shortcuts",
-  "recovery_status",
-  "recovery_artifact_action",
   "show_capture",
   "capture_painted",
   "start_capture",

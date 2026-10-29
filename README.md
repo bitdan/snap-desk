@@ -54,12 +54,11 @@ src-tauri/src/
   settings/            # 设置、快捷键、自启与目录访问
   resources/           # 资源下载与空闲资源回收
   diagnostics/         # 日志查询、诊断与导出
-  recovery/            # 恢复与清理
-  shared/              # 标注渲染、图像导出、窗口和系统基础设施
+  shared/              # 标注渲染、图像导出、安全暂存、窗口和系统基础设施
 tests/<功能>/          # 对应功能的前端测试
 ```
 
-前端功能目录为 `capture`、`annotations`、`scroll`、`recording`、`pins`、`clipboard`、`recognition`、`settings`、`resources`、`diagnostics` 和 `recovery`。新增功能先找所属目录，组件与业务逻辑放在一起；跨功能通用代码才进入 `shared`。通信命令与事件由各功能维护，通过 `services/ipc.ts` 统一处理错误，`services/api.ts` 只汇总导出。
+前端功能目录为 `capture`、`annotations`、`scroll`、`recording`、`pins`、`clipboard`、`recognition`、`settings`、`resources` 和 `diagnostics`。新增功能先找所属目录，组件与业务逻辑放在一起；跨功能通用代码才进入 `shared`。通信命令与事件由各功能维护，通过 `services/ipc.ts` 统一处理错误，`services/api.ts` 只汇总导出。
 
 `npm run check` 执行目录边界、IPC 契约和 TypeScript 静态检查；`npm test` 先检查目录边界与 IPC 契约，再运行前端及构建检查脚本测试。具体协作规则见 [AGENTS.md](AGENTS.md)。
 
