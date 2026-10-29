@@ -66,15 +66,43 @@ pub(super) fn wait(state: &CaptureState, millis: u64) -> bool {
     true
 }
 
+/// 采样结果显式区分运动、停止、取消和系统错误；运动不会触发错误导出。
+#[derive(Debug)]
+pub(super) enum SampleOutcome {
+    Stable(RgbaImage),
+    StillMoving,
+    CaptureFailure(String),
+    Cancelled,
+    Stopped,
+}
+
+/// 直接记录 xcap 调用耗时（不包含裁剪、尺寸查询和稳定性检测）。
+fn timed_capture(
+    backend: &str,
+    capture: impl FnOnce() -> Result<RgbaImage, String>,
+) -> Result<RgbaImage, String> {
+    let started = Instant::now();
+    let result = capture();
+    log::debug!(
+        "event=scroll.capture module=scroll backend={} duration_ms={:.2} success={}",
+        backend,
+        started.elapsed().as_secs_f64() * 1000.0,
+        result.is_ok()
+    );
+    result
+}
+
 fn sample(
     monitor: &xcap::Monitor,
     region: Rect,
     source_size: (u32, u32),
 ) -> Result<RgbaImage, String> {
     let started = Instant::now();
-    let image = monitor
-        .capture_image()
-        .map_err(|e| format!("滚动截图采集失败：{e}"))?;
+    let image = timed_capture("capture_image", || {
+        monitor
+            .capture_image()
+            .map_err(|e| format!("滚动截图采集失败：{e}"))
+    })?;
     if image.dimensions() != source_size {
         return Err("显示器像素尺寸发生变化，已结束采集，仅输出已确认部分。".into());
     }
@@ -100,9 +128,11 @@ fn sample_region(
     source_size: (u32, u32),
 ) -> Result<RgbaImage, String> {
     region.validate(source_size.0, source_size.1)?;
-    let image = monitor
-        .capture_region(region.x, region.y, region.width, region.height)
-        .map_err(|e| e.to_string())?;
+    let image = timed_capture("capture_region", || {
+        monitor
+            .capture_region(region.x, region.y, region.width, region.height)
+            .map_err(|e| e.to_string())
+    })?;
     // 捕获后再查询，切换分辨率若发生在抓取过程中也会回退到整屏尺寸校验。
     let size = (
         monitor.width().map_err(|e| e.to_string())?,
@@ -123,7 +153,15 @@ fn region_or_full(
 ) -> Result<RgbaImage, String> {
     match region() {
         Ok(image) if image.dimensions() == size => Ok(image),
-        _ => {
+        failed => {
+            log::debug!(
+                "event=scroll.capture_fallback module=scroll reason={}",
+                if failed.is_err() {
+                    "region_failed"
+                } else {
+                    "region_dimensions"
+                }
+            );
             *enabled = false;
             full()
         }
@@ -137,7 +175,42 @@ pub(super) fn sample_pair(
     source_size: (u32, u32),
     screen: &super::Screen,
     finishing: bool,
-) -> Result<Option<RgbaImage>, String> {
+) -> SampleOutcome {
+    let result = sample_pair_impl(state, rect, source_size, screen, finishing);
+    let outcome = result.unwrap_or_else(SampleOutcome::CaptureFailure);
+    log::debug!(
+        "event=scroll.sample_result module=scroll result={}",
+        match &outcome {
+            SampleOutcome::Stable(_) => "Stable",
+            SampleOutcome::StillMoving => "StillMoving",
+            SampleOutcome::CaptureFailure(_) => "CaptureFailure",
+            SampleOutcome::Cancelled => "Cancelled",
+            SampleOutcome::Stopped => "Stopped",
+        }
+    );
+    outcome
+}
+
+fn interrupted(state: &CaptureState, finishing: bool) -> Option<SampleOutcome> {
+    if state.scroll_cancel.load(Ordering::SeqCst) {
+        Some(SampleOutcome::Cancelled)
+    } else if !finishing && state.scroll_stop.load(Ordering::SeqCst) {
+        Some(SampleOutcome::Stopped)
+    } else {
+        None
+    }
+}
+
+fn sample_pair_impl(
+    state: &CaptureState,
+    rect: Rect,
+    source_size: (u32, u32),
+    screen: &super::Screen,
+    finishing: bool,
+) -> Result<SampleOutcome, String> {
+    if let Some(outcome) = interrupted(state, finishing) {
+        return Ok(outcome);
+    }
     #[cfg(windows)]
     let _dpi = crate::capture::desktop::PhysicalDpi::enter()?;
     // 一轮稳定性检测绑定选区所在屏幕，全部坐标均为物理像素。
@@ -165,22 +238,29 @@ pub(super) fn sample_pair(
     } else {
         sample(&monitor, rect, source_size)?
     };
+    let started = Instant::now();
+    let mut capture_started = started;
     let mut quiet_samples = 0;
-    let mut settled = None;
-    // 每 40 ms 检查，连续 80 ms 稳定即可匹配，降低滚动到拼接的等待。
-    // 始终与本段静止期的首帧比较，防止缓慢动画的逐帧小变化累积成错位。
-    // 最多等待约 0.64 秒；持续运动交由外层重试，期间绝不再发送滚轮。
-    for _ in 0..16 {
-        if finishing {
-            if state.scroll_cancel.load(Ordering::SeqCst) {
-                return Ok(None);
-            }
-            std::thread::sleep(Duration::from_millis(40));
-        } else if !wait(state, 40) {
-            return Ok(None);
+    let mut comparisons = 0;
+    // 按真实时间限制稳定等待；40 ms 是两次采样的最小间隔，不在慢抓屏后叠加睡眠。
+    // 至少做两次复核，避免慢抓屏始终在第二次复核前超时；单次系统抓屏无法中断。
+    // 与静止期首帧比较，不能把缓慢运动逐帧放行。
+    loop {
+        if let Some(outcome) = interrupted(state, finishing) {
+            return Ok(outcome);
         }
+        if comparisons >= 2 && started.elapsed() >= Duration::from_millis(1200) {
+            return Ok(SampleOutcome::StillMoving);
+        }
+        // finishing 忽略 stop，但每 10 ms 检查 cancel。
+        while capture_started.elapsed() < Duration::from_millis(40) {
+            if let Some(outcome) = interrupted(state, finishing) {
+                return Ok(outcome);
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        capture_started = Instant::now();
         let candidate = if native_region {
-            // 区域失败或返回尺寸异常时立即回退，本轮不再尝试，避免不断重试不支持的后端。
             region_or_full(
                 &mut native_region,
                 (rect.width, rect.height),
@@ -190,21 +270,20 @@ pub(super) fn sample_pair(
         } else {
             sample(&monitor, rect, source_size)?
         };
-        if !finishing && state.scroll_stop.load(Ordering::SeqCst) {
-            return Ok(None);
+        if let Some(outcome) = interrupted(state, finishing) {
+            return Ok(outcome);
         }
+        comparisons += 1;
         if stable(&reference, &candidate) {
             quiet_samples += 1;
             if quiet_samples >= 2 {
-                settled = Some(candidate);
-                break;
+                return Ok(SampleOutcome::Stable(candidate));
             }
         } else {
             reference = candidate;
             quiet_samples = 0;
         }
     }
-    Ok(settled)
 }
 
 #[cfg(test)]
@@ -239,5 +318,55 @@ mod tests {
             || Err("display changed".into())
         )
         .is_err());
+    }
+}
+
+#[cfg(test)]
+mod lifecycle_tests {
+    use super::*;
+
+    #[test]
+    fn finish_ignores_stop_but_cancel_always_wins() {
+        let state = CaptureState::default();
+        state.scroll_stop.store(true, Ordering::SeqCst);
+        assert!(matches!(
+            interrupted(&state, false),
+            Some(SampleOutcome::Stopped)
+        ));
+        assert!(interrupted(&state, true).is_none());
+        state.scroll_cancel.store(true, Ordering::SeqCst);
+        for finishing in [false, true] {
+            assert!(matches!(
+                interrupted(&state, finishing),
+                Some(SampleOutcome::Cancelled)
+            ));
+        }
+    }
+
+    /// 显式运行时只输出数值，不写原始帧；两种后端分别计时，包含冷启动样本。
+    #[test]
+    #[ignore = "需要真实桌面，测量 xcap 区域/整屏采集耗时"]
+    fn native_capture_timings() {
+        #[cfg(windows)]
+        let _dpi = crate::capture::desktop::PhysicalDpi::enter().unwrap();
+        let monitor = xcap::Monitor::all()
+            .unwrap()
+            .into_iter()
+            .next()
+            .expect("需要显示器");
+        let width = monitor.width().unwrap().min(960);
+        let height = monitor.height().unwrap().min(720);
+        for iteration in 0..5 {
+            for backend in ["capture_region", "capture_image"] {
+                let started = Instant::now();
+                let result = if backend == "capture_region" {
+                    monitor.capture_region(0, 0, width, height)
+                } else {
+                    monitor.capture_image()
+                };
+                eprintln!("event=scroll.capture_probe backend={backend} iteration={iteration} duration_ms={:.2} success={} region={}x{}", started.elapsed().as_secs_f64() * 1000.0, result.is_ok(), width, height);
+                assert!(result.is_ok(), "{backend}: {:?}", result.err());
+            }
+        }
     }
 }

@@ -85,6 +85,7 @@ pub(in crate::capture) struct ScrollSession {
     message: String,
     preview: Arc<str>,
     status: &'static str,
+    last_growth: Instant,
     background: ExportBackground,
     // 用户选择“保存已确认部分”时冻结当前可信画布，不再采集结束前的末帧。
     confirmed_only: bool,
@@ -207,7 +208,8 @@ fn complete(app: &AppHandle, id: u64, message: &str) -> Result<(), String> {
             .map_err(err)?
             .join("scroll-results");
         std::fs::create_dir_all(&root).map_err(err)?;
-        let mut file = crate::shared::export_staging::TrackedFile::new(app, &root, "png", "滚动截图导出")?;
+        let mut file =
+            crate::shared::export_staging::TrackedFile::new(app, &root, "png", "滚动截图导出")?;
         let png_started = Instant::now();
         image
             .write_to(file.file_mut(), ImageFormat::Png)
@@ -293,11 +295,14 @@ fn sample_pair(
         snapshot.source_size,
         &snapshot.screen,
         finishing,
-    )?;
+    );
     if screen_at(app, snapshot.screen.x, snapshot.screen.y)? != snapshot.screen {
         return Err("显示器布局已变化，仅输出变化前已确认的部分。".into());
     }
-    let result = if let Some(second) = settled {
+    let before_pixels = snapshot.stitch.covered_pixels();
+    let before_bounds = snapshot.stitch.bounds;
+    let before_viewport = snapshot.stitch.viewport();
+    let result = if let capture::SampleOutcome::Stable(second) = settled {
         let second = Arc::new(second);
         if !stability::stable(snapshot.stitch.last(), &second) {
             if let Some(archive) = &snapshot.archive {
@@ -328,22 +333,45 @@ fn sample_pair(
         }
         Some(result)
     } else {
-        None
+        match settled {
+            capture::SampleOutcome::CaptureFailure(error) => return Err(error),
+            capture::SampleOutcome::Cancelled | capture::SampleOutcome::Stopped => return Ok(None),
+            _ => None,
+        }
     };
-    let message = snapshot.recovery.message(result);
+    let canvas_changed = snapshot.stitch.covered_pixels() != before_pixels
+        || snapshot.stitch.bounds != before_bounds;
+    if canvas_changed {
+        snapshot.last_growth = Instant::now();
+    }
+    let no_progress = snapshot.last_growth.elapsed() >= Duration::from_secs(3);
     let status = if finishing {
         "finishing"
     } else if snapshot.recovery.is_recovering() {
         "recovering"
+    } else if no_progress {
+        "no_progress"
+    } else if result.is_none() {
+        "sampling"
     } else {
         "collecting"
     };
+    let message = if status == "no_progress" {
+        if result.is_none() {
+            "画面持续运动，尚无新增内容；请停止滚动并暂停动画，已确认部分可随时保存。"
+        } else {
+            "尚无新增内容（页面静止或正在回访）；请继续沿当前轴滚动，也可保存已确认部分。"
+        }
+    } else {
+        snapshot.recovery.message(result)
+    };
     let changed = snapshot.message != message
         || snapshot.status != status
-        || matches!(result, Some(Match::Aligned(_)));
+        || canvas_changed
+        || snapshot.stitch.viewport() != before_viewport;
     snapshot.message = message.into();
     snapshot.status = status;
-    if matches!(result, Some(Match::Aligned(_))) {
+    if canvas_changed {
         refresh_preview(&mut snapshot)?;
     }
     snapshot.revision += 1;
@@ -402,12 +430,41 @@ fn refresh_preview(session: &mut ScrollSession) -> Result<(), String> {
     Ok(())
 }
 
+/// 锁争用也向两个窗口发布状态；以会话 ID 和 revision 防止旧结果覆盖新会话。
+fn notify_waiting(app: &AppHandle, state: &CaptureState, id: u64, finishing: bool) {
+    let Ok(mut guard) = state.scroll.lock() else {
+        return;
+    };
+    let Some(session) = guard.as_mut().filter(|s| s.id == id) else {
+        return;
+    };
+    let status = if finishing { "finishing" } else { "waiting" };
+    let message = if finishing {
+        "正在等待截图操作完成，随后保存已确认部分。"
+    } else {
+        "正在等待截图操作释放；暂未采样，已确认内容保留。"
+    };
+    if session.status == status && session.message == message {
+        return;
+    }
+    session.status = status;
+    session.message = message.into();
+    session.revision += 1;
+    if let Ok(update) = view(session, true) {
+        for label in ["scroll-preview", "scroll-controls"] {
+            let _ = app.emit_to(label, "scroll-updated", &update);
+        }
+    }
+    log::warn!("event=scroll.operation_wait module=scroll op=scroll-{id} finishing={finishing}");
+}
+
 fn collect(app: AppHandle, id: u64, first_delay: u64) {
     let state = app.state::<CaptureState>();
     let deadline = Instant::now() + Duration::from_secs(300);
     let mut message = "滚动截图采集结束。".to_string();
     let mut finish_latest = true;
     let mut delay = first_delay;
+    let mut last_operation = Instant::now();
     while finish_latest && wait(&state, delay) {
         delay = 40;
         if Instant::now() >= deadline {
@@ -416,8 +473,12 @@ fn collect(app: AppHandle, id: u64, first_delay: u64) {
             break;
         }
         let Ok(_operation) = Operation::acquire(&state.operation) else {
+            if last_operation.elapsed() >= Duration::from_secs(1) {
+                notify_waiting(&app, &state, id, false);
+            }
             continue;
         };
+        last_operation = Instant::now();
         let decision = (|| -> Result<(), String> {
             sample_pair(&app, &state, id, false)?;
             if state.scroll_stop.load(Ordering::SeqCst) {
@@ -438,7 +499,19 @@ fn collect(app: AppHandle, id: u64, first_delay: u64) {
     }
     // 等待短暂的读取操作释放互斥；旧会话不得弹出窗口或覆盖新会话。
     loop {
+        // 即使操作锁长期占用，旧线程也不应永久等待或污染新会话。
+        if !state
+            .scroll
+            .lock()
+            .ok()
+            .is_some_and(|s| s.as_ref().is_some_and(|s| s.id == id))
+        {
+            break;
+        }
         let Ok(_operation) = Operation::acquire(&state.operation) else {
+            if last_operation.elapsed() >= Duration::from_secs(1) {
+                notify_waiting(&app, &state, id, true);
+            }
             std::thread::sleep(Duration::from_millis(20));
             continue;
         };
@@ -609,7 +682,8 @@ pub async fn start_scroll(
             message: "滚动鼠标以识别方向，本次仅拼接横向或纵向。".into(),
             archive,
             preview: Arc::from(""),
-            status: "collecting",
+            status: "sampling",
+            last_growth: Instant::now(),
             background: background.unwrap_or_default(),
             confirmed_only: false,
         };

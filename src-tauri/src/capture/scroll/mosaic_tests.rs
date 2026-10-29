@@ -985,3 +985,30 @@ fn repeated_document_glyph_in_new_strip_does_not_block_scroll() {
         assert!(!stitch.has_holes());
     }
 }
+
+#[test]
+fn reverse_revisit_matches_without_counting_canvas_growth() {
+    let doc = document();
+    let mut stitch = Stitch::new(frame(&doc, 0, 0)).unwrap();
+    moved(stitch.consider(frame(&doc, 0, 100)).unwrap(), 0, 100);
+    let pixels = stitch.covered_pixels();
+    let frames = stitch.count();
+    moved(stitch.consider(frame(&doc, 0, 40)).unwrap(), 0, -60);
+    assert_eq!(stitch.covered_pixels(), pixels);
+    assert_eq!(stitch.count(), frames);
+    assert_eq!(stitch.viewport().y, 40);
+    assert_truth(&stitch, &doc, (0, 0));
+}
+
+#[test]
+fn stationary_redraw_does_not_override_periodic_position_ambiguity() {
+    let first = RgbaImage::from_fn(160, 160, |x, y| {
+        Rgba([((x % 20) * 12) as u8, ((y % 20) * 12) as u8, 0, 255])
+    });
+    let mut redrawn = first.clone();
+    redrawn.put_pixel(80, 80, Rgba([255, 0, 255, 255]));
+    assert!(crate::capture::scroll::stability::stable(&first, &redrawn));
+    let mut stitch = Stitch::with_mode(first.clone(), ScrollMode::Vertical).unwrap();
+    assert_eq!(stitch.consider(redrawn).unwrap(), Match::Uncertain);
+    assert_eq!(stitch.compose(), first);
+}

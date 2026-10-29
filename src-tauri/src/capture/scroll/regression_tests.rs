@@ -91,3 +91,33 @@ fn real_scroll_sequences_match_reviewed_images() {
         }
     }
 }
+
+/// 失去重叠后必须逐段补齐；反向返回可信区时不跳过中间内容。
+#[test]
+fn fast_scroll_gap_recovers_in_reverse_without_unverified_pixels() {
+    use crate::capture::scroll::recovery::Recovery;
+    let doc = RgbaImage::from_fn(96, 640, |x, y| {
+        let v = (x.wrapping_mul(73856093) ^ y.wrapping_mul(19349663)).wrapping_mul(83492791);
+        Rgba([v as u8, (v >> 8) as u8, (v >> 16) as u8, 255])
+    });
+    let frame = |y| image::imageops::crop_imm(&doc, 0, y, 96, 160).to_image();
+    let mut stitch = Stitch::new(frame(0)).unwrap();
+    let mut recovery = Recovery::default();
+    for offset in [400, 300, 200] {
+        assert_eq!(
+            recovery.consider(&mut stitch, frame(offset)).unwrap(),
+            Match::Uncertain
+        );
+        assert_eq!(stitch.compose(), frame(0));
+    }
+    assert!(matches!(
+        recovery.consider(&mut stitch, frame(100)).unwrap(),
+        Match::Aligned(_)
+    ));
+    assert!(!recovery.is_recovering());
+    assert_eq!(stitch.viewport().y, 100);
+    assert_eq!(
+        stitch.compose(),
+        image::imageops::crop_imm(&doc, 0, 0, 96, 560).to_image()
+    );
+}

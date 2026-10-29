@@ -291,10 +291,21 @@ pub(super) fn alignment_in(
     {
         return Match::Uncertain;
     }
+    // 返回原位置后可能发生少量文字重绘；原位置也必须作为候选参加歧义检查，
+    // 不能把一次全局稳定判断直接当作 Unchanged，更不能覆盖已知重复纹理歧义。
+    let stationary = roi == known && super::stability::stable(a, b);
     match mode {
-        ScrollMode::Vertical => align_axis(a, b, roi, true),
-        ScrollMode::Horizontal => align_axis(a, b, roi, false),
-        ScrollMode::Auto => match (align_axis(a, b, roi, true), align_axis(a, b, roi, false)) {
+        ScrollMode::Vertical => align_axis(a, b, roi, true, stationary),
+        ScrollMode::Horizontal => align_axis(a, b, roi, false, stationary),
+        ScrollMode::Auto => match (
+            align_axis(a, b, roi, true, stationary),
+            align_axis(a, b, roi, false, stationary),
+        ) {
+            (Match::Aligned(a), Match::Aligned(b))
+                if a.dx == 0 && a.dy == 0 && b.dx == 0 && b.dy == 0 =>
+            {
+                Match::Aligned(a)
+            }
             (result @ Match::Aligned(_), Match::Uncertain)
             | (Match::Uncertain, result @ Match::Aligned(_)) => result,
             _ => Match::Uncertain,
@@ -304,8 +315,14 @@ pub(super) fn alignment_in(
 
 /// 单轴移动时横截坐标保持不变，因此只需要扫描 20 条线，而无需遍历整帧。
 /// 指纹仅提名位移；重复纹理、有多个近似解、无重叠仍然拒绝，最终检查原始像素。
-fn align_axis(a: &RgbaImage, b: &RgbaImage, roi: Content, vertical: bool) -> Match {
-    match align_axis_exact(a, b, roi, vertical) {
+fn align_axis(
+    a: &RgbaImage,
+    b: &RgbaImage,
+    roi: Content,
+    vertical: bool,
+    stationary: bool,
+) -> Match {
+    match align_axis_exact(a, b, roi, vertical, stationary) {
         Ok(result) => return Match::Aligned(result),
         // 已经复核出多个近似位移时保留拒绝，不能让回退丢掉已知歧义。
         Err(true) => return Match::Uncertain,
@@ -322,6 +339,7 @@ fn align_axis_exact(
     b: &RgbaImage,
     roi: Content,
     vertical: bool,
+    stationary: bool,
 ) -> Result<Alignment, bool> {
     let (start, end, cross_start, cross_end) = if vertical {
         (roi.top, roi.bottom, roi.left, roi.right)
@@ -391,6 +409,11 @@ fn align_axis_exact(
             verify(a, b, roi, dx, dy)
         })
         .collect();
+    if stationary {
+        if let Some(candidate) = verify(a, b, roi, 0, 0) {
+            valid.push(candidate);
+        }
+    }
     valid.sort_by(|a, b| b.confidence.total_cmp(&a.confidence));
     let Some(best) = valid.first().copied() else {
         return Err(false);
@@ -556,7 +579,7 @@ mod tests {
             }
             // 先锁定旧实现的失败前提：微小重绘使精确哈希没有候选。
             assert_eq!(
-                align_axis_exact(&first, &next, Content::full(&first), true),
+                align_axis_exact(&first, &next, Content::full(&first), true, false),
                 Err(false)
             );
             for horizontal in [false, true] {

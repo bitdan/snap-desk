@@ -11,6 +11,8 @@ pub struct Recovery {
     // 最多三帧、合计 800 万像素、五秒有效；不因无限重试积累内存。
     recent: FrameCache,
     failed_revision: Option<u64>,
+    rejection: &'static str,
+    recoveries: u32,
 }
 
 impl Recovery {
@@ -30,17 +32,24 @@ impl Recovery {
         now: Instant,
     ) -> Result<Match, String> {
         let image = image.into();
+        let before = stitch.covered_pixels();
+        let viewport = stitch.viewport();
+        let recovering = self.is_recovering();
+        let started = Instant::now();
         self.recent.expire(now);
         // 图像、可信画布版本和五秒有效期都不变时，不再反复搜索同一失败帧。
-        let (result, cacheable) = if self.failed_revision == Some(stitch.match_revision())
-            && self.recent.latest_matches(&image)
-        {
+        let cache_hit = self.failed_revision == Some(stitch.match_revision())
+            && self.recent.latest_matches(&image);
+        let (result, cacheable) = if cache_hit {
             (Match::Uncertain, true)
         } else {
             stitch.consider_recoverable(image.clone())?
         };
         match result {
             Match::Uncertain => {
+                if !cache_hit {
+                    self.rejection = stitch.rejection();
+                }
                 if self.failures == 0 {
                     stitch.log_rejection();
                 }
@@ -53,18 +62,22 @@ impl Recovery {
                     self.recent = FrameCache::default();
                 }
             }
-            Match::Aligned(_) => {
+            Match::Aligned(_) | Match::Unchanged => {
+                if recovering {
+                    self.recoveries = self.recoveries.saturating_add(1);
+                }
+                self.rejection = "none";
                 self.failures = 0;
                 self.failed_revision = None;
                 let observed = stitch.clone();
                 // 新画面补上缺口后，可依次接回最近已采到的后续帧；每一帧重新验证，
                 // 不能仅凭采集时间推断顺序，更不能跳过仍无重叠的内容。
-                loop {
+                while recovering || matches!(result, Match::Aligned(_)) {
                     let mut advanced = false;
                     for index in 0..self.recent.len() {
                         let candidate = self.recent.candidate(index);
                         let (replayed, cacheable) = stitch.consider_recoverable(candidate)?;
-                        if matches!(replayed, Match::Aligned(_)) || !cacheable {
+                        if !matches!(replayed, Match::Uncertain) || !cacheable {
                             self.recent.remove(index);
                             advanced = true;
                             break;
@@ -75,13 +88,19 @@ impl Recovery {
                     }
                 }
                 // 缓存只补齐已观察内容，视口最终回到本次真正采到的位置。
-                stitch.restore_viewport(&observed);
-            }
-            Match::Unchanged => {
-                self.failures = 0;
-                self.failed_revision = None;
+                if recovering || matches!(result, Match::Aligned(_)) {
+                    stitch.restore_viewport(&observed);
+                }
             }
         }
+        let (dx, dy, confidence) = match result {
+            Match::Aligned(a) => (a.dx, a.dy, a.confidence),
+            _ => (0, 0, if result == Match::Unchanged { 1.0 } else { 0.0 }),
+        };
+        log::debug!("event=scroll.match module=scroll result={:?} reason={} dx={} dy={} confidence={:.4} growth_pixels={} viewport_changed={} failures={} recoveries={} cache_frames={} duration_ms={:.2}",
+            result, self.rejection, dx, dy, confidence,
+            stitch.covered_pixels().saturating_sub(before), stitch.viewport() != viewport,
+            self.failures, self.recoveries, self.recent.len(), started.elapsed().as_secs_f64() * 1000.0);
         Ok(result)
     }
 
@@ -91,9 +110,24 @@ impl Recovery {
     }
 
     pub fn message(&self, result: Option<Match>) -> &'static str {
+        if self.is_recovering() {
+            match self.rejection {
+                "fixed_bounds_changed" | "anchor_fixed_bounds_changed" => {
+                    return "固定栏边界发生变化；请恢复原布局，或重新框选滚动正文。"
+                }
+                "stationary_overlay" => return "检测到悬浮内容；请移开悬浮层后滚回可信重叠区。",
+                "seam_conflict" | "canvas_conflict" => {
+                    return "画面与已确认内容冲突；请暂停动画并滚回可信重叠区。"
+                }
+                "anchor_position_conflict" => {
+                    return "重复内容存在多个位置；请滚回具有独特内容的可信重叠区。"
+                }
+                _ => {}
+            }
+        }
         match result {
             Some(Match::Uncertain) | None if self.failures >= 3 => {
-                "未找到可靠重叠；已确认内容保留，请沿原路滚回重叠区并停顿，或重新框选滚动正文。"
+                "未找到可靠重叠（可能滚动过快或内容重复）；已确认内容保留，请沿原路滚回重叠区并停顿，或重新框选滚动正文。"
             }
             Some(Match::Uncertain) | None if self.is_recovering() => {
                 "已确认内容保留；请沿原路滚回重叠区并停顿，匹配后自动继续。"
@@ -469,5 +503,82 @@ mod tests {
             stitch.compose(),
             image::imageops::crop_imm(&doc, 0, 0, 96, 400).to_image()
         );
+    }
+}
+
+#[cfg(test)]
+mod resume_tests {
+    use super::*;
+    use image::Rgba;
+
+    #[test]
+    fn returning_to_anchor_with_minor_redraw_resumes_without_canvas_growth() {
+        let frame = |offset: u32| {
+            RgbaImage::from_fn(96, 160, |x, y| {
+                let v = (x.wrapping_mul(73856093) ^ (y + offset).wrapping_mul(19349663))
+                    .wrapping_mul(83492791);
+                Rgba([v as u8, (v >> 8) as u8, (v >> 16) as u8, 255])
+            })
+        };
+        let first = frame(0);
+        let mut stitch = Stitch::new(first.clone()).unwrap();
+        let mut recovery = Recovery::default();
+        assert_eq!(
+            recovery.consider(&mut stitch, frame(300)).unwrap(),
+            Match::Uncertain
+        );
+        let mut redrawn = first.clone();
+        // 少量文字像素重绘，整帧仍稳定，但无法满足完全相等的 Unchanged 路径。
+        for y in 70..74 {
+            for x in 40..44 {
+                redrawn.put_pixel(x, y, Rgba([255, 0, 255, 255]));
+            }
+        }
+        let pixels = stitch.covered_pixels();
+        assert!(
+            matches!(recovery.consider(&mut stitch, redrawn).unwrap(), Match::Aligned(a) if a.dx == 0 && a.dy == 0)
+        );
+        assert!(!recovery.is_recovering());
+        assert_eq!(stitch.covered_pixels(), pixels);
+        assert_eq!(stitch.count(), 1);
+        assert_eq!(stitch.compose(), first);
+        assert!(matches!(
+            recovery.consider(&mut stitch, frame(100)).unwrap(),
+            Match::Aligned(_)
+        ));
+        assert_eq!(stitch.height, 260);
+    }
+
+    #[test]
+    fn returning_to_trusted_overlap_replays_cache_even_when_observation_is_unchanged() {
+        let frame = |offset: u32| {
+            RgbaImage::from_fn(96, 160, |x, y| {
+                let v = (x.wrapping_mul(73856093) ^ (y + offset).wrapping_mul(19349663))
+                    .wrapping_mul(83492791);
+                Rgba([v as u8, (v >> 8) as u8, (v >> 16) as u8, 255])
+            })
+        };
+        let mut stitch = Stitch::new(frame(0)).unwrap();
+        let mut recovery = Recovery::default();
+        let now = Instant::now();
+        assert_eq!(
+            recovery.consider_at(&mut stitch, frame(240), now).unwrap(),
+            Match::Uncertain
+        );
+        // 模拟可信画布已推进，但本次观察仍停在该可信位置；不能只清除失败计数。
+        assert!(matches!(
+            stitch.consider(frame(120)).unwrap(),
+            Match::Aligned(_)
+        ));
+        assert_eq!(
+            recovery.consider_at(&mut stitch, frame(120), now).unwrap(),
+            Match::Unchanged
+        );
+        assert_eq!(stitch.height, 400);
+        assert_eq!(stitch.viewport().y, 120);
+        assert_eq!(recovery.recent.len(), 0);
+        assert_eq!(recovery.recoveries, 1);
+        assert!(!stitch.has_holes());
+        assert!(!recovery.is_recovering());
     }
 }

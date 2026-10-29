@@ -18,7 +18,7 @@ const cancelling = ref(false)
 // 恢复时仍持续取样，用户滚回重叠区即可接续，无需另点“继续”。
 const recovering = computed(() => view.value?.collecting && view.value.status === 'recovering')
 const status = computed(() => busy.value ? (cancelling.value ? '正在取消…' : '正在保存…')
-  : !view.value ? '准备中…' : view.value.status === 'failed' ? '输出失败' : view.value.status === 'finishing' ? '正在保存…' : view.value.status === 'recovering' ? '等待重叠' : !view.value.collecting ? '采集结束' : '自动拼接')
+  : !view.value ? '准备中…' : view.value.status === 'failed' ? '输出失败' : view.value.status === 'finishing' ? '正在保存…' : view.value.status === 'sampling' ? '等待稳定' : view.value.status === 'no_progress' ? '暂无新增' : view.value.status === 'waiting' ? '等待采样' : view.value.status === 'recovering' ? '等待重叠' : !view.value.collecting ? '采集结束' : '自动拼接')
 const hint = computed(() => error.value || view.value?.message || '滚动后稍作停顿，等待拼接')
 let off: (() => void) | undefined
 let offClosed: (() => void) | undefined

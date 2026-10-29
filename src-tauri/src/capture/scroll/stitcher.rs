@@ -18,14 +18,14 @@ const MAX_TILES: usize = 512;
 const ANCHOR_PIXELS: u64 = 8_000_000;
 
 #[cfg(test)]
+#[path = "benchmarks.rs"]
+mod benchmarks;
+#[cfg(test)]
 #[path = "regression_tests.rs"]
 mod regression_tests;
 #[cfg(test)]
 #[path = "mosaic_tests.rs"]
 mod tests;
-#[cfg(test)]
-#[path = "benchmarks.rs"]
-mod benchmarks;
 
 #[derive(Clone)]
 struct Tile {
@@ -140,6 +140,13 @@ impl Stitch {
             self.frames
         );
     }
+    pub(super) fn rejection(&self) -> &'static str {
+        self.rejection
+    }
+    /// 可信像素数用于区分定位成功、回访和画布增长，不能用匹配次数代替。
+    pub(super) fn covered_pixels(&self) -> u64 {
+        self.covered
+    }
     pub(super) fn match_revision(&self) -> u64 {
         self.match_revision
     }
@@ -202,7 +209,14 @@ impl Stitch {
     ) -> Result<(Match, bool), String> {
         let image = image.into();
         let mut cacheable = true;
+        let before = self.covered;
         let result = self.consider_impl(image, &mut cacheable)?;
+        let (dx, dy, confidence) = match result {
+            Match::Aligned(a) => (a.dx, a.dy, a.confidence),
+            _ => (0, 0, if result == Match::Unchanged { 1.0 } else { 0.0 }),
+        };
+        log::debug!("event=scroll.alignment module=scroll result={:?} reason={} dx={} dy={} confidence={:.4} growth_pixels={} cacheable={}",
+            result, self.rejection, dx, dy, confidence, self.covered.saturating_sub(before), cacheable);
         Ok((result, cacheable))
     }
 
@@ -365,11 +379,13 @@ impl Stitch {
         }
         self.remember_latest();
         self.latest = next;
-        self.lock_axis(if result.dx != 0 {
-            ScrollMode::Horizontal
-        } else {
-            ScrollMode::Vertical
-        });
+        if result.dx != 0 || result.dy != 0 {
+            self.lock_axis(if result.dx != 0 {
+                ScrollMode::Horizontal
+            } else {
+                ScrollMode::Vertical
+            });
+        }
         self.dx = result.dx;
         self.dy = result.dy;
         self.match_revision = self.match_revision.wrapping_add(1);

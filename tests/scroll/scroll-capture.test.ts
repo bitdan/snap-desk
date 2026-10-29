@@ -71,3 +71,16 @@ describe('滚动预览状态与视口', () => {
     expect(newerScroll(view, failed, 3)?.status).toBe('failed')
   })
 })
+
+
+describe('采样与无进展状态', () => {
+  it.each(['sampling', 'no_progress', 'waiting'] as const)('传播 %s 且拒绝旧会话更新', status => {
+    const current = { ...view, id: 4, revision: 2, collecting: true }
+    const next = { ...current, revision: 3, status, message: '已确认内容保留' }
+    expect(newerScrollPreview(current, next, 3)).toBe(next)
+    expect(newerScrollPreview(next, current, 3)).toBe(next)
+    expect(newerScrollPreview(next, { ...view, revision: 999, status }, 3)).toBe(next)
+    expect(next.preview).toBe(current.preview)
+    expect(next.frames).toBe(current.frames)
+  })
+})

@@ -56,3 +56,28 @@ mod tests {
         assert!(!stable(&a, &RgbaImage::new(95, 160)));
     }
 }
+
+#[cfg(test)]
+mod motion_tests {
+    use super::*;
+    use image::Rgba;
+
+    #[test]
+    fn fixed_header_does_not_hide_fast_scroll_or_continuous_animation() {
+        let frame = |offset: u32| {
+            RgbaImage::from_fn(160, 160, |x, y| {
+                let y = if y < 32 { y } else { y + offset };
+                let v =
+                    (x.wrapping_mul(73856093) ^ y.wrapping_mul(19349663)).wrapping_mul(83492791);
+                Rgba([v as u8, (v >> 8) as u8, (v >> 16) as u8, 255])
+            })
+        };
+        let first = frame(0);
+        for offset in [1, 10, 80, 200] {
+            assert!(!stable(&first, &frame(offset)));
+        }
+        assert!(stable(&first, &first));
+        let animated = RgbaImage::from_pixel(160, 160, Rgba([255, 0, 255, 255]));
+        assert!(!stable(&first, &animated));
+    }
+}

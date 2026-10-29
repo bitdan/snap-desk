@@ -6,5 +6,5 @@ export interface ScrollView {
   width: number; height: number; frames: number; message: string; preview: string; frameHeight: number
   canvasBounds: Rect; viewportRect: Rect; coveragePercent: number; hasHoles: boolean
   direction: 'none' | 'up' | 'down' | 'left' | 'right'
-  status: 'collecting' | 'recovering' | 'finishing' | 'failed'
+  status: 'sampling' | 'no_progress' | 'waiting' | 'collecting' | 'recovering' | 'finishing' | 'failed'
 }
