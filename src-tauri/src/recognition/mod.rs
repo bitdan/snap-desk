@@ -2,6 +2,7 @@
 pub(crate) mod ocr;
 pub(crate) mod qr;
 pub(crate) mod translation;
+mod providers;
 pub(crate) mod local_translation;
 pub(crate) mod translation_models;
 pub(crate) mod translation_runtime;

@@ -77,6 +77,48 @@ describe('图片翻译定位与降级', () => {
 })
 
 describe('图片翻译请求与取消', () => {
+  const online = { ...defaultAiSettings(), provider: 'deepl' as const }
+  function batched(overrides: Partial<ImageTranslationTransport> = {}) {
+    return transport({ translateBatch: vi.fn(async (requestId, request) => ({ requestId, targetLanguage: request.targetLanguage,
+      translations: request.texts.map((sourceText: string) => ({ sourceText, translatedText: `${sourceText}\ntranslated` })),
+    })), ...overrides })
+  }
+  it('在线批量发送文字并保留 OCR 归属；50 个单元分界后继续下一批', async () => {
+    const units = Array.from({ length: 51 }, (_, i) => ({ id: `unit-${i}`, source: `source-${i}`, bounds: null }))
+    const io = batched()
+    await translateImageUnits(units, online, true, io)
+    expect(io.translate).not.toHaveBeenCalled()
+    expect(io.translateBatch).toHaveBeenCalledTimes(2)
+    expect(io.translateBatch).toHaveBeenNthCalledWith(1, 'request-1', { texts: units.slice(0, 50).map(unit => unit.source), sourceLanguage: null, targetLanguage: 'zh-CN' }, true, online)
+    expect(io.completed).toHaveBeenCalledTimes(51)
+    expect(io.completed).toHaveBeenNthCalledWith(51, units[50], expect.objectContaining({ translatedText: 'source-50\ntranslated' }))
+  })
+  it('DeepL 未确认不上传；取消后丢弃整批迟到结果', async () => {
+    const units = imageTranslationPlan(recognition()).units, io = batched()
+    await expect(translateImageUnits(units, online, false, io)).rejects.toThrow('确认')
+    expect(io.translateBatch).not.toHaveBeenCalled()
+    let cancelled = false
+    const late = batched({ cancelled: () => cancelled, translateBatch: vi.fn(async (requestId, request) => {
+      cancelled = true
+      return { requestId, targetLanguage: request.targetLanguage, translations: request.texts.map((sourceText: string) => ({ sourceText, translatedText: 'late' })) }
+    }) })
+    await expect(translateImageUnits(units, online, true, late)).rejects.toThrow('取消')
+    expect(late.completed).not.toHaveBeenCalled()
+    expect(late.pending).toHaveBeenLastCalledWith(null)
+  })
+  it.each(['order', 'count', 'empty', 'id', 'target'])('批量响应异常时整批拒绝：%s', invalid => {
+    const io = batched({ translateBatch: vi.fn(async (requestId, request) => {
+      const translations = request.texts.map((sourceText: string) => ({ sourceText, translatedText: 'translated' }))
+      if (invalid === 'order') translations.reverse()
+      if (invalid === 'count') translations.pop()
+      if (invalid === 'empty') translations[1]!.translatedText = ' '
+      return { requestId: invalid === 'id' ? 'stale' : requestId, targetLanguage: invalid === 'target' ? 'fr' : request.targetLanguage, translations }
+    }) })
+    return expect(translateImageUnits(imageTranslationPlan(recognition()).units, online, true, io)).rejects.toThrow('不匹配或为空').then(() => {
+      expect(io.completed).not.toHaveBeenCalled()
+      expect(io.pending).toHaveBeenLastCalledWith(null)
+    })
+  })
   it('逐行翻译并按请求归属提交；模型多行输出仍属于原来的一行', async () => {
     const io = transport({ translate: vi.fn(async (requestId, _text, consent, settings) => {
       expect(consent).toBe(false)

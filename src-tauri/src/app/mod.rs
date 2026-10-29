@@ -349,6 +349,7 @@ pub fn run() {
             translation_models::translation_model_status,
             translation_models::translation_model_action,
             translation::translate_text,
+            translation::translate_texts,
             translation::cancel_ai_job,
             translation::ai_credential_set,
             translation::ai_provider_status,

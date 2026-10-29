@@ -95,7 +95,7 @@ describe('application language coverage', () => {
   it('keeps OCR, QR, translations, group names and paths outside translation calls', () => {
     for (const [file, expressions] of [
       ['src/features/recognition/components/ImageTranslation.vue', ['unit.source', 'results[unit.id]']],
-      ['src/features/recognition/components/PinRecognition.vue', ['line.text', 'item.text', 'item.url']],
+      ['src/features/recognition/components/PinRecognition.vue', ['item.text', 'item.url']],
       ['src/features/pins/components/PinManager.vue', ['pin.label']],
       ['src/features/recording/components/RecordingPanel.vue', ['result.filename', 'result.path', 'item.path']],
       ['src/features/clipboard/components/ClipboardItem.vue', ['file.name', 'item.preview']],
@@ -103,6 +103,10 @@ describe('application language coverage', () => {
       const template = parse(readFileSync(file, 'utf8')).descriptor.template!.content
       for (const value of expressions) expect(template, `${file}: ${value}`).toContain(`{{ ${value} }}`)
     }
+    // OCR 原文已由共享编辑卡承载；确认它绑定原始草稿，避免对用户文字调用界面翻译。
+    const ocr = parse(readFileSync('src/features/recognition/components/OcrResultCard.vue', 'utf8')).descriptor.template!.content
+    expect(ocr).toContain('v-model="text"')
+    expect(ocr).not.toContain('t(text)')
     const pins = readFileSync('src/features/pins/components/PinManager.vue', 'utf8')
     expect(pins).toContain('groups.map(value => ({ value, label: value }))')
     // 不从 DOM 扫描或替换文本；这一边界避免语言切换误改用户内容。

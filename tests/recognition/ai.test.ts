@@ -1,8 +1,19 @@
 import { describe, expect, it } from 'vitest'
-import { defaultAiSettings, validateAiSettings } from '../../src/features/recognition/ai'
+import { deepLEndpoints, defaultAiSettings, onlineTranslationReady, validateAiSettings } from '../../src/features/recognition/ai'
 import { defaultSettings } from '../../src/features/settings/settings'
 
 describe('翻译设置契约', () => {
+  it('DeepL 仅允许官方地址，无需模型，目标语言与在线服务一致', () => {
+    for (const endpoint of deepLEndpoints) {
+      const settings = { ...defaultAiSettings(), provider: 'deepl' as const, endpoint, model: '', targetLanguage: 'ja' }
+      expect(validateAiSettings(settings)).toBeNull()
+      expect(onlineTranslationReady(settings)).toBe(true)
+    }
+    for (const endpoint of ['https://api.deepl.com.evil.test/v2/translate', 'http://127.0.0.1/v2/translate', 'https://api.deepl.com/v2/translate?key=x', 'https://api.deepl.com/v2/usage']) {
+      expect(validateAiSettings({ ...defaultAiSettings(), provider: 'deepl', endpoint })).not.toBeNull()
+    }
+    expect(onlineTranslationReady({ ...defaultAiSettings(), provider: 'online-llm', endpoint: deepLEndpoints[0]! })).toBe(false)
+  })
   it('默认不开启网络服务，嵌套草稿互不影响', () => {
     const settings = defaultSettings()
     expect(settings.ai.endpoint).toBe('')

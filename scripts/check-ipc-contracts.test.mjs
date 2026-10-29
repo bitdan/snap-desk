@@ -5,7 +5,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { checkIpcContracts } from './check-ipc-contracts.mjs'
 
-const pairs = { PinFrame: 'PinFrame', CapturePaint: 'CapturePaint', InputEffects: 'InputEffects', RecorderConfig: 'RecorderConfig', RecordingView: 'RecordingView', RecordingResult: 'RecordingResult', RecordingDirectory: 'RecordingDirectory', ExportSettings: 'ExportSettings', Settings: 'Settings', RecordingAnnotationView: 'AnnotationView' }
+const pairs = { AiSettings: 'AiSettings', TranslationRequest: 'TranslationRequest', TranslationItem: 'TranslationItem', TranslationBatchResult: 'TranslationBatchResult', TranslationResult: 'TranslationResult', PinSummary: 'PinSummary', PinAppearance: 'PinAppearance', RecordingExportSettings: 'RecordingExportSettings', PinFrame: 'PinFrame', CapturePaint: 'CapturePaint', InputEffects: 'InputEffects', RecorderConfig: 'RecorderConfig', RecordingView: 'RecordingView', RecordingResult: 'RecordingResult', RecordingDirectory: 'RecordingDirectory', ExportSettings: 'ExportSettings', Settings: 'Settings', RecordingAnnotationView: 'AnnotationView' }
 function fixture(t, changes = {}) {
   const root = mkdtempSync(join(tmpdir(), 'snap-ipc-'))
   t.after(() => rmSync(root, { recursive: true, force: true }))

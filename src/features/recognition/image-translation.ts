@@ -1,4 +1,4 @@
-import type { AiSettings, OcrLine, OcrResult, TranslationResult } from '@/features/recognition/ai'
+import type { AiSettings, OcrLine, OcrResult, TranslationResult, TranslationRequest, TranslationBatchResult } from '@/features/recognition/ai'
 import type { Rect } from '@/shared/geometry/selection'
 
 export interface TranslationImage { dataUrl: string; width: number; height: number; crop?: Rect }
@@ -81,15 +81,31 @@ export function overlayLayoutReason(plan: ImageTranslationPlan, imageWidth: numb
 
 export interface ImageTranslationTransport {
   translate(id: string, text: string, consent: boolean, settings: AiSettings): Promise<TranslationResult>
+  translateBatch?(id: string, request: TranslationRequest, consent: boolean, settings: AiSettings): Promise<TranslationBatchResult>
   newId(): string
   cancelled(): boolean
   pending(id: string | null): void
   completed(unit: ImageTextUnit, result: TranslationResult): void
 }
 
-/** 串行复用现有翻译服务；一行一次请求保证归属，不按模型输出换行重新分配译文。 */
+/** 在线按最多 50 个 OCR 单元批量请求；本地保持逐段调用，取消后不提交迟到结果。 */
 export async function translateImageUnits(units: ImageTextUnit[], settings: AiSettings, consent: boolean, transport: ImageTranslationTransport): Promise<void> {
-  if (settings.provider === 'online-llm' && !consent) throw new Error('请先确认发送识别文本。')
+  if (settings.provider !== 'local-ctranslate2' && !consent) throw new Error('请先确认发送识别文本。')
+  if (settings.provider !== 'local-ctranslate2' && transport.translateBatch) {
+    for (let offset = 0; offset < units.length; offset += 50) {
+      if (transport.cancelled()) throw new Error('翻译已取消。')
+      const batch = units.slice(offset, offset + 50), id = transport.newId()
+      transport.pending(id)
+      try {
+        const result = await transport.translateBatch(id, { texts: batch.map(unit => unit.source), sourceLanguage: null, targetLanguage: settings.targetLanguage }, consent, settings)
+        if (transport.cancelled()) throw new Error('翻译已取消。')
+        if (result.requestId !== id || result.targetLanguage !== settings.targetLanguage || result.translations.length !== batch.length
+          || result.translations.some((item, index) => item.sourceText !== batch[index]?.source || !item.translatedText.trim())) throw new Error('翻译结果与当前请求不匹配或为空，请重试。')
+        batch.forEach((unit, index) => transport.completed(unit, { requestId: id, targetLanguage: result.targetLanguage, translatedText: result.translations[index]!.translatedText }))
+      } finally { transport.pending(null) }
+    }
+    return
+  }
   for (const unit of units) {
     if (transport.cancelled()) throw new Error('翻译已取消。')
     const id = transport.newId()

@@ -93,7 +93,7 @@ export function checkIpcContracts(project = root) {
   const strings = value => [...value.matchAll(/["']([a-z_][a-z_0-9]*)["']/g)].map(match => match[1])
   parity(registered, strings(whitelist), '前端命令白名单', issues)
   parity(registered, strings(catalog), '原生命令审计名单', issues)
-  for (const [frontend, native] of Object.entries({ PinFrame: 'PinFrame', PinSummary: 'PinSummary', PinAppearance: 'PinAppearance', CapturePaint: 'CapturePaint', InputEffects: 'InputEffects', RecorderConfig: 'RecorderConfig', RecordingView: 'RecordingView', RecordingResult: 'RecordingResult', RecordingDirectory: 'RecordingDirectory', ExportSettings: 'ExportSettings', RecordingExportSettings: 'RecordingExportSettings', Settings: 'Settings', RecordingAnnotationView: 'AnnotationView' })) {
+  for (const [frontend, native] of Object.entries({ AiSettings: 'AiSettings', TranslationRequest: 'TranslationRequest', TranslationItem: 'TranslationItem', TranslationBatchResult: 'TranslationBatchResult', TranslationResult: 'TranslationResult', PinFrame: 'PinFrame', PinSummary: 'PinSummary', PinAppearance: 'PinAppearance', CapturePaint: 'CapturePaint', InputEffects: 'InputEffects', RecorderConfig: 'RecorderConfig', RecordingView: 'RecordingView', RecordingResult: 'RecordingResult', RecordingDirectory: 'RecordingDirectory', ExportSettings: 'ExportSettings', RecordingExportSettings: 'RecordingExportSettings', Settings: 'Settings', RecordingAnnotationView: 'AnnotationView' })) {
     if (!tsTypes.has(frontend) || !rustTypes.has(native)) { issues.push(`通信结构不存在: ${frontend}/${native}`); continue }
     parity(rustTypes.get(native), tsTypes.get(frontend), `通信字段 ${frontend}`, issues)
   }

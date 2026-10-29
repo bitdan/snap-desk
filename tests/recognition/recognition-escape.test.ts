@@ -7,7 +7,7 @@ import { webcrypto } from 'node:crypto'
 import { handleEscape } from '../../src/shared/ui/escape'
 import { defaultAiSettings } from '../../src/features/recognition/ai'
 import { clientComponent, MemoryNode, memoryRenderer, findNode, flushComponent } from '../helpers/component-host'
-const api = vi.hoisted(() => ({ recognizePinText: vi.fn(), recognizePinQr: vi.fn(), aiTranslationConfig: vi.fn(), translateText: vi.fn(), cancelAiJob: vi.fn(), copyOcrText: vi.fn() }))
+const api = vi.hoisted(() => ({ recognizePinText: vi.fn(), recognizePinQr: vi.fn(), aiTranslationConfig: vi.fn(), translateText: vi.fn(), translateTexts: vi.fn(), cancelAiJob: vi.fn(), copyOcrText: vi.fn() }))
 vi.mock('../../src/services/api', () => ({ api }))
 vi.mock('../../src/shared/ui/button/Button.vue', async () => {
   const { defineComponent, h } = await import('vue')
@@ -48,6 +48,37 @@ beforeEach(() => {
 afterEach(() => { memoryRenderer.render(null, root); vi.unstubAllGlobals() })
 
 describe('识别与翻译面板真实交互', () => {
+  it('单文本取消后不显示迟到的成功响应', async () => {
+    let finish!: (result: unknown) => void
+    api.translateText.mockReturnValue(new Promise(resolve => { finish = resolve }))
+    api.cancelAiJob.mockResolvedValueOnce(undefined)
+    await mount('TranslationPanel')
+    findNode(root, node => node.type === 'button' && content(node).trim() === '翻译')!.props.onClick()
+    await flushComponent()
+    findNode(root, node => node.type === 'button' && content(node).trim() === '取消翻译')!.props.onClick()
+    await flushComponent()
+    finish({ requestId: api.translateText.mock.calls[0][0], translatedText: 'late translation', targetLanguage: 'zh-CN' })
+    await flushComponent()
+    expect(findNode(root, node => node.type === 'textarea' && node.props.id === 'translation-output')?.value).toBe('')
+  })
+  it('DeepL 无模型也能翻译；确认前不上传，卸载取消当前批次', async () => {
+    const settings = { ...defaultAiSettings(), provider: 'deepl', endpoint: 'https://api-free.deepl.com/v2/translate' }
+    api.aiTranslationConfig.mockResolvedValue(settings)
+    api.translateTexts.mockReturnValue(new Promise(() => {}))
+    await mount('ImageTranslation')
+    const button = () => findNode(root, node => node.type === 'button' && content(node).trim() === '翻译')!
+    expect(button().props.disabled).toBe(true)
+    expect(api.translateTexts).not.toHaveBeenCalled()
+    findNode(root, node => node.type === 'input' && node.props.type === 'checkbox')!.props['onUpdate:modelValue'](true)
+    await flushComponent()
+    expect(button().props.disabled).toBe(false)
+    button().props.onClick(); await flushComponent()
+    expect(api.translateTexts).toHaveBeenCalledExactlyOnceWith(expect.any(String), { texts: ['hello'], sourceLanguage: null, targetLanguage: 'zh-CN' }, true, settings)
+    expect(api.translateText).not.toHaveBeenCalled()
+    const requestId = api.translateTexts.mock.calls[0][0]
+    memoryRenderer.render(null, root); await flushComponent()
+    expect(api.cancelAiJob).toHaveBeenCalledExactlyOnceWith(requestId)
+  })
   it('贴图使用截图的可编辑结果卡，复制用户修正后的文字', async () => {
     api.recognizePinText.mockResolvedValueOnce({ ...recognition, fullText: '识别原文' })
     await mount('PinRecognition')

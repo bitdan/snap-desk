@@ -99,6 +99,7 @@ export const ipcCommands = [
   "start_scroll",
   "transform_pin",
   "translate_text",
+    "translate_texts",
   "translation_model_action",
   "translation_model_status"
 ] as const

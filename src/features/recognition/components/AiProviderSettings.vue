@@ -11,7 +11,7 @@ import { updateSettings } from '@/features/settings/settings-write'
 import { t, te } from '@/shared/i18n/i18n'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { api } from '@/services/api'
-import { defaultAiSettings, targetLanguages, validateAiSettings } from '@/features/recognition/ai'
+import { deepLEndpoints, defaultAiSettings, targetLanguages, translationPresets, validateAiSettings } from '@/features/recognition/ai'
 import type { LocalTranslationStatus } from '@/features/recognition/ai'
 import { Check } from 'lucide-vue-next'
 import Button from '@/shared/ui/button/Button.vue'
@@ -20,10 +20,13 @@ import ResourceSettings from '@/features/resources/components/ResourceSettings.v
 const draft = ref(defaultAiSettings()), secret = ref(''), configured = ref<boolean | null>(null)
 const localStatus = ref<LocalTranslationStatus | null>(latestLocalStatus)
 const checking = ref(false)
+const preset = ref('custom')
 let disposed = false
 const local = computed(() => draft.value.provider === 'local-ctranslate2')
 const languages = computed(() => local.value ? targetLanguages.slice(0, 2) : targetLanguages)
 watch(local, value => { if (value && !['zh-CN', 'en'].includes(draft.value.targetLanguage)) draft.value.targetLanguage = 'zh-CN' })
+// 地址切换立即清空未保存密钥，避免把上一服务的输入写入新服务。
+watch(() => draft.value.endpoint, () => { secret.value = ''; configured.value = null }, { flush: 'sync' })
 const busy = ref(false), ready = ref(false), error = ref(''), message = ref('')
 async function loadSettings() {
   try {
@@ -65,12 +68,29 @@ const autosave = useAutoSave(async () => {
   const ai = { ...draft.value }, key = secret.value
   await updateSettings(current => ({ ...current, ai }))
   if (ai.provider !== 'local-ctranslate2' && key) {
-    await api.aiCredentialSet(key)
+    await api.aiCredentialSet(key, ai.endpoint)
     if (secret.value === key) secret.value = ''
   }
-  configured.value = ai.provider === 'local-ctranslate2' ? false : await api.aiProviderStatus()
+  const status = ai.provider === 'local-ctranslate2' ? false : await api.aiProviderStatus()
+  if (!disposed && ai.endpoint === draft.value.endpoint && ai.provider === draft.value.provider) configured.value = status
 }, () => validateAiSettings(draft.value))
 /** 密钥在结束编辑后保存，避免逐字符写入系统凭据库。 */
+function providerChanged() {
+  secret.value = ''; configured.value = null; message.value = ''; error.value = ''; preset.value = 'custom'
+  if (draft.value.provider === 'deepl' && !deepLEndpoints.includes(draft.value.endpoint)) {
+    draft.value.endpoint = deepLEndpoints[0]!; draft.value.model = ''
+  } else if (draft.value.provider === 'online-llm' && deepLEndpoints.includes(draft.value.endpoint)) {
+    draft.value.endpoint = ''; draft.value.model = ''
+  }
+  autosave.commit()
+}
+function applyPreset() {
+  const selected = translationPresets.find(item => item.value === preset.value)
+  if (!selected) return
+  secret.value = ''; configured.value = null
+  draft.value.endpoint = selected.endpoint; draft.value.model = selected.model
+  autosave.commit()
+}
 function changed(event: Event) {
   if ((event.target as HTMLInputElement).type !== 'password') autosave.schedule()
 }
@@ -79,7 +99,7 @@ async function credentialAction(action: 'delete' | 'test') {
   if (autosave.error.value) return
   busy.value = true; error.value = ''; message.value = ''
   try {
-    if (action === 'delete') { await api.aiCredentialSet(null); configured.value = false; message.value = '密钥已删除。' }
+    if (action === 'delete') { await api.aiCredentialSet(null, draft.value.endpoint); configured.value = false; message.value = '密钥已删除。' }
     else { await api.aiProviderTest(); message.value = '翻译测试成功。' }
   } catch (e) { error.value = String(e) }
   finally { busy.value = false }
@@ -108,7 +128,7 @@ async function modelAction(modelId: string, action: 'download' | 'import' | 'del
     <section class="recognition-section translation-section">
     <h3>{{ t("文本翻译") }}</h3>
     <fieldset :disabled="busy || !ready" @input="changed" @change="autosave.commit" @focusout="autosave.flush">
-      <label class="provider-field">{{ t("翻译引擎") }}<SelectControl v-model="draft.provider" :disabled="busy || !ready" :aria-label="t('翻译引擎')" :options="[{ value: 'local-ctranslate2', label: t('本地离线') }, { value: 'online-llm', label: t('在线文本服务') }]" @update:model-value="autosave.commit" /></label>
+      <label class="provider-field">{{ t("翻译引擎") }}<SelectControl v-model="draft.provider" :disabled="busy || !ready" :aria-label="t('翻译引擎')" :options="[{ value: 'local-ctranslate2', label: t('本地离线') }, { value: 'online-llm', label: t('在线文本服务') }, { value: 'deepl', label: 'DeepL' }]" @update:model-value="providerChanged" /></label>
       <div v-if="local" class="local-resources">
         <div class="model-row runtime-row">
           <span class="runtime-status" :class="{ 'status-ok': localStatus?.runtimeReady }" role="status"><Check v-if="localStatus?.runtimeReady" :size="14" />{{ !localStatus ? checking ? t("正在检查…") : t("引擎状态未读取") : localStatus.runtimeReady ? t("本地引擎已安装") : t("翻译引擎未安装或校验失败") }}</span>
@@ -130,8 +150,10 @@ async function modelAction(modelId: string, action: 'download' | 'import' | 'del
       </div>
       <div v-else class="online-fields">
         <p class="hint">{{ t("在线翻译会发送原文，可能产生费用。") }}</p>
-        <label>{{ t("完整接口地址") }}<input v-model.trim="draft.endpoint" type="url" :placeholder='t("https://服务域名/v1/chat/completions")' autocomplete="off" /></label>
-        <label>{{ t("模型名称") }}<input v-model.trim="draft.model" :placeholder='t("填写服务支持的模型 ID")' /></label>
+        <label v-if="draft.provider === 'online-llm'">{{ t("服务预设") }}<SelectControl v-model="preset" :aria-label="t('服务预设')" :options="[{ value: 'custom', label: t('自定义') }, ...translationPresets.map(item => ({ value: item.value, label: t(item.label) }))]" @update:model-value="applyPreset" /></label>
+        <label v-if="draft.provider === 'deepl'">{{ t("服务地址") }}<SelectControl v-model="draft.endpoint" :aria-label="t('服务地址')" :options="deepLEndpoints.map((value, index) => ({ value, label: index === 0 ? 'DeepL API Free' : 'DeepL API Pro' }))" @update:model-value="autosave.commit" /></label>
+        <label v-else>{{ t("完整接口地址") }}<input v-model.trim="draft.endpoint" type="url" :placeholder='t("https://服务域名/v1/chat/completions")' autocomplete="off" /></label>
+        <label v-if="draft.provider === 'online-llm'">{{ t("模型名称") }}<input v-model.trim="draft.model" :placeholder='t("填写服务支持的模型 ID")' /></label>
         <label>API Key<input v-model="secret" type="password" autocomplete="new-password" :placeholder='t("留空保留现有密钥")' /></label>
         <p :class="{ 'status-ok': configured }" role="status"><Check v-if="configured" :size="14" />{{ t("密钥") }}{{ configured === null ? t("正在检查…") : configured ? t("已配置") : t("未配置") }}{{ t("（密钥随当前服务地址保存）") }}</p>
       </div>
@@ -140,7 +162,7 @@ async function modelAction(modelId: string, action: 'download' | 'import' | 'del
         <label>{{ t("超时（秒）") }}<input v-model.number="draft.timeoutSeconds" type="number" min="5" max="120" /></label>
         <label v-if="local">{{ t("闲置回收（秒）") }}<input v-model.number="draft.localIdleSeconds" type="number" min="0" max="3600" step="1" /><small>{{ t("0 不回收；可设为 30～3600 秒。") }}</small></label>
       </div>
-      <div class="actions"><span class="settings-save-status" role="status">{{ autosave.saving.value ? t("正在保存…") : autosave.saved.value ? t("已自动保存") : t("更改自动保存") }}</span><Button variant="outline" :disabled="!local && !configured" @click="credentialAction('test')">{{ t("测试已保存配置") }}</Button><Button v-if="!local" variant="ghost" :disabled="!configured" @click="credentialAction('delete')">{{ t("删除已保存密钥") }}</Button></div>
+      <div class="actions"><span class="settings-save-status" role="status">{{ autosave.saving.value ? t("正在保存…") : autosave.saved.value ? t("已自动保存") : t("更改自动保存") }}</span><Button variant="outline" :disabled="!local && !configured" @click="credentialAction('test')">{{ t("测试已保存配置") }}</Button><span v-if="!local" class="hint">{{ t("测试会发送 Hello，可能产生费用。") }}</span><Button v-if="!local" variant="ghost" :disabled="!configured" @click="credentialAction('delete')">{{ t("删除已保存密钥") }}</Button></div>
     </fieldset>
     <p v-if="autosave.error.value" class="notice error" role="alert">{{ te(autosave.error.value) }}<Button variant="ghost" @click="autosave.retry">{{ t("重试") }}</Button></p>
     <p v-if="message" :class="{ 'status-ok': !busy }" role="status"><Check v-if="!busy" :size="14" />{{ t(message) }}</p><p v-if="error" class="notice error" role="alert">{{ te(error) }}</p>

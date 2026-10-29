@@ -973,5 +973,17 @@
   "鼠标穿透（Ctrl+Alt+P）": "Click through (Ctrl+Alt+P)",
   "用全局贴图快捷键或托盘恢复鼠标操作": "Use the global pin shortcut or tray to restore mouse interaction",
   "鼠标穿透中 · 用全局贴图快捷键或托盘恢复": "Click through active \u00b7 Restore with the global pin shortcut or tray",
-  "恢复鼠标操作": "Restore mouse interaction"
+  "恢复鼠标操作": "Restore mouse interaction",
+  "服务预设": "Service preset",
+  "本机兼容服务": "Local compatible service",
+  "测试会发送 Hello，可能产生费用。": "The test sends Hello and may incur charges.",
+  "在线翻译失败，可在设置中选择本地离线翻译。": "Online translation failed. You can select local offline translation in settings.",
+  "DeepL 仅支持官方 Free 或 Pro 的 /v2/translate 地址。": "DeepL requires the official Free or Pro /v2/translate endpoint.",
+  "一次需要 1～50 段非空文字，合计不超过 32 KB。": "Provide 1–50 non-empty text segments, totaling at most 32 KB.",
+  "DeepL 翻译额度已用尽，请检查账户用量。": "DeepL translation quota exhausted. Check your account usage.",
+  "翻译结果数量不匹配或为空。": "Translation results are missing, empty or do not match the requested count.",
+  "服务未保留受保护术语，请缩小选区或更换模型。": "The service did not preserve protected terms. Select a smaller area or choose another model.",
+  "翻译配置已变更，请重新确认服务地址。": "Translation settings changed. Confirm the service endpoint again.",
+  "服务地址": "Service endpoint",
+  "翻译请求超过 128 KB，请缩小选区。": "The translation request exceeds 128 KB. Select a smaller area."
 }

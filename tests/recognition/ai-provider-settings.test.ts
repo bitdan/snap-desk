@@ -1,10 +1,10 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { h } from 'vue'
 import { clientComponent, findNode, flushComponent, MemoryNode, memoryRenderer } from '../helpers/component-host'
 import { defaultSettings } from '../../src/features/settings/settings'
 import type { LocalTranslationStatus } from '../../src/features/recognition/ai'
 
-const api = vi.hoisted(() => ({ status: vi.fn(), translationModelStatus: vi.fn(), aiProviderStatus: vi.fn(), translationModelAction: vi.fn() }))
+const api = vi.hoisted(() => ({ status: vi.fn(), saveSettings: vi.fn(), aiCredentialSet: vi.fn(), aiProviderTest: vi.fn(), translationModelStatus: vi.fn(), aiProviderStatus: vi.fn(), translationModelAction: vi.fn() }))
 vi.mock('../../src/shared/ui/SelectControl.vue', async () => ({ default: (await import('../helpers/select-control')).SelectControlStub }))
 vi.mock('../../src/services/api', () => ({ api }))
 vi.mock('../../src/shared/ui/button/Button.vue', async () => {
@@ -21,9 +21,31 @@ const root = new MemoryNode('root')
 const text = (node: MemoryNode = root): string => node.text + node.children.map(text).join('')
 const ready: LocalTranslationStatus = { runtimeReady: true, runtimeSupported: true, models: [{ modelId: 'opus-mt-en-zh-int8', ready: true, downloadable: true, revision: '1', downloadBytes: 100 }] }
 const mount = () => memoryRenderer.render(h(Component), root)
-afterEach(() => { memoryRenderer.render(null, root); vi.resetAllMocks() })
+beforeEach(() => { vi.stubGlobal('Document', class {}); vi.stubGlobal('ShadowRoot', class {}) })
+afterEach(() => { memoryRenderer.render(null, root); vi.resetAllMocks(); vi.unstubAllGlobals() })
 
 describe('翻译设置独立加载和快照复用', () => {
+  it('选择 DeepL 后使用官方地址并隐藏模型；切换地址清空未保存密钥', async () => {
+    let settings = defaultSettings()
+    api.status.mockImplementation(async () => ({ settings }))
+    api.saveSettings.mockImplementation(async next => { settings = next; return next })
+    api.translationModelStatus.mockResolvedValue(ready)
+    api.aiProviderStatus.mockResolvedValue(false)
+    mount(); await flushComponent()
+    findNode(root, node => node.type === 'select-control' && node.props['aria-label'] === '翻译引擎')!.props['onUpdate:modelValue']('deepl')
+    await flushComponent()
+    expect(settings.ai.provider).toBe('deepl')
+    expect(settings.ai.endpoint).toBe('https://api-free.deepl.com/v2/translate')
+    expect(text()).not.toContain('模型名称')
+    expect(text()).toContain('测试会发送 Hello，可能产生费用。')
+    const key = () => findNode(root, node => node.type === 'input' && node.props.type === 'password')!
+    key().props['onUpdate:modelValue']('unsaved-key')
+    await flushComponent()
+    findNode(root, node => node.type === 'select-control' && node.props['aria-label'] === '服务地址')!.props['onUpdate:modelValue']('https://api.deepl.com/v2/translate')
+    await flushComponent()
+    expect(key().value).toBe('')
+    expect(api.aiCredentialSet).not.toHaveBeenCalled()
+  })
   it('慢模型校验不阻塞设置和凭证查询，返回本地页时先显示已有状态', async () => {
     let models!: (status: LocalTranslationStatus) => void
     const settings = defaultSettings(); settings.ai.provider = 'online-llm'

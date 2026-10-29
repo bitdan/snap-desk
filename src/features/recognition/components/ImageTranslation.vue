@@ -3,7 +3,7 @@ import { t, te } from '@/shared/i18n/i18n'
 import { handleEscape } from '@/shared/ui/escape'
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { api } from '@/services/api'
-import { targetLanguages, type AiSettings, type OcrResult } from '@/features/recognition/ai'
+import { onlineTranslationReady, targetLanguages, type AiSettings, type OcrResult } from '@/features/recognition/ai'
 import { imageTranslationPlan, translateImageUnits, type TranslationImage } from '@/features/recognition/image-translation'
 import { ArrowLeft, Check, Copy, Languages, LoaderCircle, X } from 'lucide-vue-next'
 import Button from '@/shared/ui/button/Button.vue'
@@ -21,7 +21,7 @@ const local = computed(() => config.value?.provider === 'local-ctranslate2')
 const target = computed(() => targetLanguages.find(item => item.value === config.value?.targetLanguage)?.label ?? '目标语言')
 const completed = computed(() => plan.value.units.filter(unit => results.value[unit.id]).length)
 const canTranslate = computed(() => !!config.value && !loading.value && !busy.value && !plan.value.error && plan.value.units.length > 0
-  && (local.value || (consent.value && !!config.value.endpoint && !!config.value.model)))
+  && (local.value || (consent.value && onlineTranslationReady(config.value))))
 let disposed = false, cancelled = false, requestId: string | null = null
 
 /** 只读已保存配置，不在打开面板时上传文字；重新读取时撤销上次的发送确认。 */
@@ -33,7 +33,7 @@ async function loadConfig() {
     const value = await api.aiTranslationConfig()
     if (!disposed) {
       config.value = value
-      if (value.provider === 'online-llm' && (!value.endpoint || !value.model)) error.value = '请先在“识别与翻译”中配置在线服务。'
+      if (value.provider !== 'local-ctranslate2' && !onlineTranslationReady(value)) error.value = '请先在“识别与翻译”中配置在线服务。'
     }
   } catch (e) { if (!disposed) error.value = String(e) }
   finally { if (!disposed) loading.value = false }
@@ -45,7 +45,7 @@ async function translate() {
   const units = plan.value.units.filter(unit => !results.value[unit.id])
   try {
     await translateImageUnits(units, settings, consent.value, {
-      translate: api.translateText, newId: () => crypto.randomUUID(), cancelled: () => cancelled || disposed,
+      translate: api.translateText, translateBatch: api.translateTexts, newId: () => crypto.randomUUID(), cancelled: () => cancelled || disposed,
       pending: id => { requestId = id },
       completed: (unit, result) => { if (!disposed) results.value[unit.id] = result.translatedText },
     })
@@ -97,8 +97,8 @@ onUnmounted(() => { disposed = true; void cancel() })
           <div class="text-content" tabindex="0"><template v-for="unit in plan.units" :key="unit.id"><p v-if="results[unit.id]" dir="auto">{{ results[unit.id] }}</p></template><p v-if="!allText" class="text-placeholder">{{ busy ? t("正在翻译，请稍候…") : t("点击下方翻译，译文将在这里显示") }}</p></div>
         </section>
       </div>
-      <template v-if="config && !local"><p class="result-destination">{{ config.endpoint }} · {{ config.model }}</p><label class="result-consent"><input v-model="consent" type="checkbox" :disabled="busy" />{{ t("同意将原文发送给上述服务（可能计费）") }}</label></template>
-      <p v-if="plan.error || error" class="result-error" role="alert">{{ te(plan.error || error) }}</p>
+      <template v-if="config && !local"><p class="result-destination">{{ config.endpoint }}<template v-if="config.provider === 'online-llm'"> · {{ config.model }}</template></p><label class="result-consent"><input v-model="consent" type="checkbox" :disabled="busy" />{{ t("同意将原文发送给上述服务（可能计费）") }}</label></template>
+      <p v-if="error && config && !local" class="result-destination">{{ t("在线翻译失败，可在设置中选择本地离线翻译。") }}</p><p v-if="plan.error || error" class="result-error" role="alert">{{ te(plan.error || error) }}</p>
     </div>
     <footer class="result-footer"><Button variant="ghost" @click="emit('back')"><ArrowLeft :size="15" />{{ t("返回识别") }}</Button><span v-if="message" class="result-success" role="status"><Check :size="14" />{{ t(message) }}</span><div class="result-actions"><Button v-if="busy" variant="outline" @click="cancel">{{ t("取消翻译") }}</Button><Button variant="outline" :disabled="!allText || copying" @click="copy(allText)"><Copy :size="15" />{{ t("复制译文") }}</Button><Button :disabled="!canTranslate || completed === plan.units.length" @click="translate"><Languages :size="15" />{{ completed && completed < plan.units.length ? t("继续翻译未完成部分") : t("翻译") }}</Button><Button v-if="!config && !loading" variant="outline" @click="loadConfig">{{ t("重新读取配置") }}</Button></div></footer>
   </section>
