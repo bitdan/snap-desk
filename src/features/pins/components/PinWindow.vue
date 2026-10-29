@@ -37,15 +37,27 @@ let disposed = false
 const busy = ref(false)
 const recognitionMode = ref<'ocr' | 'qr' | 'translate' | null>(null)
 let recognitionTrigger: HTMLElement | null = null
-function recognize(mode: 'ocr' | 'qr' | 'translate', event: MouseEvent) {
+async function recognize(mode: 'ocr' | 'qr' | 'translate', event: MouseEvent) {
   if (!frame.value || busy.value || editor.pending || editor.interacting) return
   recognitionTrigger = event.currentTarget as HTMLElement
   closeMenu()
-  recognitionMode.value = mode
+  const revision = frame.value.revision
+  await run(async () => {
+    await api.setPinRecognitionOpen(true)
+    if (disposed) return
+    if (!frame.value?.dataUrl || frame.value.revision !== revision) {
+      await api.setPinRecognitionOpen(false)
+      return
+    }
+    recognitionMode.value = mode
+  })
 }
-function closeRecognition() {
+async function closeRecognition(restoreFocus = true) {
+  if (!recognitionMode.value) return
   recognitionMode.value = null
-  void nextTick(() => recognitionTrigger?.isConnected ? recognitionTrigger.focus() : menuTrigger?.focus())
+  try { await api.setPinRecognitionOpen(false) }
+  catch (e) { if (!disposed) error.value = String(e) }
+  if (restoreFocus && !disposed) void nextTick(() => recognitionTrigger?.isConnected ? recognitionTrigger.focus() : menuTrigger?.focus())
 }
 const error = ref('')
 const message = ref('')
@@ -113,7 +125,7 @@ async function load() {
 }
 async function pinVisibility(visible: boolean) {
   imageSession.visibility(visible)
-  if (!visible) { recognitionMode.value = null; closeMenu(); hideControls(); return }
+  if (!visible) { void closeRecognition(false); closeMenu(); hideControls(); return }
   const revision = appearanceRevision
   try {
     if (await imageSession.refresh()) editor.reset(frame.value!.annotations)

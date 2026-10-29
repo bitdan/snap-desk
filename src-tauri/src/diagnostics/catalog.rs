@@ -125,6 +125,7 @@ pub const CODES: &[&str] = &[
     "TRANSLATION_REQUEST_FAILED",
 ];
 pub const COMMANDS: &[&str] = &[
+    "set_pin_recognition_open",
     "replay_capture",
     "finish_html_render",
     "diagnostics_status",

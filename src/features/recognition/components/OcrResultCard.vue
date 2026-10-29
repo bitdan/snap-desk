@@ -7,7 +7,7 @@ import Button from '@/shared/ui/button/Button.vue'
 import { api } from '@/services/api'
 import '@/features/recognition/components/recognition-results.css'
 
-// 草稿由截图会话持有，切换到翻译或返回识别时保留用户修正。
+// 草稿由截图/贴图会话持有，切换到翻译或返回识别时保留用户修正。
 const text = defineModel<string>('text', { required: true })
 const emit = defineEmits<{ close: []; translate: [] }>()
 const busy = ref(false), message = ref(''), error = ref('')

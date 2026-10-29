@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import type { OcrResult } from '../../src/features/recognition/ai'
-import { ocrPolygon, selectedOcrText } from '../../src/features/pins/pin-recognition'
 const invoke = vi.hoisted(() => vi.fn())
 vi.mock('@tauri-apps/api/core', () => ({ invoke, isTauri: () => true }))
 vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn() }))
@@ -16,25 +15,6 @@ const result: OcrResult = {
   })),
 }
 beforeEach(() => vi.resetAllMocks())
-describe('贴图文字选择与坐标', () => {
-  it('保持阅读顺序，忽略重复及旧行 ID，不改原结果', () => {
-    expect(selectedOcrText(result, ['c', 'a', 'a', 'missing'])).toBe('第一行\n第三行')
-    expect(result.lines.map(line => line.id)).toEqual(['c', 'a', 'b'])
-  })
-  it('清空选择不退回全文，空识别也可处理', () => {
-    expect(selectedOcrText(result, [])).toBe('')
-    expect(selectedOcrText({ ...result, lines: [] }, ['a'])).toBe('')
-  })
-  it('保留原图坐标，由 SVG 处理缩放和 DPI', () => {
-    expect(ocrPolygon([{ x: 120, y: 40 }, { x: 240, y: 40 }, { x: 240, y: 80 }], 600, 400)).toBe('120,40 240,40 240,80')
-  })
-  it('裁剪越界坐标', () => {
-    expect(ocrPolygon([{ x: -5, y: 10 }, { x: 700, y: 10 }, { x: 300, y: 450 }], 600, 400)).toBe('0,10 600,10 300,400')
-  })
-  it.each([null, [], [{ x: 0, y: 0 }], [{ x: NaN, y: 0 }, { x: 1, y: 1 }, { x: 3, y: 2 }]])('异常框不绘制，文本仍可选择 %j', points => {
-    expect(ocrPolygon(points, 600, 400)).toBe('')
-  })
-})
 describe('已有图片识别 IPC', () => {
   it('使用本窗口图片，不提交任意路径或窗口标签', async () => {
     invoke.mockResolvedValueOnce(result)

@@ -5,6 +5,7 @@ import type { PinView, PinFrame, PinSummary, PinTransform, PinAction, PinManageA
 import { invoke } from '@/services/ipc'
 
 export const pinsApi = {
+  setPinRecognitionOpen: (expanded: boolean) => invoke<void>('set_pin_recognition_open', { expanded }),
   finishHtmlRender: (id: number, png: string | null) => invoke<void>('finish_html_render', { id, png }),
   pin: (id: number, rect: Rect, annotations: Annotation[]) => invoke<void>('pin_capture', { id, rect, annotations }),
   pinClipboard: () => invoke<void>('pin_clipboard'),

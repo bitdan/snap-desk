@@ -12,6 +12,12 @@ it('读取携带已缓存版本，完整重读发送 null', async () => {
   await pinsApi.currentPin()
   expect(invoke).toHaveBeenLastCalledWith('current_pin', { knownRevision: null })
 })
+it('识别面板只调整自身窗口，关闭时请求恢复，不更改贴图缩放设置', async () => {
+  await pinsApi.setPinRecognitionOpen(true)
+  expect(invoke).toHaveBeenLastCalledWith('set_pin_recognition_open', { expanded: true })
+  await pinsApi.setPinRecognitionOpen(false)
+  expect(invoke).toHaveBeenLastCalledWith('set_pin_recognition_open', { expanded: false })
+})
 it('隐藏一张贴图只通知所属窗口，其他贴图不释放图片', async () => {
   const subscriptions: { target: string; callback: (event: { payload: boolean }) => void }[] = []
   listen.mockImplementation((_name, callback, options) => { subscriptions.push({ target: options.target, callback }); return Promise.resolve(vi.fn()) })

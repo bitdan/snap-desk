@@ -428,6 +428,7 @@ pub fn run() {
             pins::set_pin_group,
             pins::current_pin,
             pins::recognize_pin_text,
+            pins::recognition::set_pin_recognition_open,
             pins::recognize_pin_qr,
             pins::pin_qr_action,
             pins::set_pin_annotations,

@@ -5,6 +5,7 @@ mod benchmarks;
 pub(crate) mod content;
 mod text;
 pub mod html;
+pub mod recognition;
 
 use base64::{engine::general_purpose::STANDARD, Engine};
 use image::RgbaImage;
@@ -105,6 +106,8 @@ pub struct PinState {
     images: Mutex<BTreeMap<String, Pin>>,
     /// 管理页缩略图按像素版本缓存，显示/隐藏和分组更新不重复缩放原图。
     thumbnails: Mutex<BTreeMap<String, (u64, String)>>,
+    /// 只在识别面板展开期间保留原生窗口几何，关闭贴图时一并释放。
+    recognition_bounds: Mutex<BTreeMap<String, recognition::WindowBounds>>,
 }
 
 #[derive(Clone)]
@@ -498,6 +501,7 @@ pub fn create(
 
 /// 关闭事件发生时移除原图及当前图，释放内存；不在持锁期间调用原生窗口 API。
 pub fn destroyed(app: &AppHandle, label: &str) {
+    if let Ok(mut bounds) = app.state::<PinState>().recognition_bounds.lock() { bounds.remove(label); }
     if let Ok(mut images) = app.state::<PinState>().images.lock() {
         images.remove(label);
         log_retained(&images, "destroyed");
