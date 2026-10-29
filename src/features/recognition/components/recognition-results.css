@@ -16,7 +16,8 @@
 .recognition-result textarea:focus-visible { outline: 2px solid #2563eb; outline-offset: -2px; }
 .recognition-result .result-footer { flex-shrink: 0; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 8px 12px; border-top: 1px solid #e1e4e8; }
 .recognition-result .result-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-left: auto; }
-.recognition-result .result-success, .recognition-result .editor-heading > .result-success { display: inline-flex; align-items: center; gap: 4px; color: #24834b; font-size: 12px; }
+.recognition-result .result-success, .recognition-result .editor-heading > .result-success { display: inline-flex; align-items: center; gap: 4px; color: var(--ui-success-fg); font-size: 12px; line-height:1.5; }
+.recognition-result .result-success svg { flex-shrink:0; width:14px; height:14px; stroke-width:2; }
 .recognition-result .result-context { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 12px; color: #57606a; font-size: 12px; }
 .recognition-result .result-badge { padding: 2px 6px; border-radius: 4px; background: #eef4fc; color: #315a86; }
 /* 上原文、下译文；两块浅底文字区域直接呈现结果，不再叠加图片与拖拽覆盖层。 */
@@ -32,7 +33,7 @@
 .recognition-result .text-content:focus-visible { outline: 2px solid #2563eb; outline-offset: -2px; }
 .recognition-result .result-destination { margin: 12px 0 8px; overflow-wrap: anywhere; color: #57606a; font-size: 12px; user-select: text; }
 .recognition-result .result-consent { display: flex; align-items: flex-start; gap: 8px; font-size: 12px; line-height: 1.6; }
-.recognition-result .result-consent input { margin-top: 3px; accent-color: #2563eb; }
+.recognition-result .result-consent input { margin-top: 3px; }
 .recognition-result .result-consent input:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
 .recognition-result .result-error { margin: 12px 0 0; padding: 8px 10px; border-radius: 4px; background: #fff0f0; color: #a12f38; overflow-wrap: anywhere; }
 .recognition-result .result-progress { display: inline-flex; align-items: center; gap: 4px; }

@@ -80,7 +80,7 @@ onUnmounted(() => { disposed = true; request?.abort(); observer?.disconnect(); t
     <ContextMenuPortal>
       <ContextMenuContent class="history-context-menu" :collision-padding="8" :aria-label='t("历史条目操作")'>
         <ContextMenuItem :disabled="busy" @select="$emit('restore')"><Copy :size="15" />{{ t("复制") }}</ContextMenuItem>
-        <ContextMenuItem v-if="item.kind === 'image'" :disabled="busy" @select="$emit('pin')"><Pin :size="15" />{{ t("悬浮贴图") }}</ContextMenuItem>
+        <ContextMenuItem v-if="item.kind === 'image' || item.kind === 'text'" :disabled="busy" @select="$emit('pin')"><Pin :size="15" />{{ t("悬浮贴图") }}</ContextMenuItem>
         <ContextMenuSeparator class="history-menu-separator" />
         <ContextMenuItem :disabled="busy" @select="$emit('favorite')"><Star :size="15" />{{ item.favorite ? t("取消收藏") : t("收藏") }}</ContextMenuItem>
         <ContextMenuItem :disabled="busy" @select="$emit('delete')"><Trash2 :size="15" />{{ t("删除") }}</ContextMenuItem>

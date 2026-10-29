@@ -135,14 +135,14 @@ pub fn run() {
             let capture = MenuItem::with_id(
                 app,
                 "capture",
-                native_i18n::text(app.handle(), "开始截图"),
+                native_i18n::text(app.handle(), "截图"),
                 true,
                 None::<&str>,
             )?;
             let pin = MenuItem::with_id(
                 app,
                 "pin",
-                native_i18n::text(app.handle(), "贴图（选区 / 剪贴板）"),
+                native_i18n::text(app.handle(), "贴图"),
                 true,
                 None::<&str>,
             )?;
@@ -156,7 +156,7 @@ pub fn run() {
             let history = MenuItem::with_id(
                 app,
                 "history",
-                native_i18n::text(app.handle(), "剪贴板历史"),
+                native_i18n::text(app.handle(), "剪贴板"),
                 true,
                 None::<&str>,
             )?;
@@ -233,10 +233,10 @@ pub fn run() {
                 .build(app)?;
             app.manage(native_i18n::TrayLabels {
                 items: vec![
-                    ("开始截图", capture),
-                    ("贴图（选区 / 剪贴板）", pin),
+                    ("截图", capture),
+                    ("贴图", pin),
                     ("录屏", recording),
-                    ("剪贴板历史", history),
+                    ("剪贴板", history),
                     ("打开 Snap Desk", open),
                     ("退出", quit),
                 ],

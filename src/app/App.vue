@@ -205,11 +205,9 @@ onUnmounted(() => { disposed = true; window.removeEventListener('keydown', key);
 
         <ClipboardHistory v-else-if="page === '剪贴板'" />
         <DiagnosticsSettings v-else-if="page === '日志'" />
-        <template v-else-if="page === '通用'">
-          <AppearanceSettings :busy="locked" @save="saveAppearance" />
-          <span v-if="savedSection === '通用'" class="status-ok" role="status">{{ t('已保存') }}</span>
-          <GeneralSettings />
-        </template>
+        <GeneralSettings v-else-if="page === '通用'">
+          <AppearanceSettings :busy="locked" :saved="savedSection === '通用'" @save="saveAppearance" />
+        </GeneralSettings>
         <AiProviderSettings v-else-if="page === '识别与翻译'" />
         <template v-else-if="page === '帮助'">
           <Button :disabled="!status || completingOnboarding" @click="onboarding = true">{{ t('重新打开新手引导') }}</Button>

@@ -51,7 +51,7 @@ describe('全局快捷键动作映射与录入', () => {
   })
   it('报告冲突动作，修饰键顺序不影响冲突判断', () => {
     const error = validateShortcuts({ capture: 'Ctrl+Shift+S', pin: 'Shift+Ctrl+S', record: '', history: '' })
-    expect(error).toContain('区域截图'); expect(error).toContain('剪贴板图片贴图')
+    expect(error).toContain('区域截图'); expect(error).toContain('剪贴板贴图')
   })
   it('修饰键只预览，完整组合与功能键完成录入', () => {
     expect(captureShortcut(event('Control', 'ControlLeft', { ctrlKey: true }))).toEqual({ preview: 'Ctrl' })

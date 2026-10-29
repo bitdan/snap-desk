@@ -7,6 +7,7 @@ import ResourceSettings from '@/features/resources/components/ResourceSettings.v
 import { Check } from 'lucide-vue-next'
 import { api, desktop } from '@/services/api'
 import type { AppDirectory, DirectoryView } from '@/features/settings/types'
+import '@/features/settings/settings.css'
 
 const directories = ref<DirectoryView[]>([])
 const busy = ref(false), error = ref(''), message = ref('')
@@ -59,25 +60,27 @@ onMounted(() => { void run(refresh); void refreshAutostart() })
 </script>
 
 <template>
-  <section>
-    <div class="settings-card mb-4">
+  <section class="general-settings-page">
+    <section class="general-section">
+      <slot />
       <div class="setting-row flex-wrap gap-3">
         <div class="min-w-0 flex-1"><strong>{{ t('开机自启') }}</strong></div>
         <span :class="autostart && !startupBusy ? 'status-ok' : 'text-sm text-zinc-500'" role="status"><Check v-if="autostart && !startupBusy" :size="14" />{{ startupBusy ? t('处理中…') : autostart === null ? t('状态未读取') : autostart ? t('已开启') : t('已关闭') }}</span>
-        <Button variant="outline" :disabled="!desktop || startupBusy || autostart === null" :aria-pressed="autostart === true" :aria-label='t("开机自启")' @click="toggleAutostart">{{ autostart ? t('关闭自启') : t('开启') }}</Button>
-        <Button variant="ghost" :disabled="!desktop || startupBusy" @click="refreshAutostart">{{ t('刷新状态') }}</Button>
+        <button type="button" class="autostart-switch" role="switch" :disabled="!desktop || startupBusy || autostart === null" :aria-checked="autostart === true" :aria-label='t("开机自启")' :aria-busy="startupBusy" @click="toggleAutostart"><span aria-hidden="true" /></button>
+        <Button v-if="autostart === null && !startupBusy" variant="ghost" :disabled="!desktop" @click="refreshAutostart">{{ t('重新读取') }}</Button>
       </div>
       <p v-if="startupError" class="notice error" role="alert">{{ te(startupError) }}</p>
-    </div>
+    </section>
     <ClipboardSettings />
-    <ResourceSettings kind="font" />
-    <h2 class="section-heading">{{ t('文件与存储') }}</h2>
+    <section class="general-section general-font"><h2>{{ t('导出字体') }}</h2><ResourceSettings kind="font" /></section>
+    <section class="general-section general-storage">
+    <div class="general-section-heading"><h2>{{ t('文件与存储') }}</h2><Button variant="outline" :disabled="!desktop || busy" @click="run(exportConfig)">{{ t('导出主配置') }}</Button></div>
     <p v-if="error" class="notice error" role="alert">{{ te(error) }}</p>
     <p v-if="message" class="notice" role="status">{{ t(message) }}</p>
     <div class="settings-card">
-      <div v-for="directory in directories.filter(item => item.kind !== 'logs')" :key="directory.kind" class="setting-row flex-wrap gap-3">
-        <div class="min-w-0 flex-1"><strong>{{ t(labels[directory.kind].name) }}</strong><small v-if="directory.kind === 'clipboard'" class="block text-zinc-500">{{ t('请通过剪贴板页面清理历史，勿手动删除数据库。') }}</small><p class="mt-2 break-all text-xs">{{ te(directory.error) || directory.path || t('尚未记录可用位置，请先保存一张截图。') }}</p></div>
-        <div class="flex flex-wrap gap-2">
+      <div v-for="directory in directories.filter(item => item.kind !== 'logs')" :key="directory.kind" class="setting-row directory-row">
+        <div class="directory-content"><strong>{{ t(labels[directory.kind].name) }}</strong><p class="directory-path" :class="{ 'directory-error': directory.error }">{{ te(directory.error) || directory.path || t('尚未记录可用位置，请先保存一张截图。') }}</p><small v-if="directory.kind === 'clipboard'">{{ t('请通过剪贴板页面清理历史，勿手动删除数据库。') }}</small></div>
+        <div class="directory-actions">
           <Button variant="outline" :disabled="busy || !directory.path" @click="run(() => api.openAppDirectory(directory.kind))">{{ t('打开') }}</Button>
           <Button variant="ghost" :disabled="busy || !directory.path" @click="run(() => api.copyAppDirectory(directory.kind), '目录路径已复制。')">{{ t('复制路径') }}</Button>
           <template v-if="directory.kind === 'recordings'">
@@ -86,7 +89,17 @@ onMounted(() => { void run(refresh); void refreshAutostart() })
           </template>
         </div>
       </div>
-      <div class="flex gap-2 py-3"><Button :disabled="!desktop || busy" @click="run(exportConfig)">{{ t('导出主配置') }}</Button><Button variant="outline" :disabled="!desktop || busy" @click="run(refresh)">{{ t('刷新目录') }}</Button></div>
+      <Button v-if="error && !directories.length" variant="ghost" :disabled="!desktop || busy" @click="run(refresh)">{{ t('重新读取') }}</Button>
     </div>
+    </section>
   </section>
 </template>
+
+<style scoped>
+.autostart-switch { flex-shrink:0; width:38px; height:22px; padding:2px; border-radius:12px; background:#a1a1aa; transition:background .15s; }
+.autostart-switch span { display:block; width:18px; height:18px; border-radius:50%; background:#fff; transition:transform .15s; }
+.autostart-switch[aria-checked=true] { background:#2563eb; }
+.autostart-switch[aria-checked=true] span { transform:translateX(16px); }
+.autostart-switch:disabled { opacity:.45; cursor:not-allowed; }
+.autostart-switch:focus-visible { outline:2px solid #2563eb; outline-offset:3px; }
+</style>

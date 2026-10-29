@@ -1,0 +1,46 @@
+/* 通用设置共用尺寸与分隔线，限定在本页，避免影响覆盖层和其他功能设置。 */
+.app-shell .general-settings-page { width:100%; max-width:920px; margin-inline:auto; font-size:13px; }
+.general-settings-page .general-section { padding:16px 0; border-bottom:1px solid #e1e4e8; }
+.general-settings-page .general-section:first-child { padding-top:0; }
+.general-settings-page .general-section:last-child { border-bottom:0; }
+.general-settings-page h2 { margin:0 0 12px; font-size:14px; font-weight:600; }
+.general-settings-page .general-section-heading { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; margin-bottom:12px; }
+.general-settings-page .general-section-heading h2 { margin:0; }
+.general-settings-page .appearance-settings .general-section-heading { margin-bottom:4px; }
+.app-shell .general-settings-page .appearance-row { border-bottom:1px solid #edf0f2; }
+.general-settings-page .theme-options { display:flex; flex-wrap:wrap; align-items:center; gap:2px; padding:3px; border:1px solid #d8dee4; border-radius:6px; background:#f6f7f8; }
+.general-settings-page .theme-options button { display:inline-flex; align-items:center; justify-content:center; gap:6px; min-height:28px; padding:3px 10px; border:1px solid transparent; border-radius:4px; color:#57606a; }
+.general-settings-page .theme-options button:hover { background:#e8edf3; }
+.general-settings-page .theme-options button[aria-pressed=true] { background:#fff; border-color:#d8dee4; color:#2563eb; }
+.general-settings-page .theme-options button:focus-visible { outline:2px solid #2563eb; outline-offset:1px; }
+.general-settings-page .theme-options button:disabled { opacity:.5; cursor:not-allowed; }
+.general-settings-page .appearance-language { width:160px; }
+.general-settings-page .setting-field { display:flex; flex-direction:column; align-items:stretch; gap:6px; min-width:0; }
+.general-settings-page .setting-field :is(input,select) { width:100%; min-width:0; height:32px; padding:4px 8px; border:1px solid #d8dee4; border-radius:4px; background:#fff; color:inherit; }
+.general-settings-page .setting-field label { color:#57606a; font-size:12px; }
+.app-shell .general-settings-page .setting-row { min-height:48px; }
+.general-settings-page .clipboard-record-options { display:flex; flex-wrap:wrap; gap:8px 24px; margin-bottom:12px; }
+.general-settings-page .clipboard-record-options label { display:flex; align-items:center; gap:8px; min-height:28px; cursor:pointer; }
+.general-settings-page .clipboard-limits { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:16px; }
+.general-settings-page .clipboard-settings-footer { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px 16px; margin-top:12px; }
+.general-settings-page .settings-note { color:#57606a; font-size:12px; line-height:1.6; }
+.general-settings-page .general-font > .settings-card { margin:0; }
+.app-shell .general-settings-page .directory-row { align-items:center; gap:8px 16px; padding-block:12px; }
+.general-settings-page .directory-content { flex:1 1 260px; min-width:0; }
+.general-settings-page .directory-path { margin-top:4px; color:#57606a; font:12px/1.6 Consolas,'Segoe UI','Microsoft YaHei',monospace; overflow-wrap:anywhere; }
+.general-settings-page .directory-actions { display:flex; align-items:center; justify-content:flex-end; flex-wrap:wrap; gap:4px; }
+.general-settings-page .directory-error { color:#a12f38; }
+.general-settings-page .notice { margin-block:8px 0; }
+.general-settings-page .clipboard-settings > .status-ok { margin-top:8px; }
+[data-theme=dark] .general-settings-page .general-section { border-color:#39424e; }
+[data-theme=dark] .general-settings-page :is(.setting-field label,.settings-note,.directory-path) { color:#a6b2c0; }
+[data-theme=dark] .general-settings-page .directory-error { color:#ffb8bd; }
+[data-theme=dark] .app-shell .general-settings-page .appearance-row { border-color:#39424e; }
+[data-theme=dark] .general-settings-page .theme-options { background:#20252c; border-color:#39424e; }
+[data-theme=dark] .general-settings-page .theme-options button { color:#b6c2cf; }
+[data-theme=dark] .general-settings-page .theme-options button:hover { background:#303843; }
+[data-theme=dark] .general-settings-page .theme-options button[aria-pressed=true] { background:#223c62; border-color:#6386b8; color:#a9ccff; }
+@media (max-width:640px) {
+  .general-settings-page .clipboard-limits { grid-template-columns:1fr; gap:12px; }
+  .general-settings-page .directory-actions { justify-content:flex-start; }
+}

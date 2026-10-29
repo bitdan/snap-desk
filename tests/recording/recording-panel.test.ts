@@ -31,6 +31,8 @@ describe('录屏页只展示成品与录制入口', () => {
     memoryRenderer.render(h(Component), root); await flush()
     expect(button('打开目录')).toBeDefined()
     expect(button('复制路径')).toBeDefined()
+    expect(button('刷新')).toBeUndefined()
+    expect(findNode(root, node => node.text.includes('可恢复录制') || node.text.includes('暂无待恢复录制'))).toBeUndefined()
     for (const label of ['打开录屏项目', '预览与裁剪', '预览（系统播放器）']) expect(button(label)).toBeUndefined()
     expect(findNode(root, node => node.type === 'video')).toBeUndefined()
     button('打开目录')!.props.onClick(); await flush()

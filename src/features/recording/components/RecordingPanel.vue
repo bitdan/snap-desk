@@ -116,9 +116,9 @@ onUnmounted(() => { disposed = true })
       </div>
       <p v-if="resultMessage" class="text-sm pb-3" role="status">{{ t(resultMessage) }}</p>
     </div>
-    <div class="mb-3">
-      <div class="setting-row"><strong>{{ t("可恢复录制 / 清理残留（") }}{{ recoveries.length }}）</strong><Button variant="outline" :disabled="busy" @click="loadRecoveries">{{ t("刷新") }}</Button></div>
-      <p class="py-2 text-sm">{{ recoveries.length ? t("仅完整录制文件可重新导出。") : t("暂无待恢复录制。") }}</p>
+    <div v-if="recoveries.length" class="mb-3">
+      <div class="setting-row"><strong>{{ t("可恢复录制 / 清理残留（") }}{{ recoveries.length }}）</strong></div>
+      <p class="py-2 text-sm">{{ t("仅完整录制文件可重新导出。") }}</p>
       <div v-for="item in recoveries" :key="item.id" class="setting-row gap-3">
         <span class="min-w-0 flex-1 break-all">{{ item.path }}<small>{{ t(recordingRecoveryStatus(item)) }}</small></span>
         <div class="flex flex-wrap gap-2">

@@ -1,4 +1,5 @@
 import { initializeAppearance, applyAppearance, parseAppearance } from '@/shared/ui/appearance'
+import '@/shared/ui/control-theme.css'
 import { t } from '@/shared/i18n/i18n'
 import { listen } from '@tauri-apps/api/event'
 import { createApp, defineComponent, h, nextTick } from 'vue'

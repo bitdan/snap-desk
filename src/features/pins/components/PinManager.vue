@@ -57,7 +57,7 @@ onUnmounted(() => { disposed = true; off?.() })
 <template>
   <div v-if="error" class="notice error" role="alert">{{ te(error) }}</div>
   <div class="pin-manager-actions">
-    <Button :disabled="!desktop || busy" :title='t("直接贴出剪贴板中的图片，快捷键可在设置中修改")' @click="run(api.pinClipboard)">{{ t("剪贴板图片贴图") }}</Button>
+    <Button :disabled="!desktop || busy" :title='t("直接贴出剪贴板中的文字或图片，快捷键可在设置中修改")' @click="run(api.pinClipboard)">{{ t("剪贴板贴图") }}</Button>
     <Button variant="outline" :disabled="!desktop || busy" @click="run(api.pinFile)">{{ t("打开图片贴图") }}</Button>
   </div>
   <div class="pin-manager-actions group-actions">

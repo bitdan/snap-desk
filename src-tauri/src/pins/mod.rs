@@ -3,6 +3,7 @@
 #[cfg(test)]
 mod benchmarks;
 pub(crate) mod content;
+mod text;
 
 use base64::{engine::general_purpose::STANDARD, Engine};
 use image::RgbaImage;
@@ -472,12 +473,16 @@ pub async fn pin_clipboard(app: AppHandle, window: WebviewWindow) -> Result<(), 
         .map_err(err)?
 }
 
-/// 主界面、托盘和 F2 共用的剪贴板图片贴图入口；直接读取内存像素，不要求磁盘文件。
+/// 主界面、托盘和 F2 共用入口；优先读取图片，否则将剪贴板纯文字排版成贴图。
 pub fn clipboard_pin(app: &AppHandle) -> Result<(), String> {
-    let clipboard = app
-        .clipboard()
-        .read_image()
-        .map_err(|e| format!("剪贴板没有可读取的图片：{e}"))?;
+    let clipboard = match app.clipboard().read_image() {
+        Ok(image) => image,
+        Err(_) => {
+            let text = app.clipboard().read_text()
+                .map_err(|_| "剪贴板没有可读取的图片或文字。")?;
+            return create_text_visible(app, &text);
+        }
+    };
     validate_capacity(clipboard.width(), clipboard.height(), 0, 0)?;
     let image = RgbaImage::from_raw(
         clipboard.width(),
@@ -486,6 +491,11 @@ pub fn clipboard_pin(app: &AppHandle) -> Result<(), String> {
     )
     .ok_or("剪贴板图片数据无效。")?;
     create_visible(app, image, vec![])
+}
+
+/// 历史与即时剪贴板共用文字贴图入口，沿用窗口容量、显示及失败清理逻辑。
+pub(crate) fn create_text_visible(app: &AppHandle, text: &str) -> Result<(), String> {
+    create_visible(app, self::text::render(app, text)?, vec![])
 }
 
 /// 识别当前处理后的原始像素，不合成标注；坐标直接对应贴图原图像素。

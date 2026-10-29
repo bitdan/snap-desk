@@ -7,3 +7,5 @@ pub(crate) mod native_i18n;
 pub(crate) mod platform;
 #[cfg(test)]
 pub(crate) mod benchmark;
+
+pub(crate) mod text_image;

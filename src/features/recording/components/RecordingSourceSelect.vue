@@ -39,7 +39,7 @@ async function choose(value: string) {
 .recording-source-item svg { flex:none; }
 .recording-source-item[data-highlighted], .recording-source-item[aria-selected=true] { background:#eff6ff; color:#2563eb; }
 .recording-source-item[data-disabled] { opacity:.5; pointer-events:none; }
-.source-check { margin-left:auto; color:#2563eb; }
+.source-check { margin-left:auto; color:var(--ui-success-fg); }
 [data-theme=dark] .recording-source-menu { background:#20252c; color:#e6edf3; border-color:#39424e; color-scheme:dark; }
 [data-theme=dark] .recording-source-item[data-highlighted] { background:#303f56; color:#93c5fd; }
 </style>

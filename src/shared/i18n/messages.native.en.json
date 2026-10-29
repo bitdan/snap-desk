@@ -636,6 +636,9 @@
   "主窗口不可用，无法复制图片。": "Main window unavailable; cannot copy image.",
   "复制图片自动重试后仍失败：{0}": "Image copy still failed after automatic retries: {0}",
   "开始截图": "Capture",
+  "截图": "Capture",
+  "贴图": "Pin",
+  "剪贴板": "Clipboard",
   "贴图（选区 / 剪贴板）": "Pin selection / clipboard",
   "录屏": "Recording",
   "打开 Snap Desk": "Open Snap Desk",
@@ -704,5 +707,13 @@
   "选择翻译引擎 ZIP": "Select translation engine ZIP",
   "录屏需要 Windows 10 2004 或更新版本。": "Recording requires Windows 10 2004 or later.",
   "OCR 引擎不可用，请下载识别资源。": "OCR engine unavailable. Download recognition resources.",
-  "请先安装语言包。": "Install a language pack first."
+  "请先安装语言包。": "Install a language pack first.",
+  "剪贴板贴图": "Pin clipboard content",
+  "文字图片宽度无效。": "Invalid text image width.",
+  "文字图片超过像素上限，请减少文字后重试。": "Text image exceeds the pixel limit. Use less text and try again.",
+  "文字贴图字体不可用，请在通用设置下载或选择字体。": "Text pin font unavailable. Download or choose a font in General settings.",
+  "没有可贴图的文字。": "No text available to pin.",
+  "文字贴图最多支持 1 MiB 文本，请分段贴图。": "Text pins support up to 1 MiB of text. Split it into smaller parts.",
+  "剪贴板没有可读取的图片或文字。": "No readable image or text on the clipboard.",
+  "请选择文字或图片贴图。": "Choose text or an image to pin."
 }

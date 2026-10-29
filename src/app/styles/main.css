@@ -96,9 +96,9 @@ kbd { display: inline-block; border: 1px solid #d8dee4; border-bottom-width: 2px
 .app-shell .capture-panel { border: 0; border-bottom: 1px solid #e1e4e8; border-radius: 0; }
 .app-shell .capture-controls { padding: 0 0 12px; border: 0; background: white; flex-wrap: wrap; gap: 8px; }
 .app-shell .section-heading { font-size: 14px; font-weight: 600; margin: 16px 0 8px; }
-.app-shell .status-ok { display: inline-flex; align-items: center; gap: 4px; color: #24834b; font-size: 12px; }
-.app-shell .status-check { color: #24834b; flex-shrink: 0; }
-.app-shell .status-ok svg { flex-shrink: 0; }
+.app-shell .status-ok { display: inline-flex; align-items: center; gap: 4px; color: var(--ui-success-fg); font-size: 12px; line-height: 1.5; }
+.app-shell .status-check { color: var(--ui-success-fg); flex-shrink: 0; width:14px; height:14px; }
+.app-shell .status-ok svg { flex-shrink: 0; width:14px; height:14px; stroke-width:2; }
 .app-shell .logs-page { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 .app-shell .about { padding: 0; }
 .app-shell .about h2 { font-size: 18px; margin: 12px 0; }
@@ -122,7 +122,7 @@ kbd { display: inline-block; border: 1px solid #d8dee4; border-bottom-width: 2px
 [data-theme=dark] .app-shell .brand-icon { background: #223c62; color: #a9ccff; }
 [data-theme=dark] .app-shell .notice { background: #22364d; color: #c4dfff; }
 [data-theme=dark] .app-shell .notice.error { background: #49282e; color: #ffb8bd; }
-[data-theme=dark] .app-shell :is(.notice.success, .status-ok, .status-check) { color: #73d69a; }
+[data-theme=dark] .app-shell :is(.notice.success, .status-ok, .status-check) { color: var(--ui-success-fg); }
 [data-theme=dark] .app-shell button.border { border-color: #465160; }
 [data-theme=dark] .app-shell button.hover\:bg-zinc-100:hover { background: #303843; }
 [data-theme=dark] :is(.history-export-dialog, .history-context-menu) { background: #20252c; color: #e6edf3; border-color: #39424e; color-scheme: dark; }

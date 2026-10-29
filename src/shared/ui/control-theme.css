@@ -1,0 +1,51 @@
+/* 公共确认色与勾选控件；不设置窗口背景，透明截图和贴图仍由各窗口管理。 */
+:root {
+  --ui-success-fg:#24834b;
+  --ui-check-fill:#edf8f1;
+  --ui-control-border:#8c959f;
+  --ui-control-bg:#fff;
+  --ui-focus:#2563eb;
+}
+:root[data-theme=dark] {
+  --ui-success-fg:#73d69a;
+  --ui-check-fill:#203d2c;
+  --ui-control-border:#768390;
+  --ui-control-bg:#20252c;
+}
+
+/* 保留原生 input 的标签、空格键和表单行为；role=switch 使用独立的开关外观。 */
+input[type=checkbox]:not([role=switch]) {
+  appearance:none;
+  position:relative;
+  flex-shrink:0;
+  box-sizing:border-box;
+  width:16px;
+  height:16px;
+  margin:0;
+  padding:0;
+  border:1px solid var(--ui-control-border);
+  border-radius:3px;
+  background:var(--ui-control-bg);
+  vertical-align:middle;
+  cursor:pointer;
+}
+input[type=checkbox]:not([role=switch])::after {
+  content:'';
+  display:none;
+  position:absolute;
+  inset:1px;
+  background:var(--ui-success-fg);
+  mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='m20 6-11 11-5-5' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+input[type=checkbox]:not([role=switch]):is(:checked,:indeterminate) { border-color:var(--ui-success-fg); background:var(--ui-check-fill); }
+input[type=checkbox]:not([role=switch]):is(:checked,:indeterminate)::after { display:block; }
+input[type=checkbox]:not([role=switch]):indeterminate::after { inset:6px 3px; mask:none; border-radius:1px; }
+input[type=checkbox]:not([role=switch]):hover:enabled { border-color:var(--ui-success-fg); }
+input[type=checkbox]:not([role=switch]):focus-visible { outline:2px solid var(--ui-focus); outline-offset:3px; }
+input[type=checkbox]:not([role=switch]):disabled { opacity:.45; cursor:default; }
+@media (forced-colors:active) {
+  input[type=checkbox]:not([role=switch]),
+  input[type=checkbox]:not([role=switch]):is(:checked,:indeterminate) { appearance:auto; background:Canvas; border:revert; }
+  input[type=checkbox]:not([role=switch])::after,
+  input[type=checkbox]:not([role=switch]):is(:checked,:indeterminate)::after { display:none; }
+}

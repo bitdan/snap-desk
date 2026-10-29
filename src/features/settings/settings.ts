@@ -15,7 +15,7 @@ export type ShortcutAction = 'capture' | 'pin' | 'record' | 'history'
 export type Shortcuts = Record<ShortcutAction, string>
 export const shortcutActions: { key: ShortcutAction; label: string; description: string }[] = [
   { key: 'capture', label: '区域截图', description: '快速框选与标注' },
-  { key: 'pin', label: '剪贴板图片贴图', description: '把剪贴板图片贴在桌面' },
+  { key: 'pin', label: '剪贴板贴图', description: '把剪贴板文字或图片贴在桌面' },
   { key: 'record', label: '开始 / 停止录屏', description: '选择录制范围，录制中再次按下停止' },
   { key: 'history', label: '剪贴板历史', description: '打开历史管理页面' },
 ]

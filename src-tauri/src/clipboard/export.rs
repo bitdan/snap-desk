@@ -3,7 +3,8 @@ use super::{
     model::{validate_ids, Kind},
     service::Service,
 };
-use ab_glyph::{point, Font, FontRef, ScaleFont};
+use ab_glyph::Font;
+use crate::shared::text_image::{font, lines_with_font};
 use image::{ImageFormat, Rgba, RgbaImage};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -76,51 +77,6 @@ enum Snapshot {
 fn io_error(_: impl std::fmt::Display) -> String {
     "导出读写失败，请检查目标目录权限和剩余空间。".into()
 }
-fn font(bytes: &[u8]) -> Result<FontRef<'_>, String> {
-    FontRef::try_from_slice(bytes).map_err(|_| "导出字体不可用，请在通用设置重新选择。".into())
-}
-
-/// CJK 按字换行，保留空行；不支持的字形明确报错，不能静默导出方框。
-fn lines_with_font(
-    text: &str,
-    width: f32,
-    size: f32,
-    font_bytes: &[u8],
-) -> Result<Vec<String>, String> {
-    let font = font(font_bytes)?;
-    let units = font.units_per_em().ok_or("字体度量不可用。")?;
-    let mut lines = Vec::new();
-    let mut line = String::new();
-    let mut used = 0.0;
-    for c in text
-        .replace("\r\n", "\n")
-        .replace('\r', "\n")
-        .replace('\t', "    ")
-        .chars()
-    {
-        if c == '\n' {
-            lines.push(std::mem::take(&mut line));
-            used = 0.0;
-            continue;
-        }
-        let glyph = font.glyph_id(c);
-        if glyph.0 == 0 {
-            return Err(format!(
-                "所选字体缺少 U+{:04X} 字形，请更换字体或分别导出 TXT。",
-                c as u32
-            ));
-        }
-        let advance = font.h_advance_unscaled(glyph) / units * size;
-        if used + advance > width && !line.is_empty() {
-            lines.push(std::mem::take(&mut line));
-            used = 0.0;
-        }
-        line.push(c);
-        used += advance;
-    }
-    lines.push(line);
-    Ok(lines)
-}
 fn snapshot(service: &Service, ids: &[i64], dir: &Path) -> Result<Vec<Snapshot>, String> {
     let data = service.data()?;
     let _guard = data.operation.lock().map_err(|_| "历史存储忙碌。")?;
@@ -155,44 +111,7 @@ fn snapshot(service: &Service, ids: &[i64], dir: &Path) -> Result<Vec<Snapshot>,
     Ok(snapshots)
 }
 fn text_image_with_font(text: &str, font_bytes: &[u8]) -> Result<RgbaImage, String> {
-    let font = font(font_bytes)?;
-    let size = 24.0;
-    let scaled = font.as_scaled(size);
-    // ab_glyph 的 scale 表示字形高度，换行宽度换算为同一 em 比例。
-    let em = size * font.units_per_em().ok_or("字体度量无效。")? / font.height_unscaled();
-    let lines = lines_with_font(text, 1152.0, em, font_bytes)?;
-    let height = 48u64 + lines.len() as u64 * 34;
-    if height * 1200 > MAX_PIXELS {
-        return Err("文本长图超过 3200 万像素，请改用 PDF 或 TXT。".into());
-    }
-    let mut image = RgbaImage::from_pixel(1200, height as u32, Rgba([255, 255, 255, 255]));
-    for (index, line) in lines.iter().enumerate() {
-        let mut x = 24.0;
-        for c in line.chars() {
-            let id = font.glyph_id(c);
-            let glyph = id.with_scale_and_position(
-                size,
-                point(x, 24.0 + scaled.ascent() + index as f32 * 34.0),
-            );
-            if let Some(outline) = font.outline_glyph(glyph) {
-                let bounds = outline.px_bounds();
-                outline.draw(|gx, gy, coverage| {
-                    let px = gx as i32 + bounds.min.x as i32;
-                    let py = gy as i32 + bounds.min.y as i32;
-                    if px >= 0 && py >= 0 && px < image.width() as i32 && py < image.height() as i32
-                    {
-                        let v = (255.0 * (1.0 - coverage)) as u8;
-                        let pixel = image.get_pixel_mut(px as u32, py as u32);
-                        for channel in &mut pixel.0[..3] {
-                            *channel = (*channel).min(v);
-                        }
-                    }
-                });
-            }
-            x += scaled.h_advance(id);
-        }
-    }
-    Ok(image)
+    crate::shared::text_image::render(text, font_bytes, 1200, MAX_PIXELS)
 }
 fn dimensions(item: &Snapshot, font_bytes: &[u8]) -> Result<(u32, u32), String> {
     match item {

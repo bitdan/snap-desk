@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { t } from '@/shared/i18n/i18n'
 import { computed, ref, watch } from 'vue'
-import { ChevronDown } from 'lucide-vue-next'
+import { Check, ChevronDown } from 'lucide-vue-next'
 import { DropdownMenuRoot, DropdownMenuTrigger, DropdownMenuPortal, DropdownMenuContent, DropdownMenuItem } from 'reka-ui'
 import { annotationTools } from '@/features/annotations/annotation-tools'
 import type { AnnotationTool } from '@/features/annotations/use-annotations'
@@ -26,7 +26,7 @@ const items = computed(() => props.tools.map(tool => annotationTools.find(item =
         <!-- Portal 避开工具行的滚动裁剪；菜单自行处理焦点、方向键、Esc 和屏幕边缘避让。 -->
         <DropdownMenuContent class="annotation-group-menu" side="bottom" align="start" :side-offset="8" :collision-padding="8" :aria-label="t(name)" @pointerdown.stop @pointermove.stop @contextmenu.stop.prevent @keydown.stop>
           <DropdownMenuItem v-for="item in items" :key="item.tool" class="annotation-group-item" :disabled="disabled" @select="open = false; emit('select', item.tool)">
-            <component :is="item.icon" :size="16" /><span>{{ t(item.name) }}</span><span v-if="active && selected === item.tool" class="chosen">✓</span>
+            <component :is="item.icon" :size="16" /><span>{{ t(item.name) }}</span><Check v-if="active && selected === item.tool" :size="14" class="chosen" aria-hidden="true" />
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenuPortal>
@@ -45,7 +45,7 @@ const items = computed(() => props.tools.map(tool => annotationTools.find(item =
 .annotation-group-menu .annotation-group-item { display:flex; align-items:center; gap:8px; min-height:32px; padding:4px 8px; border-radius:4px; cursor:pointer; outline:none; }
 .annotation-group-menu .annotation-group-item[data-highlighted] { background:#eff6ff; color:#2563eb; }
 .annotation-group-menu .annotation-group-item[data-disabled] { opacity:.45; pointer-events:none; }
-.annotation-group-menu .chosen { margin-left:auto; color:#2563eb; }
+.annotation-group-menu .chosen { margin-left:auto; color:var(--ui-success-fg); }
 [data-theme=dark] .annotation-group-menu { background-color:#20252c; color:#e6edf3; border-color:#39424e; color-scheme:dark; }
 [data-theme=dark] .annotation-group-menu .annotation-group-item[data-highlighted] { background:#303f56; color:#93c5fd; }
 </style>

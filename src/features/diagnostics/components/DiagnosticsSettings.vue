@@ -71,8 +71,6 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
       <span role="status" :class="status && !status.error ? 'status-ok' : 'text-xs text-zinc-500'"><Check v-if="status && !status.error" :size="14" />{{ status?.error ? t("日志不可用") : status ? (remaining > 0 ? t("DEBUG · 剩余 {0} 分钟", { 0: Math.ceil(remaining / 60) }) : 'INFO') : t("状态未读取") }}</span>
       <Button variant="ghost" :disabled="!desktop || busy" @click="run(refresh)">{{ busy ? t("处理中…") : t("刷新") }}</Button>
     </div>
-    <p class="text-xs text-zinc-500">{{ t("日志仅保存在本机，导出分享前请检查内容。") }}</p>
-    <p v-if="status && !status.error" class="mt-2 text-xs text-zinc-500">{{ t("日志共") }} {{ (status.totalBytes / 1024 / 1024).toFixed(2) }} MB · {{ status.archives }} {{ t("份归档 · 最近 500 条有效记录中") }} {{ status.recentErrors }} {{ t("条错误") }}</p>
     <p v-if="status?.error || error" class="notice error" role="alert">{{ te(error || status?.error) }}</p>
     <p v-if="message" class="notice" role="status">{{ t(message) }}</p>
     <div class="diagnostics-toolbar mt-3">

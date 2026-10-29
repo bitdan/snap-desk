@@ -142,7 +142,8 @@ pub async fn clipboard_pin_item(
         };
         match content {
             Content::Image(i) => crate::pins::create_visible(app, i, vec![]),
-            Content::Text(_) | Content::Files(_) => Err("请选择图片贴图。".into()),
+            Content::Text(text) => crate::pins::create_text_visible(app, &text),
+            Content::Files(_) => Err("请选择文字或图片贴图。".into()),
         }
     })
     .await

@@ -2,6 +2,7 @@
 import { t, te } from '@/shared/i18n/i18n'
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { DialogRoot, DialogPortal, DialogOverlay, DialogContent, DialogTitle, DialogDescription, DialogTrigger } from 'reka-ui'
+import { PopoverRoot, PopoverTrigger, PopoverPortal, PopoverContent } from 'reka-ui'
 import { api, desktop, onClipboardChanged, onClipboardError, onClipboardState, onClipboardOpen } from '@/services/api'
 import { defaultClipboardSettings, toggleSelection, type ClipboardItem as Item, type ClipboardStatus, type ClipboardKind, type ClipboardExportOptions } from '@/features/clipboard/clipboard'
 import { Search, ClipboardList, Type, Image, Star, X, Download, Pin, Trash2, Files } from 'lucide-vue-next'
@@ -117,10 +118,10 @@ async function pinSelected() {
   await run(async () => {
     let done = 0
     for (const id of selected.value) {
-      if (selectedItems.value[id]?.kind !== 'image') continue
+      if (!['image', 'text'].includes(selectedItems.value[id]?.kind)) continue
       try { await api.clipboardPin(id); done++ } catch (e) { throw new Error(`已创建 ${done} 张贴图；${String(e)}`) }
     }
-    message.value = `已创建 ${done} 张图片贴图。`
+    message.value = `已创建 ${done} 张贴图。`
   })
 }
 onMounted(async () => {
@@ -153,6 +154,15 @@ onUnmounted(() => { disposed = true; revision++; clearTimeout(refreshTimer); dis
     </form>
     <nav class="history-categories" :aria-label='t("历史分类")'>
       <button v-for="tab in categories" :key="tab.value" :class="{ active: category === tab.value }" :aria-pressed="category === tab.value" :disabled="busy || !desktop" @click="category = tab.value"><component :is="tab.icon" :size="16" aria-hidden="true" />{{ t(tab.label) }}</button>
+      <PopoverRoot>
+        <PopoverTrigger class="history-help-trigger" :aria-label='t("帮助")' :title='t("帮助")'>?</PopoverTrigger>
+        <PopoverPortal>
+          <PopoverContent class="history-help-popup" side="bottom" align="end" :side-offset="6" :collision-padding="8" :aria-label='t("帮助")' @keydown.stop>
+            <p>{{ t("单击选择 · ↑↓ 浏览 · Enter / 双击复制") }}</p>
+            <p v-if="category === 'file'">{{ t("仅记录文件路径，原文件移动或删除后失效。") }}</p>
+          </PopoverContent>
+        </PopoverPortal>
+      </PopoverRoot>
     </nav>
     <div v-if="confirm" class="notice" role="alertdialog" :aria-label='t("确认删除历史")'>
       <p>{{ confirm === 'clear' ? t("清空历史记录？默认保留收藏。") : t("删除选中的 {0} 条记录（包含选中的收藏）？", { 0: selected.length }) }} {{ t("此操作不可撤销。") }}</p>
@@ -187,13 +197,12 @@ onUnmounted(() => { disposed = true; revision++; clearTimeout(refreshTimer); dis
       <template v-if="selected.length">
         <span class="history-selected-count" role="status" :title="t('已选 {0} / 100 条', { 0: selected.length })">{{ t("已选") }}<br />{{ selected.length }}</span>
         <DialogTrigger as-child><Button class="history-action" :disabled="busy || !canExport" :title="canExport ? t('组合导出') : t('组合导出仅支持文本和图片，文件引用请复制后粘贴')" :aria-label='t("组合导出所选条目")' @click="error = ''; message = ''"><Download :size="18" /></Button></DialogTrigger>
-        <Button class="history-action" variant="outline" :disabled="busy || !selected.some(id => selectedItems[id]?.kind === 'image')" :title='t("图片贴图")' :aria-label='t("将所选图片贴图")' @click="pinSelected"><Pin :size="18" /></Button>
+        <Button class="history-action" variant="outline" :disabled="busy || !selected.some(id => ['image', 'text'].includes(selectedItems[id]?.kind))" :title='t("悬浮贴图")' :aria-label='t("将所选文字和图片贴图")' @click="pinSelected"><Pin :size="18" /></Button>
         <Button class="history-action history-delete" variant="outline" :disabled="busy" :title='t("删除所选")' :aria-label='t("删除所选条目")' @click="confirm = 'delete'"><Trash2 :size="18" /></Button>
         <Button class="history-action" variant="ghost" :disabled="busy" :title='t("取消选择")' :aria-label='t("取消选择")' @click="selected = []; selectedItems = {}"><X :size="18" /></Button>
       </template>
     </aside>
     </div>
-    <footer class="history-footer"><span>{{ t("单击选择 · ↑↓ 浏览 · Enter / 双击复制") }}</span><p v-if="category === 'file'">{{ t("仅记录文件路径，原文件移动或删除后失效。") }}</p><p>{{ t("历史仅存本机，未加密；暂停不删除已有记录。") }}</p></footer>
   </section>
   </DialogRoot>
 </template>
@@ -217,8 +226,10 @@ onUnmounted(() => { disposed = true; revision++; clearTimeout(refreshTimer); dis
 .history-count { color:#57606a; font-size:12px; white-space:nowrap; }
 .history-header-actions { display:flex; margin-left:auto; }
 .history-header-actions button { padding:4px 8px; height:28px; font-size:12px; }
-.history-footer { border-top:1px solid #e1e4e8; padding-top:8px; font-size:12px; color:#57606a; line-height:1.6; }
-.history-footer p { margin-top:4px; color:#71717a; }
+.history-help-popup { z-index:111; max-width:calc(100vw - 16px); padding:10px 12px; border:1px solid #d8dee4; border-radius:6px; background:#fff; color:#57606a; box-shadow:0 4px 16px #0002; font-size:12px; line-height:1.6; }
+.history-help-popup p { margin:0; }
+.history-help-popup p + p { margin-top:4px; }
+[data-theme=dark] .history-help-popup { background:#20252c; color:#a8b3c2; border-color:#39424e; }
 .history-empty { padding:32px 16px; text-align:center; color:#71717a; }
 .history-tools { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin:12px 0; }
 .history-header { display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap; }
@@ -252,5 +263,9 @@ onUnmounted(() => { disposed = true; revision++; clearTimeout(refreshTimer); dis
 .history-categories button { display:flex; gap:8px; align-items:center; justify-content:center; padding:10px 20px; border-bottom:2px solid transparent; color:#71717a; }
 .history-categories button.active { color:#2563eb; border-bottom-color:#2563eb; background:#eff6ff; }
 @media (max-width:600px) { .history-categories { gap:0; }.history-categories button { flex:1; padding:10px 8px; } }
+.history-categories .history-help-trigger { flex:0 0 32px; align-self:center; height:32px; margin-left:auto; padding:0; border:0; border-radius:4px; font-size:16px; }
+.history-categories .history-help-trigger:hover { background:#f6f7f8; }
+[data-theme=dark] .history-categories .history-help-trigger:hover { background:#2b333d; }
+.history-categories button:focus-visible { outline:2px solid #2563eb; outline-offset:-2px; }
 .clipboard-history pre { white-space:pre-wrap; overflow-wrap:anywhere; max-height:360px; overflow:auto; }
 </style>

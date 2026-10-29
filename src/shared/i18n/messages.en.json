@@ -872,5 +872,10 @@
   "打开录屏项目": "Open recording project",
   "GIF 标注修改请在另存后预览结果。": "Save a new copy to preview annotation changes in the GIF.",
   "贴图图片缓存已失效，请重新显示贴图。": "The pinned image cache is unavailable. Show the pin again.",
-  "贴图版本超出限制。": "The pinned image revision limit was reached."
+  "贴图版本超出限制。": "The pinned image revision limit was reached.",
+  "将所选文字和图片贴图": "Pin selected text and images",
+  "已创建 {0} 张贴图。": "Created {0} pins.",
+  "剪贴板贴图": "Pin clipboard content",
+  "直接贴出剪贴板中的文字或图片，快捷键可在设置中修改": "Pin clipboard text or images directly; change the shortcut in settings",
+  "把剪贴板文字或图片贴在桌面": "Keep clipboard text or images on the desktop"
 }

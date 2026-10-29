@@ -145,7 +145,7 @@ impl Shortcuts {
     pub fn entries(&self) -> [(ShortcutAction, &str, &str); 4] {
         [
             (ShortcutAction::Capture, "区域截图", &self.capture),
-            (ShortcutAction::Pin, "剪贴板图片贴图", &self.pin),
+            (ShortcutAction::Pin, "剪贴板贴图", &self.pin),
             (ShortcutAction::Record, "开始 / 停止录屏", &self.record),
             (ShortcutAction::History, "剪贴板历史", &self.history),
         ]
