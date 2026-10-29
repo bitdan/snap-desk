@@ -20,6 +20,7 @@ pub mod scroll;
 
 pub(crate) mod latency;
 pub mod preview;
+pub mod history;
 use latency::{elapsed_ms, Latency};
 pub(crate) mod desktop;
 
@@ -45,6 +46,7 @@ pub struct CaptureState {
     operation: AtomicBool,
     next_id: AtomicU64,
     session: Mutex<Option<Session>>,
+    history: Mutex<history::History>,
     /// 最近一次隐藏蒙层的时刻；快速连续截图仍需等待桌面合成器移除上一帧。
     hidden_at: Mutex<Option<Instant>>,
     scroll: Mutex<Option<scroll::ScrollSession>>,
@@ -72,6 +74,7 @@ struct Session {
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Frame {
+    replay: Option<history::Replay>,
     id: u64,
     width: u32,
     height: u32,
@@ -424,6 +427,7 @@ fn prepare(app: &AppHandle, recording: bool, mut latency: Latency) -> Result<(),
     let state = app.state::<CaptureState>();
     let id = state.next_id.fetch_add(1, Ordering::SeqCst) + 1;
     let frame = Frame {
+        replay: None,
         id,
         recording,
         snap_enabled: recording || snap,
@@ -586,6 +590,7 @@ fn selected_region(app: &AppHandle, id: u64, rect: Rect) -> Result<(Rect, scroll
         .as_ref()
         .filter(|s| s.frame.id == id)
         .ok_or("截图已过期。")?;
+    if session.frame.replay.is_some() { return Err("请返回当前现场后再开始录屏或滚动截图。".into()); }
     rect.validate(session.image.width(), session.image.height())?;
     let display = session
         .frame
@@ -674,6 +679,7 @@ fn cleanup(app: &AppHandle) -> Result<(), String> {
     // 先释放原生 RGBA/PNG，再通知常驻 WebView 清空图片和标注历史。
     // 关闭窗口/全局取消也会经过这里，不能只依赖前端按钮的成功回调。
     drop(session);
+    history::reset(&state);
     if let Some(id) = closed_id.or(scroll_id) {
         if let Err(error) = app.emit_to("capture", "capture-closed", id) {
             log::warn!("通知截图窗口释放会话 {id} 失败: {error}");
@@ -883,6 +889,7 @@ pub async fn copy_capture(
         let _operation = Operation::acquire(&state.operation)?;
         let cropped = crop(&app, id, rect, &annotations)?;
         crate::shared::image_io::copy(&app, &cropped)?;
+        history::remember(&app, id, rect, &annotations);
         log::info!(
             "event=capture.copied module=capture op=cap-{id} width={} height={}",
             cropped.width(),
@@ -979,6 +986,7 @@ pub async fn save_capture(
         let result = crate::pins::save_capture_image(&app, &cropped);
         match result {
             Ok(true) => {
+                history::remember(&app, id, rect, &annotations);
                 log::info!(
                     "event=capture.saved module=capture op=cap-{id} width={} height={}",
                     cropped.width(),
@@ -1044,6 +1052,7 @@ pub async fn pin_capture(
             )
         };
         // 贴图保存裁剪后的底图与独立图形；将屏幕坐标平移为贴图局部像素坐标。
+        let history_annotations = annotations.clone();
         let mut annotations = annotations;
         for shape in &mut annotations {
             for p in [&mut shape.start, &mut shape.end]
@@ -1059,6 +1068,7 @@ pub async fn pin_capture(
             let _ = pin.destroy();
             return Err(err(error));
         }
+        history::remember(&app, id, rect, &history_annotations);
         if let Err(error) = close_session(&app, id) {
             let _ = pin.destroy();
             return Err(error);

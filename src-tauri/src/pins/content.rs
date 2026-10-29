@@ -26,7 +26,7 @@ pub(crate) fn read_image(path: &Path) -> Result<RgbaImage, String> {
 }
 
 /// 根据文件内容识别格式，不信任扩展名；动画 WebP 仅读取首帧作为静态贴图。
-fn decode_image(bytes: &[u8]) -> Result<RgbaImage, String> {
+pub(super) fn decode_image(bytes: &[u8]) -> Result<RgbaImage, String> {
     let format =
         image::guess_format(bytes).map_err(|_| "文件不是有效的 PNG、JPEG 或 WebP 图片。")?;
     if !matches!(

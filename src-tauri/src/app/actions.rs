@@ -27,12 +27,15 @@ pub(super) fn trigger(app: &AppHandle) {
 pub(super) fn trigger_pin(app: &AppHandle) {
     let app = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let result = capture::request_pin(&app).and_then(|handled| {
+        let result = pins::restore_click_through(&app).and_then(|restored| {
+            if restored { return Ok(()); }
+            capture::request_pin(&app).and_then(|handled| {
             if handled {
                 Ok(())
             } else {
                 pins::clipboard_pin(&app)
             }
+            })
         });
         if let Err(error) = result {
             capture::report_error(&app, error);

@@ -66,6 +66,7 @@ describe('pin display controls', () => {
     expect(canEditPin(undefined, false)).toBe(false)
     expect(canEditPin(view, true)).toBe(false)
     expect(canEditPin({ ...view, locked: true }, false)).toBe(false)
+    expect(canEditPin({ ...view, clickThrough: true }, false)).toBe(false)
     expect(canEditPin(view, false)).toBe(true)
   })
 })

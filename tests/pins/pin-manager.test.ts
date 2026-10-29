@@ -33,6 +33,12 @@ beforeEach(() => {
 })
 afterEach(() => { memoryRenderer.render(null, root); vi.clearAllTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.useRealTimers() })
 describe('贴图管理与外观', () => {
+  it('穿透贴图无需点击图片本身即可从管理页恢复鼠标操作', async () => {
+    api.listPins.mockResolvedValue([{ label: 'pin-1', width: 640, height: 480, visible: true, group: '', thumbnail: '', clickThrough: true }])
+    memoryRenderer.render(h(Component), root); await flush()
+    button('恢复鼠标操作')!.props.onClick(); await flush()
+    expect(api.managePins).toHaveBeenCalledExactlyOnceWith('interactive', 'pin-1', null)
+  })
   it('显示真实缩略图，按显示状态和分组筛选，未选择时没有批量操作', async () => {
     memoryRenderer.render(h(Component), root); await flush()
     expect(entries()).toHaveLength(2)

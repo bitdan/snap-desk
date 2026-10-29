@@ -49,6 +49,12 @@ it('释放冻结截图仅通知截图浮层，真正结束才清理滚动预览�
 })
 
 describe('原生窗口截图 IPC', () => {
+  it('截图回放绑定当前会话和明确方向，不调用剪贴板历史接口', async () => {
+    await api.replayCapture(42, 'previous')
+    expect(invoke).toHaveBeenLastCalledWith('replay_capture', { id: 42, direction: 'previous' })
+    await api.replayCapture(43, 'next')
+    expect(invoke).toHaveBeenLastCalledWith('replay_capture', { id: 43, direction: 'next' })
+  })
   it('显示与首帧回执绑定会话和图片版本，避免迟到回执操作替换后的图片', async () => {
     await api.ready(12, 3)
     expect(invoke).toHaveBeenLastCalledWith('show_capture', { id: 12, revision: 3 })

@@ -4,7 +4,7 @@ const mocks = vi.hoisted(() => ({ desktop: true, write: vi.fn(), invoke: vi.fn()
 vi.mock('@tauri-apps/api/core', () => ({ isTauri: () => mocks.desktop, invoke: mocks.invoke }))
 vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn() }))
 vi.mock('@tauri-apps/plugin-log', () => ({ debug: mocks.write, info: mocks.write, warn: mocks.write, error: mocks.write }))
-import { appLog, installGlobalErrorLogging } from '../../src/services/logger'
+import { appLog, installGlobalErrorLogging, logFrontendFailure, setLogWindowKind } from '../../src/services/logger'
 import { api } from '../../src/services/api'
 import { defaultAiSettings } from '../../src/features/recognition/ai'
 
@@ -12,6 +12,7 @@ beforeEach(() => {
   vi.resetAllMocks()
   mocks.desktop = true
   mocks.write.mockResolvedValue(undefined)
+  setLogWindowKind('unknown')
 })
 
 describe('日志隐私与异常隔离', () => {
@@ -54,16 +55,51 @@ describe('日志隐私与异常隔离', () => {
     expect(mocks.write).toHaveBeenCalledTimes(2)
   })
 
-  it('全局监听只安装一次，异常对象完全不读入日志', () => {
+  it('全局监听只安装一次，仅记录异常类别，不输出异常正文', () => {
     const target = new EventTarget()
     installGlobalErrorLogging(target)
     installGlobalErrorLogging(target)
     target.dispatchEvent(Object.assign(new Event('error'), { message: 'private path', error: new Error('token') }))
     target.dispatchEvent(Object.assign(new Event('unhandledrejection'), { reason: 'OCR text' }))
     expect(mocks.write.mock.calls).toEqual([
-      ['event=frontend.uncaught_error module=frontend'],
-      ['event=frontend.unhandled_rejection module=frontend'],
+      ['event=frontend.uncaught_error module=frontend window=unknown error_kind=Error'],
+      ['event=frontend.unhandled_rejection module=frontend window=unknown error_kind=non_error'],
     ])
+  })
+
+  it('区分窗口、运行时异常和 Promise 异常，只保留有效数字位置', () => {
+    const target = new EventTarget()
+    setLogWindowKind('recording-controls')
+    installGlobalErrorLogging(target)
+    const error = new TypeError('private text')
+    target.dispatchEvent(Object.assign(new Event('error'), {
+      error, message: 'sk-secret', filename: 'C:/Users/private.js', lineno: 42, colno: 7,
+    }))
+    target.dispatchEvent(Object.assign(new Event('unhandledrejection'), { reason: new RangeError('OCR text') }))
+    expect(mocks.write.mock.calls).toEqual([
+      ['event=frontend.uncaught_error module=frontend window=recording-controls error_kind=TypeError line=42 column=7'],
+      ['event=frontend.unhandled_rejection module=frontend window=recording-controls error_kind=RangeError'],
+    ])
+  })
+
+  it('自定义异常名称、窗口标签和额外字段不能绕过白名单', () => {
+    setLogWindowKind('pin-private-file')
+    const error = new Error('sk-secret')
+    error.name = 'user@example.com'
+    logFrontendFailure('vue.component_error', error)
+    const unsafe = appLog as (...args: unknown[]) => void
+    unsafe('error', 'frontend.uncaught_error', { kind: 'sk-secret', line: -1, column: Infinity, stack: 'private' })
+    expect(mocks.write.mock.calls).toEqual([
+      ['event=vue.component_error module=frontend window=unknown error_kind=unknown'],
+      ['event=frontend.uncaught_error module=frontend window=unknown error_kind=unknown'],
+    ])
+  })
+
+  it('异常类别读取失败仍记录 unknown，不让日志抛出新异常', () => {
+    const error = new Error('private')
+    Object.defineProperty(error, 'name', { get() { throw new Error('secret') } })
+    expect(() => logFrontendFailure('frontend.mount_failed', error)).not.toThrow()
+    expect(mocks.write).toHaveBeenCalledExactlyOnceWith('event=frontend.mount_failed module=frontend window=unknown error_kind=unknown')
   })
 
   it('日志目录沿用固定种类 IPC', async () => {

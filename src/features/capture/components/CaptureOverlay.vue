@@ -16,6 +16,7 @@ import type { ScrollView } from '@/features/scroll/types'
 import type { QrResult } from '@/features/recognition/types'
 import { clamp, move, normalize, resize, toPixels, nudgeSelection, type Handle, type Point, type Rect } from '@/shared/geometry/selection'
 import { useAnnotations, type AnnotationTool } from '@/features/annotations/use-annotations'
+import type { Annotation } from '@/features/annotations/annotations'
 import AnnotationWorkspace from '@/features/annotations/components/AnnotationWorkspace.vue'
 import RecordingAnnotations from '@/features/recording/components/RecordingAnnotations.vue'
 import { annotationToolbarPosition, useFloatingToolbar } from '@/features/annotations/toolbar-layout'
@@ -27,7 +28,7 @@ import { recordingBitrate, recordingConfig, recordingRegion, type RecordingSelec
 import { useRecordingSetup, prepareRecordingSession } from '@/features/recording/use-recording-setup'
 import RecordingSetupMenu from '@/features/recording/components/RecordingSetupMenu.vue'
 import RecordingSourceSelect from '@/features/recording/components/RecordingSourceSelect.vue'
-import { targetAt, fromPixels, snapPoint, displayBounds } from '@/features/capture/capture-targets'
+import { targetAt, targetsAt, fromPixels, snapPoint, displayBounds } from '@/features/capture/capture-targets'
 import { readRecentSelection, restoreRecentSelection, writeRecentSelection } from '@/features/capture/recent-selection'
 
 // 截图帧是不可变快照，大量窗口目标不需要逐项响应式代理。
@@ -41,11 +42,15 @@ const imageUrl = computed(() => frame.value ? `${convertFileSrc(String(frame.val
 const selection = ref<Rect | null>(null)
 const selectedTarget = ref<number | null>(null)
 const windowsOnly = ref(false)
-const hoverTarget = computed(() => {
-  if (!frame.value || !pointer.value || selection.value || busy.value || (!recordingMode.value && frame.value.snapEnabled === false)) return null
-  return targetAt(frame.value.targets, { x: pointer.value.x * frame.value.width / viewport.value.width,
+const hoverLevel = ref(0)
+const hoverCandidates = computed(() => {
+  if (!frame.value || !pointer.value || selection.value || busy.value || (!recordingMode.value && frame.value.snapEnabled === false)) return []
+  return targetsAt(frame.value.targets, { x: pointer.value.x * frame.value.width / viewport.value.width,
     y: pointer.value.y * frame.value.height / viewport.value.height }, windowsOnly.value)
 })
+// 只在命中层级改变时回到最小区域；同一面板内轻微移动不会丢失 Tab 选择。
+watch(() => hoverCandidates.value.join(','), () => { hoverLevel.value = 0 }, { flush: 'sync' })
+const hoverTarget = computed(() => hoverCandidates.value[Math.min(hoverLevel.value, hoverCandidates.value.length - 1)] ?? null)
 const hoverStyle = computed(() => {
   if (!frame.value || hoverTarget.value === null) return {}
   const rect = fromPixels(frame.value.targets[hoverTarget.value].rect, frame.value, viewport.value)
@@ -106,7 +111,7 @@ const recordingTrigger = ref<HTMLButtonElement | null>(null)
 const recordingConfirmTrigger = ref<HTMLButtonElement | null>(null)
 /** F3 与截图中的录屏按钮使用同一模式；调整范围后保留录屏偏好。 */
 function enterRecordingMode() {
-  if (busy.value || editor.pending || editor.interacting) return
+  if (busy.value || editor.pending || editor.interacting || frame.value?.replay) return
   annotating.value = false; error.value = ''; recordingMode.value = true
   void nextTick(() => recordingConfirmTrigger.value?.focus())
 }
@@ -221,7 +226,7 @@ function releaseFrame(id = frame.value?.id) {
 }
 function scrollClosed() { scroll.value = null; releaseFrame() }
 async function startScroll() {
-  if (!frame.value || !pixels.value || !valid.value || busy.value || marked.value || editor.pending || editor.interacting || gesture.value) return
+  if (!frame.value || frame.value.replay || !pixels.value || !valid.value || busy.value || marked.value || editor.pending || editor.interacting || gesture.value) return
   busy.value = true; error.value = ''
   // 滚动截图仅输出拼接结果；排错使用应用日志，不再额外保存原始帧。
   const id = frame.value.id
@@ -313,11 +318,37 @@ function up(e: PointerEvent) {
 }
 function abortGesture() { gesture.value = null }
 function selectAll() { selectedTarget.value = null; if (!busy.value && !marked.value && !editor.interacting) { editor.reset(); selection.value = { x: 0, y: 0, ...viewport.value }; void selectedRecordingRegion() } }
-function receive(value: CaptureFrame) {
+let liveSelection: { rect: Rect | null; annotations: Annotation[] } | null = null
+function receive(value: CaptureFrame, fromReplay = false) {
   if (disposed || value.id <= closedThroughId || (frame.value && value.id < frame.value.id)) return
+  if (!fromReplay) liveSelection = null
   reloadPreferences()
   liveRecordingId.value = null
   busy.value = false; reselect(); windowsOnly.value = false; scroll.value = null; imageReady.value = false; recordingMode.value = !!value.recording; frame.value = value
+  if (value.replay) {
+    selection.value = fromPixels(value.replay.rect, value, viewport.value)
+    editor.reset(value.replay.annotations)
+  }
+}
+/** 回放替换整个会话；失败保留现场，不会清空选区或当前标注。 */
+async function replay(direction: 'previous' | 'next') {
+  if (!frame.value || busy.value || gesture.value || editor.pending || editor.interacting || recordingMode.value || scroll.value || liveRecordingId.value !== null) return
+  const id = frame.value.id
+  busy.value = true; error.value = ''
+  try {
+    const live = !frame.value.replay ? { rect: pixels.value ? { ...pixels.value } : null, annotations: JSON.parse(JSON.stringify(editor.history.present)) } : null
+    const restored = await api.replayCapture(id, direction)
+    if (!disposed && frame.value?.id === id && restored.id !== id) {
+      if (restored.replay && live) liveSelection = live
+      receive(restored, true)
+      if (!restored.replay && liveSelection) {
+        selection.value = liveSelection.rect ? fromPixels(liveSelection.rect, restored, viewport.value) : null
+        editor.reset(liveSelection.annotations)
+        liveSelection = null
+      }
+    }
+  } catch (e) { error.value = String(e) }
+  finally { busy.value = false }
 }
 /** load 只表示资源可用；先解码并等待 Vue 更新与绘制机会，再显示原生蒙层。 */
 async function loaded(event: Event) {
@@ -375,7 +406,18 @@ function key(e: KeyboardEvent) {
   if (handleEscape(e, () => { void cancel() })) return
   if ((e.target as HTMLElement).closest('.recording-inline-options')) return
   if ((e.target as HTMLElement).closest('input, textarea, select')) return
+  if (!e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && !e.repeat && [',', '.'].includes(e.key)
+    && !annotating.value && !qrResult.value && !ocrResult.value) {
+    e.preventDefault(); void replay(e.key === ',' ? 'previous' : 'next'); return
+  }
   if (e.key === 'Alt') windowsOnly.value = true
+  // 框选前用 Tab 逐级选择按钮、面板或整窗；已选区和表单保留正常焦点导航。
+  if (e.key === 'Tab' && !e.ctrlKey && !e.metaKey && !e.altKey && !selection.value && !gesture.value
+    && !busy.value && hoverCandidates.value.length > 1) {
+    e.preventDefault()
+    hoverLevel.value = (hoverLevel.value + (e.shiftKey ? -1 : 1) + hoverCandidates.value.length) % hoverCandidates.value.length
+    return
+  }
   const command = e.ctrlKey || e.metaKey
   if (annotating.value && editor.key(e)) return
   // 录屏模式拦截截图导出快捷键，避免 Enter / Ctrl+C 意外复制静态图片。
@@ -454,8 +496,13 @@ onUnmounted(() => { releaseFrame(); disposed = true; offClosed?.(); off?.(); off
   <div v-else class="capture-overlay" @pointerdown="down($event)" @pointermove.capture="drag" @pointerleave="pointer = null" @pointerup="up" @pointercancel="abortGesture(); pointer = null" @contextmenu.prevent="cancel">
     <img v-if="frame" :key="frame.id" ref="screenImage" class="screen-image" :src="imageUrl" crossorigin="anonymous" :alt='t("当前屏幕截图")' draggable="false" @load="loaded" @error="imageFailed" />
     <!-- 截图和录屏共用选区入口：开始框选前保持原图，仅在形成选区后遮暗外围。 -->
-    <div v-if="!selection" class="capture-tip" :style="{ left: `${activeDisplay.x + activeDisplay.width / 2}px`, top: `${activeDisplay.y + 64}px`, maxWidth: `${activeDisplay.width - 32}px`, whiteSpace: 'normal' }">{{ recordingMode ? t("拖动选择录屏范围") : frame?.targets.length ? t("点击吸附 · 拖动框选 · Alt 选窗口 · Shift 自由框选") : t("拖动框选屏幕") }} <span>{{ recordingMode ? t("Esc 退出 · Ctrl / ⌘ + A 全屏 · R 最近选区") : t("C 取色 · Esc 取消 · Ctrl / ⌘ + A 全屏 · R 最近选区") }}</span></div>
+    <div v-if="!selection" class="capture-tip" :style="{ left: `${activeDisplay.x + activeDisplay.width / 2}px`, top: `${activeDisplay.y + 64}px`, maxWidth: `${activeDisplay.width - 32}px`, whiteSpace: 'normal' }">{{ recordingMode ? t("拖动选择录屏范围") : frame?.targets.length ? t("点击吸附 · Tab 切换层级 · 拖动框选 · Alt 选窗口 · Shift 自由框选") : t("拖动框选屏幕") }} <span>{{ recordingMode ? t("Esc 退出 · Ctrl / ⌘ + A 全屏 · R 最近选区") : t("C 取色 · Esc 取消 · Ctrl / ⌘ + A 全屏 · R 最近选区") }}</span></div>
     <div v-if="frame" class="capture-modebar" :style="{ left: `${activeDisplay.x + 16}px`, top: `${activeDisplay.y + 16}px` }" @pointerdown.stop @contextmenu.stop.prevent>
+      <template v-if="!recordingMode">
+        <button :disabled="busy || editor.pending || editor.interacting || !!gesture" :title="t('上一张截图（,）')" @click="replay('previous')">{{ t('上一张 ,') }}</button>
+        <span v-if="frame.replay">{{ t('截图历史 {0}/{1}', { 0: frame.replay.index, 1: frame.replay.total }) }}</span>
+        <button :disabled="!frame.replay || busy || editor.pending || editor.interacting || !!gesture" :title="t('下一张截图（.），最后一张后返回现场')" @click="replay('next')">{{ t('下一张 .') }}</button>
+      </template>
       <button :disabled="!recentRect || busy || marked || editor.pending || editor.interacting" :title="recentRect ? t('恢复上次成功复制、保存或贴图的选区（R）') : t('暂无最近选区，或当前屏幕分辨率已变化')" @click="restoreSelection"><Scan :size="15" />{{ t("最近选区 R") }}</button>
     </div>
     <div v-if="hoverTarget !== null" class="snap-target" :style="hoverStyle" />
@@ -469,8 +516,8 @@ onUnmounted(() => { releaseFrame(); disposed = true; offClosed?.(); off?.(); off
           <button v-if="!recordingMode && selectedTarget !== null && frame?.targets[selectedTarget]?.kind === 'window'" :disabled="busy || marked || editor.pending || editor.interacting" :title='t("原生窗口截图")' :aria-label='t("原生窗口截图")' @click="captureNative"><AppWindow :size="16" /></button>
           <button :disabled="busy || editor.pending || editor.interacting" :title='t("清空标注并重新框选")' :aria-label='t("清空标注并重新框选")' @click="reselect"><RotateCcw :size="16" /></button>
           <button :disabled="busy || editor.pending || editor.interacting || marked" :title='t("选择整个屏幕 Ctrl/⌘+A")' :aria-label='t("选择整个屏幕")' @click="selectAll"><Monitor :size="16" /></button>
-          <button v-if="!recordingMode" :disabled="busy || editor.pending || editor.interacting || marked" :title='t("开始滚动截图，按首次滚轮方向进行横向或纵向拼接")' :aria-label='t("开始滚动截图")' @click="startScroll"><ScrollCaptureIcon :size="16" /></button>
-          <button ref="recordingTrigger" class="recording-mode-trigger" :disabled="busy || editor.pending || editor.interacting || !recordingCapabilities?.available" :title="recordingCapabilities?.reason ?? (recordingCapabilityError || (recordingCapabilities ? t(recordingMode ? '返回截图' : '切换到录屏') : t('正在检查录屏能力…')))" :aria-label="t(recordingMode ? '返回截图' : '展开录屏工具栏')" :aria-pressed="recordingMode" :aria-expanded="recordingMode" @click="recordingMode ? leaveRecordingMode() : enterRecordingMode()"><Video :size="16" /></button>
+          <button v-if="!recordingMode && !frame?.replay" :disabled="busy || editor.pending || editor.interacting || marked" :title='t("开始滚动截图，按首次滚轮方向进行横向或纵向拼接")' :aria-label='t("开始滚动截图")' @click="startScroll"><ScrollCaptureIcon :size="16" /></button>
+          <button v-if="!frame?.replay" ref="recordingTrigger" class="recording-mode-trigger" :disabled="busy || editor.pending || editor.interacting || !recordingCapabilities?.available" :title="recordingCapabilities?.reason ?? (recordingCapabilityError || (recordingCapabilities ? t(recordingMode ? '返回截图' : '切换到录屏') : t('正在检查录屏能力…')))" :aria-label="t(recordingMode ? '返回截图' : '展开录屏工具栏')" :aria-pressed="recordingMode" :aria-expanded="recordingMode" @click="recordingMode ? leaveRecordingMode() : enterRecordingMode()"><Video :size="16" /></button>
         <template v-if="!recordingMode">
         <button :disabled="busy || editor.pending || editor.interacting" :title='t("贴图 Ctrl/⌘+P")' :aria-label='t("贴图")' @click="finish('pin')"><Pin :size="16" /></button>
         <button ref="ocrTrigger" :disabled="busy || editor.pending || editor.interacting" :title='t("识别文字")' :aria-label='t("识别文字")' aria-haspopup="dialog" :aria-expanded="ocrResult !== null && !translationMode" @click="recognizeText(false)"><ScanText :size="16" /></button>

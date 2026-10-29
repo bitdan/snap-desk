@@ -3,17 +3,33 @@ import type { Point, Rect, Size } from '@/shared/geometry/selection'
 
 const contains = (rect: Rect, point: Point) => point.x >= rect.x && point.y >= rect.y && point.x < rect.x + rect.width && point.y < rect.y + rect.height
 
-/** 先锁定最上层窗口，再找其最小原生控件，避免选中被遮挡窗口的子控件。 */
-export function targetAt(targets: CaptureTarget[], point: Point, windowsOnly = false): number | null {
+/** 按从小到大提供鼠标下的控件/面板层级，始终限制在最上层窗口内。 */
+export function targetsAt(targets: CaptureTarget[], point: Point, windowsOnly = false): number[] {
   const parent = targets.findIndex(target => target.kind === 'window' && !target.recordingOnly && contains(target.rect, point))
-  if (parent < 0) return null
-  if (windowsOnly) return parent
-  let chosen = parent
-  targets.forEach((target, index) => {
-    if (!target.recordingOnly && target.windowIndex === targets[parent].windowIndex && contains(target.rect, point)
-      && target.rect.width * target.rect.height < targets[chosen].rect.width * targets[chosen].rect.height) chosen = index
-  })
-  return chosen
+  if (parent < 0) return []
+  if (windowsOnly) return [parent]
+  const outer = targets[parent].rect
+  const area = (rect: Rect) => rect.width * rect.height
+  const same = (a: Rect, b: Rect) => Math.abs(a.x - b.x) <= 2 && Math.abs(a.y - b.y) <= 2
+    && Math.abs(a.x + a.width - b.x - b.width) <= 2 && Math.abs(a.y + a.height - b.y - b.height) <= 2
+  const candidates = targets.map((target, index) => ({ target, index }))
+    .filter(({ target }) => target.kind === 'element' && !target.recordingOnly
+      && target.windowIndex === targets[parent].windowIndex && contains(target.rect, point)
+      && target.rect.width >= 12 && target.rect.height >= 12
+      && target.rect.x >= outer.x && target.rect.y >= outer.y
+      && target.rect.x + target.rect.width <= outer.x + outer.width
+      && target.rect.y + target.rect.height <= outer.y + outer.height && !same(target.rect, outer))
+    .sort((a, b) => area(a.target.rect) - area(b.target.rect))
+  const chain: number[] = []
+  for (const { target, index } of candidates) {
+    if (!chain.some(chosen => same(targets[chosen].rect, target.rect))) chain.push(index)
+  }
+  return [...chain, parent]
+}
+
+/** 默认选择最小有效区域；Alt 直接选择所属窗口。 */
+export function targetAt(targets: CaptureTarget[], point: Point, windowsOnly = false): number | null {
+  return targetsAt(targets, point, windowsOnly)[0] ?? null
 }
 
 /** CSS 与原图按实际视口比例换算，不使用鼠标所在屏幕的 devicePixelRatio。 */

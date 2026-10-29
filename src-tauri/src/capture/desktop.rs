@@ -253,6 +253,7 @@ pub fn capture(primary_only: bool, include_cursor: bool, snap: bool) -> Result<D
             }
             desktop.windows.push(window);
         }
+        windows::accessibility_elements(&desktop.windows, &mut desktop.targets, (x, y), (width, height));
     }
     Ok(desktop)
 }

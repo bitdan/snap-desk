@@ -15,7 +15,7 @@ import { api, onPinVisibility } from '@/services/api'
 import { usePinImage } from '@/features/pins/pin-image'
 import type { PinView, PinAction, PinTransform } from '@/features/pins/types'
 import { canEditPin, minimumZoom, pinDisplaySize, pinImagePadding, stepZoom, defaultPinAppearance, pinAppearanceStyle } from '@/features/pins/pins'
-import { onPinAppearance } from '@/features/pins/events'
+import { onPinAppearance, onPinView } from '@/features/pins/events'
 import layout from '@/features/pins/pin-layout.json'
 
 const toolbar = ref<HTMLElement | null>(null)
@@ -32,6 +32,7 @@ const appearance = ref(defaultPinAppearance())
 let appearanceRevision = 0
 let offAppearance: (() => void) | undefined
 let offVisibility: (() => void) | undefined
+let offView: (() => void) | undefined
 let disposed = false
 const busy = ref(false)
 const recognitionMode = ref<'ocr' | 'qr' | 'translate' | null>(null)
@@ -218,6 +219,9 @@ function key(event: KeyboardEvent) {
   if (annotating.value && editor.key(event)) return
   if ((event.target as HTMLElement).closest('input, textarea, select')) return
   if (event.repeat) return
+  if (event.ctrlKey && event.altKey && event.key.toLowerCase() === 'p') {
+    event.preventDefault(); closeMenu(); void setView({ clickThrough: !frame.value?.view.clickThrough }); return
+  }
   const command = event.ctrlKey || event.metaKey
   const key = event.key.toLowerCase()
   if (command && ['c', 's', 'w'].includes(key)) {
@@ -240,11 +244,13 @@ onMounted(async () => {
     if (disposed) { offVisibility(); return }
     offAppearance = await onPinAppearance(value => { appearanceRevision++; appearance.value = value })
     if (disposed) { offAppearance(); return }
+    offView = await onPinView(view => { if (frame.value) frame.value.view = view })
+    if (disposed) { offView(); return }
     await load()
   } catch (e) { if (!disposed) error.value = String(e) }
 })
 onUnmounted(() => {
-  disposed = true; offAppearance?.(); offVisibility?.(); imageSession.dispose()
+  disposed = true; offView?.(); offAppearance?.(); offVisibility?.(); imageSession.dispose()
   clearTimeout(controlsHideTimer)
   window.removeEventListener('pointerdown', dismissMenu)
   window.removeEventListener('resize', closeOnResize)
@@ -299,6 +305,7 @@ function closeOnResize() {
       <p v-else-if="message" role="status" class="pin-status" :title="t(message)">{{ t(message) }}</p>
       <p v-else-if="controls && !annotating" class="pin-status">{{ t("拖动移动 · 滚轮缩放 · 右键编辑 · Esc 隐藏") }}</p>
     </section>
+    <p v-if="frame?.view.clickThrough" class="pin-pass-through" role="status">{{ t('鼠标穿透中 · 用全局贴图快捷键或托盘恢复') }}</p>
     <PinRecognition v-if="frame && recognitionMode" :frame="frame" :mode="recognitionMode" @close="closeRecognition" />
     <div v-if="contextMenu" ref="menuElement" class="pin-context-menu" role="menu" :aria-label='t("贴图菜单")' :style="{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }" @pointerdown.stop @contextmenu.stop.prevent @keydown.stop="menuKey">
       <div class="context-annotation-tools" role="group" :aria-label='t("标注工具")'>
@@ -319,6 +326,8 @@ function closeOnResize() {
       <button role="menuitem" @click="closeMenu(true); action('save')"><Save :size="16" />{{ t("保存图片") }}<span>Ctrl/⌘+S</span></button>
       <button role="menuitem" @click="closeMenu(true); toggleControls()"><ChevronDown :size="16" />{{ controls ? t("收起工具栏") : t("展开工具栏") }}</button>
       <div role="separator" />
+      <button role="menuitemcheckbox" :aria-checked="!!frame?.view.clickThrough" :disabled="busy || editor.pending || editor.interacting" @click="closeMenu(); setView({ clickThrough: !frame?.view.clickThrough })">{{ t('鼠标穿透（Ctrl+Alt+P）') }}</button>
+      <p class="pin-status">{{ t('用全局贴图快捷键或托盘恢复鼠标操作') }}</p>
       <button role="menuitem" @click="closeMenu(true); action('hide')"><EyeOff :size="16" />{{ t("隐藏贴图") }}</button>
       <button role="menuitem" @click="closeMenu(true); action('close')"><X :size="16" />{{ t("关闭贴图") }}</button>
     </div>
@@ -326,6 +335,7 @@ function closeOnResize() {
 </template>
 
 <style scoped>
+.pin-pass-through { position: fixed; top: 4px; left: 8px; right: 8px; margin: 0; padding: 4px 8px; background: #fff; color: #24292f; border: 1px solid #d1d5db; font-size: 12px; pointer-events: none; z-index: 20; }
 .pin-shell { position: fixed; inset: 0; display: grid; justify-items: center; color: #374151; user-select: none; }
 .pin-stage { grid-row: 1; min-width: 0; min-height: 0; align-self: start; justify-self: start; overflow: auto; border-style: solid; border-color: #a1a1aa; transition: border-color .12s, box-shadow .12s, border-radius .12s; }
 .pin-stage:focus-visible { outline:2px solid #3264df; outline-offset:2px; }

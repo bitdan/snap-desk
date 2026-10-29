@@ -4,6 +4,7 @@
 mod benchmarks;
 pub(crate) mod content;
 mod text;
+pub mod html;
 
 use base64::{engine::general_purpose::STANDARD, Engine};
 use image::RgbaImage;
@@ -226,6 +227,9 @@ fn appearance(app: &AppHandle) -> Result<PinAppearance, String> {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PinView {
+    /// 穿透仅影响鼠标命中；锁定、透明度和图片像素保持独立。
+    #[serde(default)]
+    click_through: bool,
     zoom: f64,
     opacity: f64,
     locked: bool,
@@ -236,6 +240,7 @@ pub struct PinView {
 impl Default for PinView {
     fn default() -> Self {
         Self {
+            click_through: false,
             zoom: 1.0,
             opacity: 1.0,
             locked: false,
@@ -277,6 +282,7 @@ pub struct PinFrame {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PinSummary {
+    click_through: bool,
     label: String,
     width: u32,
     height: u32,
@@ -574,6 +580,9 @@ pub fn clipboard_pin(app: &AppHandle) -> Result<(), String> {
     let clipboard = match app.clipboard().read_image() {
         Ok(image) => image,
         Err(_) => {
+            if let Some(html) = self::html::read()? {
+                return create_visible(app, self::html::render(app, html)?, vec![]);
+            }
             let text = app
                 .clipboard()
                 .read_text()
@@ -756,6 +765,7 @@ pub fn list_pins(app: AppHandle, window: WebviewWindow) -> Result<Vec<PinSummary
                 }
             };
             Ok(PinSummary {
+                click_through: pin.view.click_through,
                 label,
                 width: pin.image.width(),
                 height: pin.image.height(),
@@ -770,6 +780,7 @@ pub fn list_pins(app: AppHandle, window: WebviewWindow) -> Result<Vec<PinSummary
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ManageAction {
+    Interactive,
     Show,
     Hide,
     Close,
@@ -792,9 +803,10 @@ pub async fn manage_pins(
         for label in labels {
             if let Some(pin) = app.get_webview_window(&label) {
                 let result = match action {
-                    ManageAction::Show => set_visible(&pin, true).and_then(|_| pin.set_focus()),
-                    ManageAction::Hide => set_visible(&pin, false),
-                    ManageAction::Close => pin.destroy(),
+                    ManageAction::Interactive => restore_one(&app, &pin),
+                    ManageAction::Show => set_visible(&pin, true).and_then(|_| pin.set_focus()).map_err(err),
+                    ManageAction::Hide => set_visible(&pin, false).map_err(err),
+                    ManageAction::Close => pin.destroy().map_err(err),
                 };
                 if let Err(e) = result {
                     errors.push(format!("{label}: {e}"));
@@ -819,6 +831,36 @@ fn normalize_group(group: &str) -> Result<String, String> {
         return Err("分组名称最多 32 个字符，且不能包含换行或控制字符。".into());
     }
     Ok(group.to_string())
+}
+
+/// 管理页和托盘无需命中贴图本身；先恢复系统命中，再同步窗口内的视图状态。
+fn restore_one(app: &AppHandle, window: &WebviewWindow) -> Result<(), String> {
+    window.set_ignore_cursor_events(false).map_err(err)?;
+    let view = {
+        let state = app.state::<PinState>();
+        let mut images = state.images.lock().map_err(err)?;
+        let pin = images.get_mut(window.label()).ok_or("贴图已关闭。")?;
+        pin.view.click_through = false;
+        pin.view.clone()
+    };
+    app.emit_to(window.label(), "pin-view-changed", view).map_err(err)
+}
+
+/// 全局贴图键优先作为穿透逃生键；即使禁用全局快捷键，托盘和管理页仍可恢复。
+pub fn restore_click_through(app: &AppHandle) -> Result<bool, String> {
+    let state = app.state::<PinState>();
+    let labels: Vec<_> = state.images.lock().map_err(err)?.iter()
+        .filter(|(_, pin)| pin.view.click_through).map(|(label, _)| label.clone()).collect();
+    if labels.is_empty() { return Ok(false); }
+    let _operation = Operation::acquire(&state)?;
+    let mut failures = Vec::new();
+    for label in labels {
+        if let Some(window) = app.get_webview_window(&label) {
+            if let Err(error) = restore_one(app, &window) { failures.push(error); }
+        }
+    }
+    changed(app);
+    if failures.is_empty() { Ok(true) } else { Err(failures.join("；")) }
 }
 
 fn management_labels(
@@ -958,6 +1000,7 @@ pub async fn set_pin_view(
                 format!("{error}；恢复窗口失败：{}", failures.join("；"))
             });
         }
+        window.set_ignore_cursor_events(view.click_through).map_err(err)?;
         state
             .images
             .lock()

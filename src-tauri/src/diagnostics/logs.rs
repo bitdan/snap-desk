@@ -290,6 +290,46 @@ pub fn sanitize(line: &str) -> Option<Entry> {
                 ["created", "destroyed", "transformed"].contains(&value)
             }
             "count" | "rgba_bytes" if event == "pins.memory" => value.parse::<u64>().is_ok(),
+            "reason" if event == "scroll.rejected" => [
+                "none",
+                "fixed_bounds_changed",
+                "anchor_fixed_bounds_changed",
+                "anchor_position_conflict",
+                "alignment_missing",
+                "axis_changed",
+                "stationary_overlay",
+                "seam_conflict",
+                "canvas_conflict",
+            ]
+            .contains(&value),
+            "axis" if event == "scroll.rejected" => {
+                ["Vertical", "Horizontal", "Auto"].contains(&value)
+            }
+            "error_kind" if module == Module::Frontend => [
+                "Error",
+                "TypeError",
+                "ReferenceError",
+                "SyntaxError",
+                "RangeError",
+                "URIError",
+                "EvalError",
+                "AggregateError",
+                "DOMException",
+                "non_error",
+                "unknown",
+            ]
+            .contains(&value),
+            "window" if module == Module::Frontend => [
+                "main",
+                "capture",
+                "pin",
+                "selection-edge",
+                "recording-controls",
+                "scroll-preview",
+                "scroll-controls",
+                "unknown",
+            ]
+            .contains(&value),
             "previous_started_ms" | "previous_pid" if event == "app.previous_exit_unclean" => {
                 value.parse::<u64>().is_ok()
             }
@@ -303,7 +343,40 @@ pub fn sanitize(line: &str) -> Option<Entry> {
                     })
                 }),
             "provider" => ["local", "cloud"].contains(&value),
+            "queued" | "queue_dropped" | "throttled" | "rejected_capture" | "stale"
+                if event == "recording.finished" => value.parse::<u64>().is_ok(),
             "result" => ["success", "cancelled", "failed"].contains(&value),
+            "stage" if event == "recording.step_failed" => [
+                "encoder_thread_start",
+                "encoder_thread_panic",
+                "capture_state",
+                "capture_refresh",
+                "capture_source_check",
+                "display_changed",
+                "input_start",
+                "input_read",
+                "capture_frame",
+                "capture_timeout",
+                "output_config",
+                "recovery_create",
+                "encoder_init",
+                "encoder_state",
+                "audio_pump",
+                "video_advance",
+                "frame_state",
+                "annotation_apply",
+                "video_write",
+                "audio_stop",
+                "audio_finalize",
+                "recovery_update",
+                "encoder_finalize",
+                "file_open",
+                "file_sync",
+                "file_validate",
+                "publish_state",
+                "file_publish",
+            ]
+            .contains(&value),
             "stage" | "previous" => [
                 "idle",
                 "preparing",
@@ -347,6 +420,24 @@ pub fn sanitize(line: &str) -> Option<Entry> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn failure_details_survive_export_without_free_text() {
+        let prefix = "2026-10-29T12:00:00+08:00 [ERROR] [test]";
+        for (fields, expected) in [
+            ("event=frontend.uncaught_error module=frontend window=pin error_kind=TypeError line=42 column=7 message=secret stack=private", "event=frontend.uncaught_error window=pin error_kind=TypeError line=42 column=7"),
+            ("event=translation.failed module=translation op=tr-12 provider=local code=LOCAL_INPUT_TOO_LONG text=secret", "event=translation.failed op=tr-12 provider=local code=LOCAL_INPUT_TOO_LONG"),
+            ("event=recording.step_failed module=recording op=rec-7 code=RECORDING_STEP_FAILED stage=encoder_init path=private", "event=recording.step_failed op=rec-7 code=RECORDING_STEP_FAILED stage=encoder_init"),
+            ("event=recording.finished module=recording queued=10 queue_dropped=2 throttled=30 rejected_capture=4 stale=1", "event=recording.finished queued=10 queue_dropped=2 throttled=30 rejected_capture=4 stale=1"),
+            ("event=recording.finished module=recording queued=-1 queue_dropped=NaN throttled=secret", "event=recording.finished"),
+            ("event=scroll.rejected module=scroll reason=anchor_fixed_bounds_changed axis=Vertical frames=9", "event=scroll.rejected reason=anchor_fixed_bounds_changed axis=Vertical frames=9"),
+            ("event=frontend.uncaught_error module=frontend window=private error_kind=secret", "event=frontend.uncaught_error"),
+            ("event=recording.step_failed module=recording stage=private code=secret", "event=recording.step_failed"),
+            ("event=scroll.rejected module=scroll reason=private axis=private", "event=scroll.rejected"),
+        ] {
+            assert_eq!(sanitize(&format!("{prefix} {fields}")).unwrap().message, expected);
+        }
+    }
+
     #[test]
     fn capture_latency_preserves_safe_stages_and_rejects_content_and_invalid_times() {
         let line = "2026-10-28T12:00:00+08:00 [DEBUG] [capture] event=capture.interactive module=capture op=cap-3 hide_ms=0 dwm_ms=1.5 capture_ms=8 png_ms=20 overlay_ready_ms=3 first_paint_ms=140 load_ms=4 decode_ms=2 pre_paint_ms=100 post_paint_ms=32 delay_ms=0 revision=0 width=3840 height=2160 monitors=2 cold=0 png_bytes=123 paint_source=raf image=private";

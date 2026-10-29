@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { displayBounds, fromPixels, snapPoint, targetAt } from '../../src/features/capture/capture-targets'
+import { displayBounds, fromPixels, snapPoint, targetAt, targetsAt } from '../../src/features/capture/capture-targets'
 import { toPixels } from '../../src/shared/geometry/selection'
 import type { CaptureTarget } from '../../src/services/api'
 import { parseRecentSelection, restoreRecentSelection } from '../../src/features/capture/recent-selection'
@@ -16,6 +16,33 @@ describe('桌面目标与混合 DPI 坐标', () => {
     expect(targetAt(targets, { x: 135, y: 135 })).toBe(1)
     expect(targetAt(targets, { x: 135, y: 135 }, true)).toBe(0)
     expect(targetAt(targets, { x: 900, y: 900 })).toBeNull()
+  })
+  it('窗口内部不同面板分别命中，并保留控件、面板、整窗层级', () => {
+    const nested: CaptureTarget[] = [targets[0],
+      { kind: 'element', windowIndex: 0, rect: { x: 110, y: 110, width: 220, height: 350 } },
+      { kind: 'element', windowIndex: 0, rect: { x: 340, y: 110, width: 250, height: 350 } },
+      { kind: 'element', windowIndex: 0, rect: { x: 130, y: 130, width: 60, height: 30 } },
+    ]
+    expect(targetsAt(nested, { x: 140, y: 140 })).toEqual([3, 1, 0])
+    expect(targetAt(nested, { x: 400, y: 200 })).toBe(2)
+    expect(targetsAt(nested, { x: 140, y: 140 }, true)).toEqual([0])
+    expect(targetsAt(nested, { x: 900, y: 900 })).toEqual([])
+  })
+  it('合并 HWND 和无障碍树的重复边界，忽略整窗容器和细碎文本', () => {
+    const duplicate: CaptureTarget[] = [...targets,
+      { ...targets[1], rect: { x: 121, y: 121, width: 199, height: 79 } },
+      { ...targets[1], rect: { ...targets[0].rect } },
+      { ...targets[1], rect: { x: 130, y: 130, width: 4, height: 20 } },
+      { ...targets[1], rect: { x: 0, y: 0, width: 150, height: 150 } },
+    ]
+    const chain = targetsAt(duplicate, { x: 132, y: 132 })
+    expect(chain).toHaveLength(2)
+    expect([1, 4]).toContain(chain[0])
+    expect(chain[1]).toBe(0)
+  })
+  it('即使无障碍控件后追加，也不会穿透前方窗口选中背后控件', () => {
+    const behind = { ...targets[1], windowIndex: 1 }
+    expect(targetsAt([targets[0], targets[2], behind], { x: 140, y: 140 })).toEqual([0])
   })
   it('隐藏应用可列为录屏来源，但不能挡住可见窗口的截图吸附', () => {
     const hidden: CaptureTarget = { ...targets[0], recordingOnly: true }

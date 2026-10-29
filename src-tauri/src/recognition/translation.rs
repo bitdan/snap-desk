@@ -278,10 +278,10 @@ pub async fn translate_text(
         },
         value = async {
             if settings.provider == "local-ctranslate2" {
-                crate::recognition::local_translation::translate(&app, &job_id, &settings.target_language, &text, settings.timeout_seconds).await
-            } else { translate(&settings, &text).await }
-        } => value.map_err(|error| {
-            log::error!("event=translation.failed module=translation op=tr-{op} provider={provider} code=TRANSLATION_REQUEST_FAILED duration_ms={}", started.elapsed().as_millis());
+                crate::recognition::local_translation::translate(&app, &job_id, &settings.target_language, &text, settings.timeout_seconds).await.map_err(|error| (error.code, error.message))
+            } else { translate(&settings, &text).await.map_err(|error| ("TRANSLATION_REQUEST_FAILED", error)) }
+        } => value.map_err(|(code, error)| {
+            log::error!("event=translation.failed module=translation op=tr-{op} provider={provider} code={code} duration_ms={}", started.elapsed().as_millis());
             error
         })?,
     };
@@ -467,6 +467,10 @@ pub async fn ai_provider_test(app: AppHandle, window: WebviewWindow) -> Result<(
         )
         .await
         .map(|_| ())
+        .map_err(|error| {
+            log::error!("event=translation.failed module=translation command=ai_provider_test provider=local code={}", error.code);
+            error.message
+        })
     } else {
         translate(&settings, "Hello").await.map(|_| ())
     }

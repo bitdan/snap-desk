@@ -719,5 +719,6 @@
   "历史图片损坏。": "The clipboard image is damaged.",
   "历史图片不可用。": "The clipboard image is unavailable.",
   "历史图片读取失败。": "Failed to read the clipboard image.",
-  "历史图片大小异常。": "The clipboard image size is invalid."
+  "历史图片大小异常。": "The clipboard image size is invalid.",
+  "恢复贴图鼠标操作": "Restore pin mouse interaction"
 }

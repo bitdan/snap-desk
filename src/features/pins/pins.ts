@@ -33,7 +33,7 @@ export function stepZoom(zoom: number, direction: number, minimum = 0.1): number
 }
 /** 统一菜单和键盘入口的锁定行为，忙碌期间不叠加原生请求。 */
 export function canEditPin(view: PinView | undefined, busy: boolean): boolean {
-  return !!view && !view.locked && !busy
+  return !!view && !view.locked && !view.clickThrough && !busy
 }
 
 export function defaultPinAppearance(): PinAppearance { return { shadow: 'auto', cornerRadius: 8, borderColor: '#a1a1aa' } }

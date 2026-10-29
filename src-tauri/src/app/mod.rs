@@ -19,6 +19,7 @@ use tauri_plugin_global_shortcut::ShortcutState;
 
 pub fn run() {
     tauri::Builder::default()
+        .manage(pins::html::RenderState::default())
         .plugin(tauri_plugin_single_instance::init(|app, args, _| {
             // 登录自启与已有实例相遇时保持安静；手动再次启动仍唤起主窗口。
             if !autostart::is_autostart(args)
@@ -182,6 +183,7 @@ pub fn run() {
                 enabled,
                 None::<&str>,
             )?;
+            let restore_pins = MenuItem::with_id(app, "restore-pins", native_i18n::text(app.handle(), "恢复贴图鼠标操作"), true, None::<&str>)?;
             let quit = MenuItem::with_id(
                 app,
                 "quit",
@@ -192,7 +194,7 @@ pub fn run() {
             let menu = Menu::with_items(
                 app,
                 &[
-                    &capture, &pin, &recording, &history, &open, &shortcuts, &quit,
+                    &capture, &pin, &restore_pins, &recording, &history, &open, &shortcuts, &quit,
                 ],
             )?;
             app.manage(settings::ShortcutMenu(shortcuts));
@@ -213,6 +215,12 @@ pub fn run() {
                         });
                     }
                     "pin" => trigger_pin(app),
+                    "restore-pins" => {
+                        let app = app.clone();
+                        tauri::async_runtime::spawn_blocking(move || {
+                            if let Err(error) = pins::restore_click_through(&app) { capture::report_error(&app, error); }
+                        });
+                    },
                     "recording" => trigger_recording(app),
                     "shortcuts" => {
                         let app = app.clone();
@@ -429,6 +437,8 @@ pub fn run() {
             pins::drag_pin,
             pins::transform_pin,
             pins::pin_action,
+            pins::html::finish_html_render,
+            capture::history::replay_capture,
         ])
         .build(tauri::generate_context!())
         .expect("无法启动 Snap Desk")

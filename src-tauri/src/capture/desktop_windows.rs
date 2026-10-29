@@ -2,6 +2,8 @@
 use super::{clipped, Target};
 use base64::Engine;
 use image::RgbaImage;
+#[path = "desktop_accessibility.rs"]
+mod accessibility;
 use windows::{
     core::{BOOL, PWSTR},
     Win32::{
@@ -9,8 +11,8 @@ use windows::{
         Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS},
         Graphics::Gdi::*,
         System::Threading::{
-            OpenProcess, QueryFullProcessImageNameW,
-            PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
+            OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
+            PROCESS_QUERY_LIMITED_INFORMATION,
         },
         UI::{HiDpi::*, WindowsAndMessaging::*},
     },
@@ -245,6 +247,141 @@ struct Elements {
     origin: (i32, i32),
     size: (u32, u32),
 }
+impl Elements {
+    /// 两种系统识别方式共用裁剪与去重；候选始终使用截图物理像素坐标。
+    fn push(&mut self, bounds: RECT) {
+        if bounds.right <= bounds.left || bounds.bottom <= bounds.top {
+            return;
+        }
+        let Some(mut rect) = clipped(
+            bounds.left,
+            bounds.top,
+            (i64::from(bounds.right) - i64::from(bounds.left)).min(u32::MAX as i64) as u32,
+            (i64::from(bounds.bottom) - i64::from(bounds.top)).min(u32::MAX as i64) as u32,
+            self.origin,
+            self.size,
+        ) else {
+            return;
+        };
+        let right = (rect.x + rect.width).min(self.parent.x + self.parent.width);
+        let bottom = (rect.y + rect.height).min(self.parent.y + self.parent.height);
+        rect.x = rect.x.max(self.parent.x);
+        rect.y = rect.y.max(self.parent.y);
+        if right <= rect.x || bottom <= rect.y {
+            return;
+        }
+        rect.width = right - rect.x;
+        rect.height = bottom - rect.y;
+        // 忽略文本碎片、与整窗重合的容器和重复边界，但遍历器仍会深入这些容器。
+        if rect.width < 12
+            || rect.height < 12
+            || same_bounds(rect, self.parent)
+            || self
+                .targets
+                .iter()
+                .any(|target| same_bounds(target.rect, rect))
+        {
+            return;
+        }
+        self.targets.push(Target {
+            rect,
+            kind: "element",
+            window_index: self.index,
+            title: String::new(),
+            app_name: String::new(),
+            recording_only: false,
+            icon: None,
+        });
+    }
+}
+
+fn same_bounds(a: crate::capture::Rect, b: crate::capture::Rect) -> bool {
+    a.x.abs_diff(b.x) <= 2
+        && a.y.abs_diff(b.y) <= 2
+        && (a.x + a.width).abs_diff(b.x + b.width) <= 2
+        && (a.y + a.height).abs_diff(b.y + b.height) <= 2
+}
+
+#[cfg(test)]
+mod element_tests {
+    use super::*;
+
+    #[test]
+    fn negative_screen_origin_and_parent_clip_preserve_physical_pixels() {
+        let mut state = Elements {
+            targets: Vec::new(),
+            index: 3,
+            parent: crate::capture::Rect {
+                x: 100,
+                y: 50,
+                width: 500,
+                height: 400,
+            },
+            origin: (-1920, -200),
+            size: (4480, 1640),
+        };
+        state.push(RECT {
+            left: -1900,
+            top: -180,
+            right: -1600,
+            bottom: 100,
+        });
+        let rect = state.targets[0].rect;
+        assert_eq!(
+            (rect.x, rect.y, rect.width, rect.height),
+            (100, 50, 220, 250)
+        );
+        assert_eq!(state.targets[0].window_index, 3);
+    }
+
+    #[test]
+    fn whole_window_duplicates_fragments_and_outside_controls_are_ignored() {
+        let mut state = Elements {
+            targets: Vec::new(),
+            index: 0,
+            parent: crate::capture::Rect {
+                x: 100,
+                y: 100,
+                width: 500,
+                height: 400,
+            },
+            origin: (0, 0),
+            size: (1920, 1080),
+        };
+        state.push(RECT {
+            left: 100,
+            top: 100,
+            right: 600,
+            bottom: 500,
+        });
+        state.push(RECT {
+            left: 120,
+            top: 120,
+            right: 124,
+            bottom: 150,
+        });
+        state.push(RECT {
+            left: 800,
+            top: 800,
+            right: 900,
+            bottom: 900,
+        });
+        assert!(state.targets.is_empty());
+        state.push(RECT {
+            left: 120,
+            top: 120,
+            right: 320,
+            bottom: 200,
+        });
+        state.push(RECT {
+            left: 121,
+            top: 121,
+            right: 320,
+            bottom: 200,
+        });
+        assert_eq!(state.targets.len(), 1);
+    }
+}
 unsafe extern "system" fn child(hwnd: HWND, context: LPARAM) -> BOOL {
     // EnumChildWindows 同步回调，context 指向本次调用栈中的独占状态。
     let state = unsafe { &mut *(context.0 as *mut Elements) };
@@ -259,36 +396,11 @@ unsafe extern "system" fn child(hwnd: HWND, context: LPARAM) -> BOOL {
     {
         return BOOL(1);
     }
-    if let Some(mut rect) = clipped(
-        r.left,
-        r.top,
-        (r.right - r.left) as u32,
-        (r.bottom - r.top) as u32,
-        state.origin,
-        state.size,
-    ) {
-        let right = (rect.x + rect.width).min(state.parent.x + state.parent.width);
-        let bottom = (rect.y + rect.height).min(state.parent.y + state.parent.height);
-        rect.x = rect.x.max(state.parent.x);
-        rect.y = rect.y.max(state.parent.y);
-        if right > rect.x && bottom > rect.y {
-            rect.width = right - rect.x;
-            rect.height = bottom - rect.y;
-            state.targets.push(Target {
-                rect,
-                kind: "element",
-                window_index: state.index,
-                title: String::new(),
-                app_name: String::new(),
-                recording_only: false,
-                icon: None,
-            });
-        }
-    }
+    state.push(r);
     BOOL(1)
 }
 
-/// 支持系统原生子窗口控件；浏览器 DOM、Canvas 等无独立 HWND 的元素回退到窗口。
+/// 保留 Win32 控件回退；无独立 HWND 的面板和控件由 UI Automation 补充。
 pub fn elements(
     id: u32,
     index: usize,
@@ -311,6 +423,34 @@ pub fn elements(
         );
     }
     state.targets
+}
+
+/// 只传窗口身份与几何给辅助线程，不跨 COM apartment 传递系统接口。
+pub fn accessibility_elements(
+    windows: &[AppWindow],
+    targets: &mut Vec<Target>,
+    origin: (i32, i32),
+    size: (u32, u32),
+) {
+    let roots = targets
+        .iter()
+        .filter(|target| target.kind == "window")
+        .filter_map(|target| {
+            windows
+                .get(target.window_index)
+                .map(|window| (window.id, target.window_index, target.rect))
+        })
+        .collect();
+    for target in accessibility::collect(roots, origin, size) {
+        if targets.len() >= 4096 {
+            break;
+        }
+        if !targets.iter().any(|existing| {
+            existing.window_index == target.window_index && same_bounds(existing.rect, target.rect)
+        }) {
+            targets.push(target);
+        }
+    }
 }
 
 struct Surface {

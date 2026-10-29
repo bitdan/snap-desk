@@ -4,7 +4,7 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke, isTauri: () => true }))
 vi.mock('@tauri-apps/api/event', () => ({ listen }))
 vi.mock('@tauri-apps/api/webviewWindow', () => ({ getCurrentWebviewWindow: current }))
 import { pinsApi } from '../../src/features/pins/api'
-import { onPinVisibility } from '../../src/features/pins/events'
+import { onPinVisibility, onPinView } from '../../src/features/pins/events'
 
 it('读取携带已缓存版本，完整重读发送 null', async () => {
   await pinsApi.currentPin(3)
@@ -21,4 +21,14 @@ it('隐藏一张贴图只通知所属窗口，其他贴图不释放图片', asyn
   for (const subscription of subscriptions) if (subscription.target === 'pin-1') subscription.callback({ payload: false })
   expect(first).toHaveBeenCalledExactlyOnceWith(false)
   expect(second).not.toHaveBeenCalled()
+})
+it('穿透恢复状态只更新所属贴图，不改变其他窗口', async () => {
+  current.mockReturnValueOnce({ label: 'pin-4' })
+  listen.mockResolvedValueOnce(vi.fn())
+  const updated = vi.fn()
+  await onPinView(updated)
+  expect(listen).toHaveBeenLastCalledWith('pin-view-changed', expect.any(Function), { target: 'pin-4' })
+  const view = { zoom: 1, opacity: 1, locked: false, topmost: true, toolbarExpanded: true, clickThrough: false }
+  listen.mock.calls.at(-1)![1]({ payload: view })
+  expect(updated).toHaveBeenCalledExactlyOnceWith(view)
 })

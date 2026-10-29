@@ -5,6 +5,7 @@ import type { CaptureFrame, CapturePaint, ColorFormat } from '@/features/capture
 import { invoke } from '@/services/ipc'
 
 export const captureApi = {
+  replayCapture: (id: number, direction: 'previous' | 'next') => invoke<CaptureFrame>('replay_capture', { id, direction }),
   cancelPending: () => invoke<void>('cancel_pending_capture'),
   start: () => invoke<void>('start_capture'),
   nativeWindow: (id: number, target: number) => invoke<CaptureFrame>('capture_native_window', { id, target }),

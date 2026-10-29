@@ -170,7 +170,7 @@
   "P: 切换全局/相对坐标": "P: toggle desktop / relative coordinates",
   "当前屏幕截图": "Current screenshot",
   "拖动选择录屏范围": "Drag to select a recording region",
-  "点击吸附 · 拖动框选 · Alt 选窗口 · Shift 自由框选": "Click to snap · Drag to select · Alt for windows · Shift for free selection",
+  "点击吸附 · Tab 切换层级 · 拖动框选 · Alt 选窗口 · Shift 自由框选": "Click to snap · Tab for target levels · Drag to select · Alt for windows · Shift for free selection",
   "拖动框选屏幕": "Drag to select a screen region",
   "C 取色 · Esc 取消 · Ctrl / ⌘ + A 全屏 · R 最近选区": "C for color picker · Esc to cancel · Ctrl / ⌘ + A for full screen · R for recent region",
   "最近选区 R": "Recent region · R",
@@ -964,5 +964,14 @@
   "Esc 关闭": "Esc to close",
   "历史完整文字": "Full clipboard text",
   "选择条目 {0}，双击预览": "Select entry {0}; double-click to preview",
-  "单击选中 · Ctrl 多选 · Shift 连选 · 双击文字或图片预览 · Ctrl+C 复制": "Click to select · Ctrl for multiple · Shift for range · Double-click text or images to preview · Ctrl+C to copy"
+  "单击选中 · Ctrl 多选 · Shift 连选 · 双击文字或图片预览 · Ctrl+C 复制": "Click to select · Ctrl for multiple · Shift for range · Double-click text or images to preview · Ctrl+C to copy",
+  "上一张截图（,）": "Previous capture (,)",
+  "上一张 ,": "Previous ,",
+  "下一张 .": "Next .",
+  "下一张截图（.），最后一张后返回现场": "Next capture (.), then return to the live session",
+  "截图历史 {0}/{1}": "Capture history {0}/{1}",
+  "鼠标穿透（Ctrl+Alt+P）": "Click through (Ctrl+Alt+P)",
+  "用全局贴图快捷键或托盘恢复鼠标操作": "Use the global pin shortcut or tray to restore mouse interaction",
+  "鼠标穿透中 · 用全局贴图快捷键或托盘恢复": "Click through active \u00b7 Restore with the global pin shortcut or tray",
+  "恢复鼠标操作": "Restore mouse interaction"
 }
