@@ -4,7 +4,6 @@ pub(crate) mod autostart;
 pub(crate) mod shortcut_probe;
 pub(crate) mod storage;
 
-
 use crate::capture::{require_window, CaptureState};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -66,6 +65,33 @@ impl ExportSettings {
             return Err("文件名前缀须为 1～48 个字符，不能包含路径、控制字符或 <>:\"/\\|?*，首尾不能有空白。".into());
         }
         Ok(())
+    }
+}
+
+/// 录屏文件命名与目录记忆独立于图片，格式和画质仍由录制配置决定。
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields, default)]
+pub struct RecordingExportSettings {
+    pub filename_prefix: String,
+    pub include_dimensions: bool,
+    pub remember_directory: bool,
+}
+impl Default for RecordingExportSettings {
+    fn default() -> Self {
+        Self {
+            filename_prefix: "SnapDesk".into(),
+            include_dimensions: false,
+            remember_directory: true,
+        }
+    }
+}
+impl RecordingExportSettings {
+    pub fn validate(&self) -> Result<(), String> {
+        ExportSettings {
+            filename_prefix: self.filename_prefix.clone(),
+            ..ExportSettings::default()
+        }
+        .validate()
     }
 }
 
@@ -188,6 +214,8 @@ pub struct Settings {
     pub screenshot_cursor: bool,
     pub screenshot_snap: bool,
     pub export: ExportSettings,
+    pub recording_export: RecordingExportSettings,
+    pub pin_appearance: crate::pins::PinAppearance,
     pub clipboard: crate::clipboard::model::ClipboardSettings,
     /// 只在首次或引导大版本变化时展示，与应用版本号无关。
     pub onboarding_version: u32,
@@ -214,6 +242,10 @@ struct SettingsWire {
     #[serde(default)]
     export: ExportSettings,
     #[serde(default)]
+    recording_export: RecordingExportSettings,
+    #[serde(default)]
+    pin_appearance: crate::pins::PinAppearance,
+    #[serde(default)]
     clipboard: crate::clipboard::model::ClipboardSettings,
     #[serde(default)]
     onboarding_version: u32,
@@ -236,6 +268,8 @@ impl TryFrom<SettingsWire> for Settings {
             screenshot_cursor: wire.screenshot_cursor,
             screenshot_snap: wire.screenshot_snap,
             export: wire.export,
+            recording_export: wire.recording_export,
+            pin_appearance: wire.pin_appearance,
             clipboard: wire.clipboard,
             onboarding_version: wire.onboarding_version,
             ai: wire.ai,
@@ -255,6 +289,8 @@ impl Default for Settings {
             screenshot_cursor: false,
             screenshot_snap: true,
             export: ExportSettings::default(),
+            recording_export: RecordingExportSettings::default(),
+            pin_appearance: crate::pins::PinAppearance::default(),
             clipboard: crate::clipboard::model::ClipboardSettings::default(),
             onboarding_version: 0,
             ai: crate::recognition::translation::AiSettings::default(),
@@ -299,6 +335,8 @@ impl Settings {
     pub fn validate(&self) -> Result<(), String> {
         self.ai.validate()?;
         self.export.validate()?;
+        self.recording_export.validate()?;
+        self.pin_appearance.validate()?;
         self.clipboard.validate()?;
         if ![0, 3, 5].contains(&self.delay_seconds) {
             return Err("截图延时只能为 0、3 或 5 秒。".into());
@@ -371,6 +409,7 @@ fn notify_settings(app: &AppHandle, value: &Settings) {
         tray.update(&value.appearance.language);
     }
     let _ = app.emit("appearance-changed", &value.appearance);
+    let _ = app.emit("pin-appearance-changed", &value.pin_appearance);
     let _ = app.emit_to("main", "settings-changed", value);
 }
 
@@ -864,7 +903,10 @@ mod tests {
         assert!(value.screenshot_snap);
         assert!(value.shortcuts_enabled);
         assert_eq!(value.export, ExportSettings::default());
-        assert_eq!(value.ai, crate::recognition::translation::AiSettings::default());
+        assert_eq!(
+            value.ai,
+            crate::recognition::translation::AiSettings::default()
+        );
         assert!(value.validate().is_ok());
     }
 

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import SelectControl from '@/shared/ui/SelectControl.vue'
 import { computed } from 'vue'
 import { t } from '@/shared/i18n/i18n'
 import RecordingInputSettings from '@/features/recording/components/RecordingInputSettings.vue'
@@ -20,11 +21,11 @@ const effectCount = computed(() => [effects.value.keyboard, effects.value.clicks
   <!-- 设置入口常驻；画质和编码按组排列，自定义值与特效在各自菜单中编辑。 -->
   <div class="recording-inline-options" role="group" :aria-label="t('录屏选项')" @pointerdown.stop @contextmenu.stop.prevent>
     <template v-if="format === 'mp4'">
-      <select v-model="quality" :disabled="busy || mbps !== ''" :aria-label="t('画质')" :title="t('画质')"><option value="economy">{{ t('节省空间') }}</option><option value="balanced">{{ t('均衡') }}</option><option value="high">{{ t('高清') }}</option></select>
+      <SelectControl v-model="quality" :disabled="busy || mbps !== ''" :aria-label="t('画质')" :options="[{ value: 'economy', label: t('节省空间') }, { value: 'balanced', label: t('均衡') }, { value: 'high', label: t('高清') }]" />
       <RecordingOptionMenu :label="mbps === '' ? t('自动码率') : `${mbps} Mbps`" :disabled="busy"><label>{{ t('码率（Mbps）') }}<input v-model="mbps" type="number" min="1" max="80" step="any" :placeholder="t('自动')" :disabled="busy" /></label><small>{{ t('1–80 Mbps；清空后恢复自动码率') }}</small></RecordingOptionMenu>
-      <select v-model="encoding" :disabled="busy" :aria-label="t('编码方式')"><option value="auto">{{ t('自动编码') }}</option><option value="software">{{ t('软件兼容') }}</option></select>
+      <SelectControl v-model="encoding" :disabled="busy" :aria-label="t('编码方式')" :options="[{ value: 'auto', label: t('自动编码') }, { value: 'software', label: t('软件兼容') }]" />
     </template>
-    <select v-model="countdown" :disabled="busy" :aria-label="t('倒计时')"><option v-for="value in [0, 3, 5]" :key="value" :value="value">{{ value ? t('{0} 秒', { 0: value }) : t('无延时') }}</option></select>
+    <SelectControl v-model="countdown" :disabled="busy" :aria-label="t('倒计时')" :options="[0, 3, 5].map(value => ({ value, label: value ? t('{0} 秒', { 0: value }) : t('无延时') }))" />
     <button type="button" class="hide-main-switch" role="switch" :aria-checked="hideMainWindow" :disabled="busy" :title="t('录制时收起主界面')" @click="hideMainWindow = !hideMainWindow"><span class="switch-track" aria-hidden="true"><span /></span>{{ t('收起主界面') }}</button>
     <RecordingOptionMenu :label="t('键鼠特效')" :status="effectCount ? t('{0} 项', { 0: effectCount }) : t('已关闭')" :active="effectCount > 0" wide :disabled="busy"><RecordingInputSettings v-model="effects" :disabled="busy" /></RecordingOptionMenu>
   </div>

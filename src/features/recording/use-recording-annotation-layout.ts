@@ -64,7 +64,7 @@ export function useRecordingAnnotationLayout(view: Ref<RecordingAnnotationView |
     frame = undefined
     const v = view.value
     if (disposed || !v?.editing || !toolbar.value) return
-    const nodes = [toolbar.value, ...document.querySelectorAll<HTMLElement>('.annotation-group-menu[data-state="open"]')]
+    const nodes = [toolbar.value, ...document.querySelectorAll<HTMLElement>('.annotation-group-menu[data-state="open"], .select-menu[data-state="open"]')]
     const regions = nodes.flatMap(node => {
       const rect = node.getBoundingClientRect()
       const region = recordingInputRect({ x: rect.left, y: rect.top, width: rect.width, height: rect.height },

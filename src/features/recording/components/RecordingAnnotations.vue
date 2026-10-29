@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import SelectControl from '@/shared/ui/SelectControl.vue'
 import { recordingPollInterval } from '../polling'
 import { useRecordingPolling } from '@/features/recording/use-recording-polling'
 import { handleEscape } from '@/shared/ui/escape'
@@ -147,11 +148,11 @@ async function deactivate() {
   try { await desktop() } catch(e) { error.value=String(e) } finally { busy.value=false }
 }
 function chooseTool(tool: AnnotationTool) { if (!busy.value) editor.setTool(tool) }
-async function setTiming(event: Event, field: 'lifetimeMs' | 'fadeOutMs') {
+async function setTiming(event: Event | number, field: 'lifetimeMs' | 'fadeOutMs') {
   if (!view.value || busy.value || editor.pending || editor.interacting) return
   const id = view.value.id
-  const input = event.target as HTMLInputElement
-  const tools = { ...(editorSnapshot()?.tools ?? view.value.tools), [field]: field === 'lifetimeMs' ? Number(input.value) : input.checked ? 500 : 0 }
+  const input = typeof event === 'number' ? null : event.target as HTMLInputElement
+  const tools = { ...(editorSnapshot()?.tools ?? view.value.tools), [field]: field === 'lifetimeMs' ? Number(event) : input?.checked ? 500 : 0 }
   busy.value = true; error.value = ''; operation++
   try {
     await api.setRecordingAnnotationTools(id, tools)
@@ -196,7 +197,7 @@ onUnmounted(() => { disposed = true; off?.(); offEditorAction?.(); window.remove
     <AnnotationWorkspace :key="view.id" :editor="editor" :presentation="presentation" :width="view.width" :height="view.height" :bounds="bounds" :surface-visible="view.editing || presentation.some(shape => (shape.opacity ?? 1) > 0)" :toolbar-visible="view.editing" :enabled="view.editing && !busy" :active="view.editing" :disabled="busy" :surface-style="stage" :toolbar-style="layout.style.value" :outlined="false"
       @toolbar-element="toolbar = $event" @tool="chooseTool" @float="layout.start" @reset-position="layout.reset">
       <template #actions>
-        <label>{{ t('保留时间') }} <select :value="view.tools.lifetimeMs" :disabled="busy || editor.pending || editor.interacting" :aria-label="t('标注保留时间')" @change="setTiming($event, 'lifetimeMs')"><option :value="0">{{ t('手动清除') }}</option><option :value="3000">{{ t('3 秒') }}</option><option :value="5000">{{ t('5 秒') }}</option></select></label>
+        <label>{{ t('保留时间') }} <SelectControl :model-value="view.tools.lifetimeMs" :disabled="busy || editor.pending || editor.interacting" :aria-label="t('标注保留时间')" :options="[{ value: 0, label: t('手动清除') }, { value: 3000, label: t('3 秒') }, { value: 5000, label: t('5 秒') }]" @update:model-value="setTiming($event, 'lifetimeMs')" /></label>
         <label><input type="checkbox" :checked="view.tools.fadeOutMs > 0" :disabled="busy || editor.pending || editor.interacting || !view.tools.lifetimeMs" @change="setTiming($event, 'fadeOutMs')" />{{ t('自动淡出') }}</label>
         <button :disabled="busy || editor.pending" :aria-label="t('完成标注')" @click="deactivate">{{ t('完成标注') }}</button>
       </template>

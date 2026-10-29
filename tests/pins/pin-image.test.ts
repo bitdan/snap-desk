@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { defaultPinAppearance } from '../../src/features/pins/pins'
 import { usePinImage } from '../../src/features/pins/pin-image'
 import type { PinFrame } from '../../src/features/pins/types'
 
 function frame(revision = 0, dataUrl = 'data:image/png;base64,image'): PinFrame {
-  return { label: 'pin-1', revision, width: 20, height: 30, dataUrl, view: { zoom: 1, opacity: 1, locked: false, topmost: true, toolbarExpanded: true }, transparencySupported: true, annotations: [] }
+  return { label: 'pin-1', revision, width: 20, height: 30, dataUrl, view: { zoom: 1, opacity: 1, locked: false, topmost: true, toolbarExpanded: true }, appearance: defaultPinAppearance(), transparencySupported: true, annotations: [] }
 }
 afterEach(() => vi.useRealTimers())
 describe('贴图版本缓存与隐藏释放', () => {

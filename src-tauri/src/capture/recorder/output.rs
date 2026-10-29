@@ -1,6 +1,7 @@
 //! 录屏目录偏好：沿用图片导出的独立目录记录方式，避免覆盖快捷键设置草稿。
 //! 路径只能由原生目录选择器产生；每次准备录屏取快照，整段视频在同一目录写入和发布。
 use crate::capture::require_window;
+use crate::settings::{RecordingExportSettings, SettingsState};
 use serde::Serialize;
 use std::{
     fs,
@@ -12,13 +13,48 @@ use tauri_plugin_dialog::DialogExt;
 
 // 防止多个目录对话框或“恢复默认”同时修改目录记录；不与采集/编码锁相互等待。
 static CHANGING: Mutex<()> = Mutex::new(());
+// None 尚未读取；Some(None) 使用默认目录；Some(Some(path)) 为本次运行的选择。
+static SESSION_DIRECTORY: Mutex<Option<Option<PathBuf>>> = Mutex::new(None);
+
+pub(super) fn preferences(app: &AppHandle) -> Result<RecordingExportSettings, String> {
+    let state = app.state::<SettingsState>();
+    let current = state.0.lock().map_err(|e| e.to_string())?;
+    Ok(current.value.recording_export.clone())
+}
 
 /// 本地日期时间便于排序和查找；末尾保留后台随机标识，区分同毫秒导出。
 pub(super) fn filename(token: &str, extension: &str, recovered: bool) -> String {
+    filename_with_settings(
+        token,
+        extension,
+        recovered,
+        &RecordingExportSettings::default(),
+        None,
+    )
+}
+
+/// 尺寸取实际编码区域的物理像素；前缀沿用图片导出的路径安全校验。
+pub(super) fn filename_with_settings(
+    token: &str,
+    extension: &str,
+    recovered: bool,
+    settings: &RecordingExportSettings,
+    dimensions: Option<(u32, u32)>,
+) -> String {
     let now = chrono::Local::now();
     let stamp = now.format("%Y%m%d-%H%M%S-%3f");
     let kind = if recovered { "Recovered" } else { "Recording" };
-    format!("SnapDesk-{kind}-{stamp}-{token}.{extension}")
+    let dimensions = if settings.include_dimensions {
+        dimensions
+            .map(|(width, height)| format!("-{width}x{height}"))
+            .unwrap_or_default()
+    } else {
+        String::new()
+    };
+    format!(
+        "{}-{kind}-{stamp}-{token}{dimensions}.{extension}",
+        settings.filename_prefix
+    )
 }
 
 /// 无覆盖发布现有视频，失败时关闭 TempPath 自动删除，由 Pending 保留恢复源。
@@ -67,7 +103,10 @@ fn persist(record: &Path, directory: Option<&Path>) -> Result<(), String> {
 }
 
 pub(crate) fn resolve(app: &AppHandle) -> Result<(PathBuf, bool), String> {
-    match read(&record(app)?)? {
+    let remember = preferences(app)?.remember_directory;
+    let mut session = SESSION_DIRECTORY.lock().map_err(|e| e.to_string())?;
+    let selected = selected_directory(&record(app)?, remember, &mut session)?;
+    match selected {
         Some(path) => Ok((path, false)),
         None => Ok((
             app.path()
@@ -77,6 +116,23 @@ pub(crate) fn resolve(app: &AppHandle) -> Result<(PathBuf, bool), String> {
             true,
         )),
     }
+}
+
+/// 将磁盘记忆和本次运行的目录分开，关闭记忆不会中断当前输出位置。
+fn selected_directory(
+    record: &Path,
+    remember: bool,
+    session: &mut Option<Option<PathBuf>>,
+) -> Result<Option<PathBuf>, String> {
+    if session.is_none() {
+        *session = Some(if remember { read(record)? } else { None });
+    }
+    let selected = session.as_ref().cloned().flatten();
+    // 重新启用记忆后，把本次运行的选择同步到磁盘；关闭时不保存新的目录。
+    if remember && read(record)? != selected {
+        persist(record, selected.as_deref())?;
+    }
+    Ok(selected)
 }
 
 fn view(path: &Path, is_default: bool) -> RecordingDirectory {
@@ -140,6 +196,7 @@ pub async fn choose_recording_directory(
         let record = record(&app)?;
         if reset {
             persist(&record, None)?;
+            *SESSION_DIRECTORY.lock().map_err(|e| e.to_string())? = Some(None);
             let (path, is_default) = resolve(&app)?;
             return Ok(Some(view(&path, is_default)));
         }
@@ -158,7 +215,10 @@ pub async fn choose_recording_directory(
         };
         let path = selected.into_path().map_err(|e| e.to_string())?;
         validate_directory(&path)?;
-        persist(&record, Some(&path))?;
+        if preferences(&app)?.remember_directory {
+            persist(&record, Some(&path))?;
+        }
+        *SESSION_DIRECTORY.lock().map_err(|e| e.to_string())? = Some(Some(path.clone()));
         Ok(Some(view(&path, false)))
     })
     .await
@@ -214,5 +274,51 @@ mod tests {
         fs::write(&record, "invalid json").unwrap();
         assert!(read(&record).is_err());
         assert_eq!(fs::read_to_string(&record).unwrap(), "invalid json");
+    }
+    #[test]
+    fn filename_uses_recording_prefix_and_physical_dimensions() {
+        let settings = RecordingExportSettings {
+            filename_prefix: "Demo".into(),
+            include_dimensions: true,
+            remember_directory: false,
+        };
+        assert!(settings.validate().is_ok());
+        let name = filename_with_settings("abc123", "mp4", false, &settings, Some((1920, 1080)));
+        assert!(name.starts_with("Demo-Recording-"));
+        assert!(name.ends_with("-abc123-1920x1080.mp4"));
+        let name = filename_with_settings(
+            "abc123",
+            "gif",
+            false,
+            &RecordingExportSettings::default(),
+            Some((1920, 1080)),
+        );
+        assert!(name.ends_with("-abc123.gif"));
+        let unsafe_settings = RecordingExportSettings {
+            filename_prefix: "../escape".into(),
+            ..settings
+        };
+        assert!(unsafe_settings.validate().is_err());
+    }
+
+    #[test]
+    fn disabled_directory_memory_keeps_session_and_resets_after_restart() {
+        let root = tempfile::tempdir().unwrap();
+        let record = root.path().join("directory.json");
+        let old = root.path().join("old");
+        persist(&record, Some(&old)).unwrap();
+        let current = root.path().join("current");
+        let mut session = Some(Some(current.clone()));
+        assert_eq!(
+            selected_directory(&record, false, &mut session).unwrap(),
+            Some(current.clone())
+        );
+        assert_eq!(read(&record).unwrap(), Some(old));
+        assert_eq!(selected_directory(&record, false, &mut None).unwrap(), None);
+        assert_eq!(
+            selected_directory(&record, true, &mut session).unwrap(),
+            Some(current.clone())
+        );
+        assert_eq!(read(&record).unwrap(), Some(current));
     }
 }

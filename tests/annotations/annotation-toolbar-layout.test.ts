@@ -8,6 +8,7 @@ import { useAnnotations } from '../../src/features/annotations/use-annotations'
 import { annotationTools } from '../../src/features/annotations/annotation-tools'
 
 // 本测试只验证工具栏布局；自定义图标用占位组件，避免 SSR 编译产物缺少客户端 render。
+vi.mock('../../src/shared/ui/SelectControl.vue', async () => ({ default: (await import('../helpers/select-control')).SelectControlStub }))
 vi.mock('../../src/features/annotations/components/ArrowTextIcon.vue', async () => {
   const { defineComponent, h } = await import('vue')
   return { default: defineComponent({ setup: () => () => h('svg') }) }

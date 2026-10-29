@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import SelectControl from '@/shared/ui/SelectControl.vue'
 import { handleEscape } from '@/shared/ui/escape'
 import { t, te } from '@/shared/i18n/i18n'
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
@@ -12,13 +13,17 @@ import { annotationTools } from '@/features/annotations/annotation-tools'
 import { api, onPinVisibility } from '@/services/api'
 import { usePinImage } from '@/features/pins/pin-image'
 import type { PinView, PinAction, PinTransform } from '@/features/pins/types'
-import { canEditPin, minimumZoom, pinDisplaySize, stepZoom } from '@/features/pins/pins'
+import { canEditPin, minimumZoom, pinDisplaySize, stepZoom, defaultPinAppearance, pinAppearanceStyle } from '@/features/pins/pins'
+import { onPinAppearance } from '@/features/pins/events'
 import layout from '@/features/pins/pin-layout.json'
 
 const toolbar = ref<HTMLElement | null>(null)
 const { style: floatingToolbarStyle, start: floatToolbar, reset: resetToolbarPosition } = useFloatingToolbar(toolbar)
 const imageSession = usePinImage(knownRevision => api.currentPin(knownRevision))
 const { frame } = imageSession
+const appearance = ref(defaultPinAppearance())
+let appearanceRevision = 0
+let offAppearance: (() => void) | undefined
 let offVisibility: (() => void) | undefined
 let disposed = false
 const busy = ref(false)
@@ -45,7 +50,7 @@ function keepControlsVisible() {
 }
 function hideControls() {
   clearTimeout(controlsHideTimer)
-  controlsHovered.value = false
+  if (!document.querySelector('.select-menu[data-state="open"]')) controlsHovered.value = false
 }
 // 留出穿过图片与底栏间隙的时间；隐藏的底栏不接收指针事件，不能自行唤出。
 function scheduleControlsHide() {
@@ -90,11 +95,21 @@ async function run(task: () => Promise<void>) {
   try { await task() } catch (e) { error.value = String(e) }
   finally { busy.value = false }
 }
-async function load() { await run(async () => { if (await imageSession.refresh()) editor.reset(frame.value!.annotations) }) }
+async function load() {
+  await run(async () => {
+    const revision = appearanceRevision
+    if (await imageSession.refresh()) editor.reset(frame.value!.annotations)
+    if (frame.value && revision === appearanceRevision) appearance.value = frame.value.appearance
+  })
+}
 async function pinVisibility(visible: boolean) {
   imageSession.visibility(visible)
   if (!visible) { recognitionMode.value = null; closeMenu(); hideControls(); return }
-  try { if (await imageSession.refresh()) editor.reset(frame.value!.annotations) }
+  const revision = appearanceRevision
+  try {
+    if (await imageSession.refresh()) editor.reset(frame.value!.annotations)
+    if (frame.value && revision === appearanceRevision) appearance.value = frame.value.appearance
+  }
   catch (e) { if (!disposed) error.value = String(e) }
 }
 async function setView(patch: Partial<PinView>) {
@@ -169,11 +184,9 @@ function drag(event: PointerEvent) {
   if (event.button !== 0 || !editable.value || annotating.value) return
   void api.dragPin().catch(e => { error.value = String(e) })
 }
-async function chooseTransform(event: Event) {
-  const select = event.target as HTMLSelectElement
-  const item = transforms.find(item => item.action === select.value)
+async function chooseTransform(value: string) {
+  const item = transforms.find(item => item.action === value)
   if (item) await transform(item.action)
-  select.value = ''
 }
 async function opacity(event: Event) {
   const input = event.target as HTMLInputElement
@@ -216,11 +229,13 @@ onMounted(async () => {
   try {
     offVisibility = await onPinVisibility(visible => { void pinVisibility(visible) })
     if (disposed) { offVisibility(); return }
+    offAppearance = await onPinAppearance(value => { appearanceRevision++; appearance.value = value })
+    if (disposed) { offAppearance(); return }
     await load()
   } catch (e) { if (!disposed) error.value = String(e) }
 })
 onUnmounted(() => {
-  disposed = true; offVisibility?.(); imageSession.dispose()
+  disposed = true; offAppearance?.(); offVisibility?.(); imageSession.dispose()
   clearTimeout(controlsHideTimer)
   window.removeEventListener('pointerdown', dismissMenu)
   window.removeEventListener('resize', closeOnResize)
@@ -235,7 +250,7 @@ function closeOnResize() {
 
 <template>
   <div class="pin-shell" :class="{ 'is-focused': focused, 'controls-visible': controlsHovered }" :style="shellStyle" @pointerleave="hideControls" @contextmenu.prevent>
-    <div class="pin-stage" :inert="!!recognitionMode" tabindex="0" :aria-label='t("贴图，右键编辑标注")' :style="stageStyle" @pointerenter="keepControlsVisible" @pointerleave="scheduleControlsHide" @pointerdown="drag" @wheel.prevent="wheel" @contextmenu.capture="openMenu">
+    <div class="pin-stage" :inert="!!recognitionMode" tabindex="0" :aria-label='t("贴图，右键编辑标注")' :style="[stageStyle, pinAppearanceStyle(appearance, display.stageWidth, display.stageHeight, frame?.view.opacity ?? 1, focused)]" @pointerenter="keepControlsVisible" @pointerleave="scheduleControlsHide" @pointerdown="drag" @wheel.prevent="wheel" @contextmenu.capture="openMenu">
       <div v-if="frame" class="pin-canvas">
         <div class="pin-image-content" :style="{ width: `${display.imageWidth}px`, height: `${display.imageHeight}px`, opacity: frame.view.opacity }">
           <img v-if="frame.dataUrl" :src="frame.dataUrl" :alt='t("桌面贴图")' draggable="false" @error="error = '贴图预览加载失败，可关闭后重新贴图。'" />
@@ -261,7 +276,7 @@ function closeOnResize() {
           <button :disabled="busy" :title='t("收起工具（Tab）")' :aria-label='t("收起工具")' @click="toggleControls"><ChevronDown :size="16" /></button>
         </template>
         <template #options><div class="pin-row pin-options">
-          <select :aria-label='t("图片处理")' :disabled="!editable" @change="chooseTransform"><option value="">{{ t("图片处理") }}</option><option v-for="item in transforms" :key="item.action" :value="item.action">{{ t(item.label) }}</option></select>
+          <SelectControl model-value="" :aria-label="t('图片处理')" :disabled="!editable" :options="[{ value: '', label: t('图片处理') }, ...transforms.map(item => ({ value: item.action, label: t(item.label) }))]" @update:model-value="chooseTransform" @open-change="$event ? keepControlsVisible() : scheduleControlsHide()" />
           <label v-if="frame.transparencySupported" class="pin-opacity">{{ t("不透明度") }} <input type="range" min="20" max="100" step="5" :value="Math.round(frame.view.opacity * 100)" :disabled="busy" @change="opacity" /><span>{{ Math.round(frame.view.opacity * 100) }}%</span></label>
           <button :disabled="busy || editor.pending || editor.interacting" @click="recognize('ocr', $event)">{{ t("识别文字") }}</button>
           <button :disabled="busy || editor.pending || editor.interacting" @click="recognize('qr', $event)">{{ t("识别二维码") }}</button>
@@ -303,8 +318,8 @@ function closeOnResize() {
 
 <style scoped>
 .pin-shell { position: fixed; inset: 0; display: grid; justify-items: center; color: #374151; user-select: none; }
-.pin-stage { min-width: 0; min-height: 0; align-self: center; overflow: auto; border-style: solid; border-color: #a1a1aa; box-shadow: 0 2px 8px #0005; transition: border-color .12s, box-shadow .12s; }
-.is-focused .pin-stage { border-color: #a78bfa; box-shadow: 0 0 0 1px #a78bfa66, 0 2px 8px #0005; }
+.pin-stage { min-width: 0; min-height: 0; align-self: center; overflow: auto; border-style: solid; border-color: #a1a1aa; transition: border-color .12s, box-shadow .12s, border-radius .12s; }
+.pin-stage:focus-visible { outline:2px solid #3264df; outline-offset:2px; }
 .pin-canvas { display: flex; align-items: center; justify-content: center; min-width: 100%; min-height: 100%; width: max-content; height: max-content; }
 .pin-canvas img { flex: none; max-width: none; }
 .pin-image-content { position: relative; flex: none; }

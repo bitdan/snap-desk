@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import SelectControl from '@/shared/ui/SelectControl.vue'
 import { handleEscape } from '@/shared/ui/escape'
 import { t, te } from '@/shared/i18n/i18n'
 import { convertFileSrc } from '@tauri-apps/api/core'
@@ -120,7 +121,7 @@ async function selectedRecordingRegion() {
   recordingConfirmTrigger.value?.focus()
 }
 const { recordingFormat, recordingFps, recordingEncoding, recordingQuality, recordingMbps, recordingCountdown, captureCursor,
-  recordingEffects, recordingSystemAudio, recordingMicrophone, recordingCapabilities, recordingCapabilityError, hideMainWindow } = useRecordingSetup()
+  recordingEffects, recordingSystemAudio, recordingMicrophone, recordingCapabilities, recordingCapabilityError, hideMainWindow, reloadPreferences } = useRecordingSetup()
 const recordingSource = ref<RecordingSelection>('region')
 /** 录屏仅选择屏幕区域或整台显示器，不再置前或绑定应用窗口。 */
 function chooseRecordingSource(value: string) {
@@ -314,6 +315,7 @@ function abortGesture() { gesture.value = null }
 function selectAll() { selectedTarget.value = null; if (!busy.value && !marked.value && !editor.interacting) { editor.reset(); selection.value = { x: 0, y: 0, ...viewport.value }; void selectedRecordingRegion() } }
 function receive(value: CaptureFrame) {
   if (disposed || value.id <= closedThroughId || (frame.value && value.id < frame.value.id)) return
+  reloadPreferences()
   liveRecordingId.value = null
   busy.value = false; reselect(); windowsOnly.value = false; scroll.value = null; imageReady.value = false; recordingMode.value = !!value.recording; frame.value = value
 }
@@ -485,8 +487,8 @@ onUnmounted(() => { releaseFrame(); disposed = true; offClosed?.(); off?.(); off
         <button :disabled="busy" :title='t("返回截图")' :aria-label='t("返回截图")' @click="leaveRecordingMode"><ArrowLeft :size="16" /></button>
         <div class="recording-control-group" role="group" :aria-label="t('录制范围')">
         <RecordingSourceSelect :value="recordingSource" :disabled="busy || marked || editor.interacting" @select="chooseRecordingSource" />
-        <select v-model="recordingFormat" :disabled="busy || !recordingCapabilities?.available" :aria-label='t("录屏格式")' :title='t("录屏格式")'><option v-for="format in recordingCapabilities?.formats ?? []" :key="format" :value="format">{{ format.toUpperCase() }}</option></select>
-        <select v-model="recordingFps" :disabled="busy" :aria-label='t("录屏帧率")' :title='t("录屏帧率")'><option v-for="fps in (recordingFormat === 'gif' ? [10, 20] : [30, 60])" :key="fps" :value="fps">{{ fps }} FPS</option></select>
+        <SelectControl v-model="recordingFormat" :disabled="busy || !recordingCapabilities?.available" :aria-label="t('录屏格式')" :options="(recordingCapabilities?.formats ?? []).map(value => ({ value, label: value.toUpperCase() }))" />
+        <SelectControl v-model="recordingFps" :disabled="busy" :aria-label="t('录屏帧率')" :options="(recordingFormat === 'gif' ? [10, 20] : [30, 60]).map(value => ({ value, label: `${value} FPS` }))" />
         </div>
         <div class="recording-control-group recording-toggles" role="group" :aria-label="t('录屏选项')">
         <button :disabled="busy" :aria-pressed="captureCursor" :title="`${t('录制鼠标指针')} · ${t(captureCursor ? '已启用' : '已关闭')}`" :aria-label='t("录制鼠标指针")' @click="captureCursor = !captureCursor"><MousePointer2 :size="16" /></button>

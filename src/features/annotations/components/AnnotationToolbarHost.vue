@@ -19,7 +19,7 @@ function activate(event: Event) {
   // 折叠工具的菜单通过 Portal 绘制在工具栏外，打开前恢复完整输入区域。
   // 普通工具点击由 tool 事件切换，不能在捕获阶段提前激活后又被当作重复点击关闭。
   if (event.type === 'keydown' && !['Enter', ' ', 'ArrowDown', 'ArrowUp'].includes((event as KeyboardEvent).key)) return
-  if ((event.target as Element).closest('[aria-haspopup="menu"]')) emit('activate')
+  if ((event.target as Element).closest('[aria-haspopup="menu"], [aria-haspopup="listbox"]')) emit('activate')
 }
 </script>
 

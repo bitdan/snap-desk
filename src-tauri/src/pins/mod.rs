@@ -82,6 +82,8 @@ pub struct PinState {
     pub operation: AtomicBool,
     next_id: AtomicU64,
     images: Mutex<BTreeMap<String, Pin>>,
+    /// 管理页缩略图按像素版本缓存，显示/隐藏和分组更新不重复缩放原图。
+    thumbnails: Mutex<BTreeMap<String, (u64, String)>>,
 }
 
 #[derive(Clone)]
@@ -155,6 +157,50 @@ fn validate_transform_budget(
     Ok(())
 }
 
+/// 全局贴图外观只影响显示；阴影由 WebView 按尺寸和焦点计算，原图像素保持独立。
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields, default)]
+pub struct PinAppearance {
+    pub shadow: PinShadow,
+    pub corner_radius: u8,
+    /// 只接受 #RRGGBB，旧配置缺少字段时沿用默认中性灰。
+    pub border_color: String,
+}
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PinShadow {
+    #[default]
+    Auto,
+    Soft,
+    None,
+}
+impl Default for PinAppearance {
+    fn default() -> Self {
+        Self {
+            shadow: PinShadow::Auto,
+            corner_radius: 8,
+            border_color: "#a1a1aa".into(),
+        }
+    }
+}
+impl PinAppearance {
+    pub fn validate(&self) -> Result<(), String> {
+        let color = self.border_color.as_bytes();
+        if color.len() != 7 || color[0] != b'#' || !color[1..].iter().all(u8::is_ascii_hexdigit) {
+            return Err("边框颜色需为六位十六进制颜色。".into());
+        }
+        if self.corner_radius > 24 {
+            return Err("贴图圆角需为 0～24 像素。".into());
+        }
+        Ok(())
+    }
+}
+fn appearance(app: &AppHandle) -> Result<PinAppearance, String> {
+    let state = app.state::<crate::settings::SettingsState>();
+    let current = state.0.lock().map_err(err)?;
+    Ok(current.value.pin_appearance.clone())
+}
+
 /// zoom 使用逻辑像素比例；1 表示一图像像素对应一 CSS 像素。
 /// opacity 仅影响显示，locked 防止拖动、缩放和图像处理，仍允许复制/保存/关闭。
 #[derive(Clone, Serialize, Deserialize)]
@@ -204,6 +250,7 @@ pub struct PinFrame {
     height: u32,
     data_url: String,
     view: PinView,
+    appearance: PinAppearance,
     transparency_supported: bool,
     annotations: Vec<crate::shared::annotations::Annotation>,
 }
@@ -215,6 +262,7 @@ pub struct PinSummary {
     height: u32,
     visible: bool,
     group: String,
+    thumbnail: String,
 }
 
 /// 导出、图像变换与窗口管理串行执行；Drop 在错误提前返回时也会释放占用。
@@ -287,6 +335,7 @@ fn frame(label: &str, pin: &Pin, known_revision: Option<u64>) -> Result<PinFrame
         height: pin.image.height(),
         data_url,
         view: pin.view.clone(),
+        appearance: PinAppearance::default(),
         transparency_supported: !cfg!(target_os = "macos"),
         annotations: pin.annotations.clone(),
     })
@@ -403,6 +452,9 @@ pub fn destroyed(app: &AppHandle, label: &str) {
         images.remove(label);
         log_retained(&images, "destroyed");
     }
+    if let Ok(mut thumbnails) = app.state::<PinState>().thumbnails.lock() {
+        thumbnails.remove(label);
+    }
     changed(app);
 }
 
@@ -478,7 +530,9 @@ pub fn clipboard_pin(app: &AppHandle) -> Result<(), String> {
     let clipboard = match app.clipboard().read_image() {
         Ok(image) => image,
         Err(_) => {
-            let text = app.clipboard().read_text()
+            let text = app
+                .clipboard()
+                .read_text()
                 .map_err(|_| "剪贴板没有可读取的图片或文字。")?;
             return create_text_visible(app, &text);
         }
@@ -577,7 +631,9 @@ pub async fn current_pin(
     known_revision: Option<u64>,
 ) -> Result<PinFrame, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        frame(window.label(), &own(&app, &window)?, known_revision)
+        let mut result = frame(window.label(), &own(&app, &window)?, known_revision)?;
+        result.appearance = appearance(&app)?;
+        Ok(result)
     })
     .await
     .map_err(err)?
@@ -625,7 +681,10 @@ fn composed(pin: &Pin) -> Result<RgbaImage, String> {
 #[tauri::command]
 pub fn list_pins(app: AppHandle, window: WebviewWindow) -> Result<Vec<PinSummary>, String> {
     crate::capture::require_window(&window, "main")?;
-    let images = app.state::<PinState>().images.lock().map_err(err)?.clone();
+    let state = app.state::<PinState>();
+    let images = state.images.lock().map_err(err)?.clone();
+    let mut thumbnails = state.thumbnails.lock().map_err(err)?;
+    thumbnails.retain(|label, _| images.contains_key(label));
     images
         .into_iter()
         .map(|(label, pin)| {
@@ -635,12 +694,30 @@ pub fn list_pins(app: AppHandle, window: WebviewWindow) -> Result<Vec<PinSummary
                 .transpose()
                 .map_err(err)?
                 .unwrap_or(false);
+            // 管理页只传最多 96×72 的底图缩略图，缓存最多随 12 张贴图保留。
+            let thumbnail = match thumbnails.get(&label) {
+                Some((revision, value)) if *revision == pin.revision => value.clone(),
+                _ => {
+                    let preview = image::imageops::thumbnail(pin.image.as_ref(), 96, 72);
+                    let mut png = Cursor::new(Vec::new());
+                    preview
+                        .write_to(&mut png, image::ImageFormat::Png)
+                        .map_err(err)?;
+                    let value = format!(
+                        "data:image/png;base64,{}",
+                        STANDARD.encode(png.into_inner())
+                    );
+                    thumbnails.insert(label.clone(), (pin.revision, value.clone()));
+                    value
+                }
+            };
             Ok(PinSummary {
                 label,
                 width: pin.image.width(),
                 height: pin.image.height(),
                 visible,
                 group: pin.group,
+                thumbnail,
             })
         })
         .collect()
@@ -1003,7 +1080,8 @@ pub async fn transform_pin(
             pin.image.height(),
         )?;
         pin.revision = pin.revision.checked_add(1).ok_or("贴图版本超出限制。")?;
-        let result = frame(window.label(), &pin, None)?;
+        let mut result = frame(window.label(), &pin, None)?;
+        result.appearance = appearance(&app)?;
         commit_transformed_pin(&mut *state.images.lock().map_err(err)?, window.label(), pin)?;
         if let Ok(images) = state.images.lock() {
             log_retained(&images, "transformed");
@@ -1434,5 +1512,17 @@ mod tests {
         assert!(Operation::acquire(&state).is_err());
         drop(guard);
         assert!(Operation::acquire(&state).is_ok());
+    }
+    #[test]
+    fn pin_appearance_defaults_and_validation_keep_old_settings_compatible() {
+        let value: PinAppearance = serde_json::from_str("{}").unwrap();
+        assert_eq!(value, PinAppearance::default());
+        assert!(PinAppearance {
+            corner_radius: 25,
+            ..value
+        }
+        .validate()
+        .is_err());
+        assert!(serde_json::from_str::<PinAppearance>(r#"{"shadow":"unknown"}"#).is_err());
     }
 }

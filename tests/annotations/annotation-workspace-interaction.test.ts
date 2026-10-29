@@ -28,7 +28,7 @@ describe('共享标注宿主的菜单激活', () => {
     memoryRenderer.render(h(AnnotationWorkspace, { editor, bounds, width: 640, height: 480, surfaceVisible: false, toolbarVisible: true,
       enabled: false, active: false, disabled: false, onActivate: activate }), root)
     const toolbar = findNode(root, node => String(node.props.class).includes('capture-toolbar'))!
-    const menuTarget = { closest: (selector: string) => selector === '[aria-haspopup="menu"]' ? {} : null }
+    const menuTarget = { closest: (selector: string) => selector.includes('[aria-haspopup="menu"]') ? {} : null }
     toolbar.props.onPointerdownCapture({ type: 'pointerdown', target: { closest: () => null } })
     toolbar.props.onKeydownCapture({ type: 'keydown', key: 'Tab', target: menuTarget })
     expect(activate).not.toHaveBeenCalled()
@@ -36,5 +36,9 @@ describe('共享标注宿主的菜单激活', () => {
     expect(activate).toHaveBeenCalledOnce()
     toolbar.props.onKeydownCapture({ type: 'keydown', key: 'ArrowDown', target: menuTarget })
     expect(activate).toHaveBeenCalledTimes(2)
+    const selectTarget = { closest: (selector: string) => selector.includes('[aria-haspopup="listbox"]') ? {} : null }
+    toolbar.props.onPointerdownCapture({ type: 'pointerdown', target: selectTarget })
+    expect(activate).toHaveBeenCalledTimes(3)
+
   })
 })

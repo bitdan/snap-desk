@@ -61,10 +61,13 @@ pub(super) fn collect(
                     };
                     let animated = live_annotations::has_timed_annotations(&app, id);
                     if animated != annotation_animation && !config.input_effects.enabled() {
-                        base=None; base_dirty=false;
-                        if running && animated { backend.refresh()?; }
+                        base = None;
+                        base_dirty = false;
+                        if running && animated {
+                            backend.refresh()?;
+                        }
                     }
-                    annotation_animation=animated;
+                    annotation_animation = animated;
                     if effects_generation != Some(generation) || !running {
                         // 先停止并 join 消息线程，再清缓存；恢复使用新监听器，不继承按住状态。
                         listener = None;
@@ -107,7 +110,11 @@ pub(super) fn collect(
                             }
                             let frame = measured_capture(&state, id, backend.as_mut())?;
                             compositor.set_origin(backend.desktop_origin()?);
-                            let events = if let Some(listener)=listener.as_ref() { listener.drain()? } else { Vec::new() };
+                            let events = if let Some(listener) = listener.as_ref() {
+                                listener.drain()?
+                            } else {
+                                Vec::new()
+                            };
                             // 先取完源事件，再取 QPC，避免给未来事件分配更早的视频时间戳。
                             let now = capture::now();
                             let projected = {
@@ -160,7 +167,9 @@ pub(super) fn collect(
                                 }
                                 if let Some(clean) = base.as_ref() {
                                     // 静态桌面的淡出复用最近一帧干净底图，不重建 WGC 会话。
-                                    let needed = base_dirty || compositor.needs_frame() || annotation_animation;
+                                    let needed = base_dirty
+                                        || compositor.needs_frame()
+                                        || annotation_animation;
                                     let accepted = needed
                                         && timeline::accept_sample(
                                             &mut last_sample,
@@ -397,6 +406,8 @@ fn write_video(
     abort: &AtomicBool,
     mut audio: Option<audio::Worker>,
 ) -> Result<String, String> {
+    let export_settings = output::preferences(app)?;
+    export_settings.validate()?;
     let mut recovery = recovery::Pending::new(app, id, &root, config.format)?;
     let pending = recovery.path();
     progress(app, "recording", Some(&pending));
@@ -509,7 +520,11 @@ fn write_video(
         .filter(|s| s.view.id == id && !s.cancel)
         .ok_or("已取消录屏。")?;
     // 最后确认取消；发布和取消共用状态锁，失败时 Pending 保留完整视频。
-    let output = recovery.output(&root);
+    let output = recovery.output(
+        &root,
+        &export_settings,
+        (config.region.width, config.region.height),
+    );
     progress(app, "publishing", Some(&pending));
     output::publish(&pending, &output)?;
     recovery.published(&output);

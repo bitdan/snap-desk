@@ -5,6 +5,7 @@ import { defaultSettings } from '../../src/features/settings/settings'
 import type { LocalTranslationStatus } from '../../src/features/recognition/ai'
 
 const api = vi.hoisted(() => ({ status: vi.fn(), translationModelStatus: vi.fn(), aiProviderStatus: vi.fn(), translationModelAction: vi.fn() }))
+vi.mock('../../src/shared/ui/SelectControl.vue', async () => ({ default: (await import('../helpers/select-control')).SelectControlStub }))
 vi.mock('../../src/services/api', () => ({ api }))
 vi.mock('../../src/shared/ui/button/Button.vue', async () => {
   const { defineComponent, h } = await import('vue')

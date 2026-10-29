@@ -176,14 +176,21 @@ impl Pending {
         self.published = true;
         self.value.exported = Some(output.to_string_lossy().into_owned());
     }
-    pub fn output(&self, root: &Path) -> PathBuf {
-        root.join(output::filename(
+    pub fn output(
+        &self,
+        root: &Path,
+        settings: &crate::settings::RecordingExportSettings,
+        dimensions: (u32, u32),
+    ) -> PathBuf {
+        root.join(output::filename_with_settings(
             self.value.id.trim_start_matches("recording-pending-"),
             self.path()
                 .extension()
                 .and_then(|s| s.to_str())
                 .unwrap_or("mp4"),
             false,
+            settings,
+            Some(dimensions),
         ))
     }
 }

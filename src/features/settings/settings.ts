@@ -1,3 +1,5 @@
+import { defaultPinAppearance } from '@/features/pins/pins'
+import type { PinAppearance } from '@/features/pins/types'
 import { t } from '@/shared/i18n/i18n'
 import type { Appearance } from '@/shared/ui/appearance'
 import { defaultAiSettings, type AiSettings } from '@/features/recognition/ai'
@@ -10,6 +12,14 @@ export interface ExportSettings {
   includeDimensions: boolean
   rememberDirectory: boolean
 }
+export interface RecordingExportSettings { filenamePrefix: string; includeDimensions: boolean; rememberDirectory: boolean }
+export function defaultRecordingExportSettings(): RecordingExportSettings {
+  return { filenamePrefix: 'SnapDesk', includeDimensions: false, rememberDirectory: true }
+}
+export function validateRecordingExportSettings(value: RecordingExportSettings): string | null {
+  return validateExportSettings({ ...defaultSettings().export, ...value })
+}
+
 export type ShortcutAction = 'capture' | 'pin' | 'record' | 'history'
 /** 空字符串表示单独禁用动作；总开关保留映射。 */
 export type Shortcuts = Record<ShortcutAction, string>
@@ -21,11 +31,11 @@ export const shortcutActions: { key: ShortcutAction; label: string; description:
 ]
 export const ONBOARDING_VERSION = 1
 export function needsOnboarding(version: number): boolean { return version < ONBOARDING_VERSION }
-export interface Settings { appearance: Appearance; ai: AiSettings; onboardingVersion: number; shortcuts: Shortcuts; shortcutsEnabled: boolean; delaySeconds: 0 | 3 | 5; screenshotCursor: boolean; screenshotSnap: boolean; export: ExportSettings; clipboard: ClipboardSettings }
+export interface Settings { appearance: Appearance; ai: AiSettings; onboardingVersion: number; shortcuts: Shortcuts; shortcutsEnabled: boolean; delaySeconds: 0 | 3 | 5; screenshotCursor: boolean; screenshotSnap: boolean; export: ExportSettings; pinAppearance: PinAppearance; recordingExport: RecordingExportSettings; clipboard: ClipboardSettings }
 
 /** 每次返回独立对象，避免编辑草稿时改动“恢复默认”的值。 */
 export function defaultSettings(): Settings {
-  return { appearance: { theme: 'system', language: 'zh-CN' }, ai: defaultAiSettings(), clipboard: defaultClipboardSettings(), onboardingVersion: 0, shortcuts: { capture: 'F1', pin: 'F2', record: 'F3', history: 'F4' }, shortcutsEnabled: true, delaySeconds: 0, screenshotCursor: false, screenshotSnap: true, export: {
+  return { pinAppearance: defaultPinAppearance(), recordingExport: defaultRecordingExportSettings(), appearance: { theme: 'system', language: 'zh-CN' }, ai: defaultAiSettings(), clipboard: defaultClipboardSettings(), onboardingVersion: 0, shortcuts: { capture: 'F1', pin: 'F2', record: 'F3', history: 'F4' }, shortcutsEnabled: true, delaySeconds: 0, screenshotCursor: false, screenshotSnap: true, export: {
     format: 'png', jpegQuality: 90, filenamePrefix: 'SnapDesk', includeDimensions: false, rememberDirectory: true,
   } }
 }

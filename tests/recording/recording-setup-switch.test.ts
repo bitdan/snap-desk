@@ -3,6 +3,7 @@ import { h, nextTick, ref } from 'vue'
 import { clientComponent, findNode, MemoryNode, memoryRenderer } from '../helpers/component-host'
 import { defaultInputEffects } from '../../src/features/recording/recording'
 
+vi.mock('../../src/shared/ui/SelectControl.vue', async () => ({ default: (await import('../helpers/select-control')).SelectControlStub }))
 vi.mock('../../src/features/recording/components/RecordingOptionMenu.vue', async () => {
   const { defineComponent, h } = await import('vue')
   return { default: defineComponent({ setup: () => () => h('menu-stub') }) }

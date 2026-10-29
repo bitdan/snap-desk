@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import SelectControl from '@/shared/ui/SelectControl.vue'
 import { t, te } from '@/shared/i18n/i18n'
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { DialogRoot, DialogPortal, DialogOverlay, DialogContent, DialogTitle, DialogDescription, DialogTrigger } from 'reka-ui'
@@ -175,7 +176,7 @@ onUnmounted(() => { disposed = true; revision++; clearTimeout(refreshTimer); dis
       <DialogTitle class="history-export-title">{{ t("导出") }} {{ selected.length }} {{ t("个素材") }}</DialogTitle>
       <DialogDescription class="history-export-description">{{ t("按选择顺序导出，图片使用原图。") }}</DialogDescription>
       <fieldset :disabled="busy">
-      <div class="history-tools"><select v-model="options.mode" :aria-label='t("导出方式")'><option value="pdf">{{ t("多页 PDF") }}</option><option value="longPng">{{ t("纵向长图 PNG") }}</option><option value="separate">{{ t("分别导出 PNG / TXT") }}</option></select><select v-if="options.mode === 'pdf'" v-model="options.pageSize" :aria-label='t("页面大小")'><option value="A4">A4</option><option value="original">{{ t("图片原始比例") }}</option></select><label v-if="options.mode === 'pdf'">{{ t("边距 mm") }}<input v-model.number="options.marginMm" type="number" min="0" max="30" /></label><label v-if="options.mode === 'longPng'">{{ t("间距 px") }}<input v-model.number="options.gapPx" type="number" min="0" max="200" /></label><select v-if="options.mode === 'longPng'" v-model="options.background" :aria-label='t("背景")'><option value="white">{{ t("白底") }}</option><option value="transparent">{{ t("透明背景") }}</option></select></div>
+      <div class="history-tools"><SelectControl v-model="options.mode" :aria-label="t('导出方式')" :options="[{ value: 'pdf', label: t('多页 PDF') }, { value: 'longPng', label: t('纵向长图 PNG') }, { value: 'separate', label: t('分别导出 PNG / TXT') }]" /><SelectControl v-if="options.mode === 'pdf'" v-model="options.pageSize" :aria-label="t('页面大小')" :options="[{ value: 'A4', label: 'A4' }, { value: 'original', label: t('图片原始比例') }]" /><label v-if="options.mode === 'pdf'">{{ t("边距 mm") }}<input v-model.number="options.marginMm" type="number" min="0" max="30" /></label><label v-if="options.mode === 'longPng'">{{ t("间距 px") }}<input v-model.number="options.gapPx" type="number" min="0" max="200" /></label><SelectControl v-if="options.mode === 'longPng'" v-model="options.background" :aria-label="t('背景')" :options="[{ value: 'white', label: t('白底') }, { value: 'transparent', label: t('透明背景') }]" /></div>
       </fieldset>
       <p v-if="error" class="notice error" role="alert">{{ te(error) }}</p>
       <p v-else-if="message" role="status">{{ t(message) }}</p>

@@ -1,6 +1,6 @@
 import { defaultInputEffects, type InputEffects, type RecordingFormat, type RecordingFps, type EncodingPreference, type RecordingQuality } from './recording'
 
-const KEY = 'snap-desk.recording-preferences.v1'
+export const RECORDING_PREFERENCES_KEY = 'snap-desk.recording-preferences.v1'
 export interface RecordingPreferences {
   format: RecordingFormat; mp4Fps: RecordingFps; gifFps: RecordingFps
   encoding: EncodingPreference; quality: RecordingQuality; mbps: number | null
@@ -40,14 +40,14 @@ function browserStorage(): PreferenceStorage | undefined {
 }
 export function readRecordingPreferences(storage = browserStorage()): RecordingPreferences {
   try {
-    const saved = JSON.parse(storage?.getItem(KEY) ?? 'null')
+    const saved = JSON.parse(storage?.getItem(RECORDING_PREFERENCES_KEY) ?? 'null')
     return saved?.version === 1 ? normalizeRecordingPreferences(saved.preferences) : defaultRecordingPreferences()
   } catch { return defaultRecordingPreferences() }
 }
 export function saveRecordingPreferences(value: RecordingPreferences, storage = browserStorage()): boolean {
   try {
     if (!storage) return false
-    storage.setItem(KEY, JSON.stringify({ version: 1, preferences: normalizeRecordingPreferences(value) }))
+    storage.setItem(RECORDING_PREFERENCES_KEY, JSON.stringify({ version: 1, preferences: normalizeRecordingPreferences(value) }))
     return true
   } catch { return false /* 缓存不可写不影响本次录制，也不会回写不可信字段。 */ }
 }

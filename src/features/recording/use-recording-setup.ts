@@ -13,8 +13,10 @@ export function useRecordingSetup() {
   // 音频权限和采集意图不从缓存恢复；每次 WebView 启动都需要用户显式开启。
   const recordingSystemAudio = ref(false), recordingMicrophone = ref(false)
   const recordingCapabilities = ref<RecorderCapabilities | null>(null), recordingCapabilityError = ref('')
+  let restoring = false
   let timer: ReturnType<typeof setTimeout> | undefined
   watch(recordingFormat, (format, previous) => {
+    if (restoring) return
     if (previous === 'gif') saved.gifFps = recordingFps.value; else saved.mp4Fps = recordingFps.value
     recordingFps.value = format === 'gif' ? saved.gifFps : saved.mp4Fps
   }, { flush: 'sync' })
@@ -26,15 +28,32 @@ export function useRecordingSetup() {
     const fps = recordingFps.value
     if (recordingFormat.value === 'gif') saved.gifFps = fps; else saved.mp4Fps = fps
     const mbps = recordingMbps.value === '' ? null : Number(recordingMbps.value)
-    saveRecordingPreferences({ ...saved, format: recordingFormat.value, encoding: recordingEncoding.value, quality: recordingQuality.value,
+    timer = undefined
+    return saveRecordingPreferences({ ...saved, format: recordingFormat.value, encoding: recordingEncoding.value, quality: recordingQuality.value,
       mbps, countdown: recordingCountdown.value, captureCursor: captureCursor.value, effects: recordingEffects.value, hideMainWindow: hideMainWindow.value })
   }
   watch([recordingFormat, recordingFps, recordingEncoding, recordingQuality, recordingMbps, recordingCountdown, captureCursor, recordingEffects, hideMainWindow], () => {
+    if (restoring) return
     clearTimeout(timer); timer = setTimeout(persist, 200)
-  }, { deep: true })
-  onScopeDispose(persist)
+  }, { deep: true, flush: 'sync' })
+  /** 选区窗口会被复用，每次打开都重新读取主窗口已提交的偏好。 */
+  function reloadPreferences() {
+    restoring = true
+    clearTimeout(timer); timer = undefined
+    Object.assign(saved, readRecordingPreferences())
+    recordingFormat.value = saved.format
+    recordingFps.value = saved.format === 'gif' ? saved.gifFps : saved.mp4Fps
+    recordingEncoding.value = saved.encoding; recordingQuality.value = saved.quality
+    recordingMbps.value = saved.mbps ?? ''; recordingCountdown.value = saved.countdown
+    captureCursor.value = saved.captureCursor; recordingEffects.value = saved.effects
+    hideMainWindow.value = saved.hideMainWindow
+    recordingSystemAudio.value = false; recordingMicrophone.value = false
+    restoring = false
+  }
+  // 没有改动的旧窗口不应在销毁时覆盖另一窗口的新偏好。
+  onScopeDispose(() => { if (timer !== undefined) persist() })
   return { recordingFormat, recordingFps, recordingEncoding, recordingQuality, recordingMbps, recordingCountdown, captureCursor,
-    recordingEffects, recordingSystemAudio, recordingMicrophone, recordingCapabilities, recordingCapabilityError, hideMainWindow }
+    recordingEffects, recordingSystemAudio, recordingMicrophone, recordingCapabilities, recordingCapabilityError, hideMainWindow, persist, reloadPreferences }
 }
 
 /** 确认后先交出冻结背景，再在同一 WebView 激活控制条；任何接管失败都取消已准备的会话。 */

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import SelectControl from '@/shared/ui/SelectControl.vue'
 import { t, te } from '@/shared/i18n/i18n'
 import { computed, ref, nextTick, onUnmounted, useId } from 'vue'
 import { Eraser, Undo2, Redo2, Trash2, GripVertical, RotateCcw, ChevronUp, ChevronDown } from 'lucide-vue-next'
@@ -129,7 +130,6 @@ const numberMode = computed(() => (props.editor.shapes[props.editor.selected]?.k
 const spotlightMode = computed(() => (props.editor.shapes[props.editor.selected]?.kind ?? props.editor.tool) === 'spotlight')
 const magnifyMode = computed(() => (props.editor.shapes[props.editor.selected]?.kind ?? props.editor.tool) === 'magnify')
 function value(event: Event) { return (event.target as HTMLInputElement).value }
-function fontFamily(event: Event) { return value(event) as 'sans' | 'serif' | 'mono' }
 </script>
 
 <template>
@@ -159,13 +159,13 @@ function fontFamily(event: Event) { return value(event) as 'sans' | 'serif' | 'm
     <div v-if="active && (editor.tool !== 'edit' || editor.selected >= 0)" class="annotation-tool-row annotation-options" :aria-label='t("标注样式")'>
       <label>{{ t("颜色") }} <input type="color" :value="editor.color" :disabled="locked || filterMode" @change="editor.style({ color: value($event) })" /></label>
       <label v-if="!numberMode && !spotlightMode">{{ magnifyMode ? t("边框") : editor.tool === 'erase' ? t("直径") : t("粗细") }} <input type="number" min="1" max="64" :value="editor.width" :disabled="locked" @change="editor.style({ width: Math.min(64, Math.max(1, Number(value($event)) || 3)) })" /></label>
-      <label v-if="magnifyMode">{{ t("倍率") }} <select :value="editor.magnification" :disabled="locked" @change="editor.style({ magnification: Number(value($event)) })"><option :value="2">2×</option><option :value="3">3×</option><option :value="4">4×</option></select></label>
-      <label>{{ t("不透明度") }} <select :value="editor.opacity" :disabled="locked || filterMode" @change="editor.style({ opacity: Number(value($event)) })"><option :value="1">100%</option><option :value="0.7">70%</option><option :value="0.35">35%</option><option :value="0.15">15%</option></select></label>
+      <label v-if="magnifyMode">{{ t("倍率") }} <SelectControl :model-value="editor.magnification" :disabled="locked" :aria-label="t('倍率')" :options="[2, 3, 4].map(value => ({ value, label: `${value}×` }))" @update:model-value="editor.style({ magnification: $event })" /></label>
+      <label>{{ t("不透明度") }} <SelectControl :model-value="editor.opacity" :disabled="locked || filterMode" :aria-label="t('不透明度')" :options="[1, 0.7, 0.35, 0.15].map(value => ({ value, label: `${Math.round(value * 100)}%` }))" @update:model-value="editor.style({ opacity: $event })" /></label>
       <template v-if="textMode">
       <input v-if="editor.selected >= 0" class="annotation-text" :aria-label='t("修改标注文字")' :placeholder='t("修改选中文字")' maxlength="500" :value="editor.text" :disabled="locked" @change="editor.style({ text: value($event) })" />
       <span v-else class="annotation-hint">{{ t("点击图片输入文字；Enter 完成，Shift+Enter 换行，Esc 取消") }}</span>
       <label>{{ t("字号") }} <input type="number" min="8" max="128" :value="editor.fontSize" :disabled="locked" @change="editor.style({ fontSize: Math.min(128, Math.max(8, Number(value($event)) || 24)) })" /></label>
-      <select :aria-label='t("字体")' :value="editor.fontFamily" :disabled="locked" @change="editor.style({ fontFamily: fontFamily($event) })"><option value="sans">{{ t("无衬线") }}</option><option value="serif">{{ t("衬线") }}</option><option value="mono">{{ t("等宽") }}</option></select>
+      <SelectControl :model-value="editor.fontFamily" :disabled="locked" :aria-label="t('字体')" :options="[{ value: 'sans', label: t('无衬线') }, { value: 'serif', label: t('衬线') }, { value: 'mono', label: t('等宽') }]" @update:model-value="editor.style({ fontFamily: $event })" />
       </template>
       <span v-else class="annotation-hint">{{ editor.tool === 'erase' ? t("拖动擦除已有标注并露出底图；可撤销") : spotlightMode ? t("拖框保留亮区，框外覆盖遮罩") : magnifyMode ? t("拖框放大中心底图；移动后重新取样") : numberMode ? t("点击连续放置序号；选择 / 编辑可移动和缩放") : editor.tool === 'polyline' ? t("逐点点击，Enter 完成") : t("选择箭头指针可二次编辑") }}</span>
     </div>

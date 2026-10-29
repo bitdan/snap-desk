@@ -61,4 +61,23 @@ describe('录屏偏好持久化', () => {
     expect(restored.hideMainWindow.value).toBe(false)
     second.stop()
   })
+  it('复用的选区窗口读取另一窗口的新配置，销毁旧窗口不覆盖新偏好', async () => {
+    vi.useFakeTimers()
+    const store = storage(); vi.stubGlobal('localStorage', store)
+    const scope = effectScope(), setup = scope.run(useRecordingSetup)!
+    const changed = { ...defaultRecordingPreferences(), format: 'gif' as const, gifFps: 20 as const, mp4Fps: 30 as const }
+    saveRecordingPreferences(changed, store)
+    setup.recordingSystemAudio.value = true
+    setup.reloadPreferences()
+    expect(setup.recordingFormat.value).toBe('gif')
+    expect(setup.recordingFps.value).toBe(20)
+    expect(setup.recordingSystemAudio.value).toBe(false)
+    setup.recordingFormat.value = 'mp4'
+    expect(setup.recordingFps.value).toBe(30)
+    await nextTick(); await vi.advanceTimersByTimeAsync(200)
+    saveRecordingPreferences({ ...changed, quality: 'high' }, store)
+    scope.stop()
+    expect(readRecordingPreferences(store).quality).toBe('high')
+  })
+
 })

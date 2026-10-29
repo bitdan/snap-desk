@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { canEditPin, minimumZoom, pinDisplaySize, stepZoom } from '../../src/features/pins/pins'
+import { defaultPinAppearance, pinAppearanceStyle, validatePinAppearance, canEditPin, minimumZoom, pinDisplaySize, stepZoom } from '../../src/features/pins/pins'
 
 describe('pin display controls', () => {
   it('100% maps selected image pixels to screen pixels at Windows display scales', () => {
@@ -54,4 +54,32 @@ describe('pin display controls', () => {
     expect(canEditPin({ ...view, locked: true }, false)).toBe(false)
     expect(canEditPin(view, false)).toBe(true)
   })
+})
+
+
+describe('贴图圆角与自动阴影', () => {
+  it('阴影随实际尺寸、透明度和焦点调整，关闭时完全去除', () => {
+    const appearance = defaultPinAppearance()
+    const small = pinAppearanceStyle(appearance, 40, 30)
+    const large = pinAppearanceStyle(appearance, 800, 600)
+    expect(small.boxShadow).not.toBe(large.boxShadow)
+    expect(pinAppearanceStyle(appearance, 800, 600, 1, true).boxShadow).not.toBe(large.boxShadow)
+    expect(pinAppearanceStyle(appearance, 800, 600, 0.3).boxShadow).not.toBe(large.boxShadow)
+    expect(pinAppearanceStyle({ ...appearance, shadow: 'none' }, 800, 600).boxShadow).toBe('none')
+  })
+  it('圆角遵循设定并受显示短边限制，原始像素尺寸不参与缩放重复计算', () => {
+    expect(pinAppearanceStyle({ ...defaultPinAppearance(), cornerRadius: 24 }, 40, 30).borderRadius).toBe('15px')
+    expect(pinAppearanceStyle({ ...defaultPinAppearance(), shadow: 'soft', cornerRadius: 0 }, 400, 300).borderRadius).toBe('0px')
+    expect(validatePinAppearance(defaultPinAppearance())).toBeNull()
+    expect(validatePinAppearance({ ...defaultPinAppearance(), cornerRadius: 25 })).not.toBeNull()
+  })
+  it('自定义边框颜色用于所有阴影及焦点状态，拒绝无效颜色', () => {
+    const appearance = { ...defaultPinAppearance(), borderColor: '#12aBcD' }
+    for (const shadow of ['auto', 'soft', 'none'] as const) {
+      for (const focused of [true, false]) expect(pinAppearanceStyle({ ...appearance, shadow }, 400, 300, 1, focused).borderColor).toBe('#12aBcD')
+    }
+    expect(validatePinAppearance(appearance)).toBeNull()
+    for (const borderColor of ['', '#abc', '#12345678', 'red', '#gggggg']) expect(validatePinAppearance({ ...appearance, borderColor })).not.toBeNull()
+  })
+
 })

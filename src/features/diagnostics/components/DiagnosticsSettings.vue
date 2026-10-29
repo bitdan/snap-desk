@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import SelectControl from '@/shared/ui/SelectControl.vue'
 import { t, te } from '@/shared/i18n/i18n'
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { Check } from 'lucide-vue-next'
@@ -74,8 +75,8 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
     <p v-if="status?.error || error" class="notice error" role="alert">{{ te(error || status?.error) }}</p>
     <p v-if="message" class="notice" role="status">{{ t(message) }}</p>
     <div class="diagnostics-toolbar mt-3">
-      <label>{{ t("级别") }} <select v-model="level" :disabled="!desktop || busy" @change="run(readLogs)"><option value="">{{ t("全部") }}</option><option v-for="value in ['ERROR', 'WARN', 'INFO', 'DEBUG']" :key="value">{{ value }}</option></select></label>
-      <label>{{ t("模块") }} <select v-model="module" :disabled="!desktop || busy" @change="run(readLogs)"><option value="">{{ t("全部") }}</option><option v-for="item in modules" :key="item.value" :value="item.value">{{ t(item.label) }}</option></select></label>
+      <label>{{ t("级别") }} <SelectControl v-model="level" :disabled="!desktop || busy" :aria-label="t('级别')" @update:model-value="run(readLogs)" :options="[{ value: '', label: t('全部') }, ...['ERROR', 'WARN', 'INFO', 'DEBUG'].map(value => ({ value, label: value }))]" /></label>
+      <label>{{ t("模块") }} <SelectControl v-model="module" :disabled="!desktop || busy" :aria-label="t('模块')" @update:model-value="run(readLogs)" :options="[{ value: '', label: t('全部') }, ...modules.map(item => ({ value: item.value, label: t(item.label) }))]" /></label>
       <input v-model="search" class="diagnostics-search" type="search" :aria-label='t("搜索已读取日志")' :placeholder='t("搜索事件名、错误码")' />
     </div>
     <div class="diagnostics-list" role="region" :aria-label='t("最近日志（最新在前）")' :aria-busy="busy" tabindex="0">

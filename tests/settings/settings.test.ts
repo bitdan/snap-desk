@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { defaultSettings, exportFilenamePreview, validateExportSettings, validateShortcuts, captureShortcut, needsOnboarding } from '../../src/features/settings/settings'
+import { defaultSettings, validateRecordingExportSettings, exportFilenamePreview, validateExportSettings, validateShortcuts, captureShortcut, needsOnboarding } from '../../src/features/settings/settings'
 
 describe('导出设置', () => {
   it('草稿与恢复默认的嵌套导出对象互不影响', () => {
@@ -76,5 +76,18 @@ describe('独立引导版本', () => {
     expect(needsOnboarding(defaultSettings().onboardingVersion)).toBe(true)
     expect(needsOnboarding(1)).toBe(false)
     expect(needsOnboarding(2)).toBe(false)
+  })
+})
+
+
+describe('录屏文件设置', () => {
+  it('与截图独立，拒绝路径片段与空前缀', () => {
+    const settings = defaultSettings()
+    settings.recordingExport.filenamePrefix = 'Video'
+    expect(settings.export.filenamePrefix).toBe('SnapDesk')
+    expect(validateRecordingExportSettings(settings.recordingExport)).toBeNull()
+    for (const filenamePrefix of ['', '..', '../video', 'C:\\video', 'bad:name']) {
+      expect(validateRecordingExportSettings({ ...settings.recordingExport, filenamePrefix })).not.toBeNull()
+    }
   })
 })

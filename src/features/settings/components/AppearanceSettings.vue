@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import SelectControl from '@/shared/ui/SelectControl.vue'
 import { ref, watch } from 'vue'
 import { appearance, type Appearance } from '@/shared/ui/appearance'
 import { t } from '@/shared/i18n/i18n'
@@ -35,7 +36,7 @@ function chooseTheme(theme: Appearance['theme']) {
       </div>
     </div>
     <div class="setting-row appearance-row">
-      <label for="language">{{ t('语言') }}</label><select id="language" v-model="draft.language" class="appearance-language" :disabled="props.busy" @change="save"><option value="zh-CN">{{ t("简体中文") }}</option><option value="en">English</option></select>
+      <label for="language">{{ t('语言') }}</label><SelectControl id="language" v-model="draft.language" class="appearance-language" :disabled="props.busy" :options="[{ value: 'zh-CN', label: t('简体中文') }, { value: 'en', label: 'English' }]" @update:model-value="save" />
     </div>
   </div>
 </template>

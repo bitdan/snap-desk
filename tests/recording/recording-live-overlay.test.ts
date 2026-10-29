@@ -6,6 +6,7 @@ import type { AnnotationEditor } from '../../src/features/annotations/use-annota
 
 const api = vi.hoisted(() => ({ recordingAnnotations: vi.fn(), currentRecording: vi.fn(), updateRecordingAnnotations: vi.fn(), setRecordingAnnotationMode: vi.fn(), setRecordingAnnotationTools: vi.fn(), controlRecording: vi.fn(), publishRecordingAnnotationEditor: vi.fn(), finishRecordingAnnotationEditorAction: vi.fn() }))
 const events = vi.hoisted(() => ({ closed: undefined as undefined | ((event: { payload: number }) => void), off: vi.fn(), editor: undefined as undefined | ((event: {payload: import('../../src/features/recording/recording-annotations').RecordingAnnotationEditorRequest}) => void) }))
+vi.mock('../../src/shared/ui/SelectControl.vue', async () => ({ default: (await import('../helpers/select-control')).SelectControlStub }))
 vi.mock('../../src/services/api', () => ({ api }))
 vi.mock('@tauri-apps/api/event', () => ({ listen: async (name: string, cb: typeof events.closed) => { if(name==='recording-annotations-closed') events.closed=cb; else events.editor=cb as unknown as typeof events.editor; return events.off } }))
 vi.mock('../../src/features/recording/use-recording-annotation-layout', () => ({ useRecordingAnnotationLayout: () => ({ style: {value:{}}, start: vi.fn(), reset: vi.fn() }) }))
@@ -100,7 +101,7 @@ describe('独立的录屏标注层', () => {
     workspace()!.props.onChoose(); await flush()
     expect(editor().tool).toBe('arrow')
     const lifetime = find(n => n.props['aria-label'] === '标注保留时间')!
-    lifetime.props.onChange({target:{value:'5000'}}); await flush()
+    lifetime.props['onUpdate:modelValue'](5000); await flush()
     expect(api.setRecordingAnnotationTools).toHaveBeenCalledWith(7,expect.objectContaining({lifetimeMs:5000}))
     const finish = find(n => n.props['aria-label'] === '完成标注')!
     finish.props.onClick(); await flush()

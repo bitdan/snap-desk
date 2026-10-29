@@ -4,9 +4,9 @@ import type { PinSummary } from '../../src/services/api'
 
 describe('pin groups', () => {
   const pins: PinSummary[] = [
-    { label: 'pin-1', width: 20, height: 20, visible: true, group: '' },
-    { label: 'pin-2', width: 20, height: 20, visible: false, group: '参考' },
-    { label: 'pin-3', width: 20, height: 20, visible: true, group: '参考' },
+    { label: 'pin-1', width: 20, height: 20, thumbnail: '', visible: true, group: '' },
+    { label: 'pin-2', width: 20, height: 20, thumbnail: '', visible: false, group: '参考' },
+    { label: 'pin-3', width: 20, height: 20, thumbnail: '', visible: true, group: '参考' },
   ]
   it('distinguishes all pins from ungrouped pins and includes hidden group members', () => {
     expect(filterPins(pins, null)).toHaveLength(3)

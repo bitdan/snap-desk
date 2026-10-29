@@ -21,12 +21,14 @@ export class MemoryNode {
   children: MemoryNode[] = []
   props: Record<string, any> = {}
   text = ''
+  style: Record<string, string> = {}
   currentTime = 0
   ended = false
   muted = false
   playbackRate = 1
   value: unknown
   selectedIndex = -1
+  getRootNode(): MemoryNode { return this.parent?.getRootNode() ?? this }
   get options() { return this.children.filter(child => child.type === 'option') }
   focus = vi.fn()
   load = vi.fn()
