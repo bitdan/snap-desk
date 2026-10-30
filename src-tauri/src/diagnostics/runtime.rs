@@ -1,40 +1,102 @@
-//! 会话内的临时详细日志：用单调时钟过滤，重启自动复位，不依赖设置页轮询来关闭。
+//! 运行时日志阈值：本机持久化、立即切换；高频调试采样使用独立单调时钟。
+use super::logs::Level;
 use std::sync::{
-    atomic::{AtomicU64, Ordering},
+    atomic::{AtomicU64, AtomicU8, Ordering},
     OnceLock,
 };
 use std::time::Instant;
+use std::{fs, io::Write, path::Path};
+use tauri::Manager;
 
 static CLOCK: OnceLock<Instant> = OnceLock::new();
-static DEBUG_UNTIL: AtomicU64 = AtomicU64::new(0);
+static LEVEL: AtomicU8 = AtomicU8::new(2);
 static LAST_SAMPLE: AtomicU64 = AtomicU64::new(0);
 
 fn millis() -> u64 {
     CLOCK.get_or_init(Instant::now).elapsed().as_millis() as u64 + 1
 }
 
-pub fn remaining_seconds() -> u64 {
-    DEBUG_UNTIL
-        .load(Ordering::Relaxed)
-        .saturating_sub(millis())
-        .div_ceil(1000)
+fn code(level: Level) -> u8 {
+    match level {
+        Level::Error => 0,
+        Level::Warn => 1,
+        Level::Info => 2,
+        Level::Debug => 3,
+    }
 }
 
-pub fn set_debug(enabled: bool) {
-    DEBUG_UNTIL.store(
-        if enabled {
-            millis() + 30 * 60 * 1000
-        } else {
-            0
-        },
-        Ordering::Relaxed,
-    );
+/// 返回当前实际生效阈值，供状态页与诊断包使用。
+pub fn level() -> Level {
+    match LEVEL.load(Ordering::Relaxed) {
+        0 => Level::Error,
+        1 => Level::Warn,
+        3 => Level::Debug,
+        _ => Level::Info,
+    }
 }
 
-/// 插件上限设为 Debug，真正级别由此过滤器决定；从不放行 Trace。
+fn read_level(path: &Path) -> Result<Level, String> {
+    if !path.exists() {
+        return Ok(Level::Info);
+    }
+    if fs::metadata(path).map_err(|e| e.to_string())?.len() > 64 {
+        return Err("日志级别配置无效。".into());
+    }
+    serde_json::from_slice(&fs::read(path).map_err(|e| e.to_string())?)
+        .map_err(|_| "日志级别配置无效。".into())
+}
+
+/// 独立保存本机排错偏好，不混入可跨机器导入的业务配置；落盘失败保留当前阈值。
+fn persist_level(path: &Path, level: Level) -> Result<(), String> {
+    let parent = path.parent().ok_or("日志级别配置路径无效。")?;
+    fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    let mut temporary = tempfile::NamedTempFile::new_in(parent).map_err(|e| e.to_string())?;
+    temporary
+        .write_all(&serde_json::to_vec(&level).map_err(|e| e.to_string())?)
+        .map_err(|e| e.to_string())?;
+    temporary.as_file().sync_all().map_err(|e| e.to_string())?;
+    temporary.persist(path).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// 启动时恢复本机偏好，配置缺失默认 INFO，损坏时保留默认并记录告警。
+pub fn initialize(app: &tauri::AppHandle) {
+    let loaded = app
+        .path()
+        .app_config_dir()
+        .map_err(|e| e.to_string())
+        .and_then(|root| read_level(&root.join("logging.json")));
+    match loaded {
+        Ok(value) => {
+            LEVEL.store(code(value), Ordering::Relaxed);
+        }
+        Err(_) => {
+            log::warn!("event=diagnostics.level_load_failed module=diagnostics");
+        }
+    }
+}
+
+/// 先原子替换配置文件，再更新过滤器；调用方负责串行化修改。
+pub fn set_level(app: &tauri::AppHandle, value: Level) -> Result<(), String> {
+    let root = app.path().app_config_dir().map_err(|e| e.to_string())?;
+    persist_level(&root.join("logging.json"), value)?;
+    LEVEL.store(code(value), Ordering::Relaxed);
+    Ok(())
+}
+
+fn allows(threshold: Level, value: log::Level) -> bool {
+    let limit = match threshold {
+        Level::Error => log::Level::Error,
+        Level::Warn => log::Level::Warn,
+        Level::Info => log::Level::Info,
+        Level::Debug => log::Level::Debug,
+    };
+    value <= limit
+}
+
+/// 插件上限保持 Debug，原生与前端日志统一按当前阈值过滤。
 pub fn enabled(metadata: &log::Metadata<'_>) -> bool {
-    metadata.level() <= log::Level::Info
-        || (metadata.level() == log::Level::Debug && remaining_seconds() > 0)
+    allows(level(), metadata.level())
 }
 
 /// 高频匹配细节每 500ms 最多一条；只限制 Debug，不丢弃故障与生命周期事件。
@@ -65,17 +127,36 @@ pub fn install_panic_hook() {
 mod tests {
     use super::*;
     #[test]
-    fn debug_expires_without_ui_or_restart() {
-        let debug = log::Metadata::builder().level(log::Level::Debug).build();
-        let info = log::Metadata::builder().level(log::Level::Info).build();
-        let trace = log::Metadata::builder().level(log::Level::Trace).build();
-        set_debug(true);
-        assert!(remaining_seconds() <= 1800 && remaining_seconds() > 1790);
-        assert!(enabled(&debug) && enabled(&info) && !enabled(&trace));
-        DEBUG_UNTIL.store(millis().saturating_sub(1), Ordering::Relaxed);
-        assert_eq!(remaining_seconds(), 0);
-        assert!(!enabled(&debug) && enabled(&info));
-        set_debug(false);
-        assert_eq!(remaining_seconds(), 0);
+    fn thresholds_include_severity_and_never_trace() {
+        for threshold in [Level::Error, Level::Warn, Level::Info, Level::Debug] {
+            assert!(allows(threshold, log::Level::Error));
+            assert!(!allows(threshold, log::Level::Trace));
+            assert_eq!(
+                allows(threshold, log::Level::Debug),
+                threshold == Level::Debug
+            );
+            assert_eq!(
+                allows(threshold, log::Level::Info),
+                matches!(threshold, Level::Info | Level::Debug)
+            );
+            assert_eq!(
+                allows(threshold, log::Level::Warn),
+                threshold != Level::Error
+            );
+        }
+    }
+    #[test]
+    fn level_survives_reload_and_invalid_values_are_rejected() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("logging.json");
+        assert_eq!(read_level(&path).unwrap(), Level::Info);
+        for level in [Level::Debug, Level::Warn, Level::Error, Level::Info] {
+            persist_level(&path, level).unwrap();
+            assert_eq!(read_level(&path).unwrap(), level);
+        }
+        fs::write(&path, b"\"TRACE\"").unwrap();
+        assert!(read_level(&path).is_err());
+        fs::write(&path, [b' '; 65]).unwrap();
+        assert!(read_level(&path).is_err());
     }
 }

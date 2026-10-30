@@ -57,6 +57,13 @@ impl Timeline {
         (source >= since).then_some((self.generation, self.elapsed + source - since))
     }
 
+    /// 特效底图使用已收到的画面，输出按当前合成时刻计时，与输入事件保持同源。
+    /// WGC 帧时间可能略晚于交付时刻，不能据此丢弃底图；仍排除开始/恢复前的旧帧。
+    pub fn project_composite(&self, source: i64, now: i64) -> Option<(u64, i64)> {
+        self.project(source)?;
+        self.project(now)
+    }
+
     fn close_audio_span(&mut self, now: i64) {
         if let Some((start, end, _)) = self.audio_spans.last_mut() {
             // 重复 stop/freeze 不得延长已经关闭的区间。
@@ -110,6 +117,24 @@ mod tests {
         clock.stop(950);
         assert_eq!(clock.generation, 3);
         assert_eq!(clock.elapsed(2000), 100);
+    }
+
+    #[test]
+    fn composition_accepts_early_delivered_frames_without_future_output_or_stale_resume() {
+        let mut clock = Timeline::default();
+        assert_eq!(clock.project_composite(120, 110), None);
+        clock.resume(100);
+        // 底图提前交付：输出时间跟随合成时刻，不把未来的源时间写入编码队列。
+        assert_eq!(clock.project_composite(120, 110), Some((1, 10)));
+        assert_eq!(clock.project_composite(105, 110), Some((1, 10)));
+        assert_eq!(clock.project_composite(99, 110), None);
+        clock.pause(150);
+        assert_eq!(clock.project_composite(160, 170), None);
+        clock.resume(900);
+        assert_eq!(clock.project_composite(899, 910), None);
+        assert_eq!(clock.project_composite(920, 910), Some((3, 60)));
+        clock.stop(950);
+        assert_eq!(clock.project_composite(960, 970), None);
     }
 
     #[test]

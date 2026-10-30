@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { debugSeconds, searchLogs, type LogEntry } from '../../src/features/diagnostics/diagnostics'
+import { searchLogs, type LogEntry } from '../../src/features/diagnostics/diagnostics'
 
 const invoke = vi.hoisted(() => vi.fn())
 vi.mock('@tauri-apps/api/core', () => ({ invoke, isTauri: () => true }))
@@ -30,14 +30,11 @@ describe('本地诊断契约', () => {
     expect(invoke).toHaveBeenLastCalledWith('diagnostics_clear_archives', undefined)
   })
 
-  it('Debug 仅发送开关，不允许前端指定永久开启或任意到期时间', async () => {
-    await api.diagnosticsSetDebug(true)
-    expect(invoke).toHaveBeenLastCalledWith('diagnostics_set_debug', { enabled: true })
-    await api.diagnosticsSetDebug(false)
-    expect(invoke).toHaveBeenLastCalledWith('diagnostics_set_debug', { enabled: false })
-    expect(debugSeconds(1800, 1000, 31_000)).toBe(1770)
-    expect(debugSeconds(1800, 1000, 1_801_000)).toBe(0)
-    expect(debugSeconds(0, 1000, 999)).toBe(0)
+  it.each(['DEBUG', 'INFO', 'WARN', 'ERROR'] as const)('记录级别 %s 使用枚举契约，返回后端实际状态', async level => {
+    const status = { level }
+    invoke.mockResolvedValueOnce(status)
+    expect(await api.diagnosticsSetLevel(level)).toBe(status)
+    expect(invoke).toHaveBeenLastCalledWith('diagnostics_set_level', { level })
   })
 
   it('搜索只过滤已读内容，不进行 IPC；特殊字符按普通字符串处理', () => {

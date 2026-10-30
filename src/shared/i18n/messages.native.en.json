@@ -1,4 +1,5 @@
 {
+  "已收到屏幕画面，但帧时间戳校验未通过，请查看录屏诊断日志。": "Screen frames were received, but timestamp validation failed. Check the recording diagnostic log.",
   "无法读取 Windows 凭证库。": "Cannot read the Windows credential store.",
   "凭证为空，请重新保存。": "Credential is empty. Save it again.",
   "凭证格式错误，请重新保存。": "Invalid credential format. Save it again.",
@@ -202,7 +203,6 @@
   "诊断状态读取失败。": "Could not read diagnostic status.",
   "读取日志任务失败。": "Log reading task failed.",
   "诊断操作正在进行。": "Diagnostic operation in progress.",
-  "修改详细日志模式失败。": "Could not change detailed logging mode.",
   "仅删除历史日志归档，保留当前正在写入的日志。此操作无法撤销。": "Delete log archives only and keep the active log. This cannot be undone.",
   "清理历史日志": "Clear log history",
   "清理历史日志失败。": "Could not clear log history.",
@@ -746,5 +746,8 @@
   "配置版本不支持，请使用当前版本重新导出。": "Unsupported settings version. Export again using the current version.",
   "请先完成当前配置导入或导出。": "Finish the current settings import or export first.",
   "配置导入失败：{0}；回滚失败：{1}": "Settings import failed: {0}; rollback failed: {1}",
-  "不能覆盖正在使用的配置文件，请另选导出位置。": "Choose a different export location; active settings files cannot be overwritten."
+  "不能覆盖正在使用的配置文件，请另选导出位置。": "Choose a different export location; active settings files cannot be overwritten.",
+  "修改日志级别失败。": "Could not change log level.",
+  "日志级别配置无效。": "Invalid log level configuration.",
+  "日志级别配置路径无效。": "Invalid log level configuration path."
 }

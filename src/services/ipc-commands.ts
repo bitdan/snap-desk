@@ -7,7 +7,7 @@ export const ipcCommands = [
   "diagnostics_recent_logs",
   "diagnostics_export",
   "diagnostics_clear_archives",
-  "diagnostics_set_debug",
+  "diagnostics_set_level",
 
   "ai_credential_set",
   "ai_provider_status",

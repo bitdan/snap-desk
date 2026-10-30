@@ -47,7 +47,7 @@ pub fn save(app: &AppHandle, window: &WebviewWindow) -> Result<bool, String> {
         "buildChannel": if app.package_info().version.pre.is_empty() { "stable" } else { "prerelease" },
         "os": std::env::consts::OS, "arch": std::env::consts::ARCH,
         "collectedAt": collected,
-        "logLevel": if runtime::remaining_seconds() > 0 { "DEBUG" } else { "INFO" },
+        "logLevel": runtime::level(),
         "ocr": crate::resources::diagnostic_summary(app),
         "translation": crate::recognition::translation_models::diagnostic_summary(app),
         // 不为导出试录视频；标明仅为后端能力检查，编码器未探测。

@@ -333,6 +333,10 @@ pub fn sanitize(line: &str) -> Option<Entry> {
             "previous_started_ms" | "previous_pid" if event == "app.previous_exit_unclean" => {
                 value.parse::<u64>().is_ok()
             }
+            "reason" if event == "recording.timestamp_rejected" => value == "before_start",
+            "generation" if event == "recording.timestamp_rejected" => value.parse::<u64>().is_ok(),
+            "source_offset_ms" if event == "recording.timestamp_rejected" => value.parse::<i64>().is_ok(),
+            "level" if event == "diagnostics.level_changed" => ["Error", "Warn", "Info", "Debug"].contains(&value),
             "code" => super::catalog::CODES.contains(&value),
             "command" => super::catalog::COMMANDS.contains(&value),
             "op" => ["cap-", "rec-", "scroll-", "ocr-", "tr-"]
@@ -357,6 +361,7 @@ pub fn sanitize(line: &str) -> Option<Entry> {
                 "input_read",
                 "capture_frame",
                 "capture_timeout",
+                "capture_timestamp_timeout",
                 "output_config",
                 "recovery_create",
                 "encoder_init",

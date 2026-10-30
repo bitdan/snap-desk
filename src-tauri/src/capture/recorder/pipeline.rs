@@ -36,6 +36,7 @@ pub(super) fn collect(
         }
         Ok(writer) => {
             let mut last_sample = None;
+            let mut rejected_generation = None;
             let mut annotation_revision = live_annotations::snapshot(&app, id).0;
             let mut annotation_editing = false;
             let mut check_screen = Instant::now();
@@ -151,8 +152,14 @@ pub(super) fn collect(
                                 } else {
                                     let had_frame = frame.is_some();
                                     let frame = frame.filter(|f| {
-                                        s.timeline.project(f.source_time).is_some()
-                                            && f.source_time <= now
+                                        let accepted = s.timeline.project_composite(f.source_time, now).is_some();
+                                        if !accepted {
+                                            log_timestamp_rejection(
+                                                id, generation, f.source_time, now,
+                                                "before_start", &mut rejected_generation,
+                                            );
+                                        }
+                                        accepted
                                     });
                                     if had_frame && frame.is_none() {
                                         s.view.stats.rejected_capture_frames += 1;
@@ -293,6 +300,12 @@ pub(super) fn collect(
                                     s.view.stats.throttled_samples += 1;
                                 }
                             } else {
+                                if !s.stop && !s.cancel && s.timeline.generation == generation {
+                                    log_timestamp_rejection(
+                                        id, generation, frame.source_time, capture::now(),
+                                        "before_start", &mut rejected_generation,
+                                    );
+                                }
                                 s.view.stats.rejected_capture_frames += 1;
                             }
                         }
@@ -303,6 +316,13 @@ pub(super) fn collect(
                             last_sample.is_none()
                         }) && waiting_since.is_some_and(|t| t.elapsed() > Duration::from_secs(5))
                         {
+                            let guard = state.0.lock().map_err(err)?;
+                            let received = guard.as_ref().filter(|s| s.view.id == id)
+                                .is_some_and(|s| s.view.stats.rejected_capture_frames > 0);
+                            if received {
+                                capture_stage.set("capture_timestamp_timeout");
+                                return Err("已收到屏幕画面，但帧时间戳校验未通过，请查看录屏诊断日志。".into());
+                            }
                             capture_stage.set("capture_timeout");
                             return Err("屏幕采集未返回画面，请检查权限或图形驱动。".into());
                         }
@@ -669,4 +689,23 @@ fn pump_audio(
 /// 具体步骤与最终汇总共享 rec 会话号，分析时以步骤事件确定故障环节。
 fn log_step_failure(id: u64, stage: &'static str) {
     log::error!("event=recording.step_failed module=recording op=rec-{id} code=RECORDING_STEP_FAILED stage={stage}");
+}
+
+/// 每个录制代次仅记录一次异常，只输出固定原因和毫秒差值，不记录画面内容。
+fn log_timestamp_rejection(
+    id: u64,
+    generation: u64,
+    source: i64,
+    now: i64,
+    reason: &'static str,
+    logged: &mut Option<u64>,
+) {
+    if *logged == Some(generation) {
+        return;
+    }
+    *logged = Some(generation);
+    log::warn!(
+        "event=recording.timestamp_rejected module=recording op=rec-{} generation={} reason={} source_offset_ms={}",
+        id, generation, reason, source.saturating_sub(now) / 10_000
+    );
 }

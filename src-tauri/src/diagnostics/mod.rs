@@ -17,8 +17,7 @@ static OPERATION: Mutex<()> = Mutex::new(());
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Status {
-    level: &'static str,
-    debug_remaining_seconds: u64,
+    level: logs::Level,
     directory: Option<String>,
     error: Option<String>,
     total_bytes: u64,
@@ -37,10 +36,8 @@ fn location(app: &AppHandle) -> Result<(std::path::PathBuf, String), String> {
 }
 
 fn status(app: &AppHandle) -> Status {
-    let remaining = runtime::remaining_seconds();
     let mut status = Status {
-        level: if remaining > 0 { "DEBUG" } else { "INFO" },
-        debug_remaining_seconds: remaining,
+        level: runtime::level(),
         directory: None,
         error: None,
         total_bytes: 0,
@@ -107,26 +104,22 @@ pub async fn diagnostics_recent_logs(
     .map_err(|_| "读取日志任务失败。")?
 }
 
-/// 每次开启固定 30 分钟；不接受任意时长，不持久化，关闭后立即恢复 INFO。
+/// 级别使用枚举白名单；持久化成功后立即生效，返回后端实际状态。
 #[tauri::command]
-pub async fn diagnostics_set_debug(
+pub async fn diagnostics_set_level(
     app: AppHandle,
     window: WebviewWindow,
-    enabled: bool,
+    level: logs::Level,
 ) -> Result<Status, String> {
     require_window(&window, "main")?;
     tauri::async_runtime::spawn_blocking(move || {
         let _guard = OPERATION.try_lock().map_err(|_| "诊断操作正在进行。")?;
-        runtime::set_debug(enabled);
-        if enabled {
-            log::info!("event=diagnostics.debug_enabled module=diagnostics");
-        } else {
-            log::info!("event=diagnostics.debug_disabled module=diagnostics");
-        }
+        runtime::set_level(&app, level)?;
+        log::info!("event=diagnostics.level_changed module=diagnostics level={:?}", level);
         Ok(status(&app))
     })
     .await
-    .map_err(|_| "修改详细日志模式失败。")?
+    .map_err(|_| "修改日志级别失败。")?
 }
 
 #[derive(Serialize)]

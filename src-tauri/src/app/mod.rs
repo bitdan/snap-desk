@@ -125,6 +125,7 @@ pub fn run() {
                 .build(),
         )
         .setup(|app| {
+            diagnostics::runtime::initialize(app.handle());
             diagnostics::runtime::install_panic_hook();
             log::info!("event=app.starting module=app version={} platform={}", app.package_info().version, std::env::consts::OS);
             settings::initialize(app.handle()).map_err(|error| {
@@ -392,7 +393,7 @@ pub fn run() {
             diagnostics::diagnostics_recent_logs,
             diagnostics::diagnostics_export,
             diagnostics::diagnostics_clear_archives,
-            diagnostics::diagnostics_set_debug,
+            diagnostics::diagnostics_set_level,
             storage::app_directories,
             storage::choose_capture_directory,
             storage::open_app_directory,

@@ -4,8 +4,9 @@ import { clientComponent, findNode, flushComponent, MemoryNode, memoryRenderer }
 import { handleWindowEscape } from '../../src/shared/ui/escape'
 
 const api = vi.hoisted(() => ({ clipboardList: vi.fn(), clipboardStatus: vi.fn(), status: vi.fn(), clipboardPin: vi.fn() }))
+const clipboardEvents = vi.hoisted(() => ({ changed: () => {} }))
 vi.mock('../../src/services/api', () => ({ api, desktop: true,
-  onClipboardChanged: async () => () => {}, onClipboardError: async () => () => {},
+  onClipboardChanged: async (callback: () => void) => { clipboardEvents.changed = callback; return () => { clipboardEvents.changed = () => {} } }, onClipboardError: async () => () => {},
   onClipboardState: async () => () => {}, onClipboardOpen: async () => () => {},
 }))
 vi.mock('reka-ui', async () => {
@@ -51,7 +52,7 @@ beforeEach(async () => {
   api.clipboardPin.mockResolvedValue(undefined)
   memoryRenderer.render(h(Component), root); await flushComponent()
 })
-afterEach(() => { memoryRenderer.render(null, root) })
+afterEach(() => { memoryRenderer.render(null, root); vi.useRealTimers() })
 
 it('清空确认和导出弹窗先响应 Esc，焦点不在弹窗内也不直接退出主窗口', async () => {
   const text = (node: MemoryNode): string => node.text + node.children.map(text).join('')
@@ -127,4 +128,27 @@ it('中途失败停止创建，显示已完成数量，允许用户继续操作'
   expect(api.clipboardPin.mock.calls).toEqual([[2], [1]])
   expect(findNode(root, node => node.props.role === 'alert')?.text).toContain('已创建 1 张贴图')
   expect(pinButton().props.disabled).toBe(false)
+})
+
+it('剪贴板变更事件静默刷新，只有点击加载更多才显示转圈和禁用按钮', async () => {
+  const text = (node: MemoryNode): string => node.text + node.children.map(text).join('')
+  memoryRenderer.render(null, root)
+  const page: { items: { id: number; kind: string }[]; nextCursor: string | null } = { items: [{ id: 1, kind: 'text' }], nextCursor: 'next' }
+  api.clipboardList.mockResolvedValueOnce(page)
+  memoryRenderer.render(h(Component), root); await flushComponent()
+  vi.useFakeTimers()
+  let complete!: (value: typeof page) => void
+  api.clipboardList.mockImplementationOnce(() => new Promise(resolve => { complete = resolve }))
+  clipboardEvents.changed()
+  await vi.advanceTimersByTimeAsync(100)
+  expect(findNode(root, node => node.props['aria-label'] === '加载更多')!.props.disabled).toBe(false)
+  expect(findNode(root, node => node.type === 'button' && text(node) === '刷新')!.props.disabled).toBe(false)
+  expect(findNode(root, node => node.props['aria-label'] === '加载中…')).toBeUndefined()
+  expect(findNode(root, node => node.props['data-id'] === 1)).toBeDefined()
+  complete(page); await flushComponent()
+  api.clipboardList.mockImplementationOnce(() => new Promise(resolve => { complete = resolve }))
+  findNode(root, node => node.props['aria-label'] === '加载更多')!.props.onClick()
+  await flushComponent()
+  expect(findNode(root, node => node.props['aria-label'] === '加载中…')!.props.disabled).toBe(true)
+  complete({ ...page, nextCursor: null }); await flushComponent()
 })

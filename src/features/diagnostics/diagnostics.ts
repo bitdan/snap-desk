@@ -5,8 +5,7 @@ export interface LogQuery { limit: number; level: LogLevel | null; module: LogMo
 export interface LogEntry { timestamp: string; level: LogLevel; module: LogModule; message: string }
 export interface RecentLogs { entries: LogEntry[]; scannedBytes: number; omittedLines: number; truncated: boolean }
 export interface DiagnosticsStatus {
-  level: 'INFO' | 'DEBUG'
-  debugRemainingSeconds: number
+  level: LogLevel
   directory: string | null
   error: string | null
   totalBytes: number
@@ -20,9 +19,4 @@ export interface ClearArchivesResult { cancelled: boolean; deleted: number; fail
 export function searchLogs(entries: LogEntry[], search: string): LogEntry[] {
   const term = search.trim().toLowerCase()
   return term ? entries.filter(entry => entry.message.toLowerCase().includes(term)) : entries
-}
-
-/** 只用于界面倒计时；实际写盘级别始终由后端单调时钟决定。 */
-export function debugSeconds(remaining: number, loadedAt: number, now: number): number {
-  return Math.max(0, remaining - Math.floor(Math.max(0, now - loadedAt) / 1000))
 }

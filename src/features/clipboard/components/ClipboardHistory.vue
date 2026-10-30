@@ -39,6 +39,7 @@ const favorites = computed(() => category.value === 'favorites')
 const categories = [{ value: '' as const, label: '全部', icon: ClipboardList }, { value: 'text' as const, label: '文本', icon: Type }, { value: 'image' as const, label: '图像', icon: Image }, { value: 'file' as const, label: '文件', icon: Files }, { value: 'favorites' as const, label: '收藏', icon: Star }]
 const canExport = computed(() => selected.value.length > 0 && selected.value.every(id => ['text', 'image'].includes(selectedItems.value[id]?.kind)))
 const busy = ref(false), loading = ref(false), error = ref(''), message = ref('')
+const foregroundLoading = ref(false), loadingMore = ref(false)
 const confirm = ref<'delete' | 'clear' | null>(null), includeFavorites = ref(false), exportOpen = ref(false)
 const helpOpen = ref(false)
 useEscapeLayer(() => !!confirm.value, () => { if (!busy.value) confirm.value = null })
@@ -98,9 +99,10 @@ function selectItem(item: Item, gesture: ClipboardSelectionGesture = { toggle: t
 }
 let revision = 0, disposed = false, refreshTimer: ReturnType<typeof setTimeout> | undefined
 const disposers: (() => void)[] = []
-async function refresh(append = false) {
+async function refresh(append = false, background = false) {
   if (!desktop || disposed) return
   const request = ++revision; loading.value = true
+  foregroundLoading.value = !background; loadingMore.value = append
   try {
     const [page, state] = await Promise.all([api.clipboardList({ keyword: keyword.value, kind: kind.value || undefined, favoritesOnly: favorites.value, limit: 40, cursor: append ? cursor.value ?? undefined : undefined }), api.clipboardStatus()])
     if (disposed || request !== revision) return
@@ -108,11 +110,15 @@ async function refresh(append = false) {
     items.value = [...(append ? items.value : []), ...page.items.filter(item => !seen.has(item.id))]
     cursor.value = page.nextCursor; status.value = state
   } catch (e) { if (!disposed && request === revision) error.value = String(e) }
-  finally { if (request === revision) loading.value = false }
+  finally { if (request === revision) { loading.value = false; foregroundLoading.value = false; loadingMore.value = false } }
 }
 function scheduleRefresh() {
   clearTimeout(refreshTimer)
-  refreshTimer = setTimeout(() => { void refresh() }, 100)
+  refreshTimer = setTimeout(() => {
+    // 内容变更静默更新；用户正在查询时延后，避免后台事件抢占前台加载状态。
+    if (loading.value) { scheduleRefresh(); return }
+    void refresh(false, true)
+  }, 100)
 }
 // 输入停顿后查询；分类立即生效，清除旧选择和旧请求，避免显示过期结果。
 function applyFilter() {
@@ -183,7 +189,7 @@ onUnmounted(() => { disposed = true; revision++; clearTimeout(refreshTimer); dis
   <section class="clipboard-history" @keydown="navigate">
     <header class="history-header">
       <span class="history-count">{{ status?.count ?? 0 }} {{ t("条 ·") }} {{ ((status?.byteSize ?? 0) / 1048576).toFixed(1) }} MiB</span>
-      <div class="history-header-actions"><Button variant="ghost" :disabled="busy || loading || !desktop" @click="refresh()">{{ t("刷新") }}</Button><Button variant="ghost" class="history-clear" :disabled="busy || !status?.count" @click="confirm = 'clear'; includeFavorites = false">{{ t("清空") }}</Button></div>
+      <div class="history-header-actions"><Button variant="ghost" :disabled="busy || foregroundLoading || !desktop" @click="refresh()">{{ t("刷新") }}</Button><Button variant="ghost" class="history-clear" :disabled="busy || !status?.count" @click="confirm = 'clear'; includeFavorites = false">{{ t("清空") }}</Button></div>
       <label class="history-recording"><span>{{ status?.enabled ? t("正在记录") : t("已暂停") }}</span><input type="checkbox" role="switch" :aria-label='t("记录剪贴板历史")' :checked="status?.enabled ?? false" :disabled="busy || !desktop || !status?.supported" @click.prevent="configure(!status?.enabled)" /><span class="recording-track" aria-hidden="true"></span></label>
     </header>
     <p v-if="status && !status.supported" class="notice">{{ t("当前平台尚未支持自动监听；现有手动贴图不受影响。") }}</p>
@@ -229,14 +235,14 @@ onUnmounted(() => { disposed = true; revision++; clearTimeout(refreshTimer); dis
     </DialogContent>
     </DialogPortal>
     <div class="history-browser">
-    <VirtualClipboardList ref="list" :items="items" :layout="layout" role="region" :aria-label='t("历史记录列表")' :aria-busy="loading">
+    <VirtualClipboardList ref="list" :items="items" :layout="layout" role="region" :aria-label='t("历史记录列表")' :aria-busy="foregroundLoading">
       <template #default="{ item }">
       <ClipboardItem :item="item" :selected="selected.includes(item.id)" :busy="busy" @select="selectItem(item, $event)" @preview="previewItem = item" @restore="run(() => api.clipboardRestore(item.id), '已复制。')" @delete="selected = [item.id]; selectedItems = { [item.id]: item }; confirm = 'delete'" @pin="run(() => api.clipboardPin(item.id))" @favorite="run(async () => { await api.clipboardFavorite(item.id, !item.favorite); await refresh() })" />
       </template>
       <template #footer>
-      <p v-if="!items.length" class="history-empty">{{ loading ? t("正在加载…") : keyword || category ? t("没有匹配的记录，试试其他关键词或分类。") : status?.enabled ? t("暂无记录，复制文字或图片后会显示在这里。") : t("暂无记录，开启右上方开关后开始记录。") }}</p>
+      <p v-if="!items.length" class="history-empty">{{ foregroundLoading ? t("正在加载…") : keyword || category ? t("没有匹配的记录，试试其他关键词或分类。") : status?.enabled ? t("暂无记录，复制文字或图片后会显示在这里。") : t("暂无记录，开启右上方开关后开始记录。") }}</p>
       <div v-if="cursor" class="history-load-more">
-        <Button variant="ghost" :disabled="loading || busy" :aria-label="loading ? t('加载中…') : t('加载更多')" :title="t('加载更多')" @click="refresh(true)"><LoaderCircle v-if="loading" :size="18" class="history-spinner" /><Ellipsis v-else :size="22" /></Button>
+        <Button variant="ghost" :disabled="foregroundLoading || busy" :aria-label="loadingMore ? t('加载中…') : t('加载更多')" :title="t('加载更多')" @click="refresh(true)"><LoaderCircle v-if="loadingMore" :size="18" class="history-spinner" /><Ellipsis v-else :size="22" /></Button>
       </div>
       </template>
     </VirtualClipboardList>
