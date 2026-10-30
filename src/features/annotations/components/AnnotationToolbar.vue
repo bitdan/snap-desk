@@ -178,9 +178,11 @@ function value(event: Event) { return (event.target as HTMLInputElement).value }
 <style scoped>
 .annotation-tools { min-width: 0; max-width: 100%; font: 13px 'Segoe UI', 'Microsoft YaHei', sans-serif; color:#24292f; background:#f6f7f8; border-radius:5px; }
 .annotation-tool-row { display: flex; align-items: center; gap: 3px; min-height: 36px; white-space: nowrap; overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; }
-.annotation-tool-row > * { flex-shrink: 0; }
+/* 工具使用 CSS 像素，图片缩放或宿主变窄只改变可见区域，不压缩按钮和控件。 */
+.annotation-tool-row > * { flex: 0 0 auto; }
+.annotation-tools :deep(svg) { flex: 0 0 auto; }
 .annotation-tools :deep(button), .annotation-tools select { display: inline-flex; align-items: center; justify-content: center; height: 32px; padding: 3px 6px; border-radius: 5px; color: inherit; background: transparent; }
-.annotation-tools :deep(button) { border: 0; gap: 4px; font: inherit; min-width: 32px; position: relative; }
+.annotation-tools :deep(button) { flex: 0 0 auto; border: 0; gap: 4px; font: 13px 'Segoe UI', 'Microsoft YaHei', sans-serif; min-width: 32px; position: relative; }
 .annotation-tools :deep(button:hover:not(:disabled)) { background: #eff6ff; }
 .annotation-tools :deep(button[aria-pressed=true]) { color: #2563eb; background: #dbeafe; }
 .annotation-tools :deep(:focus-visible) { outline: 2px solid #2563eb; outline-offset: -2px; }
@@ -193,7 +195,8 @@ function value(event: Event) { return (event.target as HTMLInputElement).value }
 .annotation-action-row { border-top:1px solid #e1e4e8; padding-top:3px; }
 .annotation-options { gap: 10px; border-top: 1px solid #f4f4f5; }
 .annotation-tools label { display: inline-flex; align-items: center; gap: 3px; }
-.annotation-tools input { color: #374151; background: white; border: 1px solid #d4d4d8; border-radius: 3px; height: 28px; }
+.annotation-tools label > * { flex: 0 0 auto; }
+.annotation-tools input { flex: 0 0 auto; font: 13px 'Segoe UI', 'Microsoft YaHei', sans-serif; color: #374151; background: white; border: 1px solid #d4d4d8; border-radius: 3px; height: 28px; }
 .annotation-tools input[type=color] { width: 28px; padding: 1px; }
 .annotation-tools input[type=number] { width: 44px; }
 .annotation-text { width: 190px; padding: 2px 6px; }

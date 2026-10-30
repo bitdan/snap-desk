@@ -1003,5 +1003,10 @@
   "收起窗口后仍在托盘运行；退出应用请用托盘菜单。": "The app keeps running in the tray when hidden. Use the tray menu to quit.",
   "以后可从“帮助”重新打开引导。": "Reopen this guide anytime from Help.",
   "滚动截图：框选正文后慢慢滚动": "Scroll capture: select the content, then scroll slowly",
-  "暂无新增": "No new content"
+  "暂无新增": "No new content",
+  "贴图，右键打开菜单": "Pin; right-click to open the menu",
+  "拖动移动 · 滚轮缩放 · 右键菜单 · Esc 隐藏": "Drag to move · Wheel to zoom · Right-click for menu · Esc to hide",
+  "窗口置顶": "Always on top",
+  "显示工具栏": "Show toolbar",
+  "鼠标穿透": "Click-through"
 }

@@ -4,13 +4,12 @@ import { handleWindowEscape as handleEscape } from '@/shared/ui/escape'
 import { useEscapeLayer } from '@/shared/ui/use-escape-layer'
 import { t, te } from '@/shared/i18n/i18n'
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
-import { Pin, PinOff, Lock, Unlock, Minus, Plus, Copy, Save, EyeOff, X, ChevronDown, ChevronUp, Move, Undo2, Redo2, Trash2 } from 'lucide-vue-next'
+import { Pin, PinOff, Lock, Unlock, Minus, Plus, Copy, Save, EyeOff, X, ChevronDown, ChevronUp, Move, Check } from 'lucide-vue-next'
 import PinRecognition from '@/features/recognition/components/PinRecognition.vue'
 import AnnotationSurface from '@/features/annotations/components/AnnotationSurface.vue'
 import AnnotationToolbar from '@/features/annotations/components/AnnotationToolbar.vue'
 import { useFloatingToolbar } from '@/features/annotations/toolbar-layout'
 import { useAnnotations, type AnnotationTool } from '@/features/annotations/use-annotations'
-import { annotationTools } from '@/features/annotations/annotation-tools'
 import { api, onPinVisibility } from '@/services/api'
 import { usePinImage } from '@/features/pins/pin-image'
 import type { PinView, PinAction, PinTransform } from '@/features/pins/types'
@@ -143,7 +142,7 @@ function closeMenu(restoreFocus = false) {
   contextMenu.value = null
   if (restoreFocus) menuTrigger?.focus({ preventScroll: true })
 }
-/** 工具收起时从右键进入编辑，先让原生窗口为底栏留出空间。 */
+/** 选中标注工具时先为底栏留出空间；右键菜单仅保留图片和窗口操作。 */
 async function startEditing(tool: AnnotationTool = 'edit') {
   closeMenu(true)
   if (!editable.value) return
@@ -277,7 +276,7 @@ function closeOnResize() {
 
 <template>
   <div class="pin-shell" :class="{ 'is-focused': focused, 'controls-visible': controlsHovered || !!error || !!message }" :style="shellStyle" @pointerleave="hideControls" @contextmenu.prevent>
-    <div v-show="imageReady" class="pin-stage" :inert="!!recognitionMode" tabindex="0" :aria-label='t("贴图，右键编辑标注")' :style="[stageStyle, pinAppearanceStyle(appearance, display.stageWidth, display.stageHeight, frame?.view.opacity ?? 1, focused)]" @pointerenter="keepControlsVisible" @pointerleave="scheduleControlsHide" @pointerdown="drag" @wheel.prevent="wheel" @contextmenu.capture="openMenu">
+    <div v-show="imageReady" class="pin-stage" :inert="!!recognitionMode" tabindex="0" :aria-label='t("贴图，右键打开菜单")' :style="[stageStyle, pinAppearanceStyle(appearance, display.stageWidth, display.stageHeight, frame?.view.opacity ?? 1, focused)]" @pointerenter="keepControlsVisible" @pointerleave="scheduleControlsHide" @pointerdown="drag" @wheel.prevent="wheel" @contextmenu.capture="openMenu">
       <div v-if="frame" class="pin-canvas">
         <div class="pin-image-content" :style="{ width: `${display.imageWidth}px`, height: `${display.imageHeight}px`, opacity: frame.view.opacity }">
           <img v-if="frame.dataUrl" :src="frame.dataUrl" :alt='t("桌面贴图")' draggable="false" @load="imageLoaded" @error="error = '贴图预览加载失败，可关闭后重新贴图。'" />
@@ -315,33 +314,25 @@ function closeOnResize() {
       <button v-else class="pin-toggle" :disabled="busy" :title='t("展开贴图工具（右键）")' @click="toggleControls"><ChevronUp :size="16" />{{ t("工具") }}</button>
       <p v-if="error" role="alert" class="pin-status pin-error" :title="te(error)">{{ te(error) }}</p>
       <p v-else-if="message" role="status" class="pin-status" :title="t(message)">{{ t(message) }}</p>
-      <p v-else-if="controls && !annotating" class="pin-status">{{ t("拖动移动 · 滚轮缩放 · 右键编辑 · Esc 隐藏") }}</p>
+      <p v-else-if="controls && !annotating" class="pin-status">{{ t("拖动移动 · 滚轮缩放 · 右键菜单 · Esc 隐藏") }}</p>
     </section>
     <p v-if="frame?.view.clickThrough" class="pin-pass-through" role="status">{{ t('鼠标穿透中 · 用全局贴图快捷键或托盘恢复') }}</p>
     <PinRecognition v-if="frame && recognitionMode" :frame="frame" :mode="recognitionMode" @close="closeRecognition" />
     <div v-if="contextMenu" ref="menuElement" class="pin-context-menu" role="menu" :aria-label='t("贴图菜单")' :style="{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }" @pointerdown.stop @contextmenu.stop.prevent @keydown.stop="menuKey">
-      <div class="context-annotation-tools" role="group" :aria-label='t("标注工具")'>
-        <button v-for="item in annotationTools" :key="item.tool" role="menuitemradio" :aria-checked="annotating && editor.tool === item.tool" :disabled="!editable" @click="startEditing(item.tool)"><component :is="item.icon" :size="16" />{{ t(item.name) }}</button>
-      </div>
+      <button role="menuitem" :disabled="busy || editor.pending || editor.interacting" @click="recognize('ocr', $event)">{{ t("识别文字") }}</button>
+      <button role="menuitem" :disabled="busy || editor.pending || editor.interacting" @click="recognize('qr', $event)">{{ t("识别二维码") }}</button>
+      <button role="menuitem" :disabled="busy || editor.pending || editor.interacting" @click="recognize('translate', $event)">{{ t("翻译图片") }}</button>
       <div role="separator" />
-      <button role="menuitem" :disabled="!editable || !editor.history.past.length" @click="closeMenu(true); editor.travel('undo')"><Undo2 :size="16" />{{ t("撤销标注") }}</button>
-      <button role="menuitem" :disabled="!editable || !editor.history.future.length" @click="closeMenu(true); editor.travel('redo')"><Redo2 :size="16" />{{ t("重做标注") }}</button>
-      <button role="menuitem" :disabled="!editable || editor.selected < 0" @click="closeMenu(true); editor.remove()"><Trash2 :size="16" />{{ t("删除选中标注") }}</button>
-      <button role="menuitem" :disabled="!editable || !editor.history.present.length" @click="closeMenu(true); editor.clear()"><Trash2 :size="16" />{{ t("清空标注") }}</button>
-      <button v-if="annotating" role="menuitem" @click="closeMenu(true); annotating = false">{{ t("完成标注") }}</button>
-      <button role="menuitem" @click="closeMenu(true); setView({ locked: !frame!.view.locked })"><component :is="frame?.view.locked ? Unlock : Lock" :size="16" />{{ frame?.view.locked ? t("解锁贴图") : t("锁定贴图") }}</button>
+      <button role="menuitem" @click="closeMenu(true); action('copy')">{{ t("复制图片") }}<span>Ctrl/⌘+C</span></button>
+      <button role="menuitem" @click="closeMenu(true); action('save')">{{ t("保存图片") }}<span>Ctrl/⌘+S</span></button>
       <div role="separator" />
-      <button role="menuitem" @click="recognize('ocr', $event)">{{ t("识别文字") }}</button>
-      <button role="menuitem" @click="recognize('qr', $event)">{{ t("识别二维码") }}</button>
-      <button role="menuitem" @click="recognize('translate', $event)">{{ t("翻译图片") }}</button>
-      <button role="menuitem" @click="closeMenu(true); action('copy')"><Copy :size="16" />{{ t("复制图片") }}<span>Ctrl/⌘+C</span></button>
-      <button role="menuitem" @click="closeMenu(true); action('save')"><Save :size="16" />{{ t("保存图片") }}<span>Ctrl/⌘+S</span></button>
-      <button role="menuitem" @click="closeMenu(true); toggleControls()"><ChevronDown :size="16" />{{ controls ? t("收起工具栏") : t("展开工具栏") }}</button>
+      <button role="menuitemcheckbox" :aria-checked="frame?.view.topmost" :disabled="busy || editor.pending || editor.interacting" @click="closeMenu(true); setView({ topmost: !frame?.view.topmost })"><Check v-if="frame?.view.topmost" :size="14" class="menu-check" aria-hidden="true" />{{ t("窗口置顶") }}</button>
+      <button role="menuitemcheckbox" :aria-checked="frame?.view.locked" :disabled="busy || editor.pending || editor.interacting" @click="closeMenu(true); setView({ locked: !frame?.view.locked })"><Check v-if="frame?.view.locked" :size="14" class="menu-check" aria-hidden="true" />{{ t("锁定贴图") }}</button>
+      <button role="menuitemcheckbox" :aria-checked="controls" :disabled="busy || editor.pending || editor.interacting" @click="closeMenu(true); toggleControls()"><Check v-if="controls" :size="14" class="menu-check" aria-hidden="true" />{{ t("显示工具栏") }}<span>Tab</span></button>
+      <button role="menuitemcheckbox" :aria-checked="!!frame?.view.clickThrough" :disabled="busy || editor.pending || editor.interacting" :title="t('用全局贴图快捷键或托盘恢复鼠标操作')" @click="closeMenu(); setView({ clickThrough: !frame?.view.clickThrough })"><Check v-if="frame?.view.clickThrough" :size="14" class="menu-check" aria-hidden="true" />{{ t("鼠标穿透") }}<span>Ctrl+Alt+P</span></button>
       <div role="separator" />
-      <button role="menuitemcheckbox" :aria-checked="!!frame?.view.clickThrough" :disabled="busy || editor.pending || editor.interacting" @click="closeMenu(); setView({ clickThrough: !frame?.view.clickThrough })">{{ t('鼠标穿透（Ctrl+Alt+P）') }}</button>
-      <p class="pin-status">{{ t('用全局贴图快捷键或托盘恢复鼠标操作') }}</p>
-      <button role="menuitem" @click="closeMenu(true); action('hide')"><EyeOff :size="16" />{{ t("隐藏贴图") }}</button>
-      <button role="menuitem" @click="closeMenu(true); action('close')"><X :size="16" />{{ t("关闭贴图") }}</button>
+      <button role="menuitem" @click="closeMenu(true); action('hide')">{{ t("隐藏贴图") }}<span>Esc</span></button>
+      <button role="menuitem" @click="closeMenu(true); action('close')">{{ t("关闭贴图") }}<span>Ctrl/⌘+W</span></button>
     </div>
   </div>
 </template>
@@ -350,17 +341,21 @@ function closeOnResize() {
 .pin-pass-through { position: fixed; top: 4px; left: 8px; right: 8px; margin: 0; padding: 4px 8px; background: #fff; color: #24292f; border: 1px solid #d1d5db; font-size: 12px; pointer-events: none; z-index: 20; }
 .pin-shell { position: fixed; inset: 0; display: grid; justify-items: center; color: #374151; user-select: none; }
 .pin-stage { grid-row: 1; min-width: 0; min-height: 0; align-self: start; justify-self: start; overflow: auto; border-style: solid; border-color: #a1a1aa; transition: border-color .12s, box-shadow .12s, border-radius .12s; }
+/* 缩放及窄窗口时只隐藏滚动条，保留原有滚动与键盘聚焦能力。 */
+.pin-stage, .pin-controls, .pin-row, .pin-controls :deep(.annotation-tool-row) { scrollbar-width: none; }
+.pin-stage::-webkit-scrollbar, .pin-controls::-webkit-scrollbar, .pin-row::-webkit-scrollbar, .pin-controls :deep(.annotation-tool-row::-webkit-scrollbar) { display: none; }
 .pin-stage:focus-visible { outline:2px solid #3264df; outline-offset:2px; }
 .pin-canvas { display: flex; align-items: center; justify-content: center; min-width: 100%; min-height: 100%; width: max-content; height: max-content; }
 .pin-canvas img { flex: none; max-width: none; }
 .pin-image-content { position: relative; flex: none; }
 .pin-image-content img { display: block; width: 100%; height: 100%; }
-.pin-controls { grid-row: 2; min-width: 0; width: max-content; max-width: 100%; height: 100%; justify-self: center; overflow: auto; scrollbar-width: thin; padding: 4px 6px; border: 1px solid #d4d4d8; border-radius: 7px; background: #fffffff5; box-shadow: 0 2px 6px #0002; font: 13px 'Segoe UI', 'Microsoft YaHei', sans-serif; }
+.pin-controls { grid-row: 2; min-width: 0; width: max-content; max-width: 100%; height: 100%; justify-self: center; overflow: auto; padding: 4px 6px; border: 1px solid #d4d4d8; border-radius: 7px; background: #fffffff5; box-shadow: 0 2px 6px #0002; font: 13px 'Segoe UI', 'Microsoft YaHei', sans-serif; }
 /* 隐藏时保留底栏占位，避免图片跳动；键盘焦点仍可唤出工具。 */
 .pin-shell:not(.controls-visible):not(:has(:focus-visible)) .pin-controls:not(.floating) { visibility: hidden; pointer-events: none; }
-.pin-row { display: flex; align-items: center; gap: 3px; height: 34px; overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; white-space: nowrap; }
+.pin-row { display: flex; align-items: center; gap: 3px; height: 34px; overflow-x: auto; overflow-y: hidden; white-space: nowrap; }
 .pin-row > * { flex-shrink: 0; }
-.pin-controls button { display: inline-flex; align-items: center; justify-content: center; gap: 4px; height: 32px; min-width: 32px; padding: 3px 5px; border-radius: 4px; }
+.pin-controls button { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; gap: 4px; height: 32px; min-width: 32px; padding: 3px 5px; border-radius: 4px; }
+.pin-controls :deep(svg) { flex: 0 0 auto; }
 .pin-controls button:hover { background: #eff6ff; }
 .pin-controls button:disabled { opacity: .45; }
 .pin-controls button[aria-pressed=true] { color: #2563eb; background: #dbeafe; }
@@ -369,17 +364,16 @@ function closeOnResize() {
 .pin-options { gap: 8px; min-height: 36px; }
 .pin-options select { background: transparent; max-width: 100px; height: 26px; }
 .pin-opacity { display: flex; align-items: center; gap: 4px; }
-.pin-opacity input { width: 64px; accent-color: #2563eb; }
+.pin-opacity input { flex: 0 0 64px; width: 64px; accent-color: #2563eb; }
 .pin-dimensions { color: #71717a; }
 .pin-status { line-height: 16px; margin: 0; font-size: 10px; color: #71717a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pin-error { color: #b91c1c; }
 .collapsed { display: flex; align-items: center; gap: 8px; }
 .collapsed .pin-status { min-width: 0; }
 .pin-toggle { flex-shrink: 0; }
-.pin-context-menu { position: fixed; z-index: 20; width: 278px; max-width: calc(100vw - 8px); max-height: calc(100vh - 8px); overflow-y: auto; padding: 5px; border: 1px solid #e4e4e7; border-radius: 8px; background: #fff; box-shadow: 0 4px 18px #0003; font-size: 12px; }
-.context-annotation-tools { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 2px; }
-.pin-context-menu button[aria-checked=true] { color: #2563eb; background: #dbeafe; }
-.pin-context-menu button { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 30px; padding: 5px 8px; border-radius: 4px; text-align: left; }
+.pin-context-menu { position: fixed; z-index: 20; width: 224px; max-width: calc(100vw - 8px); max-height: calc(100vh - 8px); overflow-y: auto; padding: 5px; border: 1px solid #e4e4e7; border-radius: 8px; background: #fff; box-shadow: 0 4px 18px #0003; font-size: 12px; }
+.pin-context-menu .menu-check { position: absolute; left: 8px; top: 50%; transform: translateY(-50%); color: #2563eb; }
+.pin-context-menu button { position: relative; display: flex; align-items: center; gap: 8px; width: 100%; min-height: 28px; padding: 4px 8px 4px 28px; border-radius: 4px; text-align: left; }
 .pin-context-menu button:hover:not(:disabled), .pin-context-menu button:focus-visible { background: #eff6ff; color: #2563eb; outline: none; }
 .pin-context-menu button:disabled { opacity: .4; }
 .pin-context-menu button span { margin-left: auto; color: #a1a1aa; font-size: 10px; }
