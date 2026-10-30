@@ -330,9 +330,6 @@ pub fn sanitize(line: &str) -> Option<Entry> {
                 "unknown",
             ]
             .contains(&value),
-            "previous_started_ms" | "previous_pid" if event == "app.previous_exit_unclean" => {
-                value.parse::<u64>().is_ok()
-            }
             "reason" if event == "recording.timestamp_rejected" => value == "before_start",
             "generation" if event == "recording.timestamp_rejected" => value.parse::<u64>().is_ok(),
             "source_offset_ms" if event == "recording.timestamp_rejected" => value.parse::<i64>().is_ok(),
@@ -456,14 +453,11 @@ mod tests {
         for event in ["capture.prepared", "capture.visible", "capture.native_replaced"] { assert!(sanitize(&line.replace("capture.interactive", event)).is_some()); }
     }
     #[test]
-    fn abnormal_exit_log_preserves_only_numeric_run_identity() {
+    fn retired_abnormal_exit_event_is_not_exported() {
+        // 异常退出探测已移除，旧日志中的事件不再进入当前诊断导出白名单。
         let line = "2026-10-23T16:00:00+08:00 [WARN] [app] event=app.previous_exit_unclean module=app previous_started_ms=1792727969001 previous_pid=42 path=private";
-        assert_eq!(
-            sanitize(line).unwrap().message,
-            "event=app.previous_exit_unclean previous_started_ms=1792727969001 previous_pid=42"
-        );
-        let invalid = line.replace("previous_pid=42", "previous_pid=private");
-        assert!(!sanitize(&invalid).unwrap().message.contains("previous_pid"));
+        assert!(sanitize(line).is_none());
+        assert!(sanitize(&line.replace("previous_pid=42", "previous_pid=private")).is_none());
     }
     #[test]
     fn pin_memory_diagnostics_keep_only_counts_and_known_reasons() {

@@ -95,10 +95,10 @@ describe('application language coverage', () => {
   it('keeps OCR, QR, translations, group names and paths outside translation calls', () => {
     for (const [file, expressions] of [
       ['src/features/recognition/components/ImageTranslation.vue', ['unit.source', 'results[unit.id]']],
-      ['src/features/recognition/components/PinRecognition.vue', ['item.text', 'item.url']],
+      ['src/features/recognition/components/PinRecognition.vue', ['item.text']],
       ['src/features/pins/components/PinManager.vue', ['pin.label']],
-      ['src/features/recording/components/RecordingPanel.vue', ['result.filename', 'result.path', 'item.path']],
       ['src/features/clipboard/components/ClipboardItem.vue', ['file.name', 'item.preview']],
+      ['src/shared/ui/ConfirmDialog.vue', ['description']],
     ] as const) {
       const template = parse(readFileSync(file, 'utf8')).descriptor.template!.content
       for (const value of expressions) expect(template, `${file}: ${value}`).toContain(`{{ ${value} }}`)

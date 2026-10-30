@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs'
 import { parse } from '@vue/compiler-sfc'
 import ts from 'typescript'
 import { webcrypto } from 'node:crypto'
+import { appearance } from '../../src/shared/ui/appearance'
 import { handleEscape } from '../../src/shared/ui/escape'
 import { defaultAiSettings } from '../../src/features/recognition/ai'
 import { clientComponent, MemoryNode, memoryRenderer, findNode, flushComponent } from '../helpers/component-host'
@@ -52,9 +53,23 @@ beforeEach(() => {
   api.translateText.mockReturnValue(new Promise(() => {}))
   api.cancelAiJob.mockRejectedValue(new Error('already finished'))
 })
-afterEach(() => { memoryRenderer.render(null, root); vi.unstubAllGlobals() })
+afterEach(() => { memoryRenderer.render(null, root); appearance.value.language = 'zh-CN'; vi.unstubAllGlobals() })
 
 describe('识别与翻译面板真实交互', () => {
+  it('二维码确认框切换语言只翻译提示，保留链接中的中文原文', async () => {
+    const url = 'https://example.com/保存图片?内容=正在处理…'
+    api.recognizePinQr.mockResolvedValue({ id: 7, items: [{ text: url, url }] })
+    await mount('PinRecognition', { mode: 'qr' })
+    findNode(root, node => node.type === 'button' && content(node) === '打开链接…')!.props.onClick()
+    await flushComponent()
+    const description = () => findNode(root, node => node.props.class === 'confirm-dialog-description')!
+    expect(content(description())).toBe(`将在浏览器打开：\n${url}`)
+    appearance.value.language = 'en'; await flushComponent()
+    expect(content(description())).toBe(`Open in your browser: \n${url}`)
+    expect(api.pinQrAction).not.toHaveBeenCalled()
+    appearance.value.language = 'zh-CN'; await flushComponent()
+    expect(content(description())).toBe(`将在浏览器打开：\n${url}`)
+  })
   it('二维码打开链接使用独立确认框，Esc 只取消确认，失败留在框内可重试', async () => {
     api.recognizePinQr.mockResolvedValue({ id: 7, items: [{ text: 'https://example.com', url: 'https://example.com' }] })
     const panel = await mount('PinRecognition', { mode: 'qr' })

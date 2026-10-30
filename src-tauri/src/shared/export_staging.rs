@@ -341,7 +341,7 @@ mod tests {
         let restored: Artifact = read(&record).unwrap();
         assert!(restored.finalized);
         assert_eq!(fs::read(&path).unwrap(), b"encoded-image");
-        assert_eq!(stats(&restored).unwrap().0, 13);
+        assert_eq!(fs::metadata(&restored.path).unwrap().len(), 13);
         discard(&restored, &record).unwrap();
         assert!(!path.exists());
     }
