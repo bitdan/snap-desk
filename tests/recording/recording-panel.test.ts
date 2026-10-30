@@ -39,23 +39,25 @@ beforeEach(() => {
   api.latestRecordingResult.mockResolvedValue({ id: 7, filename: 'recording.mp4', path: 'D:/recording.mp4' })
   api.currentRecordingDirectory.mockResolvedValue({ path: 'D:/', isDefault: true })
   api.recordingCapabilities.mockResolvedValue({ available: true })
-  api.recoverableRecordings.mockResolvedValue([])
+  api.recoverableRecordings.mockResolvedValue([{ id: 'pending', path: 'D:/pending/video.mp4', finalized: true, sourceExists: true, exported: null }])
 })
 afterEach(() => { memoryRenderer.render(null, root); vi.clearAllTimers(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
-describe('录屏页设置、成品与录制入口', () => {
-  it('最近完成的录屏提供打开目录和复制路径，不挂载播放器或项目编辑器', async () => {
+describe('录屏页设置与录制入口', () => {
+  it('仅显示录制设置与控制，不查询或展示最近录屏和恢复记录', async () => {
+    api.currentRecording.mockResolvedValue({ id: 9, revision: 1, phase: 'recording', seconds: 12, systemAudio: false, microphone: false, message: '' })
     memoryRenderer.render(h(Component), root); await flush()
-    expect(button('打开目录')).toBeDefined()
-    expect(button('复制路径')).toBeDefined()
-    expect(button('刷新')).toBeUndefined()
-    expect(findNode(root, node => node.text.includes('可恢复录制') || node.text.includes('暂无待恢复录制'))).toBeUndefined()
-    for (const label of ['打开录屏项目', '预览与裁剪', '预览（系统播放器）']) expect(button(label)).toBeUndefined()
-    expect(findNode(root, node => node.type === 'video')).toBeUndefined()
-    button('打开目录')!.props.onClick(); await flush()
-    expect(api.recordingResultAction).toHaveBeenCalledWith(7, 'openDirectory')
-    button('复制路径')!.props.onClick(); await flush()
-    expect(api.recordingResultAction).toHaveBeenCalledWith(7, 'copyPath')
+    for (const label of ['打开目录', '复制路径', '重试导出', '清理残留']) expect(button(label)).toBeUndefined()
+    expect(findNode(root, node => node.text.includes('最近完成的录屏') || node.text.includes('可恢复录制'))).toBeUndefined()
+    expect(api.latestRecordingResult).not.toHaveBeenCalled()
+    expect(api.recoverableRecordings).not.toHaveBeenCalled()
+
+    expect(button('停止并导出')).toBeDefined()
+    api.currentRecording.mockResolvedValue({ id: 9, revision: 2, phase: 'completed', seconds: 12, message: '' })
+    button('停止并导出')!.props.onClick(); await flush()
+    expect(button('选择录制范围')).toBeDefined()
+    expect(api.latestRecordingResult).not.toHaveBeenCalled()
+    expect(api.recoverableRecordings).not.toHaveBeenCalled()
   })
   it('保留选择录制范围入口，直接进入既有录制流程', async () => {
     memoryRenderer.render(h(Component), root); await flush()

@@ -1,17 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { recordingRegion, defaultInputEffects, newerRecording, recordingAudioStatus, recordingRecoveryStatus, recordingBitrate, recordingStats, recordingActive, recordingConfig, recordingStatus, recordingTime, type RecordingView } from '../../src/features/recording/recording'
+import { recordingRegion, defaultInputEffects, newerRecording, recordingAudioStatus, recordingBitrate, recordingStats, recordingActive, recordingConfig, recordingStatus, recordingTime, type RecordingView } from '../../src/features/recording/recording'
 
 const emptyStats = { capturePolls: 0, capturedFrames: 0, captureMillis: 0, captureCopyBytes: 0, compositionCopyBytes: 0, nv12OutputBytes: 0, throttledSamples: 0, composedFrames: 0, compositionMillis: 0, queuedFrames: 0, queueDroppedFrames: 0, staleQueuedFrames: 0, rejectedCaptureFrames: 0, rejectedComposedFrames: 0, recentFps: 0 }
 const view: RecordingView = { id: 7, revision: 3, phase: 'paused', seconds: 23, frames: 180, droppedFrames: 2, targetFps: 30, systemAudio: false, microphone: false, encodingMillis: 360, targetBitrate: 8_087_040, encoderKind: 'system', encoderFallback: null, countdownRemaining: 0, message: '', path: null, stats: emptyStats }
 describe('录屏会话状态', () => {
-  it('明确区分可导出、未封装与已导出的残留', () => {
-    const raw = { id: 'recording-pending-example', path: 'D:/video.mp4', finalized: false, stage: 'failed:recording', exported: null, sourceExists: true }
-    expect(recordingRecoveryStatus(raw)).toContain('不能直接播放')
-    expect(recordingRecoveryStatus({ ...raw, finalized: true })).toContain('可重新导出')
-    expect(recordingRecoveryStatus({ ...raw, exported: 'D:/final.mp4' })).toContain('D:/final.mp4')
-    expect(recordingRecoveryStatus({ ...raw, exported: 'D:/final.mp4' })).toContain('清理源文件残留')
-    expect(recordingRecoveryStatus({ ...raw, finalized: true, sourceExists: false })).toContain('源文件已不存在')
-  })
   it('按本次录制快照展示四种音频来源组合', () => {
     expect(recordingAudioStatus({ systemAudio: false, microphone: false })).toBe('无声')
     expect(recordingAudioStatus({ systemAudio: true, microphone: false })).toBe('系统声音')

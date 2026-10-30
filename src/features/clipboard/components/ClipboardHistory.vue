@@ -3,6 +3,7 @@ import SelectControl from '@/shared/ui/SelectControl.vue'
 import { t, te } from '@/shared/i18n/i18n'
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { DialogRoot, DialogPortal, DialogOverlay, DialogContent, DialogTitle, DialogDescription, DialogTrigger } from 'reka-ui'
+import ConfirmDialog from '@/shared/ui/ConfirmDialog.vue'
 import { PopoverRoot, PopoverTrigger, PopoverPortal, PopoverContent } from 'reka-ui'
 import { api, desktop, onClipboardChanged, onClipboardError, onClipboardState, onClipboardOpen } from '@/services/api'
 import { defaultClipboardSettings, selectClipboardItems, type ClipboardSelectionGesture, type ClipboardItem as Item, type ClipboardStatus, type ClipboardKind, type ClipboardExportOptions } from '@/features/clipboard/clipboard'
@@ -42,7 +43,6 @@ const busy = ref(false), loading = ref(false), error = ref(''), message = ref(''
 const foregroundLoading = ref(false), loadingMore = ref(false)
 const confirm = ref<'delete' | 'clear' | null>(null), includeFavorites = ref(false), exportOpen = ref(false)
 const helpOpen = ref(false)
-useEscapeLayer(() => !!confirm.value, () => { if (!busy.value) confirm.value = null })
 useEscapeLayer(() => exportOpen.value, () => { if (!busy.value) exportOpen.value = false })
 useEscapeLayer(() => helpOpen.value, () => { helpOpen.value = false })
 function exportKey(event: KeyboardEvent) { handleEscape(event, () => { if (!busy.value) exportOpen.value = false }) }
@@ -143,8 +143,16 @@ async function configure(enabled = settings.value.enabled) {
     settings.value = (await api.status()).settings.clipboard
   }, enabled ? '历史记录已开启，仅记录此后复制的内容。' : '历史记录已暂停。')
 }
+/** 确认框由模态层管理焦点；删除期间禁止关闭，失败时在框内保留原因。 */
+function updateConfirmOpen(open: boolean) {
+  if (!open && !busy.value) confirm.value = null
+}
+function requestDelete(action: 'clear' | 'delete') {
+  error.value = ''; includeFavorites.value = false; confirm.value = action
+}
 async function remove() {
   const action = confirm.value
+  if (!action || busy.value) return
   await run(async () => {
     if (action === 'clear') await api.clipboardClear(includeFavorites.value)
     else await api.clipboardDelete(selected.value)
@@ -189,7 +197,7 @@ onUnmounted(() => { disposed = true; revision++; clearTimeout(refreshTimer); dis
   <section class="clipboard-history" @keydown="navigate">
     <header class="history-header">
       <span class="history-count">{{ status?.count ?? 0 }} {{ t("条 ·") }} {{ ((status?.byteSize ?? 0) / 1048576).toFixed(1) }} MiB</span>
-      <div class="history-header-actions"><Button variant="ghost" :disabled="busy || foregroundLoading || !desktop" @click="refresh()">{{ t("刷新") }}</Button><Button variant="ghost" class="history-clear" :disabled="busy || !status?.count" @click="confirm = 'clear'; includeFavorites = false">{{ t("清空") }}</Button></div>
+      <div class="history-header-actions"><Button variant="ghost" :disabled="busy || foregroundLoading || !desktop" @click="refresh()">{{ t("刷新") }}</Button><Button variant="ghost" class="history-clear" :disabled="busy || !status?.count" @click="requestDelete('clear')">{{ t("清空") }}</Button></div>
       <label class="history-recording"><span>{{ status?.enabled ? t("正在记录") : t("已暂停") }}</span><input type="checkbox" role="switch" :aria-label='t("记录剪贴板历史")' :checked="status?.enabled ?? false" :disabled="busy || !desktop || !status?.supported" @click.prevent="configure(!status?.enabled)" /><span class="recording-track" aria-hidden="true"></span></label>
     </header>
     <p v-if="status && !status.supported" class="notice">{{ t("当前平台尚未支持自动监听；现有手动贴图不受影响。") }}</p>
@@ -216,11 +224,6 @@ onUnmounted(() => { disposed = true; revision++; clearTimeout(refreshTimer); dis
       <button type="button" :aria-pressed="layout === 'grid'" :aria-label="t('网格视图')" :title="t('网格视图')" @click="setLayout('grid')"><LayoutGrid :size="16" /></button>
     </div>
     </div>
-    <div v-if="confirm" class="notice history-danger-notice" role="alertdialog" :aria-label='t("确认删除历史")'>
-      <p>{{ confirm === 'clear' ? t("清空历史记录？默认保留收藏。") : t("删除选中的 {0} 条记录（包含选中的收藏）？", { 0: selected.length }) }} {{ t("此操作不可撤销。") }}</p>
-      <label v-if="confirm === 'clear'"><input v-model="includeFavorites" type="checkbox" />{{ t("同时删除收藏") }}</label>
-      <Button variant="destructive" :disabled="busy" @click="remove">{{ t("确认删除") }}</Button><Button variant="outline" :disabled="busy" @click="confirm = null">{{ t("取消") }}</Button>
-    </div>
     <DialogPortal>
     <DialogOverlay class="history-export-overlay" />
     <DialogContent class="history-export-dialog" @keydown.stop="exportKey" @escape-key-down="guardExportDismiss" @interact-outside="guardExportDismiss">
@@ -237,7 +240,7 @@ onUnmounted(() => { disposed = true; revision++; clearTimeout(refreshTimer); dis
     <div class="history-browser">
     <VirtualClipboardList ref="list" :items="items" :layout="layout" role="region" :aria-label='t("历史记录列表")' :aria-busy="foregroundLoading">
       <template #default="{ item }">
-      <ClipboardItem :item="item" :selected="selected.includes(item.id)" :busy="busy" @select="selectItem(item, $event)" @preview="previewItem = item" @restore="run(() => api.clipboardRestore(item.id), '已复制。')" @delete="selected = [item.id]; selectedItems = { [item.id]: item }; confirm = 'delete'" @pin="run(() => api.clipboardPin(item.id))" @favorite="run(async () => { await api.clipboardFavorite(item.id, !item.favorite); await refresh() })" />
+      <ClipboardItem :item="item" :selected="selected.includes(item.id)" :busy="busy" @select="selectItem(item, $event)" @preview="previewItem = item" @restore="run(() => api.clipboardRestore(item.id), '已复制。')" @delete="selected = [item.id]; selectedItems = { [item.id]: item }; requestDelete('delete')" @pin="run(() => api.clipboardPin(item.id))" @favorite="run(async () => { await api.clipboardFavorite(item.id, !item.favorite); await refresh() })" />
       </template>
       <template #footer>
       <p v-if="!items.length" class="history-empty">{{ foregroundLoading ? t("正在加载…") : keyword || category ? t("没有匹配的记录，试试其他关键词或分类。") : status?.enabled ? t("暂无记录，复制文字或图片后会显示在这里。") : t("暂无记录，开启右上方开关后开始记录。") }}</p>
@@ -252,19 +255,24 @@ onUnmounted(() => { disposed = true; revision++; clearTimeout(refreshTimer); dis
         <span class="history-selected-count" role="status" :title="t('已选 {0} / 100 条', { 0: selected.length })">{{ t("已选") }}<br />{{ selected.length }}</span>
         <DialogTrigger as-child><Button class="history-action" :disabled="busy || !canExport" :title="canExport ? t('组合导出') : t('组合导出仅支持文本和图片，文件引用请复制后粘贴')" :aria-label='t("组合导出所选条目")' @click="error = ''; message = ''"><Download :size="18" /></Button></DialogTrigger>
         <Button class="history-action" variant="outline" :disabled="busy || !selected.some(id => ['image', 'text'].includes(selectedItems[id]?.kind))" :title='t("悬浮贴图")' :aria-label='t("将所选文字和图片贴图")' @click="pinSelected"><Pin :size="18" /></Button>
-        <Button class="history-action history-delete" variant="outline" :disabled="busy" :title='t("删除所选")' :aria-label='t("删除所选条目")' @click="confirm = 'delete'"><Trash2 :size="18" /></Button>
+        <Button class="history-action history-delete" variant="outline" :disabled="busy" :title='t("删除所选")' :aria-label='t("删除所选条目")' @click="requestDelete('delete')"><Trash2 :size="18" /></Button>
         <Button class="history-action" variant="ghost" :disabled="busy" :title='t("取消选择")' :aria-label='t("取消选择")' @click="selected = []; selectedItems = {}"><X :size="18" /></Button>
       </template>
     </aside>
     </div>
   </section>
   </DialogRoot>
+  <ConfirmDialog :open="!!confirm" :title="confirm === 'clear' ? t('清空') : t('删除所选')" :description="(confirm === 'clear' ? t('清空历史记录？默认保留收藏。') : t('删除选中的 {0} 条记录（包含选中的收藏）？', { 0: selected.length })) + ' ' + t('此操作不可撤销。')" :confirm-label="t('确认删除')" :busy="busy" destructive :error="te(error)" @update:open="updateConfirmOpen" @confirm="remove">
+    <label v-if="confirm === 'clear'" class="history-confirm-option"><input v-model="includeFavorites" type="checkbox" :disabled="busy" />{{ t("同时删除收藏") }}</label>
+  </ConfirmDialog>
   <ClipboardPreview :item="previewItem" @close="closePreview" />
 </template>
 <style>
 .history-export-overlay { position:fixed; inset:0; z-index:110; background:#0006; }
 .history-export-dialog { position:fixed; z-index:111; top:50%; left:50%; transform:translate(-50%,-50%); width:min(600px, calc(100vw - 32px)); max-height:calc(100vh - 32px); overflow-y:auto; border:1px solid #d8dee4; border-radius:6px; background:#fff; box-shadow:0 12px 40px #0003; font-size:13px; }
 .history-export-dialog { padding:20px; }
+.history-confirm-option { display:flex; align-items:center; gap:8px; min-height:32px; }
+.history-confirm-option input[type=checkbox] { width:16px; height:16px; margin:0; accent-color:#2563eb; }
 .history-export-title { font-size:18px; font-weight:600; }
 .history-export-description { margin:8px 0 16px; color:#57606a; font-size:12px; }
 .history-export-dialog input, .history-export-dialog select { border:1px solid #d4d4d8; border-radius:4px; padding:6px; max-width:100%; }
@@ -341,6 +349,5 @@ onUnmounted(() => { disposed = true; revision++; clearTimeout(refreshTimer); dis
 .clipboard-history .history-clear, .clipboard-history .history-delete { color:var(--history-danger); }
 .clipboard-history .history-clear:hover:enabled, .clipboard-history .history-delete:hover:enabled { color:var(--history-danger); background:var(--history-danger-bg); }
 .clipboard-history .history-delete { border-color:var(--history-danger-border); }
-.clipboard-history .history-danger-notice { color:var(--history-danger); border-color:var(--history-danger-border); background:var(--history-danger-bg); }
 [data-theme=dark] .clipboard-history { --history-danger:#ff9c95; --history-danger-bg:#3b2327; --history-danger-border:#74414a; }
 </style>

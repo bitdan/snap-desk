@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { t, te } from '@/shared/i18n/i18n'
+import ConfirmDialog from '@/shared/ui/ConfirmDialog.vue'
 import { handleEscape } from '@/shared/ui/escape'
 import { nextTick, onMounted, onUnmounted, ref } from 'vue'
 import ImageTranslation from '@/features/recognition/components/ImageTranslation.vue'
@@ -47,7 +48,13 @@ async function qrAction(index: number, action: 'open' | 'copy') {
     message.value = action === 'copy' ? '已复制' : '已请求浏览器打开链接'
   })
 }
+function updateLinkOpen(open: boolean) { if (!open && !busy.value) pendingLink.value = null }
+function requestLink(index: number) { error.value = ''; pendingLink.value = index }
 function key(event: KeyboardEvent) {
+  if (pendingLink.value !== null) {
+    handleEscape(event, () => { if (!busy.value) pendingLink.value = null })
+    return
+  }
   // 识别处理中也允许返回贴图；迟到结果由 disposed 忽略，不重新打开面板。
   if (handleEscape(event, () => emit('close'))) return
   // 对话框内循环焦点，防止 Tab 移到背后的贴图工具。
@@ -78,16 +85,13 @@ onUnmounted(() => { disposed = true })
           <p v-if="!qr.items.length">{{ t("未发现二维码，请保留完整码及白边。") }}</p>
           <div v-for="(item, index) in qr.items" :key="index" class="qr-item">
             <p class="qr-text" dir="auto">{{ item.text }}</p>
-            <footer><button :disabled="busy" @click="qrAction(index, 'copy')">{{ t("复制内容") }}</button><button v-if="item.url" :disabled="busy" @click="pendingLink = index">{{ t("打开链接…") }}</button></footer>
-            <div v-if="pendingLink === index" role="group" :aria-label='t("确认打开链接")'>
-              <p>{{ t("将在浏览器打开：") }}<span class="qr-text">{{ item.url }}</span></p>
-              <footer><button :disabled="busy" @click="pendingLink = null">{{ t("取消") }}</button><button :disabled="busy" @click="qrAction(index, 'open')">{{ t("确认打开") }}</button></footer>
-            </div>
+            <footer><button :disabled="busy" @click="qrAction(index, 'copy')">{{ t("复制内容") }}</button><button v-if="item.url" :disabled="busy" @click="requestLink(index)">{{ t("打开链接…") }}</button></footer>
           </div>
         </template>
       </div>
       <footer><button :disabled="busy" @click="recognize">{{ t("重新识别") }}</button></footer>
     </section>
+    <ConfirmDialog :open="pendingLink !== null" :title="t('确认打开链接')" :description="t('将在浏览器打开：') + '\n' + (qr?.items[pendingLink ?? -1]?.url ?? '')" :confirm-label="t('确认打开')" :busy="busy" :error="te(error)" @update:open="updateLinkOpen" @confirm="pendingLink !== null && qrAction(pendingLink, 'open')" />
   </div>
 </template>
 

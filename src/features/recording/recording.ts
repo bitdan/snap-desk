@@ -15,12 +15,6 @@ export function recordingRegion(region: Rect, mode: RecordingSelection, displays
 export interface RecordingDirectory { path: string; isDefault: boolean }
 export interface RecoverableRecording { id: string; path: string; finalized: boolean; stage: string; exported: string | null; sourceExists: boolean }
 
-/** 未封装的数据没有可播放保证；清理已导出记录也不会删除最终输出。 */
-export function recordingRecoveryStatus(item: RecoverableRecording): string {
-  if (item.exported) return t('导出记录：{0}；可清理源文件残留', { 0: item.exported })
-  if (!item.sourceExists) return '源文件已不存在，可清理恢复记录'
-  return item.finalized ? '封装已完成，可重新导出' : '封装未完成或未确认，不能直接播放；仅保留原始数据供检查'
-}
 export function recordingAudioStatus(view: Pick<RecordingView, 'systemAudio' | 'microphone'>): string {
   return [view.systemAudio && '系统声音', view.microphone && '麦克风'].filter((value): value is string => !!value).map(value => t(value)).join(' + ') || t('无声')
 }

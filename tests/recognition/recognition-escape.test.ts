@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import ConfirmDialog from '../../src/shared/ui/ConfirmDialog.vue'
 import { h, type Component } from 'vue'
 import { readFileSync } from 'node:fs'
 import { parse } from '@vue/compiler-sfc'
@@ -7,11 +8,16 @@ import { webcrypto } from 'node:crypto'
 import { handleEscape } from '../../src/shared/ui/escape'
 import { defaultAiSettings } from '../../src/features/recognition/ai'
 import { clientComponent, MemoryNode, memoryRenderer, findNode, flushComponent } from '../helpers/component-host'
-const api = vi.hoisted(() => ({ recognizePinText: vi.fn(), recognizePinQr: vi.fn(), aiTranslationConfig: vi.fn(), translateText: vi.fn(), translateTexts: vi.fn(), cancelAiJob: vi.fn(), copyOcrText: vi.fn() }))
+const api = vi.hoisted(() => ({ recognizePinText: vi.fn(), recognizePinQr: vi.fn(), pinQrAction: vi.fn(), aiTranslationConfig: vi.fn(), translateText: vi.fn(), translateTexts: vi.fn(), cancelAiJob: vi.fn(), copyOcrText: vi.fn() }))
 vi.mock('../../src/services/api', () => ({ api }))
 vi.mock('../../src/shared/ui/button/Button.vue', async () => {
   const { defineComponent, h } = await import('vue')
   return { default: defineComponent({ inheritAttrs: false, setup: (_, { attrs, slots }) => () => h('button', attrs, slots.default?.()) }) }
+})
+vi.mock('reka-ui', async () => {
+  const { defineComponent, h } = await import('vue')
+  const pass = defineComponent({ setup: (_, { slots }) => () => h('div', slots.default?.()) })
+  return Object.fromEntries(['AlertDialogRoot', 'AlertDialogPortal', 'AlertDialogOverlay', 'AlertDialogContent', 'AlertDialogTitle', 'AlertDialogDescription', 'AlertDialogCancel'].map(name => [name, pass]))
 })
 import PinRecognition from '../../src/features/recognition/components/PinRecognition.vue'
 import ImageTranslation from '../../src/features/recognition/components/ImageTranslation.vue'
@@ -22,6 +28,7 @@ const components = { PinRecognition, ImageTranslation, TranslationPanel, OcrResu
 const recognition = { provider: 'local-ppocr', fullText: 'hello', lines: [], imageWidth: 640, imageHeight: 480 }
 const frame = { label: 'pin-1', width: 640, height: 480, dataUrl: '', view: { zoom: 1, opacity: 1, locked: false, topmost: true, toolbarExpanded: true }, annotations: [], transparencySupported: true }
 const clients: Record<string, Component> = Object.fromEntries(Object.entries(components).map(([name, component]) => [name, clientComponent(component, new URL(`../../src/features/recognition/components/${name}.vue`, import.meta.url))]))
+clientComponent(ConfirmDialog, new URL('../../src/shared/ui/ConfirmDialog.vue', import.meta.url))
 let root = new MemoryNode('root'), close = vi.fn()
 async function mount(name: keyof typeof components, overrides = {}) {
   const props = { onClose: close, text: 'hello', frame, mode: 'ocr', recognition, image: { dataUrl: '', width: 640, height: 480 }, captureResult: { id: 7, items: [] }, ...overrides }
@@ -48,6 +55,30 @@ beforeEach(() => {
 afterEach(() => { memoryRenderer.render(null, root); vi.unstubAllGlobals() })
 
 describe('识别与翻译面板真实交互', () => {
+  it('二维码打开链接使用独立确认框，Esc 只取消确认，失败留在框内可重试', async () => {
+    api.recognizePinQr.mockResolvedValue({ id: 7, items: [{ text: 'https://example.com', url: 'https://example.com' }] })
+    const panel = await mount('PinRecognition', { mode: 'qr' })
+    const open = () => findNode(root, node => node.type === 'button' && content(node) === '打开链接…')!
+    open().props.onClick(); await flushComponent()
+    expect(api.pinQrAction).not.toHaveBeenCalled()
+    let dialog = findNode(root, node => node.props.role === 'alertdialog')!
+    expect(content(dialog)).toContain('https://example.com')
+    dialog.props.onKeydown(escape()); await flushComponent()
+    expect(findNode(root, node => node.props.role === 'alertdialog')).toBeUndefined()
+    expect(close).not.toHaveBeenCalled()
+    open().props.onClick(); await flushComponent()
+    api.pinQrAction.mockRejectedValueOnce(new Error('浏览器打开失败'))
+    dialog = findNode(root, node => node.props.role === 'alertdialog')!
+    const confirm = () => findNode(dialog, node => node.type === 'button' && content(node) === '确认打开')!
+    confirm().props.onClick(); await flushComponent()
+    expect(findNode(dialog, node => node.props.role === 'alert')?.text).toContain('浏览器打开失败')
+    expect(api.pinQrAction).toHaveBeenCalledExactlyOnceWith(7, 0, 'open')
+    confirm().props.onClick(); await flushComponent()
+    expect(findNode(root, node => node.props.role === 'alertdialog')).toBeUndefined()
+    expect(close).not.toHaveBeenCalled()
+    panel.props.onKeydown(escape())
+    expect(close).toHaveBeenCalledOnce()
+  })
   it('单文本取消后不显示迟到的成功响应', async () => {
     let finish!: (result: unknown) => void
     api.translateText.mockReturnValue(new Promise(resolve => { finish = resolve }))

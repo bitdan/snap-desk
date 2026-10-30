@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import ConfirmDialog from '../../src/shared/ui/ConfirmDialog.vue'
 import { h } from 'vue'
 import { clientComponent, findNode, flushComponent, MemoryNode, memoryRenderer } from '../helpers/component-host'
 import { handleWindowEscape } from '../../src/shared/ui/escape'
 
-const api = vi.hoisted(() => ({ clipboardList: vi.fn(), clipboardStatus: vi.fn(), status: vi.fn(), clipboardPin: vi.fn() }))
+const api = vi.hoisted(() => ({ clipboardList: vi.fn(), clipboardStatus: vi.fn(), status: vi.fn(), clipboardPin: vi.fn(), clipboardClear: vi.fn(), clipboardDelete: vi.fn() }))
 const clipboardEvents = vi.hoisted(() => ({ changed: () => {} }))
 vi.mock('../../src/services/api', () => ({ api, desktop: true,
   onClipboardChanged: async (callback: () => void) => { clipboardEvents.changed = callback; return () => { clipboardEvents.changed = () => {} } }, onClipboardError: async () => () => {},
@@ -15,6 +16,8 @@ vi.mock('reka-ui', async () => {
   const hidden = defineComponent({ setup: () => () => null })
   return { DialogRoot: pass, DialogPortal: hidden, DialogOverlay: hidden, DialogContent: hidden,
     DialogTitle: pass, DialogDescription: pass, DialogTrigger: pass,
+    AlertDialogRoot: pass, AlertDialogPortal: pass, AlertDialogOverlay: hidden, AlertDialogContent: pass,
+    AlertDialogTitle: pass, AlertDialogDescription: pass, AlertDialogCancel: pass,
     PopoverRoot: pass, PopoverTrigger: pass, PopoverPortal: hidden, PopoverContent: hidden }
 })
 vi.mock('../../src/shared/ui/button/Button.vue', async () => {
@@ -35,6 +38,7 @@ vi.mock('../../src/features/clipboard/components/ClipboardItem.vue', async () =>
 })
 import History from '../../src/features/clipboard/components/ClipboardHistory.vue'
 const Component = clientComponent(History, new URL('../../src/features/clipboard/components/ClipboardHistory.vue', import.meta.url))
+clientComponent(ConfirmDialog, new URL('../../src/shared/ui/ConfirmDialog.vue', import.meta.url))
 let root: MemoryNode
 const pinButton = () => findNode(root, node => node.props['aria-label'] === '将所选文字和图片贴图')!
 async function select(...ids: number[]) {
@@ -151,4 +155,41 @@ it('剪贴板变更事件静默刷新，只有点击加载更多才显示转圈�
   await flushComponent()
   expect(findNode(root, node => node.props['aria-label'] === '加载中…')!.props.disabled).toBe(true)
   complete({ ...page, nextCursor: null }); await flushComponent()
+})
+
+it.each([false, true])('清空通过确认框提交，删除收藏选项为 %s', async includeFavorites => {
+  const text = (node: MemoryNode): string => node.text + node.children.map(text).join('')
+  findNode(root, node => node.type === 'button' && text(node) === '清空')!.props.onClick()
+  await flushComponent()
+  expect(api.clipboardClear).not.toHaveBeenCalled()
+  const dialog = findNode(root, node => node.props.role === 'alertdialog')!
+  const checkbox = findNode(dialog, node => node.type === 'input' && node.props.type === 'checkbox')!
+  expect(checkbox.props['onUpdate:modelValue']).toBeTypeOf('function')
+  checkbox.props['onUpdate:modelValue'](includeFavorites)
+  findNode(dialog, node => node.type === 'button' && text(node) === '确认删除')!.props.onClick()
+  await flushComponent()
+  expect(api.clipboardClear).toHaveBeenCalledExactlyOnceWith(includeFavorites)
+  expect(findNode(root, node => node.props.role === 'alertdialog')).toBeUndefined()
+})
+
+it('删除失败保留确认框和错误，忙碌期间阻止关闭与重复提交', async () => {
+  const text = (node: MemoryNode): string => node.text + node.children.map(text).join('')
+  await select(1, 2)
+  findNode(root, node => node.props['aria-label'] === '删除所选条目')!.props.onClick()
+  await flushComponent()
+  const dialog = findNode(root, node => node.props.role === 'alertdialog')!
+  let reject!: (error: Error) => void
+  api.clipboardDelete.mockImplementationOnce(() => new Promise((_, fail) => { reject = fail }))
+  const remove = findNode(dialog, node => node.type === 'button' && text(node) === '确认删除')!
+  remove.props.onClick(); await flushComponent()
+  expect(remove.props.disabled).toBe(true)
+  remove.props.onClick()
+  const event = { preventDefault: vi.fn() }
+  dialog.props.onEscapeKeyDown(event)
+  expect(event.preventDefault).toHaveBeenCalledOnce()
+  expect(api.clipboardDelete).toHaveBeenCalledExactlyOnceWith([1, 2])
+  reject(new Error('删除失败')); await flushComponent()
+  expect(findNode(dialog, node => node.props.role === 'alert')?.text).toContain('删除失败')
+  expect(remove.props.disabled).toBe(false)
+  expect(findNode(root, node => node.props.role === 'alertdialog')).toBeDefined()
 })
