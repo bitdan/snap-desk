@@ -113,27 +113,23 @@ impl Recovery {
         if self.is_recovering() {
             match self.rejection {
                 "fixed_bounds_changed" | "anchor_fixed_bounds_changed" => {
-                    return "固定栏边界发生变化；请恢复原布局，或重新框选滚动正文。"
+                    return "暂时没接上，请往回滚一点再停一下。"
                 }
-                "stationary_overlay" => return "检测到悬浮内容；请移开悬浮层后滚回可信重叠区。",
+                "stationary_overlay" => return "请移开悬浮内容，再往回滚一点。",
                 "seam_conflict" | "canvas_conflict" => {
-                    return "画面与已确认内容冲突；请暂停动画并滚回可信重叠区。"
+                    return "画面有变化，请暂停动画后往回滚一点。"
                 }
-                "anchor_position_conflict" => {
-                    return "重复内容存在多个位置；请滚回具有独特内容的可信重叠区。"
-                }
+                "anchor_position_conflict" => return "内容太相似，请往回滚到有明显区别的位置。",
                 _ => {}
             }
         }
         match result {
             Some(Match::Uncertain) | None if self.failures >= 3 => {
-                "未找到可靠重叠（可能滚动过快或内容重复）；已确认内容保留，请沿原路滚回重叠区并停顿，或重新框选滚动正文。"
+                "还没接上，请往回滚到上一段内容并停一下。"
             }
-            Some(Match::Uncertain) | None if self.is_recovering() => {
-                "已确认内容保留；请沿原路滚回重叠区并停顿，匹配后自动继续。"
-            }
-            None => "等待页面稳定；若有局部动画，请暂停动画后继续。",
-            _ => "沿首次滚动方向所在的横轴或纵轴继续滚动，完成后点击完成。",
+            Some(Match::Uncertain) | None if self.is_recovering() => "往回滚一点，停一下即可继续。",
+            None => "请停一下，等待页面稳定。",
+            _ => "慢慢滚动，停一下再继续。",
         }
     }
 
@@ -401,7 +397,7 @@ mod tests {
             Match::Uncertain
         );
         assert!(recovery.is_recovering());
-        assert!(recovery.message(None).contains("重叠区"));
+        assert!(recovery.message(None).contains("往回滚"));
         assert_eq!(stitch.compose(), first);
         assert_eq!(
             recovery.consider(&mut stitch, first.clone()).unwrap(),
@@ -431,11 +427,9 @@ mod tests {
         assert_eq!(stitch.compose(), frame(0));
         assert!(recovery.is_recovering());
         // 不稳定帧不参与匹配；其提示仍必须保留恢复操作，不能闪回“自动拼接”。
-        assert!(recovery.message(None).contains("重叠区"));
+        assert!(recovery.message(None).contains("往回滚"));
         assert_eq!(recovery.recent.len(), 1);
-        assert!(recovery
-            .message(Some(Match::Uncertain))
-            .contains("原路滚回"));
+        assert!(recovery.message(Some(Match::Uncertain)).contains("往回滚"));
         recovery.consider_at(&mut stitch, frame(240), now).unwrap();
         recovery.consider_at(&mut stitch, frame(120), now).unwrap();
         assert_eq!(

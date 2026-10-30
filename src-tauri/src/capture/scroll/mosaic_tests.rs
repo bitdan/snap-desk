@@ -1012,3 +1012,38 @@ fn stationary_redraw_does_not_override_periodic_position_ambiguity() {
     assert_eq!(stitch.consider(redrawn).unwrap(), Match::Uncertain);
     assert_eq!(stitch.compose(), first);
 }
+
+/// 正文边缘的周期纹理会在特定位移下与上一屏完全相同，不能误判为新增固定栏。
+#[test]
+fn periodic_document_edges_do_not_change_fixed_bounds() {
+    let doc = RgbaImage::from_fn(160, 400, |x, y| {
+        if x < 20 {
+            Rgba([(x * 12) as u8, ((y % 20) * 12) as u8, 0, 255])
+        } else {
+            let v = (x.wrapping_mul(73856093) ^ y.wrapping_mul(19349663)).wrapping_mul(83492791);
+            Rgba([v as u8, (v >> 8) as u8, (v >> 16) as u8, 255])
+        }
+    });
+    for rotation in 0..4 {
+        let rotate = |image: &RgbaImage| match rotation {
+            0 => image.clone(),
+            1 => image::imageops::rotate90(image),
+            2 => image::imageops::rotate180(image),
+            _ => image::imageops::rotate270(image),
+        };
+        let frame = |y| rotate(&image::imageops::crop_imm(&doc, 0, y, 160, 160).to_image());
+        let mut stitch = Stitch::new(frame(0)).unwrap();
+        for offset in [37, 77] {
+            assert!(
+                matches!(stitch.consider(frame(offset)).unwrap(), Match::Aligned(_)),
+                "rotation={rotation}, offset={offset}, reason={}",
+                stitch.rejection()
+            );
+        }
+        assert_eq!(
+            stitch.compose(),
+            rotate(&image::imageops::crop_imm(&doc, 0, 0, 160, 237).to_image())
+        );
+        assert!(!stitch.has_holes());
+    }
+}

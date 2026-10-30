@@ -154,6 +154,13 @@ pub fn control_scroll(
     if !matches!(window.label(), "scroll-preview" | "scroll-controls") {
         return Err("窗口无权控制滚动截图。".into());
     }
+    if cancel {
+        return if cancel_current(&app, id, "window") {
+            Ok(())
+        } else {
+            Err("滚动截图已结束。".into())
+        };
+    }
     let state = app.state::<CaptureState>();
     let mut guard = state.scroll.lock().map_err(err)?;
     let session = guard
@@ -161,11 +168,26 @@ pub fn control_scroll(
         .filter(|s| s.id == id)
         .ok_or("滚动截图已结束。")?;
     session.confirmed_only |= confirmed_only.unwrap_or(false);
-    if cancel {
-        state.scroll_cancel.store(true, Ordering::SeqCst);
-    }
     state.scroll_stop.store(true, Ordering::SeqCst);
     Ok(())
+}
+
+/// Esc 和取消按钮共用入口；立即隐藏窗口，后台保留停止标志直到在途计算安全退出。
+fn cancel_current(app: &AppHandle, id: u64, source: &'static str) -> bool {
+    let state = app.state::<CaptureState>();
+    let Ok(guard) = state.scroll.lock() else {
+        return false;
+    };
+    if !guard.as_ref().is_some_and(|s| s.id == id) {
+        return false;
+    }
+    state.scroll_cancel.store(true, Ordering::SeqCst);
+    state.scroll_stop.store(true, Ordering::SeqCst);
+    // 窗口操作不能持会话锁，避免等待 UI 时阻塞采集线程收尾。
+    drop(guard);
+    log::info!("event=scroll.cancel_requested module=scroll op=scroll-{id} source={source}");
+    chrome::hide(app);
+    true
 }
 
 /// 后台直接落盘并复制。匹配不可靠的候选帧不会进入成图，不要求用户修接缝。
@@ -288,7 +310,7 @@ fn sample_pair(
     if screen_at(app, snapshot.screen.x, snapshot.screen.y)? != snapshot.screen {
         return Err("显示器布局、尺寸或 DPI 发生变化，已结束采集，仅输出已确认部分。".into());
     }
-    let _preview_guard = chrome::hide_for_sample(app, &snapshot.obscuring_windows)?;
+    let _preview_guard = chrome::hide_for_sample(app, id, &snapshot.obscuring_windows)?;
     let settled = capture::sample_pair(
         state,
         snapshot.rect,
@@ -358,9 +380,9 @@ fn sample_pair(
     };
     let message = if status == "no_progress" {
         if result.is_none() {
-            "画面持续运动，尚无新增内容；请停止滚动并暂停动画，已确认部分可随时保存。"
+            "页面还在动，请停一下或暂停动画。"
         } else {
-            "尚无新增内容（页面静止或正在回访）；请继续沿当前轴滚动，也可保存已确认部分。"
+            "暂无新增，可继续滚动或点“完成”。"
         }
     } else {
         snapshot.recovery.message(result)
@@ -440,9 +462,9 @@ fn notify_waiting(app: &AppHandle, state: &CaptureState, id: u64, finishing: boo
     };
     let status = if finishing { "finishing" } else { "waiting" };
     let message = if finishing {
-        "正在等待截图操作完成，随后保存已确认部分。"
+        "正在等待当前操作完成后保存。"
     } else {
-        "正在等待截图操作释放；暂未采样，已确认内容保留。"
+        "正在处理其他截图，请稍候。"
     };
     if session.status == status && session.message == message {
         return;
@@ -601,6 +623,7 @@ fn launch(app: &AppHandle, id: u64, first_delay: u64) -> Result<(), String> {
             .ok_or("滚动截图会话已结束。")?;
         let x = i64::from(s.screen.x) + i64::from(s.rect.x);
         let y = i64::from(s.screen.y) + i64::from(s.rect.y);
+        let cancel_app = app.clone();
         super::input::Listener::start(
             s.direction.clone(),
             (
@@ -609,6 +632,7 @@ fn launch(app: &AppHandle, id: u64, first_delay: u64) -> Result<(), String> {
                 x + i64::from(s.rect.width),
                 y + i64::from(s.rect.height),
             ),
+            move || cancel_current(&cancel_app, id, "escape"),
         )?
     };
     let app = app.clone();
@@ -679,7 +703,7 @@ pub async fn start_scroll(
             stitch,
             direction: Direction::default(),
             recovery: recovery::Recovery::default(),
-            message: "滚动鼠标以识别方向，本次仅拼接横向或纵向。".into(),
+            message: "在选区内慢慢滚动，横向或纵向均可。".into(),
             archive,
             preview: Arc::from(""),
             status: "sampling",

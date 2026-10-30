@@ -721,5 +721,19 @@
   "历史图片读取失败。": "Failed to read the clipboard image.",
   "历史图片大小异常。": "The clipboard image size is invalid.",
   "恢复贴图鼠标操作": "Restore pin mouse interaction",
-  "请先恢复贴图鼠标操作。": "Restore mouse interaction with the pin first."
+  "请先恢复贴图鼠标操作。": "Restore mouse interaction with the pin first.",
+  "页面布局变了，请恢复原样或重新框选正文。": "Page layout changed. Restore it or select the scrolling content again.",
+  "请移开悬浮内容，再往回滚一点。": "Dismiss floating content, then scroll back a little.",
+  "画面有变化，请暂停动画后往回滚一点。": "Content changed. Pause animations, then scroll back a little.",
+  "内容太相似，请往回滚到有明显区别的位置。": "Content looks too similar. Scroll back to a more distinctive section.",
+  "还没接上，请往回滚到上一段内容并停一下。": "Still unable to stitch. Scroll back to the previous section and pause.",
+  "往回滚一点，停一下即可继续。": "Scroll back a little and pause to resume.",
+  "请停一下，等待页面稳定。": "Pause scrolling and let the page settle.",
+  "慢慢滚动，停一下再继续。": "Scroll slowly and pause between movements.",
+  "页面还在动，请停一下或暂停动画。": "The page is still moving. Stop scrolling or pause animations.",
+  "暂无新增，可继续滚动或点“完成”。": "No new content. Keep scrolling or click Finish.",
+  "正在等待当前操作完成后保存。": "Waiting for the current operation before saving.",
+  "正在处理其他截图，请稍候。": "Another capture is being processed. Please wait.",
+  "在选区内慢慢滚动，横向或纵向均可。": "Scroll slowly inside the selection, horizontally or vertically.",
+  "暂时没接上，请往回滚一点再停一下。": "Unable to stitch yet. Scroll back a little and pause."
 }

@@ -18,8 +18,8 @@ const cancelling = ref(false)
 // 恢复时仍持续取样，用户滚回重叠区即可接续，无需另点“继续”。
 const recovering = computed(() => view.value?.collecting && view.value.status === 'recovering')
 const status = computed(() => busy.value ? (cancelling.value ? '正在取消…' : '正在保存…')
-  : !view.value ? '准备中…' : view.value.status === 'failed' ? '输出失败' : view.value.status === 'finishing' ? '正在保存…' : view.value.status === 'sampling' ? '等待稳定' : view.value.status === 'no_progress' ? '暂无新增' : view.value.status === 'waiting' ? '等待采样' : view.value.status === 'recovering' ? '等待重叠' : !view.value.collecting ? '采集结束' : '自动拼接')
-const hint = computed(() => error.value || view.value?.message || '滚动后稍作停顿，等待拼接')
+  : !view.value ? '准备中…' : view.value.status === 'failed' ? '输出失败' : view.value.status === 'finishing' ? '正在保存…' : view.value.status === 'sampling' ? '请停一下' : view.value.status === 'no_progress' ? '暂无新增' : view.value.status === 'waiting' ? '请稍候' : view.value.status === 'recovering' ? '请往回滚' : !view.value.collecting ? '采集结束' : '自动拼接')
+const hint = computed(() => error.value || view.value?.message || '慢慢滚动，停一下再继续。')
 let off: (() => void) | undefined
 let offClosed: (() => void) | undefined
 let disposed = false
@@ -36,10 +36,16 @@ function receive(next: ScrollView) {
 // 单轴回滚时移动视口框，不重复增长画布。
 const marker = computed(() => view.value ? scrollViewportStyle(view.value) : {})
 async function finish(cancel: boolean) {
-  if (!view.value || busy.value) return
+  if (!view.value || (busy.value && (!cancel || cancelling.value))) return
+  const id = view.value.id
   busy.value = true; cancelling.value = cancel; error.value = ''
-  try { await api.controlScroll(view.value.id, cancel, !!recovering.value) }
-  catch (e) { error.value = String(e); busy.value = false }
+  // Esc 可中断尚在等待的完成操作；旧请求失败不能覆盖取消状态或下一会话。
+  try { await api.controlScroll(id, cancel, !!recovering.value) }
+  catch (e) {
+    if (view.value?.id === id && cancelling.value === cancel) {
+      error.value = String(e); busy.value = false
+    }
+  }
 }
 function key(event: KeyboardEvent) { handleEscape(event, () => { void finish(true) }) }
 onMounted(async () => {
@@ -75,7 +81,7 @@ onUnmounted(() => { disposed = true; window.removeEventListener('keydown', key);
         <span v-else>{{ t("准备采集…") }}</span>
       </div>
       <p v-if="view" class="coverage">{{ t("已拼接 {0} 帧", { 0: view.frames }) }}</p>
-      <p class="preview-hint" :class="{ error, recovering }" :role="error ? 'alert' : recovering ? 'status' : undefined" :title="te(hint)">{{ te(hint) }}<span v-if="recovering && !error">{{ t("也可保存已确认部分或取消。") }}</span></p>
+      <p class="preview-hint" :class="{ error, recovering }" :role="error ? 'alert' : recovering ? 'status' : undefined" :title="te(hint)">{{ te(hint) }}</p>
     </template>
     <footer v-else>
       <div class="progress" :title="te(hint)">
@@ -83,8 +89,8 @@ onUnmounted(() => { disposed = true; window.removeEventListener('keydown', key);
         <small v-if="view" aria-live="polite">{{ te(view.message) || t("{0} 帧 · {1} px", { 0: view.frames, 1: view.height }) }}</small>
       </div>
       <span v-if="error" class="error-indicator" role="alert" :title="te(error)" :aria-label="te(error)"><AlertCircle :size="16" /></span>
-      <button class="save" :disabled="busy || !view" :title="recovering ? t('仅保存并复制当前已确认画布，不追加未匹配画面') : t('结束采集，保存并复制滚动截图')" @click="finish(false)"><Save :size="15" />{{ recovering ? t("保存已确认部分") : t("完成") }}</button>
-      <button class="cancel" :disabled="busy || !view" :title='t("取消滚动截图，不导出当前画布")' :aria-label='t("取消滚动截图")' @click="finish(true)"><X :size="17" /><span v-if="recovering">{{ t("取消") }}</span></button>
+      <button class="save" :disabled="busy || !view" :title="recovering ? t('保存已拼接内容') : t('完成并保存')" @click="finish(false)"><Save :size="15" />{{ recovering ? t("保存已确认部分") : t("完成") }}</button>
+      <button class="cancel" :disabled="busy || !view" :title='t("取消（Esc，不保存）")' :aria-label='t("取消滚动截图")' @click="finish(true)"><X :size="17" /><span v-if="recovering">{{ t("取消") }}</span></button>
     </footer>
   </main>
 </template>
@@ -98,7 +104,7 @@ header span { color: #71717a; font-size: 10px; }
 img { display: block; width: 100%; height: 100%; }
 .current-frame { position: absolute; box-sizing: border-box; border: 2px solid #24834b; background: #84cc1610; pointer-events: none; }
 .coverage { margin: 0; flex: none; font-size: 12px; color: #57606a; }
-.preview-hint { flex: none; margin: 0; color: #71717a; font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.preview-hint { flex: none; margin: 0; color: #71717a; font-size: 12px; overflow-wrap: anywhere; }
 .preview-hint.recovering { white-space: normal; overflow-wrap: anywhere; font-size: 12px; color: #92400e; }
 .preview-hint.recovering.error { color: #b91c1c; }
 .controls { justify-content: center; padding: 5px 8px; }

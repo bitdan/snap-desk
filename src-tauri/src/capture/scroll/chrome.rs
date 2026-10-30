@@ -1,5 +1,5 @@
 //! 滚动截图辅助窗口：边框放在选区外；预览优先右侧、空间不足时左侧，操作条独立显示。
-use super::super::{err, Rect};
+use super::super::{err, CaptureState, Rect};
 use super::session::Screen;
 #[cfg(target_os = "windows")]
 use std::collections::BTreeMap;
@@ -462,23 +462,37 @@ impl Drop for PendingScrollWindows<'_> {
 }
 
 /// 只有与选区相交的辅助窗口需要避让，普通布局的四条边框会一直显示。
-pub(super) struct SampleGuard(Vec<Window>);
+pub(super) struct SampleGuard {
+    app: AppHandle,
+    id: u64,
+    windows: Vec<Window>,
+}
 impl Drop for SampleGuard {
     fn drop(&mut self) {
-        for w in &self.0 {
+        let state = self.app.state::<CaptureState>();
+        // 取消已立即隐藏窗口，旧采样结束时不能再把窗口显示回来。
+        if state.scroll_stop.load(std::sync::atomic::Ordering::SeqCst)
+            || !state.scroll.lock().ok().is_some_and(|s| s.as_ref().is_some_and(|s| s.id == self.id)) {
+            return;
+        }
+        for w in &self.windows {
             let _ = show_window(w);
+            // 取消可能发生在上面的检查和 show 之间；再次隐藏，消除采样恢复窗口的竞态。
+            if state.scroll_stop.load(std::sync::atomic::Ordering::SeqCst) {
+                let _ = w.hide();
+            }
         }
     }
 }
-pub(super) fn hide_for_sample(app: &AppHandle, labels: &[String]) -> Result<SampleGuard, String> {
-    let mut guard = SampleGuard(Vec::new());
+pub(super) fn hide_for_sample(app: &AppHandle, id: u64, labels: &[String]) -> Result<SampleGuard, String> {
+    let mut guard = SampleGuard { app: app.clone(), id, windows: Vec::new() };
     for label in labels {
         if let Some(w) = window(app, label) {
             w.hide().map_err(err)?;
-            guard.0.push(w);
+            guard.windows.push(w);
         }
     }
-    if !guard.0.is_empty() {
+    if !guard.windows.is_empty() {
         thread::sleep(Duration::from_millis(80));
     }
     Ok(guard)

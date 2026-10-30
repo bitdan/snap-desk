@@ -204,6 +204,50 @@ pub(super) fn verify_at(
         return None;
     }
     verify(a, b, content(a, b).intersect(known), dx, dy)
+        .map(|result| reconcile_bounds(a, b, known, result))
+}
+
+/// 同屏相同像素只能提名固定栏：正文中的周期纹理也可能暂时静止。
+/// 用已定位的文档位移逐像素复核被裁去的条带；每条带都必须有真实重叠证据，
+/// 且完整已知正文仍通过原 verify 门槛，才保留既有边界。真实固定栏的位移冲突仍拒绝。
+fn reconcile_bounds(a: &RgbaImage, b: &RgbaImage, known: Content, result: Alignment) -> Alignment {
+    let detected = result.content;
+    if detected == known {
+        return result;
+    }
+    let strips = [
+        (known.left, known.top, detected.left, known.bottom),
+        (detected.right, known.top, known.right, known.bottom),
+        (known.left, known.top, known.right, detected.top),
+        (known.left, detected.bottom, known.right, known.bottom),
+    ];
+    for (left, top, right, bottom) in strips {
+        if left >= right || top >= bottom {
+            continue;
+        }
+        let mut evidence = 0;
+        for y in top..bottom {
+            for x in left..right {
+                let ax = i64::from(x) + i64::from(result.dx);
+                let ay = i64::from(y) + i64::from(result.dy);
+                if ax < i64::from(known.left)
+                    || ax >= i64::from(known.right)
+                    || ay < i64::from(known.top)
+                    || ay >= i64::from(known.bottom)
+                {
+                    continue;
+                }
+                if difference(a, b, ax as u32, ay as u32, x, y) > 36 {
+                    return result;
+                }
+                evidence += 1;
+            }
+        }
+        if evidence < MIN_OVERLAP {
+            return result;
+        }
+    }
+    verify(a, b, known, result.dx, result.dy).unwrap_or(result)
 }
 
 /// 每个交集分成 4×4 块，按多数纹理提名位移；少量差异仍可能通过。
@@ -294,7 +338,7 @@ pub(super) fn alignment_in(
     // 返回原位置后可能发生少量文字重绘；原位置也必须作为候选参加歧义检查，
     // 不能把一次全局稳定判断直接当作 Unchanged，更不能覆盖已知重复纹理歧义。
     let stationary = roi == known && super::stability::stable(a, b);
-    match mode {
+    let result = match mode {
         ScrollMode::Vertical => align_axis(a, b, roi, true, stationary),
         ScrollMode::Horizontal => align_axis(a, b, roi, false, stationary),
         ScrollMode::Auto => match (
@@ -310,6 +354,10 @@ pub(super) fn alignment_in(
             | (Match::Uncertain, result @ Match::Aligned(_)) => result,
             _ => Match::Uncertain,
         },
+    };
+    match result {
+        Match::Aligned(alignment) => Match::Aligned(reconcile_bounds(a, b, known, alignment)),
+        other => other,
     }
 }
 
