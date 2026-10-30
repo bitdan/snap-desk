@@ -735,5 +735,16 @@
   "正在等待当前操作完成后保存。": "Waiting for the current operation before saving.",
   "正在处理其他截图，请稍候。": "Another capture is being processed. Please wait.",
   "在选区内慢慢滚动，横向或纵向均可。": "Scroll slowly inside the selection, horizontally or vertically.",
-  "暂时没接上，请往回滚一点再停一下。": "Unable to stitch yet. Scroll back a little and pause."
+  "暂时没接上，请往回滚一点再停一下。": "Unable to stitch yet. Scroll back a little and pause.",
+  "选择截图保存文件夹": "Choose screenshot folder",
+  "截图保存目录不可用，请重新选择。": "Screenshot folder is unavailable. Choose another folder.",
+  "截图保存目录无法写入，请选择其他目录。": "Screenshot folder is not writable. Choose another folder.",
+  "导入配置": "Import settings",
+  "导出配置": "Export settings",
+  "配置文件超过 512 KiB，请检查所选文件。": "Settings file exceeds 512 KiB. Check the selected file.",
+  "配置格式无效，请选择当前版本导出的配置文件。": "Invalid settings format. Choose a file exported by the current version.",
+  "配置版本不支持，请使用当前版本重新导出。": "Unsupported settings version. Export again using the current version.",
+  "请先完成当前配置导入或导出。": "Finish the current settings import or export first.",
+  "配置导入失败：{0}；回滚失败：{1}": "Settings import failed: {0}; rollback failed: {1}",
+  "不能覆盖正在使用的配置文件，请另选导出位置。": "Choose a different export location; active settings files cannot be overwritten."
 }

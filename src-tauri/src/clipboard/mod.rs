@@ -274,6 +274,15 @@ pub async fn clipboard_configure(
     })
     .await
 }
+/// 完整配置提交成功后再按新配额维护，失败的导入不能清理历史。
+pub(crate) fn settings_imported(app: &AppHandle) {
+    let service = app.state::<Service>();
+    if let Err(error) = service.maintain(app) {
+        service.report(app, error);
+    }
+    let _ = app.emit_to("main", "clipboard-state", service.status());
+}
+
 pub fn open_history(app: &AppHandle) {
     crate::capture::show_main(app);
     let _ = app.emit_to("main", "clipboard-open", ());

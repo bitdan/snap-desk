@@ -98,6 +98,53 @@ pub async fn app_directories(
     .await
     .map_err(|e| e.to_string())?
 }
+// 目录选择器单独串行，不阻塞采集或导出；取消选择不修改任何目录记录。
+static CAPTURE_DIRECTORY_CHOOSING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// 截图默认保存位置；只接受选择器结果，不向前端开放任意路径写入。
+#[tauri::command]
+pub async fn choose_capture_directory(
+    app: AppHandle,
+    window: WebviewWindow,
+    reset: bool,
+) -> Result<Option<DirectoryView>, String> {
+    require_window(&window, "main")?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let _changing = CAPTURE_DIRECTORY_CHOOSING
+            .try_lock()
+            .map_err(|_| "请先完成当前目录选择。".to_string())?;
+        if reset {
+            let state = app.state::<SettingsState>();
+            let _settings = state.0.lock().map_err(|e| e.to_string())?;
+            crate::shared::image_io::configure_directory(&app, None)?;
+        } else {
+            let mut dialog = app
+                .dialog()
+                .file()
+                .set_parent(&window)
+                .set_title(crate::shared::native_i18n::text(&app, "选择截图保存文件夹"));
+            if let Some(directory) = crate::shared::image_io::current_directory(&app)? {
+                dialog = dialog.set_directory(directory);
+            }
+            let Some(selected) = dialog.blocking_pick_folder() else {
+                return Ok(None);
+            };
+            let path = selected.into_path().map_err(|e| e.to_string())?;
+            let state = app.state::<SettingsState>();
+            let _settings = state.0.lock().map_err(|e| e.to_string())?;
+            crate::shared::image_io::configure_directory(&app, Some(&path))?;
+        }
+        Ok(Some(DirectoryView {
+            kind: AppDirectory::Captures,
+            path: crate::shared::image_io::current_directory(&app)?
+                .map(|p| p.to_string_lossy().into_owned()),
+            error: None,
+        }))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 pub async fn open_app_directory(
     app: AppHandle,
@@ -143,36 +190,6 @@ pub async fn copy_shortcut_example(app: AppHandle, window: WebviewWindow) -> Res
         let example = serde_json::json!({ "shortcutsEnabled": true, "shortcuts": crate::settings::Shortcuts::default() });
         app.clipboard().write_text(serde_json::to_string_pretty(&example).map_err(|e| e.to_string())?).map_err(|e| e.to_string())
     }).await.map_err(|e| e.to_string())?
-}
-
-/// 导出已生效的主配置；输出位置来自原生对话框，不开放任意路径写入 IPC。
-#[tauri::command]
-pub async fn export_settings(app: AppHandle, window: WebviewWindow) -> Result<bool, String> {
-    require_window(&window, "main")?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let value = app
-            .state::<SettingsState>()
-            .0
-            .lock()
-            .map_err(|e| e.to_string())?
-            .value
-            .clone();
-        let Some(file) = app
-            .dialog()
-            .file()
-            .set_parent(&window)
-            .set_title(crate::shared::native_i18n::text(&app, "导出主配置"))
-            .set_file_name("snap-desk-settings.json")
-            .add_filter("JSON", &["json"])
-            .blocking_save_file()
-        else {
-            return Ok(false);
-        };
-        crate::settings::persist(&file.into_path().map_err(|e| e.to_string())?, &value)?;
-        Ok(true)
-    })
-    .await
-    .map_err(|e| e.to_string())?
 }
 
 #[cfg(test)]

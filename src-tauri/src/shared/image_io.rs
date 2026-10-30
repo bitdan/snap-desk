@@ -18,7 +18,9 @@ mod windows_clipboard;
 
 /// 专项基准只构造系统载荷，不替换开发者当前剪贴板。
 #[cfg(all(test, windows))]
-pub(crate) fn clipboard_bitmap_for_benchmark(image: &RgbaImage) -> Result<Vec<u8>, String> { windows_clipboard::benchmark_dib(image) }
+pub(crate) fn clipboard_bitmap_for_benchmark(image: &RgbaImage) -> Result<Vec<u8>, String> {
+    windows_clipboard::benchmark_dib(image)
+}
 
 /// 保留原始 RGBA 像素，不把窗口缩放或透明度混入导出图片。
 pub fn copy(app: &AppHandle, image: &RgbaImage) -> Result<(), String> {
@@ -130,25 +132,92 @@ fn directory_record(app: &AppHandle) -> Result<PathBuf, String> {
         .join("export-directory.json"))
 }
 
-fn read_directory(path: &Path) -> Option<PathBuf> {
-    let directory: PathBuf = serde_json::from_slice(&fs::read(path).ok()?).ok()?;
+// 兼容旧版只记录上次保存路径；显式设置的目录不受“记住上次位置”开关影响。
+#[derive(serde::Deserialize, serde::Serialize)]
+#[serde(untagged)]
+enum DirectoryPreference {
+    Remembered(PathBuf),
+    Selected { directory: PathBuf },
+}
+static DIRECTORY_RECORD_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn read_preference(path: &Path) -> Option<DirectoryPreference> {
+    serde_json::from_slice(&fs::read(path).ok()?).ok()
+}
+fn preferred_directory(path: &Path, remember: bool) -> Option<PathBuf> {
+    let directory = match read_preference(path)? {
+        DirectoryPreference::Selected { directory } => directory,
+        DirectoryPreference::Remembered(directory) if remember => directory,
+        _ => return None,
+    };
     // 移动磁盘拔出、目录被删除或记录损坏时，让系统选择默认位置。
     (directory.is_absolute() && directory.is_dir()).then_some(directory)
 }
+fn read_directory(path: &Path) -> Option<PathBuf> {
+    preferred_directory(path, true)
+}
 
-/// 通用设置只查看已有目录记录，不为尚未保存过图片的用户猜测位置。
+/// 通用设置展示显式默认目录或已有保存位置；尚未设置时使用系统默认位置。
 pub(crate) fn current_directory(app: &AppHandle) -> Result<Option<PathBuf>, String> {
     Ok(read_directory(&directory_record(app)?))
 }
 
-fn remember_directory(record: &Path, directory: &Path) -> Result<(), String> {
+fn write_directory(record: &Path, preference: &DirectoryPreference) -> Result<(), String> {
     let parent = record.parent().ok_or("目录记录路径无效。")?;
     fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     let mut temporary = tempfile::NamedTempFile::new_in(parent).map_err(|e| e.to_string())?;
-    serde_json::to_writer(temporary.as_file_mut(), directory).map_err(|e| e.to_string())?;
+    serde_json::to_writer(temporary.as_file_mut(), preference).map_err(|e| e.to_string())?;
     temporary.as_file().sync_all().map_err(|e| e.to_string())?;
     temporary.persist(record).map_err(|e| e.to_string())?;
     Ok(())
+}
+
+fn remember_directory(record: &Path, directory: &Path) -> Result<(), String> {
+    let _guard = DIRECTORY_RECORD_LOCK.lock().map_err(|e| e.to_string())?;
+    // 保存到临时的其他位置不能覆盖用户在设置页显式选定的默认目录。
+    if matches!(
+        read_preference(record),
+        Some(DirectoryPreference::Selected { .. })
+    ) {
+        return Ok(());
+    }
+    write_directory(
+        record,
+        &DirectoryPreference::Remembered(directory.to_owned()),
+    )
+}
+
+/// 目录只能来自设置页的系统选择器；重置仅移除偏好文件，不触碰图片。
+pub(crate) fn configure_directory(app: &AppHandle, directory: Option<&Path>) -> Result<(), String> {
+    configure_directory_record(&directory_record(app)?, directory)
+}
+fn configure_directory_record(record: &Path, directory: Option<&Path>) -> Result<(), String> {
+    let _guard = DIRECTORY_RECORD_LOCK.lock().map_err(|e| e.to_string())?;
+    if let Some(directory) = directory {
+        validate_directory(directory)?;
+        write_directory(
+            record,
+            &DirectoryPreference::Selected {
+                directory: directory.to_owned(),
+            },
+        )
+    } else {
+        match fs::remove_file(record) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error.to_string()),
+        }
+    }
+}
+
+/// 配置导入与目录选择共用可用性校验，校验失败不改写偏好。
+pub(crate) fn validate_directory(directory: &Path) -> Result<(), String> {
+    if !directory.is_absolute() || !directory.is_dir() {
+        return Err("截图保存目录不可用，请重新选择。".into());
+    }
+    tempfile::NamedTempFile::new_in(directory)
+        .and_then(|file| file.close())
+        .map_err(|_| "截图保存目录无法写入，请选择其他目录。".to_string())
 }
 
 /// 历史组合导出复用既有目录记忆，只有成功保存后调用。
@@ -184,10 +253,11 @@ pub fn save(app: &AppHandle, image: &RgbaImage) -> Result<bool, String> {
             image.height(),
         )?);
     let record = directory_record(app).ok();
-    if settings.remember_directory {
-        if let Some(directory) = record.as_deref().and_then(read_directory) {
-            dialog = dialog.set_directory(directory);
-        }
+    if let Some(directory) = record
+        .as_deref()
+        .and_then(|path| preferred_directory(path, settings.remember_directory))
+    {
+        dialog = dialog.set_directory(directory);
     }
     let Some(path) = dialog.blocking_save_file() else {
         return Ok(false);
@@ -316,5 +386,31 @@ mod tests {
         assert!(read_directory(&record).is_none());
         fs::write(&record, r#""relative""#).unwrap();
         assert!(read_directory(&record).is_none());
+    }
+
+    #[test]
+    fn configured_capture_directory_survives_memory_toggle_and_other_save_locations() {
+        let root = tempfile::tempdir().unwrap();
+        let record = root.path().join("config/export-directory.json");
+        let selected = root.path().join("selected");
+        let other = root.path().join("other");
+        fs::create_dir_all(&selected).unwrap();
+        fs::create_dir_all(&other).unwrap();
+        let existing = selected.join("existing.png");
+        fs::write(&existing, b"keep").unwrap();
+        // 旧版字符串记录仍可读取，关闭自动记忆时不作为默认目录。
+        remember_directory(&record, &other).unwrap();
+        assert_eq!(preferred_directory(&record, true), Some(other.clone()));
+        assert!(preferred_directory(&record, false).is_none());
+        configure_directory_record(&record, Some(&selected)).unwrap();
+        assert_eq!(preferred_directory(&record, false), Some(selected.clone()));
+        remember_directory(&record, &other).unwrap();
+        assert_eq!(read_directory(&record), Some(selected.clone()));
+        assert!(configure_directory_record(&record, Some(&root.path().join("missing"))).is_err());
+        assert_eq!(read_directory(&record), Some(selected));
+        configure_directory_record(&record, None).unwrap();
+        configure_directory_record(&record, None).unwrap();
+        assert!(read_directory(&record).is_none());
+        assert_eq!(fs::read(existing).unwrap(), b"keep");
     }
 }

@@ -1,4 +1,5 @@
 {
+  "导出/导入": "Export / Import",
   "鼠标效果": "Mouse effects",
   "{0} 项": "{0} enabled",
   "录屏画面，空格播放，方向键逐帧定位": "Recording preview: Space to play, arrow keys to step frames",
@@ -1008,5 +1009,13 @@
   "拖动移动 · 滚轮缩放 · 右键菜单 · Esc 隐藏": "Drag to move · Wheel to zoom · Right-click for menu · Esc to hide",
   "窗口置顶": "Always on top",
   "显示工具栏": "Show toolbar",
-  "鼠标穿透": "Click-through"
+  "鼠标穿透": "Click-through",
+  "系统默认位置": "System default location",
+  "作为保存对话框的默认位置，保存时仍可另选目录。": "Default location for the save dialog. You can choose another folder when saving.",
+  "导入配置": "Import settings",
+  "导出配置": "Export settings",
+  "备份包含主配置、快捷键和保存目录，不包含密钥、历史记录及图片视频。": "Backup includes settings, shortcuts and save folders. Credentials, history and media files are excluded.",
+  "配置已导出，包含快捷键和截图、录屏保存目录。": "Settings exported with shortcuts and screenshot/recording folders.",
+  "配置已导入，快捷键和保存目录已更新。": "Settings imported. Shortcuts and save folders are updated.",
+  "请先修正未保存的设置，再重试。": "Fix unsaved settings before trying again."
 }

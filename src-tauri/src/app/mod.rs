@@ -12,7 +12,7 @@ use capture::{show_main, CaptureState};
 use std::sync::atomic::Ordering;
 use tauri::{
     menu::{CheckMenuItem, Menu, MenuItem},
-    tray::TrayIconBuilder,
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     Manager, WebviewWindowBuilder,
 };
 use tauri_plugin_global_shortcut::ShortcutState;
@@ -204,6 +204,22 @@ pub fn run() {
                 ))?)
                 .tooltip(native_i18n::text(app.handle(), "Snap Desk · 截图工具"))
                 .menu(&menu)
+                // 左键释放时截图，右键沿用原生菜单，避免按下和释放重复触发。
+                .show_menu_on_left_click(false)
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event {
+                        let app = tray.app_handle().clone();
+                        tauri::async_runtime::spawn(async move {
+                            if let Err(error) = capture::begin(app.clone()).await {
+                                capture::report_error(&app, error);
+                            }
+                        });
+                    }
+                })
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "capture" => {
                         // 菜单只启动截图；录屏期间由共享占用状态拒绝新截图。
@@ -378,9 +394,11 @@ pub fn run() {
             diagnostics::diagnostics_clear_archives,
             diagnostics::diagnostics_set_debug,
             storage::app_directories,
+            storage::choose_capture_directory,
             storage::open_app_directory,
             storage::copy_app_directory,
-            storage::export_settings,
+            settings::backup::export_settings,
+            settings::backup::import_settings,
             storage::copy_shortcut_example,
             settings::complete_onboarding,
             commands::hide_main,

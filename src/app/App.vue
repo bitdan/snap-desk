@@ -5,8 +5,9 @@ import SelectControl from '@/shared/ui/SelectControl.vue'
 import { updateSettings } from '@/features/settings/settings-write'
 import { t, te } from '@/shared/i18n/i18n'
 import { computed, defineAsyncComponent, onMounted, onUnmounted, ref } from 'vue'
-import { Camera, Timer, Keyboard, Info, Scan, PanelLeftClose, Pin, Video, Folder, CircleHelp, Settings as SettingsIcon, FileText, Check } from 'lucide-vue-next'
+import { Camera, Timer, Keyboard, Info, Scan, PanelLeftClose, Pin, Video, Folder, ArrowLeftRight, CircleHelp, Settings as SettingsIcon, FileText, Check } from 'lucide-vue-next'
 const DiagnosticsSettings = defineAsyncComponent(() => import('@/features/diagnostics/components/DiagnosticsSettings.vue'))
+const ConfigTransferSettings = defineAsyncComponent(() => import('@/features/settings/components/ConfigTransferSettings.vue'))
 const GeneralSettings = defineAsyncComponent(() => import('@/features/settings/components/GeneralSettings.vue'))
 const AiProviderSettings = defineAsyncComponent(() => import('@/features/recognition/components/AiProviderSettings.vue'))
 import SupportPages from '@/app/components/SupportPages.vue'
@@ -18,7 +19,7 @@ const RecordingPanel = defineAsyncComponent(() => import('@/features/recording/c
 const ClipboardHistory = defineAsyncComponent(() => import('@/features/clipboard/components/ClipboardHistory.vue'))
 const PinManager = defineAsyncComponent(() => import('@/features/pins/components/PinManager.vue'))
 import Button from '@/shared/ui/button/Button.vue'
-import { api, desktop, onDelay, onError, onSettingsChanged, onClipboardOpen, type Settings } from '@/services/api'
+import { api, desktop, onDelay, onError, onSettingsChanged, onSettingsImported, onClipboardOpen, type Settings } from '@/services/api'
 import type { AppStatus } from '@/features/settings/types'
 import { defaultSettings, exportFilenamePreview, validateExportSettings, validateShortcuts, shortcutActions, needsOnboarding } from '@/features/settings/settings'
 import { errorMessage } from '@/services/errors'
@@ -29,7 +30,7 @@ const page = ref('截图')
 // 导航按操作、配置与支持分组，日志拥有独立页面。
 const groups = [
   { name: '工具', items: [{ name: '截图', icon: Camera }, { name: '录屏', icon: Video }, { name: '贴图', icon: Pin }, { name: '剪贴板', icon: Folder }] },
-  { name: '设置', items: [{ name: '通用', icon: SettingsIcon }, { name: '快捷键', icon: Keyboard }, { name: '识别与翻译', icon: Scan }] },
+  { name: '设置', items: [{ name: '通用', icon: SettingsIcon }, { name: '快捷键', icon: Keyboard }, { name: '导出/导入', icon: ArrowLeftRight }, { name: '识别与翻译', icon: Scan }] },
   { name: '支持', items: [{ name: '日志', icon: FileText }, { name: '帮助', icon: CircleHelp }, { name: '关于', icon: Info }] },
 ]
 const pageGroup = computed(() => groups.find(group => group.items.some(item => item.name === page.value))?.name ?? '')
@@ -49,12 +50,15 @@ const error = ref('')
 const disposers: (() => void)[] = []
 let disposed = false
 let delayRevision = 0
+let configRevision = 0
 const initializing = ref(false)
 const initializationFailed = ref(false)
 const locked = computed(() => !desktop || !status.value || initializing.value || initializationFailed.value || pending.value || saving.value || editingShortcut.value || testingShortcuts.value || remaining.value > 0)
 async function refreshStatus() {
-  const revision = delayRevision
-  status.value = await api.status()
+  const revision = delayRevision, config = configRevision
+  const next = await api.status()
+  if (disposed || config !== configRevision) return
+  status.value = next
   applyAppearance(status.value.settings.appearance)
   // 查询返回前若已收到更新事件，不能用旧快照覆盖倒计时结束通知。
   if (revision === delayRevision) remaining.value = status.value.delayRemaining
@@ -93,6 +97,21 @@ function resetCapture() {
 function resetShortcuts() {
   draft.value.shortcuts = defaultSettings().shortcuts
   shortcutAutoSave.schedule(); void shortcutAutoSave.flush()
+}
+/** 配置转移先提交未完成的自动保存，避免导出遗漏或旧草稿覆盖导入。 */
+async function prepareConfigTransfer() {
+  await captureAutoSave.flush()
+  await shortcutAutoSave.flush()
+  return !captureAutoSave.error.value && !shortcutAutoSave.error.value
+}
+function configImported(settings: Settings) {
+  configRevision++
+  error.value = ''
+  onboarding.value = needsOnboarding(settings.onboardingVersion)
+  applyAppearance(settings.appearance)
+  draft.value = structuredClone(settings)
+  if (status.value) status.value.settings = structuredClone(settings)
+  void refreshStatus().catch(e => { error.value = String(e) })
 }
 async function copyShortcutExample() {
   try { await api.copyShortcutExample(); shortcutExampleCopied.value = true }
@@ -141,7 +160,7 @@ async function initialize() {
   if (!desktop || initializing.value || disposed) return
   initializing.value = true; initializationFailed.value = false; error.value = ''
   try {
-    for (const subscribe of [() => onClipboardOpen(() => { page.value = '剪贴板' }), () => onSettingsChanged(() => { void syncSettings() }), () => onError(e => { error.value = e }), () => onDelay(value => { delayRevision++; remaining.value = value })]) {
+    for (const subscribe of [() => onClipboardOpen(() => { page.value = '剪贴板' }), () => onSettingsChanged(() => { void syncSettings() }), () => onSettingsImported(configImported), () => onError(e => { error.value = e }), () => onDelay(value => { delayRevision++; remaining.value = value })]) {
       const off = await subscribe()
       if (disposed) { off(); return }
       disposers.push(off)
@@ -225,6 +244,7 @@ onUnmounted(() => { disposed = true; window.removeEventListener('keydown', key);
         <GeneralSettings v-else-if="page === '通用'">
           <AppearanceSettings :busy="locked" :saved="savedSection === '通用'" @save="saveAppearance" />
         </GeneralSettings>
+        <ConfigTransferSettings v-else-if="page === '导出/导入'" :prepare-transfer="prepareConfigTransfer" />
         <AiProviderSettings v-else-if="page === '识别与翻译'" />
         <SupportPages v-else-if="page === '帮助' || page === '关于'" :page="page" :version="status?.version" :shortcuts="status?.settings.shortcuts" :busy="!status || completingOnboarding" @navigate="page = $event" @onboarding="onboarding = true" @project="openProject" />
         <RecordingPanel v-else-if="page === '录屏'" />

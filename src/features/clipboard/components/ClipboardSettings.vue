@@ -6,6 +6,7 @@ import { api, desktop } from '@/services/api'
 import { defaultClipboardSettings } from '@/features/clipboard/clipboard'
 import Button from '@/shared/ui/button/Button.vue'
 
+defineProps<{ disabled?: boolean }>()
 const settings = ref(defaultClipboardSettings())
 const ready = ref(false), busy = ref(false), error = ref('')
 async function load() {
@@ -28,13 +29,15 @@ const autosave = useAutoSave(async () => {
     || !Number.isInteger(value.retainDays) || value.retainDays < 0 || value.retainDays > 3650
     ? '历史限制无效：条目 100～5000、容量 50～2048 MiB、保留期 0～3650 天。' : null
 })
+async function flush() { await autosave.flush(); return ready.value && !error.value && !autosave.error.value }
+defineExpose({ flush, load })
 onMounted(load)
 </script>
 <template>
   <section class="general-section clipboard-settings" aria-labelledby="clipboard-settings-title">
     <h2 id="clipboard-settings-title">{{ t("剪贴板记录与自动清理") }}</h2>
     <form @submit.prevent @input="autosave.schedule" @change="autosave.commit" @focusout="autosave.flush">
-      <fieldset :disabled="busy || !ready || !desktop">
+      <fieldset :disabled="disabled || busy || !ready || !desktop">
         <div class="clipboard-record-options">
           <label for="history-text"><input id="history-text" v-model="settings.saveCopiedText" type="checkbox" />{{ t("记录文本") }}</label>
           <label for="history-images"><input id="history-images" v-model="settings.saveCopiedImages" type="checkbox" />{{ t("记录图片") }}</label>

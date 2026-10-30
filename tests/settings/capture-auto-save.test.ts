@@ -5,12 +5,29 @@ import { defaultSettings } from '../../src/features/settings/settings'
 
 const api = vi.hoisted(() => ({ status: vi.fn(), saveSettings: vi.fn(), setShortcutEditing: vi.fn(), start: vi.fn() }))
 const subscribe = vi.hoisted(() => vi.fn(async () => () => {}))
-vi.mock('../../src/services/api', () => ({ api, desktop: true, onDelay: subscribe, onError: subscribe, onSettingsChanged: subscribe, onClipboardOpen: subscribe }))
+const importedEvent = vi.hoisted(() => ({ receive: (_settings: any) => {} }))
+const subscribeImported = vi.hoisted(() => vi.fn(async (fn: (settings: any) => void) => {
+  importedEvent.receive = fn
+  return () => { importedEvent.receive = () => {} }
+}))
+vi.mock('../../src/services/api', () => ({ api, desktop: true, onDelay: subscribe, onError: subscribe, onSettingsChanged: subscribe, onSettingsImported: subscribeImported, onClipboardOpen: subscribe }))
 vi.mock('../../src/shared/ui/SelectControl.vue', async () => ({ default: (await import('../helpers/select-control')).SelectControlStub }))
 vi.mock('../../src/shared/ui/appearance', () => ({ applyAppearance: vi.fn(), appearance: { value: { language: 'zh-CN' } } }))
 vi.mock('../../src/shared/ui/button/Button.vue', async () => {
   const { defineComponent, h } = await import('vue')
   return { default: defineComponent({ setup: (_, { attrs, slots }) => () => h('button', attrs, slots.default?.()) }) }
+})
+vi.mock('../../src/features/settings/components/ConfigTransferSettings.vue', async () => {
+  const { defineComponent, h } = await import('vue')
+  const { defaultSettings } = await import('../../src/features/settings/settings')
+  return { __esModule: true, default: defineComponent({ props: ['prepareTransfer'], setup: (props) => () => h('button', {
+    'data-import': true,
+    onClick: async () => {
+      await props.prepareTransfer()
+      const settings = defaultSettings(); settings.export.filenamePrefix = 'Imported'; settings.shortcutsEnabled = false; settings.onboardingVersion = 1
+      importedEvent.receive(settings)
+    },
+  }, 'Import') }) }
 })
 import Compatibility from '../../src/features/settings/components/ShortcutCompatibility.vue'
 clientComponent(Compatibility, new URL('../../src/features/settings/components/ShortcutCompatibility.vue', import.meta.url))
@@ -47,4 +64,18 @@ describe('截图设置自动生效', () => {
     expect(api.saveSettings).toHaveBeenCalledWith(expect.objectContaining({ export: expect.objectContaining({ filenamePrefix: 'Capture' }) }))
     expect(api.start).toHaveBeenCalledOnce()
   })
+})
+
+it('导入成功替换截图页草稿和快捷键状态，返回原页面不显示旧配置', async () => {
+  await flush()
+  findNode(root, node => node.type === 'button' && text(node) === '导出/导入')!.props.onClick()
+  await vi.dynamicImportSettled(); await flush()
+  const importedSettings = defaultSettings(); importedSettings.export.filenamePrefix = 'Imported'; importedSettings.shortcutsEnabled = false; importedSettings.onboardingVersion = 1
+  api.status.mockResolvedValue({ settings: importedSettings, version: 'test', platform: 'windows', delayRemaining: 0 })
+  await findNode(root, node => node.props['data-import'])!.props.onClick()
+  await flush()
+  findNode(root, node => node.type === 'button' && text(node) === '截图')!.props.onClick()
+  await flush()
+  expect(findNode(root, node => node.props.id === 'filename-prefix')!.value).toBe('Imported')
+  expect(findNode(root, node => node.type === 'button' && text(node).includes('快捷键') && text(node).includes('已禁用'))).toBeDefined()
 })

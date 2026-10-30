@@ -104,9 +104,7 @@ fn persist(record: &Path, directory: Option<&Path>) -> Result<(), String> {
 
 pub(crate) fn resolve(app: &AppHandle) -> Result<(PathBuf, bool), String> {
     let remember = preferences(app)?.remember_directory;
-    let mut session = SESSION_DIRECTORY.lock().map_err(|e| e.to_string())?;
-    let selected = selected_directory(&record(app)?, remember, &mut session)?;
-    match selected {
+    match configured_directory(app, remember)? {
         Some(path) => Ok((path, false)),
         None => Ok((
             app.path()
@@ -116,6 +114,36 @@ pub(crate) fn resolve(app: &AppHandle) -> Result<(PathBuf, bool), String> {
             true,
         )),
     }
+}
+
+/// 备份在设置锁内使用已读取的记忆开关，避免再次锁定设置状态。
+pub(crate) fn configured_directory(
+    app: &AppHandle,
+    remember: bool,
+) -> Result<Option<PathBuf>, String> {
+    let mut session = SESSION_DIRECTORY.lock().map_err(|e| e.to_string())?;
+    selected_directory(&record(app)?, remember, &mut session)
+}
+
+/// 选择器和配置导入共用目录提交；调用方持有设置锁，保证与导入互斥。
+pub(crate) fn configure_directory(
+    app: &AppHandle,
+    directory: Option<&Path>,
+    remember: bool,
+) -> Result<(), String> {
+    if let Some(directory) = directory {
+        validate_directory(directory)?;
+    }
+    if remember || directory.is_none() {
+        persist(&record(app)?, directory)?;
+    }
+    restore_session_directory(directory.map(Path::to_owned))
+}
+
+/// 配置导入回滚只恢复运行时选择，磁盘原始记录由备份事务恢复。
+pub(crate) fn restore_session_directory(directory: Option<PathBuf>) -> Result<(), String> {
+    *SESSION_DIRECTORY.lock().map_err(|e| e.to_string())? = Some(directory);
+    Ok(())
 }
 
 /// 将磁盘记忆和本次运行的目录分开，关闭记忆不会中断当前输出位置。
@@ -142,7 +170,7 @@ fn view(path: &Path, is_default: bool) -> RecordingDirectory {
     }
 }
 
-fn validate_directory(path: &Path) -> Result<(), String> {
+pub(crate) fn validate_directory(path: &Path) -> Result<(), String> {
     if !path.is_absolute() || !path.is_dir() {
         return Err(format!(
             "录屏保存目录不可用：{}。请重新选择目录或恢复默认。",
@@ -193,10 +221,15 @@ pub async fn choose_recording_directory(
         let _changing = CHANGING
             .try_lock()
             .map_err(|_| "请先完成当前目录选择。".to_string())?;
-        let record = record(&app)?;
         if reset {
-            persist(&record, None)?;
-            *SESSION_DIRECTORY.lock().map_err(|e| e.to_string())? = Some(None);
+            let state = app.state::<SettingsState>();
+            let current = state.0.lock().map_err(|e| e.to_string())?;
+            configure_directory(
+                &app,
+                None,
+                current.value.recording_export.remember_directory,
+            )?;
+            drop(current);
             let (path, is_default) = resolve(&app)?;
             return Ok(Some(view(&path, is_default)));
         }
@@ -215,10 +248,13 @@ pub async fn choose_recording_directory(
         };
         let path = selected.into_path().map_err(|e| e.to_string())?;
         validate_directory(&path)?;
-        if preferences(&app)?.remember_directory {
-            persist(&record, Some(&path))?;
-        }
-        *SESSION_DIRECTORY.lock().map_err(|e| e.to_string())? = Some(Some(path.clone()));
+        let state = app.state::<SettingsState>();
+        let current = state.0.lock().map_err(|e| e.to_string())?;
+        configure_directory(
+            &app,
+            Some(&path),
+            current.value.recording_export.remember_directory,
+        )?;
         Ok(Some(view(&path, false)))
     })
     .await

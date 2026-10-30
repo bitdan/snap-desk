@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { defaultSettings } from '../../src/features/settings/settings'
 const api = vi.hoisted(() => ({ status: vi.fn(), saveSettings: vi.fn() }))
 vi.mock('../../src/services/api', () => ({ api }))
-import { updateSettings } from '../../src/features/settings/settings-write'
+import { updateSettings, queueSettingsOperation } from '../../src/features/settings/settings-write'
 
 afterEach(() => vi.resetAllMocks())
 describe('跨页面自动保存队列', () => {
@@ -23,4 +23,20 @@ describe('跨页面自动保存队列', () => {
     await expect(updateSettings(current => current)).rejects.toThrow('配置写入失败')
     await expect(updateSettings(current => ({ ...current, delaySeconds: 3 }))).resolves.toMatchObject({ delaySeconds: 3 })
   })
+})
+
+it('配置导入在自动保存之间串行执行，后续保存基于导入后的值', async () => {
+  let settings = defaultSettings()
+  const order: string[] = []
+  api.status.mockImplementation(async () => ({ settings: structuredClone(settings) }))
+  api.saveSettings.mockImplementation(async value => { settings = structuredClone(value); order.push('save'); return settings })
+  await Promise.all([
+    updateSettings(current => ({ ...current, delaySeconds: 3 })),
+    queueSettingsOperation(async () => { order.push('import'); settings = { ...defaultSettings(), shortcutsEnabled: false }; return settings }),
+    updateSettings(current => ({ ...current, export: { ...current.export, filenamePrefix: 'AfterImport' } })),
+  ])
+  expect(order).toEqual(['save', 'import', 'save'])
+  expect(settings.delaySeconds).toBe(0)
+  expect(settings.shortcutsEnabled).toBe(false)
+  expect(settings.export.filenamePrefix).toBe('AfterImport')
 })

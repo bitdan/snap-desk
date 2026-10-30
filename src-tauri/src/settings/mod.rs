@@ -3,6 +3,7 @@
 pub(crate) mod autostart;
 pub(crate) mod shortcut_probe;
 pub(crate) mod storage;
+pub(crate) mod backup;
 
 use crate::capture::{require_window, CaptureState};
 use serde::{Deserialize, Serialize};
