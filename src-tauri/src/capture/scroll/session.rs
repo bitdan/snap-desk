@@ -161,13 +161,18 @@ pub fn control_scroll(
             Err("滚动截图已结束。".into())
         };
     }
+    finish_current(&app, id, Some(confirmed_only.unwrap_or(false)))
+}
+
+/// 完成按钮与 Ctrl+C 共用停止入口；快捷键在恢复状态只导出已确认画布。
+fn finish_current(app: &AppHandle, id: u64, confirmed_only: Option<bool>) -> Result<(), String> {
     let state = app.state::<CaptureState>();
     let mut guard = state.scroll.lock().map_err(err)?;
-    let session = guard
-        .as_mut()
-        .filter(|s| s.id == id)
-        .ok_or("滚动截图已结束。")?;
-    session.confirmed_only |= confirmed_only.unwrap_or(false);
+    let session = guard.as_mut().filter(|s| s.id == id).ok_or("滚动截图已结束。")?;
+    if state.scroll_cancel.load(Ordering::SeqCst) {
+        return Err("滚动截图已取消。".into());
+    }
+    session.confirmed_only |= confirmed_only.unwrap_or(session.status == "recovering");
     state.scroll_stop.store(true, Ordering::SeqCst);
     Ok(())
 }
@@ -624,6 +629,7 @@ fn launch(app: &AppHandle, id: u64, first_delay: u64) -> Result<(), String> {
         let x = i64::from(s.screen.x) + i64::from(s.rect.x);
         let y = i64::from(s.screen.y) + i64::from(s.rect.y);
         let cancel_app = app.clone();
+        let finish_app = app.clone();
         super::input::Listener::start(
             s.direction.clone(),
             (
@@ -633,6 +639,7 @@ fn launch(app: &AppHandle, id: u64, first_delay: u64) -> Result<(), String> {
                 y + i64::from(s.rect.height),
             ),
             move || cancel_current(&cancel_app, id, "escape"),
+            move || finish_current(&finish_app, id, None).is_ok(),
         )?
     };
     let app = app.clone();

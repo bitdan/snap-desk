@@ -695,8 +695,6 @@
   "翻译中": "Translating",
   "已完成": "Completed",
   "正在翻译，请稍候…": "Translating, please wait…",
-  "点击下方翻译，译文将在这里显示": "Click Translate below to see the result here",
-  "同意将原文发送给上述服务（可能计费）": "Allow sending the source text to this service (charges may apply)",
   "翻译中…": "Translating…",
   "重新翻译": "Translate again",
   "英语": "English",
@@ -978,7 +976,6 @@
   "服务预设": "Service preset",
   "本机兼容服务": "Local compatible service",
   "测试会发送 Hello，可能产生费用。": "The test sends Hello and may incur charges.",
-  "在线翻译失败，可在设置中选择本地离线翻译。": "Online translation failed. You can select local offline translation in settings.",
   "DeepL 仅支持官方 Free 或 Pro 的 /v2/translate 地址。": "DeepL requires the official Free or Pro /v2/translate endpoint.",
   "一次需要 1～50 段非空文字，合计不超过 32 KB。": "Provide 1–50 non-empty text segments, totaling at most 32 KB.",
   "DeepL 翻译额度已用尽，请检查账户用量。": "DeepL translation quota exhausted. Check your account usage.",
@@ -1017,5 +1014,8 @@
   "备份包含主配置、快捷键和保存目录，不包含密钥、历史记录及图片视频。": "Backup includes settings, shortcuts and save folders. Credentials, history and media files are excluded.",
   "配置已导出，包含快捷键和截图、录屏保存目录。": "Settings exported with shortcuts and screenshot/recording folders.",
   "配置已导入，快捷键和保存目录已更新。": "Settings imported. Shortcuts and save folders are updated.",
-  "请先修正未保存的设置，再重试。": "Fix unsaved settings before trying again."
+  "请先修正未保存的设置，再重试。": "Fix unsaved settings before trying again.",
+  "保存并复制已拼接内容（Ctrl+C）": "Save and copy stitched content (Ctrl+C)",
+  "完成并复制（Ctrl+C）": "Finish and copy (Ctrl+C)",
+  "译文将在这里显示": "Translation will appear here"
 }

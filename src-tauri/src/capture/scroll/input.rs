@@ -1,4 +1,4 @@
-//! 首次在选区内滚动时锁定轴；滚轮透传，Esc 在会话期间取消截图。
+//! 首次滚动锁定轴；滚轮透传，Esc 取消，Ctrl+C 完成并复制长截图。
 use super::matcher::ScrollMode;
 use std::sync::{
     atomic::{AtomicU8, Ordering},
@@ -38,7 +38,7 @@ mod platform {
         Foundation::{HINSTANCE, LPARAM, LRESULT, WPARAM},
         System::LibraryLoader::GetModuleHandleW,
         UI::{
-            Input::KeyboardAndMouse::{GetAsyncKeyState, VK_ESCAPE, VK_SHIFT},
+            Input::KeyboardAndMouse::{GetAsyncKeyState, VK_C, VK_CONTROL, VK_ESCAPE, VK_MENU, VK_SHIFT},
             WindowsAndMessaging::*,
         },
     };
@@ -49,6 +49,10 @@ mod platform {
         // 回调只置位，请求取消在消息循环中处理，避免低级钩子等待会话锁。
         static ESCAPE_REQUESTED: Cell<bool> = const { Cell::new(false) };
         static ESCAPE_ACTIVE: Cell<bool> = const { Cell::new(true) };
+        static COPY_REQUESTED: Cell<bool> = const { Cell::new(false) };
+        static COPY_ACTIVE: Cell<bool> = const { Cell::new(true) };
+        // 消费同一轮 C 的长按和释放，避免原应用复制正文覆盖长截图。
+        static COPY_HELD: Cell<bool> = const { Cell::new(false) };
     }
     unsafe extern "system" fn mouse(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
         if code >= 0 && matches!(wparam.0 as u32, WM_MOUSEWHEEL | WM_MOUSEHWHEEL) {
@@ -71,10 +75,43 @@ mod platform {
         CallNextHookEx(None, code, wparam, lparam)
     }
 
-    /// 焦点留在被截图应用时也能退出；消费 Esc，避免同时关闭原页面的弹层。
+    /// 钩子回调只记录按键意图，不在系统回调内锁会话或操作剪贴板。
+    fn copy_key(message: u32, key: u32, control: bool, shift: bool, alt: bool) -> bool {
+        if key != u32::from(VK_C.0) { return false; }
+        if matches!(message, WM_KEYUP | WM_SYSKEYUP) {
+            return COPY_HELD.with(|held| held.replace(false));
+        }
+        if !matches!(message, WM_KEYDOWN | WM_SYSKEYDOWN) { return false; }
+        if COPY_HELD.with(Cell::get) { return true; }
+        if ESCAPE_ACTIVE.with(Cell::get) && COPY_ACTIVE.with(Cell::get) && control && !shift && !alt {
+            COPY_HELD.with(|held| held.set(true));
+            COPY_REQUESTED.with(|requested| requested.set(true));
+            return true;
+        }
+        false
+    }
+
+    fn copy_down() -> bool {
+        unsafe {
+            GetAsyncKeyState(i32::from(VK_C.0)) < 0
+                && GetAsyncKeyState(i32::from(VK_CONTROL.0)) < 0
+                && GetAsyncKeyState(i32::from(VK_SHIFT.0)) >= 0
+                && GetAsyncKeyState(i32::from(VK_MENU.0)) >= 0
+        }
+    }
+
+    /// 焦点留在被截图应用时也能完成或取消；消费对应按键，避免原页面同时处理。
     unsafe extern "system" fn keyboard(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
         if code >= 0 {
             let event = &*(lparam.0 as *const KBDLLHOOKSTRUCT);
+            if copy_key(
+                wparam.0 as u32, event.vkCode,
+                GetAsyncKeyState(i32::from(VK_CONTROL.0)) < 0,
+                GetAsyncKeyState(i32::from(VK_SHIFT.0)) < 0,
+                GetAsyncKeyState(i32::from(VK_MENU.0)) < 0,
+            ) {
+                return LRESULT(1);
+            }
             if event.vkCode == u32::from(VK_ESCAPE.0) && ESCAPE_ACTIVE.with(Cell::get) {
                 if matches!(wparam.0 as u32, WM_KEYDOWN | WM_SYSKEYDOWN) {
                     ESCAPE_REQUESTED.with(|requested| requested.set(true));
@@ -95,6 +132,7 @@ mod platform {
             direction: Direction,
             bounds: (i64, i64, i64, i64),
             cancel: impl Fn() -> bool + Send + 'static,
+            finish: impl Fn() -> bool + Send + 'static,
         ) -> Result<Self, String> {
             let stop = Arc::new(AtomicBool::new(false));
             let stopped = stop.clone();
@@ -148,6 +186,7 @@ mod platform {
                     // 不使用异步按键状态的最低位（可能被其他进程读取），只检测当前按下边沿。
                     // 低级钩子被系统移除时，轮询仍能接住前台应用中的 Esc。
                     let mut escape_down = GetAsyncKeyState(i32::from(VK_ESCAPE.0)) < 0;
+                    let mut copying = copy_down();
                     while !stopped.load(Ordering::Acquire) {
                         MsgWaitForMultipleObjectsEx(None, 20, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
                         let mut msg = MSG::default();
@@ -164,6 +203,15 @@ mod platform {
                             }
                         }
                         escape_down = down;
+                        let copy_pressed = copy_down();
+                        let copy_hooked = COPY_REQUESTED.with(|requested| requested.replace(false));
+                        if ESCAPE_ACTIVE.with(Cell::get) && COPY_ACTIVE.with(Cell::get)
+                            && (copy_hooked || (copy_pressed && !copying)) && finish()
+                        {
+                            // 完成只停止采集；Esc 仍可中断末帧等待或导出。
+                            COPY_ACTIVE.with(|active| active.set(false));
+                        }
+                        copying = copy_pressed;
                     }
                     let _ = UnhookWindowsHookEx(keyboard_hook);
                     let _ = UnhookWindowsHookEx(hook);
@@ -191,6 +239,25 @@ mod platform {
     #[cfg(test)]
     mod tests {
         use super::*;
+
+        #[test]
+        fn copy_chord_is_consumed_once_and_other_modifiers_are_preserved() {
+            COPY_ACTIVE.with(|active| active.set(true));
+            COPY_HELD.with(|held| held.set(false));
+            COPY_REQUESTED.with(|requested| requested.set(false));
+            let c = u32::from(VK_C.0);
+            assert!(!copy_key(WM_KEYDOWN, c, false, false, false));
+            assert!(!copy_key(WM_KEYDOWN, c, true, true, false));
+            assert!(!copy_key(WM_KEYDOWN, c, true, false, true));
+            assert!(copy_key(WM_KEYDOWN, c, true, false, false));
+            assert!(COPY_REQUESTED.with(|requested| requested.replace(false)));
+            assert!(copy_key(WM_KEYDOWN, c, true, false, false));
+            assert!(!COPY_REQUESTED.with(Cell::get));
+            assert!(copy_key(WM_KEYUP, c, false, false, false));
+            COPY_ACTIVE.with(|active| active.set(false));
+            assert!(!copy_key(WM_KEYDOWN, c, true, false, false));
+            COPY_ACTIVE.with(|active| active.set(true));
+        }
 
         #[test]
         fn escape_hook_requests_cancel_on_keydown_without_waiting_for_a_webview() {

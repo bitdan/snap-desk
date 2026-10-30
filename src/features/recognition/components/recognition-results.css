@@ -32,9 +32,6 @@
 .recognition-result .text-placeholder { color: #8c959f; font-size: 13px; font-weight: 400; }
 .recognition-result .text-content:focus-visible { outline: 2px solid #2563eb; outline-offset: -2px; }
 .recognition-result .result-destination { margin: 12px 0 8px; overflow-wrap: anywhere; color: #57606a; font-size: 12px; user-select: text; }
-.recognition-result .result-consent { display: flex; align-items: flex-start; gap: 8px; font-size: 12px; line-height: 1.6; }
-.recognition-result .result-consent input { margin-top: 3px; }
-.recognition-result .result-consent input:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
 .recognition-result .result-error { margin: 12px 0 0; padding: 8px 10px; border-radius: 4px; background: #fff0f0; color: #a12f38; overflow-wrap: anywhere; }
 .recognition-result .result-progress { display: inline-flex; align-items: center; gap: 4px; }
 .recognition-result .result-spinner { animation: result-spin 1s linear infinite; }

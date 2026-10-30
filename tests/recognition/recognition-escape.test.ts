@@ -53,26 +53,19 @@ describe('识别与翻译面板真实交互', () => {
     api.translateText.mockReturnValue(new Promise(resolve => { finish = resolve }))
     api.cancelAiJob.mockResolvedValueOnce(undefined)
     await mount('TranslationPanel')
-    findNode(root, node => node.type === 'button' && content(node).trim() === '翻译')!.props.onClick()
-    await flushComponent()
+    expect(api.translateText).toHaveBeenCalledOnce()
     findNode(root, node => node.type === 'button' && content(node).trim() === '取消翻译')!.props.onClick()
     await flushComponent()
     finish({ requestId: api.translateText.mock.calls[0][0], translatedText: 'late translation', targetLanguage: 'zh-CN' })
     await flushComponent()
     expect(findNode(root, node => node.type === 'textarea' && node.props.id === 'translation-output')?.value).toBe('')
   })
-  it('DeepL 无模型也能翻译；确认前不上传，卸载取消当前批次', async () => {
+  it('DeepL 无模型也能自动翻译，不需要再次勾选确认，卸载取消当前批次', async () => {
     const settings = { ...defaultAiSettings(), provider: 'deepl', endpoint: 'https://api-free.deepl.com/v2/translate' }
     api.aiTranslationConfig.mockResolvedValue(settings)
     api.translateTexts.mockReturnValue(new Promise(() => {}))
     await mount('ImageTranslation')
-    const button = () => findNode(root, node => node.type === 'button' && content(node).trim() === '翻译')!
-    expect(button().props.disabled).toBe(true)
-    expect(api.translateTexts).not.toHaveBeenCalled()
-    findNode(root, node => node.type === 'input' && node.props.type === 'checkbox')!.props['onUpdate:modelValue'](true)
-    await flushComponent()
-    expect(button().props.disabled).toBe(false)
-    button().props.onClick(); await flushComponent()
+    expect(findNode(root, node => node.type === 'input' && node.props.type === 'checkbox')).toBeUndefined()
     expect(api.translateTexts).toHaveBeenCalledExactlyOnceWith(expect.any(String), { texts: ['hello'], sourceLanguage: null, targetLanguage: 'zh-CN' }, true, settings)
     expect(api.translateText).not.toHaveBeenCalled()
     const requestId = api.translateTexts.mock.calls[0][0]
@@ -98,9 +91,6 @@ describe('识别与翻译面板真实交互', () => {
     findNode(root, node => node.type === 'button' && content(node).trim() === '翻译文字')!.props.onClick()
     await flushComponent()
     expect(content(root)).toContain('修正后的原文')
-    expect(api.translateText).not.toHaveBeenCalled()
-    findNode(root, node => node.type === 'button' && content(node).trim() === '翻译')!.props.onClick()
-    await flushComponent()
     expect(api.translateText).toHaveBeenCalledOnce()
     expect(api.translateText.mock.calls[0][1]).toBe('修正后的原文')
     findNode(root, node => node.type === 'button' && content(node).trim() === '返回识别')!.props.onClick()
@@ -112,7 +102,7 @@ describe('识别与翻译面板真实交互', () => {
     api.recognizePinText.mockResolvedValueOnce({ ...recognition, fullText: '直接翻译的原文' })
     await mount('PinRecognition', { mode: 'translate' })
     expect(content(root)).toContain('直接翻译的原文')
-    expect(api.translateText).not.toHaveBeenCalled()
+    expect(api.translateText).toHaveBeenCalledOnce()
     findNode(root, node => node.type === 'button' && content(node).trim() === '返回识别')!.props.onClick()
     await flushComponent()
     expect(findNode(root, node => node.type === 'textarea')!.value).toBe('直接翻译的原文')
@@ -154,9 +144,6 @@ describe('识别与翻译面板真实交互', () => {
   })
   it.each(['ImageTranslation', 'TranslationPanel'] as const)('%s 在真实翻译期间卸载会取消请求，取消失败也能正常退出', async name => {
     await mount(name)
-    const translate = findNode(root, node => node.type === 'button' && content(node).trim() === '翻译')!
-    expect(translate.props.disabled).toBeFalsy()
-    translate.props.onClick(); await flushComponent()
     expect(api.translateText).toHaveBeenCalledOnce()
     const requestId = api.translateText.mock.calls[0][0]
     memoryRenderer.render(null, root); await flushComponent()
@@ -206,5 +193,40 @@ describe('窗口识别面板 Esc 兜底', () => {
     expect(closeRecognition).toHaveBeenCalledOnce()
     key(event)
     expect(action).not.toHaveBeenCalled()
+  })
+})
+
+describe('进入翻译即使用已配置服务', () => {
+  it.each(['ImageTranslation', 'TranslationPanel'] as const)('%s 在线失败只显示错误，不改用本地服务', async name => {
+    const settings = { ...defaultAiSettings(), provider: 'online-llm', endpoint: 'https://example.test/v1/chat/completions', model: 'configured-model' }
+    api.aiTranslationConfig.mockResolvedValue(settings)
+    api.translateText.mockRejectedValue(new Error('服务不可用'))
+    api.translateTexts.mockRejectedValue(new Error('服务不可用'))
+    await mount(name); await flushComponent()
+    const request = name === 'ImageTranslation' ? api.translateTexts : api.translateText
+    const other = name === 'ImageTranslation' ? api.translateText : api.translateTexts
+    expect(request).toHaveBeenCalledOnce()
+    expect(request.mock.calls[0][2]).toBe(true)
+    expect(request.mock.calls[0][3]).toEqual(settings)
+    expect(other).not.toHaveBeenCalled()
+    expect(content(root)).toContain('服务不可用')
+    expect(content(root)).not.toContain('本地离线翻译')
+    expect(findNode(root, node => node.type === 'input' && node.props.type === 'checkbox')).toBeUndefined()
+  })
+  it.each(['ImageTranslation', 'TranslationPanel'] as const)('%s 配置未就绪时不发送请求，也不切换默认引擎', async name => {
+    api.aiTranslationConfig.mockResolvedValue({ ...defaultAiSettings(), provider: 'deepl', endpoint: '' })
+    await mount(name)
+    expect(api.translateText).not.toHaveBeenCalled()
+    expect(api.translateTexts).not.toHaveBeenCalled()
+    expect(content(root)).toContain('配置在线服务')
+  })
+  it.each(['ImageTranslation', 'TranslationPanel'] as const)('%s 关闭期间配置迟到不触发请求', async name => {
+    let resolve!: (value: unknown) => void
+    api.aiTranslationConfig.mockReturnValue(new Promise(done => { resolve = done }))
+    await mount(name)
+    memoryRenderer.render(null, root)
+    resolve(defaultAiSettings()); await flushComponent()
+    expect(api.translateText).not.toHaveBeenCalled()
+    expect(api.translateTexts).not.toHaveBeenCalled()
   })
 })

@@ -47,7 +47,16 @@ async function finish(cancel: boolean) {
     }
   }
 }
-function key(event: KeyboardEvent) { handleEscape(event, () => { void finish(true) }) }
+function key(event: KeyboardEvent) {
+  if (handleEscape(event, () => { void finish(true) })) return
+  if (event.defaultPrevented || event.isComposing || event.keyCode === 229 || event.altKey || event.shiftKey
+    || !(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== 'c') return
+  // 输入框保留文本复制；预览与控制条共用完成入口，不复制低分辨率预览图。
+  if ((event.target as HTMLElement | null)?.closest?.('input, textarea, select, [contenteditable=""], [contenteditable="true"], [role="textbox"]')) return
+  if (!view.value) return
+  event.preventDefault()
+  if (!event.repeat && !busy.value && view.value.status !== 'finishing') void finish(false)
+}
 onMounted(async () => {
   window.addEventListener('keydown', key)
   try {
@@ -89,7 +98,7 @@ onUnmounted(() => { disposed = true; window.removeEventListener('keydown', key);
         <small v-if="view" aria-live="polite">{{ te(view.message) || t("{0} 帧 · {1} px", { 0: view.frames, 1: view.height }) }}</small>
       </div>
       <span v-if="error" class="error-indicator" role="alert" :title="te(error)" :aria-label="te(error)"><AlertCircle :size="16" /></span>
-      <button class="save" :disabled="busy || !view" :title="recovering ? t('保存已拼接内容') : t('完成并保存')" @click="finish(false)"><Save :size="15" />{{ recovering ? t("保存已确认部分") : t("完成") }}</button>
+      <button class="save" :disabled="busy || !view" :title="recovering ? t('保存并复制已拼接内容（Ctrl+C）') : t('完成并复制（Ctrl+C）')" @click="finish(false)"><Save :size="15" />{{ recovering ? t("保存已确认部分") : t("完成") }}</button>
       <button class="cancel" :disabled="busy || !view" :title='t("取消（Esc，不保存）")' :aria-label='t("取消滚动截图")' @click="finish(true)"><X :size="17" /><span v-if="recovering">{{ t("取消") }}</span></button>
     </footer>
   </main>

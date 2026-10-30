@@ -87,3 +87,45 @@ describe('滚动采样状态与控制', () => {
     expect(findNode(root, node => node.type === 'p' && node.props.title === '尚无新增内容')).toBeDefined()
   })
 })
+
+describe('长截图复制快捷键', () => {
+  function press(overrides: Record<string, unknown> = {}) {
+    const key = vi.mocked(window.addEventListener).mock.calls.find(([type]) => type === 'keydown')![1] as (event: KeyboardEvent) => void
+    const event = { key: 'c', ctrlKey: true, preventDefault: vi.fn(), ...overrides } as unknown as KeyboardEvent
+    key(event)
+    return event
+  }
+  it.each(['scroll-preview', 'scroll-controls'])('%s 的 Ctrl+C 与完成按钮共用原图输出入口，长按不重复提交', async label => {
+    vi.stubGlobal('location', { search: `?window=${label}` })
+    await mount()
+    const event = press()
+    press({ repeat: true }); press()
+    await flushComponent()
+    expect(event.preventDefault).toHaveBeenCalledOnce()
+    expect(mocks.controlScroll).toHaveBeenCalledExactlyOnceWith(7, false, false)
+  })
+  it('Cmd+C 在恢复状态仅复制已确认部分', async () => {
+    mocks.currentScroll.mockResolvedValue({ ...view, status: 'recovering' })
+    await mount()
+    press({ key: 'C', ctrlKey: false, metaKey: true }); await flushComponent()
+    expect(mocks.controlScroll).toHaveBeenCalledWith(7, false, true)
+  })
+  it.each([
+    { ctrlKey: false }, { altKey: true }, { shiftKey: true },
+    { defaultPrevented: true }, { isComposing: true }, { keyCode: 229 },
+    { target: { closest: () => ({}) } }, { repeat: true },
+  ])('输入框、组词或其他组合不触发复制：%o', async overrides => {
+    await mount()
+    press(overrides); await flushComponent()
+    expect(mocks.controlScroll).not.toHaveBeenCalled()
+  })
+  it('关闭后的迟到按键不复制旧会话，正在完成时也不重复提交', async () => {
+    await mount()
+    receive({ ...view, revision: 2, status: 'finishing' })
+    press(); await flushComponent()
+    expect(mocks.controlScroll).not.toHaveBeenCalled()
+    close(7)
+    press(); await flushComponent()
+    expect(mocks.controlScroll).not.toHaveBeenCalled()
+  })
+})

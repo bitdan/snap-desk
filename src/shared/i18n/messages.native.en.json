@@ -749,5 +749,6 @@
   "不能覆盖正在使用的配置文件，请另选导出位置。": "Choose a different export location; active settings files cannot be overwritten.",
   "修改日志级别失败。": "Could not change log level.",
   "日志级别配置无效。": "Invalid log level configuration.",
-  "日志级别配置路径无效。": "Invalid log level configuration path."
+  "日志级别配置路径无效。": "Invalid log level configuration path.",
+  "滚动截图已取消。": "Scroll capture was cancelled."
 }
