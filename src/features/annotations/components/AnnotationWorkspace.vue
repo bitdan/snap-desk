@@ -17,14 +17,15 @@ const emit = defineEmits<{
   tool: [tool: AnnotationTool]; float: [event: PointerEvent]; resetPosition: []
   toolbarElement: [element: HTMLElement | null]
   activate: []
+  backgroundPointerdown: [event: PointerEvent]
 }>()
 </script>
 
 <template>
   <div v-if="surfaceVisible" class="annotation-workspace-stage" :class="{ outlined }" :style="surfaceStyle">
-    <AnnotationSurface :editor="editor" :presentation="presentation" :width="width" :height="height" :bounds="bounds" :enabled="enabled" />
+    <AnnotationSurface :editor="editor" :presentation="presentation" :width="width" :height="height" :bounds="bounds" :enabled="enabled" @background-pointerdown="emit('backgroundPointerdown', $event)" />
   </div>
-  <AnnotationToolbarHost v-if="toolbarVisible" :style="toolbarStyle" :editor="editor" :disabled="disabled" :active="active" :default-expanded="defaultExpanded" :pointer-label="pointerLabel"
+  <AnnotationToolbarHost v-if="surfaceVisible || toolbarVisible" v-show="toolbarVisible" :style="toolbarStyle" :editor="editor" :disabled="disabled" :active="active" :default-expanded="defaultExpanded" :pointer-label="pointerLabel"
     @tool="emit('tool', $event)" @float="emit('float', $event)" @reset-position="emit('resetPosition')" @activate="emit('activate')" @toolbar-element="emit('toolbarElement', $event)">
     <template #leading><slot name="leading" /></template>
     <template #actions><slot name="actions" /></template>

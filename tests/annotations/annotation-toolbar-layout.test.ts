@@ -55,6 +55,18 @@ async function mount(collapsible = true, defaultExpanded = false, pointerLabel?:
 }
 
 describe('共享标注工具栏分行与折叠', () => {
+  it('绘制期间通过行级交互锁保护工具，不反复切换按钮禁用外观', async () => {
+    editor.setTool('rectangle'); await mount(true, true)
+    const reset = row('恢复默认工具顺序')
+    expect(reset.props.disabled).toBe(false)
+    editor.begin({ x: 20, y: 20 }, 2); await Vue.nextTick()
+    expect(row('标注工具').props.inert).toBe(true)
+    expect(reset.props.disabled).toBe(false)
+    expect(row('标注操作').props.inert).toBe(true)
+    editor.drag({ x: 80, y: 60 }); await editor.finish(); await Vue.nextTick()
+    expect(row('标注工具').props.inert).toBe(false)
+    expect(reset.props.disabled).toBe(false)
+  })
   it('录屏桌面指针在展开和折叠时都显示明确名称与选中状态', async () => {
     editor.setTool('pen')
     await mount(true, true, '操作桌面', false)

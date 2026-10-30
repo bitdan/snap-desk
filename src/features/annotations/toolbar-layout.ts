@@ -27,7 +27,10 @@ export function useFloatingToolbar(element: Ref<HTMLElement | null>) {
     top: `${bounded.value.y}px`, transform: 'none', margin: '0', height: 'auto', zIndex: 5 } : {})
   watch(element, (node, _, cleanup) => {
     if (!node) return
-    const measure = () => { const rect = node.getBoundingClientRect(); size.value = { width: rect.width, height: rect.height } }
+    const measure = () => {
+      const rect = node.getBoundingClientRect()
+      if (rect.width > 0 && rect.height > 0) size.value = { width: rect.width, height: rect.height }
+    }
     const observer = new ResizeObserver(measure)
     observer.observe(node); measure()
     cleanup(() => { observer.disconnect(); end() })

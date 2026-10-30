@@ -19,7 +19,7 @@ describe('place a text input before typing', () => {
     editor.setTool('arrow-text')
     editor.begin({ x: 100, y: 100 }, 2); editor.drag({ x: 400, y: 200 }); await editor.finish()
     expect(editor.textEditing).toBe(true)
-    expect(editor.textBox()).toEqual({ x: 160, y: 132, width: 180, height: 180 })
+    expect(editor.textBox()).toEqual({ x: 160, y: 132, width: 180, height: 298 })
     expect(editor.arrowDraft).toMatchObject({ kind: 'arrow', start: { x: 100, y: 100 }, end: { x: 400, y: 200 } })
     expect(editor.draft).toMatchObject({ kind: 'text', text: '' })
     expect(persist).not.toHaveBeenCalled()
@@ -63,7 +63,7 @@ describe('place a text input before typing', () => {
     editor.begin({ x: 80, y: 90 }, 2); editor.draft!.text = '原文'
     await editor.finishText()
     const original = editor.history.present[0]
-    editor.begin({ x: 90, y: 100 }, 2)
+    editor.editText(0)
     expect(editor.textEditing).toBe(true)
     expect(editor.textAutoHeight).toBe(true)
     editor.draft!.text = '修改后'
@@ -76,12 +76,16 @@ describe('place a text input before typing', () => {
     await editor.travel('redo')
     expect(editor.history.present[0].text).toBe('修改后')
   })
-  it('clicking text in edit mode reopens input, while dragging still moves it', async () => {
+  it('single click selects text, explicit editing clones it, and dragging moves it', async () => {
     const editor = editorFor()
     editor.begin({ x: 80, y: 90 }, 2); editor.draft!.text = '文字'
     await editor.finishText()
     editor.setTool('edit')
     editor.begin({ x: 90, y: 100 }, 2); await editor.finish()
+    expect(editor.textEditing).toBe(false)
+    expect(editor.selected).toBe(0)
+    expect(editor.history.past).toHaveLength(1)
+    editor.editText(0)
     expect(editor.textEditing).toBe(true)
     editor.draft!.text = '取消修改'; editor.abort()
     expect(editor.history.present[0].text).toBe('文字')
@@ -108,7 +112,7 @@ describe('place a text input before typing', () => {
   it('keeps the original layer and edited draft when saving a second edit fails', async () => {
     const persist = vi.fn().mockResolvedValue(undefined), editor = editorFor(persist)
     editor.begin({ x: 80, y: 90 }, 2); editor.draft!.text = '原文'; await editor.finishText()
-    editor.begin({ x: 90, y: 100 }, 2); editor.draft!.text = '新内容'
+    editor.editText(0); editor.draft!.text = '新内容'
     persist.mockRejectedValueOnce(new Error('save failed'))
     await editor.finishText()
     expect(editor.history.present[0].text).toBe('原文')
@@ -135,7 +139,7 @@ describe('place a text input before typing', () => {
     await editor.finishText()
     expect(persist).toHaveBeenCalledTimes(1)
     expect(editor.history.present[0]).toMatchObject({ text: '中文\n第二行', raster: 'glyph' })
-    expect(prepareRaster).toHaveBeenCalledWith(expect.anything(), 'image', { x: 80, y: 90, width: 180, height: 180 })
+    expect(prepareRaster).toHaveBeenCalledWith(expect.anything(), 'image', { x: 80, y: 90, width: 180, height: 340 })
     expect(editor.interacting).toBe(false)
     await editor.travel('undo'); expect(editor.history.present).toEqual([])
     await editor.travel('redo'); expect(editor.history.present[0].text).toBe('中文\n第二行')
@@ -172,6 +176,35 @@ describe('place a text input before typing', () => {
     persist.mockResolvedValue(undefined)
     await editor.finishText()
     expect(editor.history.present).toHaveLength(1)
+  })
+  it('lets the user adjust font size after a layout failure without losing text or locking the toolbar', async () => {
+    const editor = editorFor()
+    editor.begin({ x: 80, y: 90 }, 2); editor.draft!.text = '需要缩小字号'
+    vi.mocked(prepareRaster).mockRejectedValueOnce(new Error('文字超出区域'))
+    await editor.finishText()
+    expect(editor.textEditing).toBe(true)
+    await editor.style({ fontSize: 16, color: '#123456' })
+    expect(editor.draft).toMatchObject({ text: '需要缩小字号', fontSize: 16, color: '#123456' })
+    expect(editor.error).toBe('')
+    await editor.finishText()
+    expect(editor.textEditing).toBe(false)
+    expect(editor.history.present[0]).toMatchObject({ text: '需要缩小字号', fontSize: 16 })
+  })
+  it('Esc can cancel pending text layout and late results cannot restore the abandoned input', async () => {
+    const editor = editorFor()
+    editor.begin({ x: 80, y: 90 }, 2); editor.draft!.text = '等待排版'
+    const old = { ...editor.draft! }
+    let release!: (shape: typeof old) => void
+    vi.mocked(prepareRaster).mockImplementationOnce(() => new Promise(resolve => { release = resolve }))
+    const task = editor.finishText(); expect(editor.pending).toBe(true)
+    editor.cancelText()
+    expect(editor.textEditing).toBe(false); expect(editor.pending).toBe(false)
+    editor.begin({ x: 80, y: 90 }, 2); editor.draft!.text = '新输入'
+    release(old); await task
+    expect(editor.history.present).toEqual([])
+    expect(editor.draft!.text).toBe('新输入')
+    await editor.finishText()
+    expect(editor.history.present[0].text).toBe('新输入')
   })
   it('does not commit an old draft after the image resets during rasterization', async () => {
     const editor = editorFor()

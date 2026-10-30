@@ -120,7 +120,7 @@
   "标注文字": "Annotation text",
   "输入文字": "Enter text",
   "Enter 完成，Shift+Enter 换行，Esc 取消": "Enter to finish, Shift+Enter for a new line, Esc to cancel",
-  "Enter / Esc 完成，Shift+Enter 换行": "Enter / Esc to finish, Shift+Enter for a new line",
+  "Enter 完成，Esc 取消，Shift+Enter 换行": "Enter to finish, Esc to cancel, Shift+Enter for a new line",
   "拖动工具栏；双击恢复位置": "Drag toolbar; double-click to reset position",
   "拖动工具栏，双击或 Enter 恢复位置": "Drag toolbar; double-click or press Enter to reset position",
   "{0}（拖动排序，Alt+←/→调整顺序）": "{0} (drag to reorder, Alt+←/→ to move)",
@@ -1017,5 +1017,8 @@
   "请先修正未保存的设置，再重试。": "Fix unsaved settings before trying again.",
   "保存并复制已拼接内容（Ctrl+C）": "Save and copy stitched content (Ctrl+C)",
   "完成并复制（Ctrl+C）": "Finish and copy (Ctrl+C)",
-  "译文将在这里显示": "Translation will appear here"
+  "译文将在这里显示": "Translation will appear here",
+  "移出输入框完成；单击选中，双击文字编辑": "Move outside to finish; click to select, double-click text to edit",
+  "单击标注拖动；Alt 拖动叠加绘制": "Click annotations to drag; Alt-drag to draw over them",
+  "已到选区边界，可缩小字号继续输入": "Selection boundary reached; reduce the font size to continue typing"
 }

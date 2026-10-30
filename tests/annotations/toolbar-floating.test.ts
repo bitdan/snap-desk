@@ -46,10 +46,17 @@ async function setup(initialElement = false) {
   Object.defineProperty(start, 'currentTarget', { value: handle })
   floating.start(start)
   return { floating, windowTarget, pointer, captured, element, disconnect, handle,
-    grow: () => { width = 600; measure() } }
+    grow: () => { width = 600; measure() }, hide: () => { width = 0; measure() } }
 }
 
 describe('浮动工具栏指针生命周期', () => {
+  it('隐藏时的零尺寸不改变浮动位置，恢复显示继续使用有效尺寸', async () => {
+    const { floating, windowTarget, pointer, hide, grow } = await setup(true)
+    windowTarget.dispatchEvent(pointer('pointermove', 910, 710))
+    const before = { ...floating.style.value }
+    hide(); expect(floating.style.value).toEqual(before)
+    grow(); expect(floating.style.value.left).toBe('400px')
+  })
   it('传入已有元素时也监听尺寸变化，失去指针捕获后停止移动', async () => {
     const { floating, windowTarget, pointer, grow, handle } = await setup(true)
     windowTarget.dispatchEvent(pointer('pointermove', 910, 710))

@@ -38,7 +38,7 @@ describe('局部像素橡皮擦', () => {
     expect(editor.history.present[0]).toEqual(pen)
     await editor.travel('undo'); expect(editor.history.present).toEqual([pen])
     await editor.travel('redo'); expect(editor.history.present[1].width).toBe(32)
-    editor.setTool('line'); editor.begin({ x: 20, y: 25 }, 1); editor.drag({ x: 80, y: 25 }); await editor.finish()
+    editor.setTool('line'); editor.begin({ x: 20, y: 25 }, 1, undefined, true); editor.drag({ x: 80, y: 25 }); await editor.finish()
     expect(editor.history.present.map(s => s.kind)).toEqual(['pen', 'erase', 'line'])
   })
   it('取消及持久化失败回滚', async () => {

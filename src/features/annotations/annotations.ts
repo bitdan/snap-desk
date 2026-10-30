@@ -108,8 +108,8 @@ function segmentDistance(p: Point, a: Point, b: Point): number {
   const t = clamp(((p.x - a.x) * dx + (p.y - a.y) * dy) / (dx * dx + dy * dy || 1), 0, 1)
   return Math.hypot(p.x - a.x - t * dx, p.y - a.y - t * dy)
 }
-/** 从最后绘制的图形开始命中，避免选到被上层图形遮住的对象。 */
-export function hitTest(shapes: Annotation[], p: Point, tolerance = 6): number {
+/** 从最后绘制的图形开始命中；交互选择可包含封闭图形内部，擦除仍按实际笔迹命中。 */
+export function hitTest(shapes: Annotation[], p: Point, tolerance = 6, skipErase = false, interiors = false): number {
   const hit = (s: Annotation) => {
     const b = shapeBounds(s), t = tolerance + s.width / 2
     if (s.kind === 'erase' && s.points?.length === 1) return Math.hypot(p.x - s.start.x, p.y - s.start.y) <= t
@@ -117,12 +117,13 @@ export function hitTest(shapes: Annotation[], p: Point, tolerance = 6): number {
     if (s.kind === 'line' || s.kind === 'arrow') return segmentDistance(p, s.start, s.end) <= t || (s.kind === 'arrow' && arrowWings(s).some(v => segmentDistance(p, v, s.end) <= t))
     if (s.kind === 'ellipse') {
       const rx = b.width / 2, ry = b.height / 2
-      return rx > 0 && ry > 0 && Math.abs(Math.hypot((p.x - b.x - rx) / rx, (p.y - b.y - ry) / ry) - 1) <= t / Math.min(rx, ry)
+      const radius = Math.hypot((p.x - b.x - rx) / rx, (p.y - b.y - ry) / ry)
+      return rx > 0 && ry > 0 && (interiors ? radius <= 1 + t / Math.min(rx, ry) : Math.abs(radius - 1) <= t / Math.min(rx, ry))
     }
     const inside = p.x >= b.x - t && p.x <= b.x + b.width + t && p.y >= b.y - t && p.y <= b.y + b.height + t
-    return inside && (s.kind !== 'rectangle' || Math.min(Math.abs(p.x - b.x), Math.abs(p.x - b.x - b.width), Math.abs(p.y - b.y), Math.abs(p.y - b.y - b.height)) <= t)
+    return inside && (s.kind !== 'rectangle' || interiors || Math.min(Math.abs(p.x - b.x), Math.abs(p.x - b.x - b.width), Math.abs(p.y - b.y), Math.abs(p.y - b.y - b.height)) <= t)
   }
-  for (let index = shapes.length - 1; index >= 0; index--) if (hit(shapes[index])) return index
+  for (let index = shapes.length - 1; index >= 0; index--) if ((!skipErase || shapes[index].kind !== 'erase') && hit(shapes[index])) return index
   return -1
 }
 export const isRaster = (s: Annotation) => ['text', 'number', 'mosaic', 'blur', 'magnify'].includes(s.kind)

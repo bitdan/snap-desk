@@ -1,3 +1,4 @@
+import { annotationTextLayout } from './annotation-text-layout'
 import { isRaster, shapeBounds, magnifierSource, type Annotation } from '@/features/annotations/annotations'
 import { clamp, type Rect } from '@/shared/geometry/selection'
 
@@ -35,28 +36,21 @@ export async function prepareRaster(shape: Annotation, imageUrl: string, crop: R
       context.textAlign = 'center'; context.textBaseline = 'middle'
       context.fillText(shape.text!, 72, 76)
     } else if (shape.kind === 'text') {
-      const size = shape.fontSize ?? 24, lines: string[] = []
+      const size = shape.fontSize ?? 24
       if (!shape.text?.trim()) throw new Error('文字不能为空。')
       const font = `${size}px ${fonts[shape.fontFamily ?? 'sans']}`
       await document.fonts.ready
       context.font = font
-      const maxWidth = Math.min(2048, crop.width)
-      for (const paragraph of shape.text.split('\n')) {
-        let line = ''
-        for (const char of paragraph) {
-          if (line && context.measureText(line + char).width > maxWidth - 4) { lines.push(line); line = '' }
-          line += char
-        }
-        lines.push(line)
-      }
-      canvas.width = Math.min(2048, Math.max(1, Math.ceil(Math.max(...lines.map(line => context.measureText(line).width)) + 4)))
-      canvas.width = Math.min(canvas.width, Math.max(1, Math.floor(crop.width)))
-      canvas.height = Math.max(1, Math.ceil(lines.length * size * 1.3 + 4))
-      if (canvas.height > Math.min(512, crop.height)) throw new Error('文字超出区域，请减少文字、缩小字号或扩大选区。')
+      const { lines, width, height } = annotationTextLayout(shape.text, size, crop.width, text => context.measureText(text).width)
+      if (height > crop.height) throw new Error('文字超出区域，请减少文字、缩小字号或扩大选区。')
+      // 保持原图上的文字尺寸；只降低超大字形 PNG 的采样率，满足原生 2048 边长和 1MP 限额。
+      const scale = Math.min(1, 2048 / height, Math.sqrt(1_048_576 / (width * height)))
+      canvas.width = Math.max(1, Math.floor(width * scale)); canvas.height = Math.max(1, Math.floor(height * scale))
+      if (scale < 1) context.scale(scale, scale)
       context.font = font; context.fillStyle = shape.color; context.textBaseline = 'top'
       lines.forEach((line, i) => context.fillText(line, 2, 2 + i * size * 1.3))
       // 新建/改文字时重新排版；纯几何缩放直接复用字形 PNG。
-      if (!preserveGeometry) box = { x: clamp(box.x, crop.x, crop.x + crop.width - canvas.width), y: clamp(box.y, crop.y, crop.y + crop.height - canvas.height), width: canvas.width, height: canvas.height }
+      if (!preserveGeometry) box = { x: clamp(box.x, crop.x, crop.x + crop.width - width), y: clamp(box.y, crop.y, crop.y + crop.height - height), width, height }
     } else {
       const image = createImage()
       image.src = imageUrl
