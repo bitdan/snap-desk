@@ -26,6 +26,8 @@ describe('日志隐私与异常隔离', () => {
   it('忽略精确取消和正常保存对话框取消，不把真正错误误判为取消', async () => {
     mocks.invoke.mockRejectedValueOnce('翻译已取消。')
     await expect(api.translateText('id', 'text', true, defaultAiSettings())).rejects.toThrow('翻译已取消。')
+    mocks.invoke.mockRejectedValueOnce('翻译已取消。')
+    await expect(api.translateTexts('id', { texts: ['text'], sourceLanguage: null, targetLanguage: 'zh-CN' }, true, defaultAiSettings())).rejects.toThrow('翻译已取消。')
     mocks.invoke.mockResolvedValueOnce(false)
     expect(await api.exportSettings()).toBe(false)
     expect(mocks.write).not.toHaveBeenCalled()

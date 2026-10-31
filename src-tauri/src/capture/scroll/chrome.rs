@@ -439,6 +439,15 @@ pub(super) fn show(app: &AppHandle) -> Result<(), String> {
     }
     Ok(())
 }
+
+/// 输出失败后只恢复预览和操作条，不再显示已经停止采集的选区边框。
+pub(super) fn show_output(app: &AppHandle) -> Result<(), String> {
+    for label in &LABELS[..2] {
+        let window = window(app, label).ok_or("滚动截图窗口不可用。")?;
+        show_window(&window)?;
+    }
+    Ok(())
+}
 pub(crate) fn hide(app: &AppHandle) {
     for label in LABELS {
         if let Some(w) = window(app, label) {

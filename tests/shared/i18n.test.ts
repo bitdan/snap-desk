@@ -33,6 +33,7 @@ describe('application language coverage', () => {
     expect(te(`Error: save_capture：无法打开目录：${path}`)).toBe(`Error: save_capture：Could not open folder: ${path}`)
     expect(t('平均 29.5 FPS · 近 2 秒 30.0 FPS')).toBe('Average 29.5 FPS · Last 2 seconds 30.0 FPS')
     expect(te('driver error 中文详情 0x80004005')).toBe('driver error 中文详情 0x80004005')
+    expect(te(`录屏已中断：显示器位置、尺寸或 DPI 改变，请重新录屏。 已保存可用部分：${path}`)).toBe(`Recording interrupted: Monitor position, size or DPI changed. Record again. Usable portion saved: ${path}`)
     for (const key of ['__proto__', 'constructor', 'toString']) expect(t(key)).toBe(key)
     appearance.value.language = 'zh-CN'
     expect(t('保存图片')).toBe('保存图片')

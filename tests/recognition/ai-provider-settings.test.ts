@@ -25,6 +25,45 @@ beforeEach(() => { vi.stubGlobal('Document', class {}); vi.stubGlobal('ShadowRoo
 afterEach(() => { memoryRenderer.render(null, root); vi.resetAllMocks(); vi.unstubAllGlobals() })
 
 describe('翻译设置独立加载和快照复用', () => {
+  it('旧服务保存结束后不清除新服务重新输入的相同密钥', async () => {
+    let settings = defaultSettings()
+    settings.ai = { ...settings.ai, provider: 'deepl', endpoint: 'https://api-free.deepl.com/v2/translate', model: '' }
+    api.status.mockImplementation(async () => ({ settings }))
+    api.saveSettings.mockImplementation(async next => { settings = next; return next })
+    api.translationModelStatus.mockResolvedValue(ready)
+    api.aiProviderStatus.mockResolvedValue(true)
+    let finishOld!: () => void
+    api.aiCredentialSet.mockReturnValueOnce(new Promise<void>(resolve => { finishOld = resolve })).mockResolvedValue(undefined)
+    mount(); await flushComponent()
+    const key = () => findNode(root, node => node.type === 'input' && node.props.type === 'password')!
+    key().props['onUpdate:modelValue']('shared-test-key')
+    findNode(root, node => node.type === 'fieldset')!.props.onChange(); await flushComponent()
+    expect(api.aiCredentialSet).toHaveBeenCalledWith('shared-test-key', 'https://api-free.deepl.com/v2/translate')
+    findNode(root, node => node.type === 'select-control' && node.props['aria-label'] === '服务地址')!.props['onUpdate:modelValue']('https://api.deepl.com/v2/translate')
+    key().props['onUpdate:modelValue']('shared-test-key')
+    findNode(root, node => node.type === 'fieldset')!.props.onChange()
+    finishOld(); await flushComponent(); await flushComponent()
+    expect(api.aiCredentialSet).toHaveBeenCalledTimes(2)
+    expect(api.aiCredentialSet).toHaveBeenLastCalledWith('shared-test-key', 'https://api.deepl.com/v2/translate')
+  })
+  it('切换服务并完成新状态查询后，旧初始化响应不能覆盖密钥状态', async () => {
+    let settings = defaultSettings()
+    settings.ai = { ...settings.ai, provider: 'online-llm', endpoint: 'https://old.example/v1', model: 'old-model' }
+    api.status.mockImplementation(async () => ({ settings }))
+    api.saveSettings.mockImplementation(async next => { settings = next; return next })
+    api.translationModelStatus.mockResolvedValue(ready)
+    let finishOld!: (value: boolean) => void
+    api.aiProviderStatus.mockReturnValueOnce(new Promise(resolve => { finishOld = resolve })).mockResolvedValue(false)
+    mount(); await flushComponent()
+    expect(api.aiProviderStatus).toHaveBeenCalledOnce()
+    findNode(root, node => node.type === 'select-control' && node.props['aria-label'] === '翻译引擎')!.props['onUpdate:modelValue']('deepl')
+    await flushComponent()
+    expect(api.aiProviderStatus).toHaveBeenCalledTimes(2)
+    expect(text()).toContain('未配置')
+    finishOld(true); await flushComponent()
+    expect(text()).toContain('未配置')
+    expect(findNode(root, node => node.type === 'button' && text(node) === '删除已保存密钥')!.props.disabled).toBe(true)
+  })
   it('选择 DeepL 后使用官方地址并隐藏模型；切换地址清空未保存密钥', async () => {
     let settings = defaultSettings()
     api.status.mockImplementation(async () => ({ settings }))

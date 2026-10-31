@@ -79,6 +79,49 @@ describe('滚动采样状态与控制', () => {
     await flushComponent()
     expect(mocks.controlScroll).toHaveBeenCalledWith(7, true, false)
   })
+  it('输出失败恢复重试与取消入口，重复失败快照不解除新一轮忙碌状态', async () => {
+    await mount()
+    const save = findNode(root, node => node.type === 'button' && node.props.class === 'save')!
+    const cancel = findNode(root, node => node.type === 'button' && node.props.class === 'cancel')!
+    save.props.onClick(); await flushComponent()
+    expect(save.props.disabled).toBe(true)
+    expect(cancel.props.disabled).toBe(false)
+    const failed = { ...view, revision: 3, collecting: false, status: 'failed' as const, message: '输出失败，结果仍保留：磁盘不可写' }
+    receive(failed); await flushComponent()
+    expect(findNode(root, node => node.text === '输出失败')).toBeDefined()
+    expect(findNode(root, node => node.text === '重试')).toBeDefined()
+    expect(save.props.disabled).toBe(false)
+    expect(cancel.props.disabled).toBe(false)
+    save.props.onClick(); await flushComponent()
+    expect(mocks.controlScroll).toHaveBeenCalledTimes(2)
+    receive(failed); await flushComponent()
+    expect(save.props.disabled).toBe(true)
+    save.props.onClick(); await flushComponent()
+    expect(mocks.controlScroll).toHaveBeenCalledTimes(2)
+    cancel.props.onClick(); await flushComponent()
+    expect(mocks.controlScroll).toHaveBeenLastCalledWith(7, true, false)
+  })
+  it('旧完成请求迟到失败不覆盖失败后的新一轮重试', async () => {
+    let rejectFinish!: (error: Error) => void
+    mocks.controlScroll.mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectFinish = reject }))
+    await mount()
+    const save = findNode(root, node => node.type === 'button' && node.props.class === 'save')!
+    save.props.onClick(); await flushComponent()
+    receive({ ...view, revision: 2, collecting: false, status: 'failed' }); await flushComponent()
+    save.props.onClick(); await flushComponent()
+    rejectFinish(new Error('上一轮请求的迟到错误')); await flushComponent()
+    expect(save.props.disabled).toBe(true)
+    expect(findNode(root, node => node.props.role === 'alert')).toBeUndefined()
+  })
+  it('失败预览保留可信图片，放弃后释放并拒绝迟到失败事件', async () => {
+    vi.stubGlobal('location', { search: '?window=scroll-preview' })
+    mocks.currentScroll.mockResolvedValue({ ...view, revision: 2, collecting: false, status: 'failed' })
+    await mount()
+    expect(findNode(root, node => node.type === 'img')?.props.src).toBe(view.preview)
+    expect(findNode(root, node => node.props.role === 'alert')).toBeDefined()
+    close(7); receive({ ...view, revision: 99, collecting: false, status: 'failed' }); await flushComponent()
+    expect(findNode(root, node => node.type === 'img')).toBeUndefined()
+  })
   it('预览窗口接收状态提示但保留可信图像', async () => {
     vi.stubGlobal('location', { search: '?window=scroll-preview' })
     await mount()

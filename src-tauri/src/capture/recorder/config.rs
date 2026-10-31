@@ -212,9 +212,11 @@ impl RecorderConfig {
     }
 }
 
+/// 设置页可选的平台能力，不代表当前设备已完成编码试写或声音权限验证。
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RecorderCapabilities {
+    /// 仅表示原生采集接口受支持；选区确认仍会验证实际尺寸和所选编码器。
     pub available: bool,
     pub reason: Option<String>,
     pub sources: Vec<CaptureSource>,
@@ -225,9 +227,77 @@ pub struct RecorderCapabilities {
     pub formats: Vec<OutputFormat>,
 }
 
+impl RecorderCapabilities {
+    /// 仅映射采集接口检查结果，不触发媒体组件初始化、文件写入或音频设备访问。
+    pub(super) fn from_capture_support(result: Result<(), String>) -> Self {
+        let available = result.is_ok();
+        let audio_supported = available && cfg!(target_os = "windows");
+        Self {
+            available,
+            reason: result.err(),
+            sources: if available {
+                vec![
+                    CaptureSource::PrimaryMonitor,
+                    CaptureSource::SelectedMonitor,
+                    CaptureSource::SelectedWindow,
+                ]
+            } else {
+                vec![]
+            },
+            frame_rates: if available {
+                vec![10, 20, 30, 60]
+            } else {
+                vec![]
+            },
+            capture_cursor: available,
+            // Windows MP4 提供声音选项；实际 AAC 编码和 WASAPI 设备在 start_recording 准备时校验。
+            system_audio: audio_supported,
+            microphone: audio_supported,
+            formats: if available {
+                vec![OutputFormat::Mp4, OutputFormat::Gif]
+            } else {
+                vec![]
+            },
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn platform_capabilities_preserve_ipc_fields_without_claiming_device_validation() {
+        let capabilities = RecorderCapabilities::from_capture_support(Ok(()));
+        let value = serde_json::to_value(capabilities).unwrap();
+        assert_eq!(
+            value,
+            serde_json::json!({
+                "available": true,
+                "reason": null,
+                "sources": ["primaryMonitor", "selectedMonitor", "selectedWindow"],
+                "frameRates": [10, 20, 30, 60],
+                "captureCursor": true,
+                "systemAudio": cfg!(target_os = "windows"),
+                "microphone": cfg!(target_os = "windows"),
+                "formats": ["mp4", "gif"],
+            })
+        );
+        let unavailable =
+            RecorderCapabilities::from_capture_support(Err("采集接口不受支持。".into()));
+        assert_eq!(
+            serde_json::to_value(unavailable).unwrap(),
+            serde_json::json!({
+                "available": false,
+                "reason": "采集接口不受支持。",
+                "sources": [],
+                "frameRates": [],
+                "captureCursor": false,
+                "systemAudio": false,
+                "microphone": false,
+                "formats": [],
+            })
+        );
+    }
     #[test]
     fn main_window_preference_keeps_explicit_false_and_defaults_legacy_configs() {
         let config = RecorderConfig::for_region(Rect {

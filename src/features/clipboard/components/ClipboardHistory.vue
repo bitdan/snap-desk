@@ -41,6 +41,7 @@ const categories = [{ value: '' as const, label: '全部', icon: ClipboardList }
 const canExport = computed(() => selected.value.length > 0 && selected.value.every(id => ['text', 'image'].includes(selectedItems.value[id]?.kind)))
 const busy = ref(false), loading = ref(false), error = ref(''), message = ref('')
 const foregroundLoading = ref(false), loadingMore = ref(false)
+const updatesPending = ref(false)
 const confirm = ref<'delete' | 'clear' | null>(null), includeFavorites = ref(false), exportOpen = ref(false)
 const helpOpen = ref(false)
 useEscapeLayer(() => exportOpen.value, () => { if (!busy.value) exportOpen.value = false })
@@ -97,37 +98,78 @@ function selectItem(item: Item, gesture: ClipboardSelectionGesture = { toggle: t
   const available = new Map(items.value.map(value => [value.id, value]))
   selectedItems.value = Object.fromEntries(selected.value.map(id => [id, available.get(id) ?? selectedItems.value[id]]))
 }
-let revision = 0, disposed = false, refreshTimer: ReturnType<typeof setTimeout> | undefined
+let revision = 0, changeRevision = 0, disposed = false, loadedMore = false, listScrolled = false
+let clipboardErrorRevision = 0, latestClipboardError: string | null = null
+let refreshTimer: ReturnType<typeof setTimeout> | undefined, searchTimer: ReturnType<typeof setTimeout> | undefined
 const disposers: (() => void)[] = []
+/** 状态查询可能早于列表返回；请求期间的新错误或恢复事件优先于旧状态快照。 */
+function applyStatus(value: ClipboardStatus, errors: number) {
+  status.value = errors === clipboardErrorRevision ? value : { ...value, error: latestClipboardError }
+}
+/** 浏览旧记录或操作所选内容时保留现场，后台更新交给用户主动刷新。 */
+function canRefreshInBackground() {
+  return !loadedMore && !listScrolled && !selected.value.length && !previewItem.value
+    && !busy.value && !confirm.value && !exportOpen.value && !helpOpen.value
+}
+function listScroll(event: Event) { listScrolled = (event.target as HTMLElement).scrollTop > 0 }
 async function refresh(append = false, background = false) {
   if (!desktop || disposed) return
-  const request = ++revision; loading.value = true
+  if (!append && !background) {
+    clearTimeout(searchTimer); searchTimer = undefined
+    clearTimeout(refreshTimer); refreshTimer = undefined
+  }
+  const request = ++revision, changes = changeRevision, errors = clipboardErrorRevision
+  let applied = false
+  loading.value = true
   foregroundLoading.value = !background; loadingMore.value = append
   try {
     const [page, state] = await Promise.all([api.clipboardList({ keyword: keyword.value, kind: kind.value || undefined, favoritesOnly: favorites.value, limit: 40, cursor: append ? cursor.value ?? undefined : undefined }), api.clipboardStatus()])
     if (disposed || request !== revision) return
+    // 请求在途期间也可能开始选择或翻页，迟到的后台结果不能覆盖新的浏览现场。
+    if (background && !canRefreshInBackground()) return
     const seen = new Set(append ? items.value.map(item => item.id) : [])
     items.value = [...(append ? items.value : []), ...page.items.filter(item => !seen.has(item.id))]
-    cursor.value = page.nextCursor; status.value = state
+    cursor.value = page.nextCursor; applyStatus(state, errors)
+    loadedMore = append
+    const available = new Map(items.value.map(item => [item.id, item]))
+    selected.value = selected.value.filter(id => available.has(id))
+    selectedItems.value = Object.fromEntries(selected.value.map(id => [id, available.get(id)!]))
+    if (selectionAnchor !== null && !available.has(selectionAnchor)) selectionAnchor = null
+    if (!append) {
+      updatesPending.value = changes !== changeRevision
+      if (!background) { list.value?.resetScroll(); listScrolled = false }
+    }
+    applied = true
   } catch (e) { if (!disposed && request === revision) error.value = String(e) }
-  finally { if (request === revision) { loading.value = false; foregroundLoading.value = false; loadingMore.value = false } }
+  finally {
+    if (request === revision) {
+      loading.value = false; foregroundLoading.value = false; loadingMore.value = false
+      if (applied && updatesPending.value && canRefreshInBackground()) queueBackgroundRefresh()
+    }
+  }
 }
-function scheduleRefresh() {
+function queueBackgroundRefresh() {
   clearTimeout(refreshTimer)
   refreshTimer = setTimeout(() => {
-    // 内容变更静默更新；用户正在查询时延后，避免后台事件抢占前台加载状态。
-    if (loading.value) { scheduleRefresh(); return }
+    refreshTimer = undefined
+    // 搜索防抖拥有独立计时器；等待当前查询完成后再决定是否刷新，不循环轮询。
+    if (disposed || searchTimer || loading.value || !canRefreshInBackground()) return
     void refresh(false, true)
   }, 100)
 }
+function scheduleRefresh() {
+  changeRevision++; updatesPending.value = true
+  queueBackgroundRefresh()
+}
 // 输入停顿后查询；分类立即生效，清除旧选择和旧请求，避免显示过期结果。
 function applyFilter() {
-  clearTimeout(refreshTimer)
+  clearTimeout(searchTimer); searchTimer = undefined
   selected.value = []; selectedItems.value = {}; selectionAnchor = null; list.value?.resetScroll(); void refresh()
 }
 watch(keyword, () => {
-  revision++; clearTimeout(refreshTimer)
-  refreshTimer = setTimeout(applyFilter, 250)
+  revision++; clearTimeout(searchTimer)
+  loading.value = false; foregroundLoading.value = false; loadingMore.value = false
+  searchTimer = setTimeout(() => { searchTimer = undefined; applyFilter() }, 250)
 })
 watch(category, applyFilter)
 async function run(action: () => Promise<unknown>, success = '') {
@@ -139,7 +181,8 @@ async function run(action: () => Promise<unknown>, success = '') {
 }
 async function configure(enabled = settings.value.enabled) {
   await run(async () => {
-    status.value = await api.clipboardConfigure({ ...settings.value, enabled })
+    const errors = clipboardErrorRevision
+    applyStatus(await api.clipboardConfigure({ ...settings.value, enabled }), errors)
     settings.value = (await api.status()).settings.clipboard
   }, enabled ? '历史记录已开启，仅记录此后复制的内容。' : '历史记录已暂停。')
 }
@@ -178,18 +221,24 @@ async function pinSelected() {
     message.value = `已创建 ${done} 张贴图。`
   })
 }
+/** 恢复事件清除列表提示与已缓存状态中的旧错误，避免仍回退显示故障快照。 */
+function clipboardError(value: string) {
+  clipboardErrorRevision++; latestClipboardError = value || null
+  error.value = value
+  if (status.value) status.value.error = latestClipboardError
+}
 onMounted(async () => {
   await nextTick(); focusSearch()
   if (!desktop) return
   try {
-    for (const subscribe of [() => onClipboardOpen(focusSearch), () => onClipboardChanged(scheduleRefresh), () => onClipboardError(value => { error.value = value }), () => onClipboardState(value => { status.value = value })]) {
+    for (const subscribe of [() => onClipboardOpen(focusSearch), () => onClipboardChanged(scheduleRefresh), () => onClipboardError(clipboardError), () => onClipboardState(value => { status.value = value })]) {
       const off = await subscribe(); if (disposed) { off(); return }; disposers.push(off)
     }
     settings.value = (await api.status()).settings.clipboard
     await refresh()
   } catch (e) { error.value = String(e) }
 })
-onUnmounted(() => { disposed = true; revision++; clearTimeout(refreshTimer); disposers.forEach(off => off()); clipboardThumbnails.clear() })
+onUnmounted(() => { disposed = true; revision++; clearTimeout(refreshTimer); clearTimeout(searchTimer); disposers.forEach(off => off()); clipboardThumbnails.clear() })
 </script>
 <template>
   <!-- 复用模态组件管理焦点与遮罩；导出期间保持弹窗，避免重复提交或误关闭。 -->
@@ -200,6 +249,7 @@ onUnmounted(() => { disposed = true; revision++; clearTimeout(refreshTimer); dis
       <div class="history-header-actions"><Button variant="ghost" :disabled="busy || foregroundLoading || !desktop" @click="refresh()">{{ t("刷新") }}</Button><Button variant="ghost" class="history-clear" :disabled="busy || !status?.count" @click="requestDelete('clear')">{{ t("清空") }}</Button></div>
       <label class="history-recording"><span>{{ status?.enabled ? t("正在记录") : t("已暂停") }}</span><input type="checkbox" role="switch" :aria-label='t("记录剪贴板历史")' :checked="status?.enabled ?? false" :disabled="busy || !desktop || !status?.supported" @click.prevent="configure(!status?.enabled)" /><span class="recording-track" aria-hidden="true"></span></label>
     </header>
+    <p v-if="updatesPending" class="history-count" role="status">{{ t("内容已更新，点击刷新。") }}</p>
     <p v-if="status && !status.supported" class="notice">{{ t("当前平台尚未支持自动监听；现有手动贴图不受影响。") }}</p>
     <p v-if="error || status?.error" class="notice error" role="alert">{{ te(error || status?.error) }}</p>
     <p v-if="message" role="status">{{ t(message) }}</p>
@@ -238,7 +288,7 @@ onUnmounted(() => { disposed = true; revision++; clearTimeout(refreshTimer); dis
     </DialogContent>
     </DialogPortal>
     <div class="history-browser">
-    <VirtualClipboardList ref="list" :items="items" :layout="layout" role="region" :aria-label='t("历史记录列表")' :aria-busy="foregroundLoading">
+    <VirtualClipboardList ref="list" :items="items" :layout="layout" role="region" :aria-label='t("历史记录列表")' :aria-busy="foregroundLoading" @scroll="listScroll">
       <template #default="{ item }">
       <ClipboardItem :item="item" :selected="selected.includes(item.id)" :busy="busy" @select="selectItem(item, $event)" @preview="previewItem = item" @restore="run(() => api.clipboardRestore(item.id), '已复制。')" @delete="selected = [item.id]; selectedItems = { [item.id]: item }; requestDelete('delete')" @pin="run(() => api.clipboardPin(item.id))" @favorite="run(async () => { await api.clipboardFavorite(item.id, !item.favorite); await refresh() })" />
       </template>

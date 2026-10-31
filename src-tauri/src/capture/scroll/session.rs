@@ -15,7 +15,7 @@ use base64::{engine::general_purpose::STANDARD, Engine};
 use image::ImageFormat;
 use serde::{Deserialize, Serialize};
 use std::{
-    io::Cursor,
+    io::{Cursor, Write},
     sync::{atomic::Ordering, Arc},
     time::{Duration, Instant},
 };
@@ -134,7 +134,7 @@ fn view(session: &ScrollSession, collecting: bool) -> Result<ScrollView, String>
         has_holes: session.stitch.has_holes(),
         direction: session.stitch.direction(),
         status: session.status,
-        preview: if collecting {
+        preview: if collecting || matches!(session.status, "failed" | "finishing") {
             session.preview.to_string()
         } else {
             String::new()
@@ -227,7 +227,11 @@ fn complete(app: &AppHandle, id: u64, message: &str) -> Result<(), String> {
     if state.scroll_cancel.load(Ordering::SeqCst) {
         return close_session(app, id);
     }
-    let mut png_ms = 0.0;
+    // 同一份 PNG 同时用于落盘和 Windows 剪贴板，长图不重复进行无损编码。
+    let png_started = Instant::now();
+    let mut png = Cursor::new(Vec::new());
+    image.write_to(&mut png, ImageFormat::Png).map_err(err)?;
+    let png_ms = png_started.elapsed().as_secs_f64() * 1000.0;
     let saved = (|| -> Result<std::path::PathBuf, String> {
         let root = app
             .path()
@@ -237,18 +241,14 @@ fn complete(app: &AppHandle, id: u64, message: &str) -> Result<(), String> {
         std::fs::create_dir_all(&root).map_err(err)?;
         let mut file =
             crate::shared::export_staging::TrackedFile::new(app, &root, "png", "滚动截图导出")?;
-        let png_started = Instant::now();
-        image
-            .write_to(file.file_mut(), ImageFormat::Png)
-            .map_err(err)?;
-        png_ms = png_started.elapsed().as_secs_f64() * 1000.0;
+        file.file_mut().write_all(png.get_ref()).map_err(err)?;
         file.finalize()?;
         let path = root.join(format!("scroll-{}.png", file.id()));
         file.publish(&path, false)?;
         Ok(path)
     })();
     let clipboard_started = Instant::now();
-    let copied = crate::shared::image_io::copy(app, &image);
+    let copied = crate::shared::image_io::copy_png(app, &image, png.get_ref());
     // 实际复制包含 PNG/DIB 准备及系统剪贴板重试；只记录数值，不记录输出路径或图像。
     log::debug!("event=scroll.export module=scroll op=scroll-{id} compose_ms={compose_ms:.2} png_ms={png_ms:.2} clipboard_ms={:.2} rgba_bytes={} width={} height={} frames={}",
         clipboard_started.elapsed().as_secs_f64()*1000.0, image.as_raw().len(), image.width(), image.height(), snapshot.stitch.count());
@@ -485,7 +485,34 @@ fn notify_waiting(app: &AppHandle, state: &CaptureState, id: u64, finishing: boo
     log::warn!("event=scroll.operation_wait module=scroll op=scroll-{id} finishing={finishing}");
 }
 
-fn collect(app: AppHandle, id: u64, first_delay: u64) {
+/// 输出失败只冻结可信画布；保留预览供用户重试，不再采集新的桌面内容。
+fn failed_output(session: &mut ScrollSession, error: &str) -> Result<ScrollView, String> {
+    session.status = "failed";
+    session.message = format!("输出失败，结果仍保留：{error}");
+    session.confirmed_only = true;
+    session.revision += 1;
+    view(session, false)
+}
+
+/// 失败等待期间不持操作锁，取消或全局清理仍能释放会话；完成按钮沿用停止信号重试。
+fn wait_for_output_action(state: &CaptureState, id: u64) -> bool {
+    loop {
+        if !state
+            .scroll
+            .lock()
+            .ok()
+            .is_some_and(|s| s.as_ref().is_some_and(|s| s.id == id))
+        {
+            return false;
+        }
+        if state.scroll_cancel.load(Ordering::SeqCst) || state.scroll_stop.load(Ordering::SeqCst) {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(40));
+    }
+}
+
+fn collect(app: AppHandle, id: u64, first_delay: u64, allow_copy_retry: impl Fn()) {
     let state = app.state::<CaptureState>();
     let deadline = Instant::now() + Duration::from_secs(300);
     let mut message = "滚动截图采集结束。".to_string();
@@ -559,7 +586,7 @@ fn collect(app: AppHandle, id: u64, first_delay: u64) {
             s.as_ref()
                 .is_some_and(|s| s.id == id && (s.confirmed_only || s.recovery.is_recovering()))
         });
-        if confirmed_only {
+        if confirmed_only && !message.ends_with(" 仅输出已确认部分；未匹配画面未追加。") {
             message.push_str(" 仅输出已确认部分；未匹配画面未追加。");
         }
         if finish_latest && !confirmed_only {
@@ -598,20 +625,39 @@ fn collect(app: AppHandle, id: u64, first_delay: u64) {
             log::error!(
                 "event=scroll.failed module=scroll op=scroll-{id} code=SCROLL_OUTPUT_FAILED"
             );
-            if let Ok(mut guard) = state.scroll.lock() {
+            let update = if let Ok(mut guard) = state.scroll.lock() {
                 if let Some(session) = guard.as_mut().filter(|s| s.id == id) {
-                    session.status = "failed";
-                    session.message = format!("输出失败，结果仍保留：{error}");
-                    session.revision += 1;
-                    if let Ok(update) = view(session, false) {
-                        let _ = app.emit_to("capture", "scroll-updated", &update);
-                    }
+                    // 与控制命令共用会话锁，先清掉旧完成信号，再开放下一次重试。
+                    state.scroll_stop.store(false, Ordering::SeqCst);
+                    failed_output(session, &error).ok()
+                } else {
+                    None
                 }
+            } else {
+                None
+            };
+            if let Some(update) = update {
+                allow_copy_retry();
+                for label in ["scroll-preview", "scroll-controls"] {
+                    let _ = app.emit_to(label, "scroll-updated", &update);
+                }
+                if let Err(window_error) = chrome::show_output(&app) {
+                    report_error(&app, window_error);
+                }
+            }
+            // 用户的 Esc 可能在重新显示窗口期间到达，必须恢复其立即隐藏的效果。
+            if state.scroll_cancel.load(Ordering::SeqCst) {
+                chrome::hide(&app);
             }
             report_error(
                 &app,
                 format!("滚动截图输出重试失败，内存结果仍保留：{error}"),
             );
+            finish_latest = false;
+            drop(_operation);
+            if wait_for_output_action(&state, id) {
+                continue;
+            }
         }
         break;
     }
@@ -647,8 +693,10 @@ fn launch(app: &AppHandle, id: u64, first_delay: u64) -> Result<(), String> {
         .name("scroll-capture".into())
         .spawn(move || {
             #[cfg(windows)]
-            let _listener = listener;
-            collect(app, id, first_delay)
+            let allow_copy_retry = || listener.allow_copy_retry();
+            #[cfg(not(windows))]
+            let allow_copy_retry = || {};
+            collect(app, id, first_delay, allow_copy_retry)
         })
         .map(|_| ())
         .map_err(err)
@@ -771,4 +819,73 @@ pub async fn current_scroll(
     })
     .await
     .map_err(err)?
+}
+
+#[cfg(test)]
+mod output_tests {
+    use super::*;
+
+    fn session(id: u64) -> ScrollSession {
+        ScrollSession {
+            id,
+            revision: 4,
+            rect: Rect {
+                x: 0,
+                y: 0,
+                width: 32,
+                height: 64,
+            },
+            screen: Screen {
+                name: None,
+                x: 0,
+                y: 0,
+                width: 100,
+                height: 100,
+                scale: 1.0f64.to_bits(),
+                layout: Vec::new(),
+            },
+            source_size: (100, 100),
+            stitch: Stitch::new(image::RgbaImage::new(32, 64)).unwrap(),
+            direction: Direction::default(),
+            recovery: recovery::Recovery::default(),
+            message: String::new(),
+            preview: Arc::from("data:image/png;base64,trusted"),
+            status: "finishing",
+            last_growth: Instant::now(),
+            background: ExportBackground::White,
+            confirmed_only: false,
+            obscuring_windows: Vec::new(),
+            archive: None,
+        }
+    }
+
+    #[test]
+    fn failed_output_freezes_trusted_canvas_and_keeps_preview_for_retry() {
+        let mut session = session(7);
+        let pixels = session.stitch.covered_pixels();
+        let result = failed_output(&mut session, "磁盘不可写").unwrap();
+        assert_eq!(result.status, "failed");
+        assert_eq!(result.revision, 5);
+        assert!(!result.collecting);
+        assert_eq!(result.preview, "data:image/png;base64,trusted");
+        assert!(result.message.contains("磁盘不可写"));
+        assert!(session.confirmed_only);
+        assert_eq!(session.stitch.covered_pixels(), pixels);
+    }
+
+    #[test]
+    fn output_wait_observes_retry_cancel_and_replaced_sessions() {
+        let state = CaptureState::default();
+        *state.scroll.lock().unwrap() = Some(session(7));
+        state.scroll_stop.store(true, Ordering::SeqCst);
+        assert!(wait_for_output_action(&state, 7));
+        state.scroll_stop.store(false, Ordering::SeqCst);
+        state.scroll_cancel.store(true, Ordering::SeqCst);
+        assert!(wait_for_output_action(&state, 7));
+        // 即便上一会话的标志还未复位，也不得重试或清理替换后的会话。
+        *state.scroll.lock().unwrap() = Some(session(8));
+        assert!(!wait_for_output_action(&state, 7));
+        *state.scroll.lock().unwrap() = None;
+        assert!(!wait_for_output_action(&state, 7));
+    }
 }

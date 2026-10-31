@@ -1,6 +1,13 @@
 //! 录屏流水线：帧采集、有界编码队列、音频提交和最终发布。
 use super::*;
 
+/// 已发布的成品始终携带路径；采集异常另附原因，不能把可用片段误报为完整录制。
+#[derive(Debug)]
+struct CollectedOutput {
+    path: String,
+    interruption: Option<String>,
+}
+
 /// 采集线程绝不等待编码队列；开启特效时额外保留一帧干净底图，动画与事件数量有界。
 pub(super) fn collect(
     app: AppHandle,
@@ -352,15 +359,13 @@ pub(super) fn collect(
             {
                 log_step_failure(id, capture_stage.get());
             }
-            // 无论停止、取消、采集失败或编码线程提前退出，都在封装 MP4 前停止输入监听。
-            drop(listener);
-            compositor.clear();
-            drop(base);
-            if collected.is_err() {
+            // 来源断开、显示器变化和采集超时不破坏已经提交的媒体样本。
+            // 这些故障按停止收尾；状态/编码故障仍立即中止，取消由会话标志裁决。
+            let keep_partial = can_finalize_capture(capture_stage.get());
+            if collected.is_err() && !keep_partial {
                 abort.store(true, Ordering::Release);
             }
-            // 先停止捕获，再关闭发送端，编码器按有效代次排空队列后 Finalize。
-            drop(backend);
+            // 先冻结媒体时间，再等待监听器和采集设备释放；驱动清理耗时不计入成品。
             if let Ok(mut guard) = state.0.lock() {
                 if let Some(s) = guard.as_mut().filter(|s| s.view.id == id) {
                     s.freeze();
@@ -375,6 +380,11 @@ pub(super) fn collect(
                     s.view.revision += 1;
                 }
             }
+            // 无论停止、取消或异常，封装前都释放设备；队列保留冻结前的有效代次。
+            drop(listener);
+            compositor.clear();
+            drop(base);
+            drop(backend);
             drop(sender);
             let encoded = writer
                 .join()
@@ -383,14 +393,7 @@ pub(super) fn collect(
                     "录屏编码线程异常退出。".to_string()
                 })
                 .and_then(|r| r);
-            // 编码故障优先展示具体原生错误；采集故障不被内部中止提示覆盖。
-            match (collected, encoded) {
-                (Err(_), Err(writer_error)) if writer_error != "录屏采集已中止。" => {
-                    Err(writer_error)
-                }
-                (Err(e), _) => Err(e),
-                (Ok(()), result) => result,
-            }
+            collection_result(capture_stage.get(), collected, encoded)
         }
     };
     live_annotations::clear(&app, id);
@@ -399,7 +402,12 @@ pub(super) fn collect(
         if let Some(s) = guard.as_mut().filter(|s| s.view.id == id) {
             s.freeze();
             let (phase, text, path) = match result {
-                Ok(path) => (Phase::Completed, format!("录屏已保存：{path}"), Some(path)),
+                Ok(CollectedOutput { path, interruption: Some(reason) }) => (
+                    Phase::Failed,
+                    format!("录屏已中断：{reason} 已保存可用部分：{path}"),
+                    Some(path),
+                ),
+                Ok(CollectedOutput { path, .. }) => (Phase::Completed, format!("录屏已保存：{path}"), Some(path)),
                 Err(_) if s.cancel => (
                     Phase::Cancelled,
                     "录屏已取消；未能清理的残留可在录屏页查看并删除。".into(),
@@ -446,6 +454,21 @@ pub(super) fn collect(
         .store(false, Ordering::SeqCst);
     let _ = app.emit_to("main", "capture-result", &message);
     // 不主动改变主界面的显示状态；结果通过录屏页的最近完成记录查看。
+}
+
+/// 仅采集来源故障允许排空当前代次并封装；内部状态、输入及编码故障不在此回退。
+fn can_finalize_capture(stage: &str) -> bool {
+    matches!(stage, "capture_source_check" | "display_changed" | "capture_frame" | "capture_refresh" | "capture_timeout")
+}
+
+/// 编码故障优先展示具体原生错误；来源中断封装成功时同时保留成品与中断原因。
+fn collection_result(stage: &str, collected: Result<(), String>, encoded: Result<String, String>) -> Result<CollectedOutput, String> {
+    match (collected, encoded) {
+        (Err(reason), Ok(path)) if can_finalize_capture(stage) => Ok(CollectedOutput { path, interruption: Some(reason) }),
+        (Err(_), Err(writer_error)) if writer_error != "录屏采集已中止。" => Err(writer_error),
+        (Err(error), _) => Err(error),
+        (Ok(()), result) => result.map(|path| CollectedOutput { path, interruption: None }),
+    }
 }
 
 /// Finalize、sync_all 成功才发布；保存失败保留视频与恢复记录，明确取消才清理。
@@ -708,4 +731,29 @@ fn log_timestamp_rejection(
         "event=recording.timestamp_rejected module=recording op=rec-{} generation={} reason={} source_offset_ms={}",
         id, generation, reason, source.saturating_sub(now) / 10_000
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn source_interruption_keeps_only_successfully_finalized_output() {
+        for stage in ["capture_source_check", "display_changed", "capture_frame", "capture_refresh", "capture_timeout"] {
+            let output = collection_result(stage, Err("来源已断开".into()), Ok("partial.mp4".into())).unwrap();
+            assert_eq!(output.path, "partial.mp4");
+            assert_eq!(output.interruption.as_deref(), Some("来源已断开"));
+            assert!(matches!(collection_result(stage, Err("来源已断开".into()), Err("封装失败".into())), Err(error) if error == "封装失败"));
+        }
+        assert!(matches!(collection_result("capture_state", Err("会话已失效".into()), Ok("stale.mp4".into())), Err(error) if error == "会话已失效"));
+        assert!(matches!(collection_result("capture_state", Err("会话已失效".into()), Err("录屏采集已中止。".into())), Err(error) if error == "会话已失效"));
+    }
+
+    #[test]
+    fn normal_stop_and_explicit_cancel_keep_existing_result_semantics() {
+        let output = collection_result("capture_state", Ok(()), Ok("complete.mp4".into())).unwrap();
+        assert_eq!(output.path, "complete.mp4");
+        assert!(output.interruption.is_none());
+        assert!(matches!(collection_result("capture_frame", Ok(()), Err("已取消录屏。".into())), Err(error) if error == "已取消录屏。"));
+    }
 }

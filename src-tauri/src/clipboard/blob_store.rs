@@ -50,6 +50,92 @@ mod tests {
     };
     use super::*;
     #[test]
+    fn quota_cleanup_removes_only_returned_paths_and_preserves_rollback_and_shared_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = BlobStore::new(dir.path().join("clipboard")).unwrap();
+        let repo = Repository::open(&dir.path().join("history.db")).unwrap();
+        let image = RgbaImage::new(2, 2);
+        let hash = "a".repeat(64);
+        let first = store.save(&hash, &image).unwrap();
+        let (blob, thumb) = (first.blob.clone(), first.thumb.clone());
+        let settings = ClipboardSettings {
+            max_items: 1,
+            ..ClipboardSettings::default()
+        };
+        repo.insert(
+            NewItem {
+                kind: Kind::Image,
+                hash: &hash,
+                text: None,
+                blob: Some(&blob),
+                thumb: Some(&thumb),
+                width: Some(2),
+                height: Some(2),
+                bytes: first.bytes,
+            },
+            &settings,
+            1,
+        )
+        .unwrap();
+        first.commit();
+        repo.favorite(1, true).unwrap();
+        let rejected = store.save(&"b".repeat(64), &image).unwrap();
+        let rejected_blob = rejected.blob.clone();
+        assert!(repo
+            .insert(
+                NewItem {
+                    kind: Kind::Image,
+                    hash: "other",
+                    text: None,
+                    blob: Some(&rejected.blob),
+                    thumb: Some(&rejected.thumb),
+                    width: Some(2),
+                    height: Some(2),
+                    bytes: rejected.bytes
+                },
+                &settings,
+                2
+            )
+            .is_err());
+        drop(rejected);
+        assert!(store.reference_exists(&blob).unwrap());
+        assert!(!store.reference_exists(&rejected_blob).unwrap());
+
+        repo.favorite(1, false).unwrap();
+        // 新条目复用旧原图时，淘汰旧记录只能移除旧缩略图，不能删除仍被引用的原图。
+        let other_thumb = "thumbs/shared.webp";
+        fs::copy(store.path(&thumb).unwrap(), store.root.join(other_thumb)).unwrap();
+        let orphan = store.save(&"c".repeat(64), &image).unwrap();
+        let unrelated = orphan.blob.clone();
+        orphan.commit();
+        let removed = repo
+            .insert(
+                NewItem {
+                    kind: Kind::Image,
+                    hash: "shared",
+                    text: None,
+                    blob: Some(&blob),
+                    thumb: Some(other_thumb),
+                    width: Some(2),
+                    height: Some(2),
+                    bytes: 16,
+                },
+                &settings,
+                3,
+            )
+            .unwrap();
+        store.remove(&removed).unwrap();
+        assert!(store.reference_exists(&blob).unwrap());
+        assert!(!store.reference_exists(&thumb).unwrap());
+        assert!(store.reference_exists(other_thumb).unwrap());
+        assert!(store.reference_exists(&unrelated).unwrap());
+        let removed = repo.clear(true).unwrap();
+        store.remove(&removed).unwrap();
+        store.remove(&removed).unwrap();
+        assert!(!store.reference_exists(&blob).unwrap());
+        assert!(!store.reference_exists(other_thumb).unwrap());
+    }
+    #[test]
     fn borrowed_thumbnail_preserves_existing_size_pixels_and_alpha() {
         for (width, height) in [(2, 2), (601, 199), (199, 601), (1, 400), (1920, 1080)] {
             let image = RgbaImage::from_fn(width, height, |x, y| {
@@ -229,6 +315,27 @@ impl BlobStore {
         saved.blob = refs.remove(0);
         saved.thumb = refs.remove(0);
         Ok(saved)
+    }
+    /// 只清理已提交事务返回的孤儿路径；调用方继续持有服务操作锁，防止复用素材时交错删除。
+    /// 单个文件失败不阻止其余清理，失败残留仍由启动和定时 repair 兜底。
+    pub fn remove(&self, references: &[String]) -> Result<(), String> {
+        let mut failure = None;
+        for relative in references {
+            let result = (|| {
+                if self.reference_exists(relative)? {
+                    match fs::remove_file(self.path(relative)?) {
+                        Ok(()) => {}
+                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                        Err(error) => return Err(err(error)),
+                    }
+                }
+                Ok(())
+            })();
+            if let Err(error) = result {
+                failure.get_or_insert(error);
+            }
+        }
+        failure.map_or(Ok(()), Err)
     }
     /// 调用方持服务操作锁，避免清理与新素材写盘/导出快照交错；数据库锁不跨文件 IO。
     pub fn repair(&self, repo: &Repository) -> Result<(), String> {

@@ -4,6 +4,7 @@ import { clientComponent, findNode, MemoryNode, memoryRenderer } from '../helper
 import { defaultSettings } from '../../src/features/settings/settings'
 
 const api = vi.hoisted(() => ({ status: vi.fn(), saveSettings: vi.fn(), setShortcutEditing: vi.fn(), start: vi.fn() }))
+const recordingPage = vi.hoisted(() => ({ loaded: vi.fn(), mounted: vi.fn() }))
 const subscribe = vi.hoisted(() => vi.fn(async () => () => {}))
 const importedEvent = vi.hoisted(() => ({ receive: (_settings: any) => {} }))
 const subscribeImported = vi.hoisted(() => vi.fn(async (fn: (settings: any) => void) => {
@@ -16,6 +17,14 @@ vi.mock('../../src/shared/ui/appearance', () => ({ applyAppearance: vi.fn(), app
 vi.mock('../../src/shared/ui/button/Button.vue', async () => {
   const { defineComponent, h } = await import('vue')
   return { default: defineComponent({ setup: (_, { attrs, slots }) => () => h('button', attrs, slots.default?.()) }) }
+})
+vi.mock('../../src/features/recording/components/RecordingPanel.vue', async () => {
+  const { defineComponent, h } = await import('vue')
+  recordingPage.loaded()
+  return { __esModule: true, default: defineComponent({ setup() {
+    recordingPage.mounted()
+    return () => h('recording-page-stub')
+  } }) }
 })
 vi.mock('../../src/features/settings/components/ConfigTransferSettings.vue', async () => {
   const { defineComponent, h } = await import('vue')
@@ -49,6 +58,18 @@ beforeEach(() => {
 afterEach(() => { memoryRenderer.render(null, root); vi.clearAllTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.useRealTimers() })
 
 describe('截图设置自动生效', () => {
+  it('悬停和聚焦录屏导航只预取模块，点击后才挂载页面', async () => {
+    await flush()
+    const recording = findNode(root, node => node.type === 'button' && text(node) === '录屏')!
+    recording.props.onPointerenter(); recording.props.onFocus()
+    await vi.dynamicImportSettled(); await flush()
+    expect(recordingPage.loaded).toHaveBeenCalledOnce()
+    expect(recordingPage.mounted).not.toHaveBeenCalled()
+    expect(findNode(root, node => node.props.id === 'filename-prefix')).toBeDefined()
+    recording.props.onClick(); await vi.dynamicImportSettled(); await flush()
+    expect(recordingPage.mounted).toHaveBeenCalledOnce()
+    expect(findNode(root, node => node.type === 'recording-page-stub')).toBeDefined()
+  })
   it('格式选择后自动写入配置，页面没有保存按钮', async () => {
     await flush()
     findNode(root, node => node.props.id === 'export-format')!.props['onUpdate:modelValue']('webp')

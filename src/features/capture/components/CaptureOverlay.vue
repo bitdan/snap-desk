@@ -114,6 +114,7 @@ const recordingConfirmTrigger = ref<HTMLButtonElement | null>(null)
 function enterRecordingMode() {
   if (busy.value || editor.pending || editor.interacting || frame.value?.replay) return
   annotating.value = false; error.value = ''; recordingMode.value = true
+  void loadRecordingCapabilities()
   void nextTick(() => recordingConfirmTrigger.value?.focus())
 }
 function leaveRecordingMode() {
@@ -128,6 +129,17 @@ async function selectedRecordingRegion() {
 }
 const { recordingFormat, recordingFps, recordingEncoding, recordingQuality, recordingMbps, recordingCountdown, captureCursor,
   recordingEffects, recordingSystemAudio, recordingMicrophone, recordingCapabilities, recordingCapabilityError, hideMainWindow, reloadPreferences } = useRecordingSetup()
+const checkingRecordingCapabilities = ref(false)
+/** 普通截图与长截图不需要录屏能力；首次进入录屏才读取，失败和不支持均可主动重试。 */
+async function loadRecordingCapabilities(retry = false) {
+  if (disposed || checkingRecordingCapabilities.value || (!retry && recordingCapabilities.value)) return
+  checkingRecordingCapabilities.value = true; recordingCapabilityError.value = ''; recordingCapabilities.value = null
+  try {
+    const value = await api.recordingCapabilities()
+    if (!disposed) recordingCapabilities.value = value
+  } catch (e) { if (!disposed) recordingCapabilityError.value = String(e) }
+  finally { if (!disposed) checkingRecordingCapabilities.value = false }
+}
 const recordingSource = ref<RecordingSelection>('region')
 /** 录屏仅选择屏幕区域或整台显示器，不再置前或绑定应用窗口。 */
 function chooseRecordingSource(value: string) {
@@ -333,6 +345,7 @@ function receive(value: CaptureFrame, fromReplay = false) {
   reloadPreferences()
   liveRecordingId.value = null
   busy.value = false; reselect(); windowsOnly.value = false; scroll.value = null; imageReady.value = false; recordingMode.value = !!value.recording; frame.value = value
+  if (value.recording) void loadRecordingCapabilities()
   if (value.replay) {
     selection.value = fromPixels(value.replay.rect, value, viewport.value)
     editor.reset(value.replay.annotations)
@@ -471,8 +484,6 @@ async function imageFailed() {
   await cancel()
 }
 onMounted(async () => {
-  void api.recordingCapabilities().then(value => { if (!disposed) recordingCapabilities.value = value })
-    .catch(e => { if (!disposed) recordingCapabilityError.value = String(e) })
   window.addEventListener('keydown', key); window.addEventListener('keyup', keyUp); window.addEventListener('resize', resized)
   try {
     offClosed = await onCaptureClosed(id => {
@@ -512,6 +523,8 @@ onUnmounted(() => { releaseFrame(); disposed = true; offClosed?.(); off?.(); off
         <button :disabled="!frame.replay || busy || editor.pending || editor.interacting || !!gesture" :title="t('下一张截图（.），最后一张后返回现场')" @click="replay('next')">{{ t('下一张 .') }}</button>
       </template>
       <button :disabled="!recentRect || busy || marked || editor.pending || editor.interacting" :title="recentRect ? t('恢复上次成功复制、保存或贴图的选区（R）') : t('暂无最近选区，或当前屏幕分辨率已变化')" @click="restoreSelection"><Scan :size="15" />{{ t("最近选区 R") }}</button>
+      <span v-if="recordingMode && checkingRecordingCapabilities" role="status">{{ t('正在检查录屏能力…') }}</span>
+      <span v-else-if="recordingMode && (recordingCapabilityError || recordingCapabilities?.available === false)" role="alert">{{ te(recordingCapabilityError || recordingCapabilities?.reason) || t('没有可用的录制编码器。') }} <button :disabled="busy" :aria-label="t('重新读取')" @click="loadRecordingCapabilities(true)">{{ t('重新读取') }}</button></span>
     </div>
     <div v-if="hoverTarget !== null" class="snap-target" :style="hoverStyle" />
     <div v-if="selection" class="selection" :class="{ 'annotation-active': annotating }" :style="{ ...boxStyle, boxShadow: valid ? undefined : 'none' }" @pointerdown.stop="selectionDown">
@@ -528,7 +541,7 @@ onUnmounted(() => { releaseFrame(); disposed = true; offClosed?.(); off?.(); off
           <button :disabled="busy || !!gesture" :title='t("清空标注并重新框选")' :aria-label='t("清空标注并重新框选")' @click="reselect"><RotateCcw :size="16" /></button>
           <button :disabled="busy || !!gesture || marked" :title='t("选择整个屏幕 Ctrl/⌘+A")' :aria-label='t("选择整个屏幕")' @click="selectAll"><Monitor :size="16" /></button>
           <button v-if="!recordingMode && !frame?.replay" :disabled="busy || !!gesture || marked" :title='t("滚动截图：框选正文后慢慢滚动")' :aria-label='t("开始滚动截图")' @click="startScroll"><ScrollCaptureIcon :size="16" /></button>
-          <button v-if="!frame?.replay" ref="recordingTrigger" class="recording-mode-trigger" :disabled="busy || !!gesture || !recordingCapabilities?.available" :title="recordingCapabilities?.reason ?? (recordingCapabilityError || (recordingCapabilities ? t(recordingMode ? '返回截图' : '切换到录屏') : t('正在检查录屏能力…')))" :aria-label="t(recordingMode ? '返回截图' : '展开录屏工具栏')" :aria-pressed="recordingMode" :aria-expanded="recordingMode" @click="recordingMode ? leaveRecordingMode() : enterRecordingMode()"><Video :size="16" /></button>
+          <button v-if="!frame?.replay" ref="recordingTrigger" class="recording-mode-trigger" :disabled="busy || !!gesture || editor.pending || editor.interacting" :title="t(recordingMode ? '返回截图' : '切换到录屏')" :aria-label="t(recordingMode ? '返回截图' : '展开录屏工具栏')" :aria-pressed="recordingMode" :aria-expanded="recordingMode" @click="recordingMode ? leaveRecordingMode() : enterRecordingMode()"><Video :size="16" /></button>
         <template v-if="!recordingMode">
         <button :disabled="busy || !!gesture" :title='t("贴图 Ctrl/⌘+P")' :aria-label='t("贴图")' @click="finish('pin')"><Pin :size="16" /></button>
         <button ref="ocrTrigger" :disabled="busy || !!gesture" :title='t("识别文字")' :aria-label='t("识别文字")' aria-haspopup="dialog" :aria-expanded="ocrResult !== null && !translationMode" @click="recognizeText(false)"><ScanText :size="16" /></button>

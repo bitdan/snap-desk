@@ -343,79 +343,18 @@ fn require_control_window(window: &WebviewWindow) -> Result<(), String> {
     }
 }
 
-/// 分别试写 MP4/GIF；H.264 不可用时仍可录 GIF，具体选区准备时再次探测。
+/// 页面查询只读取平台/采集支持，不初始化编码器、音频设备或生成临时试录。
+/// 格式和声音字段表示可选的平台能力；实际设备、尺寸及编码组合在确认选区时试写。
 #[tauri::command]
 pub async fn recording_capabilities(window: WebviewWindow) -> Result<RecorderCapabilities, String> {
     if !matches!(window.label(), "main" | "capture") {
         return Err("当前窗口无权查询录屏能力。".into());
     }
     tauri::async_runtime::spawn_blocking(|| {
-        let result = capture::supported();
-        let mut formats = Vec::new();
-        if result.is_ok() {
-            let root = tempfile::tempdir().map_err(err)?;
-            for format in [OutputFormat::Mp4, OutputFormat::Gif] {
-                if encoder::probe(
-                    root.path(),
-                    64,
-                    64,
-                    30,
-                    1_000_000,
-                    config::EncodingPreference::Auto,
-                    format,
-                    false,
-                )
-                .is_ok()
-                {
-                    formats.push(format);
-                }
-            }
-        }
-        let available = result.is_ok() && !formats.is_empty();
-        // 能力查询只以合成静音试写 AAC；不开始麦克风或系统声音采集。
-        let audio_available = cfg!(target_os = "windows")
-            && formats.iter().any(|f| matches!(f, OutputFormat::Mp4))
-            && (|| {
-                let root = tempfile::tempdir().map_err(err)?;
-                encoder::probe(
-                    root.path(),
-                    64,
-                    64,
-                    30,
-                    1_000_000,
-                    config::EncodingPreference::Auto,
-                    OutputFormat::Mp4,
-                    true,
-                )
-            })()
-            .is_ok();
-        Ok(RecorderCapabilities {
-            available,
-            reason: result
-                .err()
-                .or_else(|| (!available).then(|| "没有可用的录制编码器。".into())),
-            sources: if available {
-                vec![
-                    CaptureSource::PrimaryMonitor,
-                    CaptureSource::SelectedMonitor,
-                    CaptureSource::SelectedWindow,
-                ]
-            } else {
-                vec![]
-            },
-            frame_rates: if available {
-                vec![10, 20, 30, 60]
-            } else {
-                vec![]
-            },
-            capture_cursor: available,
-            system_audio: audio_available,
-            microphone: audio_available,
-            formats,
-        })
+        RecorderCapabilities::from_capture_support(capture::supported())
     })
     .await
-    .map_err(err)?
+    .map_err(err)
 }
 
 #[tauri::command]

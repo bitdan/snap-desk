@@ -45,6 +45,7 @@ export interface RecorderConfig {
   /** bit/s；null 使用画质预设计算目标码率。 */
   bitrate: number | null
 }
+/** 平台支持的录制选项；具体尺寸、编码器与音轨在确认录制范围时实际验证。 */
 export interface RecorderCapabilities {
   available: boolean; reason: string | null; sources: RecordingSource[];
   frameRates: number[]; captureCursor: boolean; systemAudio: boolean; microphone: boolean; formats: RecordingFormat[]

@@ -125,6 +125,7 @@ mod platform {
     /// 监听跟随采集线程生命周期；Drop 等待卸载完成，取消后不会遗留系统钩子。
     pub struct Listener {
         stop: Arc<AtomicBool>,
+        retry_copy: Arc<AtomicBool>,
         worker: Option<JoinHandle<()>>,
     }
     impl Listener {
@@ -136,6 +137,8 @@ mod platform {
         ) -> Result<Self, String> {
             let stop = Arc::new(AtomicBool::new(false));
             let stopped = stop.clone();
+            let retry_copy = Arc::new(AtomicBool::new(false));
+            let retry_requested = retry_copy.clone();
             let (tx, rx) = mpsc::sync_channel(1);
             let worker = std::thread::Builder::new()
                 .name("scroll-direction".into())
@@ -188,6 +191,11 @@ mod platform {
                     let mut escape_down = GetAsyncKeyState(i32::from(VK_ESCAPE.0)) < 0;
                     let mut copying = copy_down();
                     while !stopped.load(Ordering::Acquire) {
+                        // 首轮完成后不再吞 Ctrl+C；输出失败时仅重启下一次按下边沿。
+                        if retry_requested.swap(false, Ordering::AcqRel) {
+                            COPY_ACTIVE.with(|active| active.set(true));
+                            copying = copy_down();
+                        }
                         MsgWaitForMultipleObjectsEx(None, 20, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
                         let mut msg = MSG::default();
                         while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
@@ -220,11 +228,17 @@ mod platform {
                 .map_err(|e| e.to_string())?;
             let listener = Self {
                 stop,
+                retry_copy,
                 worker: Some(worker),
             };
             rx.recv()
                 .map_err(|_| "滚轮方向监听线程初始化失败。".to_string())??;
             Ok(listener)
+        }
+
+        /// 由采集线程在失败状态已发布后调用；消息线程负责恢复快捷键，不跨线程操作钩子。
+        pub fn allow_copy_retry(&self) {
+            self.retry_copy.store(true, Ordering::Release);
         }
     }
     impl Drop for Listener {

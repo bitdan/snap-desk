@@ -15,7 +15,8 @@ import './styles/workspace.css'
 import OnboardingGuide from '@/app/components/OnboardingGuide.vue'
 import ShortcutInput from '@/features/settings/components/ShortcutInput.vue'
 import ShortcutCompatibility from '@/features/settings/components/ShortcutCompatibility.vue'
-const RecordingPanel = defineAsyncComponent(() => import('@/features/recording/components/RecordingPanel.vue'))
+const loadRecordingPanel = () => import('@/features/recording/components/RecordingPanel.vue')
+const RecordingPanel = defineAsyncComponent(loadRecordingPanel)
 const ClipboardHistory = defineAsyncComponent(() => import('@/features/clipboard/components/ClipboardHistory.vue'))
 const PinManager = defineAsyncComponent(() => import('@/features/pins/components/PinManager.vue'))
 import Button from '@/shared/ui/button/Button.vue'
@@ -27,6 +28,10 @@ import AppearanceSettings from '@/features/settings/components/AppearanceSetting
 import { applyAppearance, type Appearance } from '@/shared/ui/appearance'
 
 const page = ref('截图')
+/** 导航悬停或键盘聚焦时只预取模块，不挂载页面，也不提前查询设备或启动轮询。 */
+function prefetchPage(name: string) {
+  if (name === '录屏') void loadRecordingPanel().catch(() => {})
+}
 // 导航按操作、配置与支持分组，日志拥有独立页面。
 const groups = [
   { name: '工具', items: [{ name: '截图', icon: Camera }, { name: '录屏', icon: Video }, { name: '贴图', icon: Pin }, { name: '剪贴板', icon: Folder }] },
@@ -199,7 +204,7 @@ onUnmounted(() => { disposed = true; window.removeEventListener('keydown', key);
   <div class="app-shell">
     <aside class="sidebar">
       <div class="brand"><span class="brand-icon"><Scan :size="23" /></span><div>Snap Desk</div></div>
-      <nav v-for="group in groups" :key="group.name" :aria-label="t(group.name)"><div class="nav-caption">{{ t(group.name) }}</div><button v-for="item in group.items" :key="item.name" :class="['nav-item', { active: page === item.name }]" :aria-current="page === item.name ? 'page' : undefined" @click="page = item.name"><component :is="item.icon" :size="18" />{{ t(item.name) }}</button></nav>
+      <nav v-for="group in groups" :key="group.name" :aria-label="t(group.name)"><div class="nav-caption">{{ t(group.name) }}</div><button v-for="item in group.items" :key="item.name" :class="['nav-item', { active: page === item.name }]" :aria-current="page === item.name ? 'page' : undefined" @pointerenter="prefetchPage(item.name)" @focus="prefetchPage(item.name)" @click="page = item.name"><component :is="item.icon" :size="18" />{{ t(item.name) }}</button></nav>
       <div class="sidebar-bottom"><span v-if="status" class="version-dot" /> {{ status ? `v${status.version}` : t('版本待读取') }}</div>
     </aside>
     <main class="workspace">

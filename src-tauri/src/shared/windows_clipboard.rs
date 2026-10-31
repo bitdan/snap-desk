@@ -47,11 +47,16 @@ fn dib(image: &RgbaImage) -> Result<Vec<u8>, String> {
 
 /// 从现有后台截图/贴图线程调用；Open、Empty、Set、Close 始终发生于同一线程。
 pub fn copy(app: &AppHandle, image: &RgbaImage) -> Result<(), String> {
-    let bitmap = dib(image)?;
     let mut png = Cursor::new(Vec::new());
     image
         .write_to(&mut png, ImageFormat::Png)
         .map_err(|e| e.to_string())?;
+    copy_png(app, image, png.get_ref())
+}
+
+/// 保存和复制同一张图片时复用已编码 PNG；像素仅用于兼容性 DIB，不再次编码。
+pub(super) fn copy_png(app: &AppHandle, image: &RgbaImage, png: &[u8]) -> Result<(), String> {
+    let bitmap = dib(image)?;
     let format = clipboard_win::register_format("PNG").ok_or("无法注册 PNG 剪贴板格式。")?;
     let window = app
         .get_webview_window("main")
@@ -68,7 +73,7 @@ pub fn copy(app: &AppHandle, image: &RgbaImage) -> Result<(), String> {
             let _clipboard =
                 clipboard_win::Clipboard::new_for(hwnd.0 as _).map_err(|e| e.to_string())?;
             clipboard_win::raw::empty().map_err(|e| e.to_string())?;
-            clipboard_win::raw::set_without_clear(format.get(), png.get_ref())
+            clipboard_win::raw::set_without_clear(format.get(), png)
                 .map_err(|e| e.to_string())?;
             // PNG 已写入即有可用输出，补充 DIB 失败不能重试清空已经成功的 PNG。
             if let Err(_error) = clipboard_win::raw::set_without_clear(17, &bitmap) {

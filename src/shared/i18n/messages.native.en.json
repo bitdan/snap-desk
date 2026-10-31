@@ -750,5 +750,7 @@
   "修改日志级别失败。": "Could not change log level.",
   "日志级别配置无效。": "Invalid log level configuration.",
   "日志级别配置路径无效。": "Invalid log level configuration path.",
-  "滚动截图已取消。": "Scroll capture was cancelled."
+  "滚动截图已取消。": "Scroll capture was cancelled.",
+  "滚动截图窗口不可用。": "Scroll capture window is unavailable.",
+  "录屏已中断：{0} 已保存可用部分：{1}": "Recording interrupted: {0} Usable portion saved: {1}"
 }

@@ -120,13 +120,17 @@ pub async fn clipboard_get_image(
         // 1600 万像素的 PNG 允许编码开销，但损坏的文件不能无限读入 WebView。
         const LIMIT: u64 = 72 * 1024 * 1024;
         let mut bytes = Vec::new();
-        std::fs::File::open(path).map_err(|_| "历史图片不可用。")?
-            .take(LIMIT + 1).read_to_end(&mut bytes).map_err(|_| "历史图片读取失败。")?;
+        std::fs::File::open(path)
+            .map_err(|_| "历史图片不可用。")?
+            .take(LIMIT + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|_| "历史图片读取失败。")?;
         if bytes.len() as u64 > LIMIT {
             return Err("历史图片大小异常。".into());
         }
         Ok(format!("data:image/png;base64,{}", STANDARD.encode(bytes)))
-    }).await
+    })
+    .await
 }
 
 #[tauri::command]
@@ -202,8 +206,8 @@ pub async fn clipboard_delete(
     work(app, window, move |app, s| {
         let d = s.data()?;
         let _guard = d.operation.lock().map_err(|_| "历史存储忙碌。")?;
-        d.repo.delete(&ids)?;
-        let cleanup = d.blobs.repair(&d.repo);
+        let removed = d.repo.delete(&ids)?;
+        let cleanup = d.blobs.remove(&removed);
         s.changed(app);
         cleanup
     })
@@ -218,13 +222,15 @@ pub async fn clipboard_clear(
     work(app, window, move |app, s| {
         let d = s.data()?;
         let _guard = d.operation.lock().map_err(|_| "历史存储忙碌。")?;
-        d.repo.clear(include_favorites)?;
-        let cleanup = d.blobs.repair(&d.repo);
+        let removed = d.repo.clear(include_favorites)?;
+        let cleanup = d.blobs.remove(&removed);
         s.changed(app);
         if cleanup.is_ok() {
             log::info!("event=clipboard.cleared module=clipboard");
         } else {
-            log::warn!("event=clipboard.cleanup_failed module=clipboard code=CLIPBOARD_CLEANUP_FAILED");
+            log::warn!(
+                "event=clipboard.cleanup_failed module=clipboard code=CLIPBOARD_CLEANUP_FAILED"
+            );
         }
         cleanup
     })

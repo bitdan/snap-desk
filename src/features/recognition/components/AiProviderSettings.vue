@@ -21,12 +21,14 @@ const draft = ref(defaultAiSettings()), secret = ref(''), configured = ref<boole
 const localStatus = ref<LocalTranslationStatus | null>(latestLocalStatus)
 const checking = ref(false)
 const preset = ref('custom')
-let disposed = false
+let disposed = false, credentialStatusRevision = 0
 const local = computed(() => draft.value.provider === 'local-ctranslate2')
 const languages = computed(() => local.value ? targetLanguages.slice(0, 2) : targetLanguages)
 watch(local, value => { if (value && !['zh-CN', 'en'].includes(draft.value.targetLanguage)) draft.value.targetLanguage = 'zh-CN' })
 // 地址切换立即清空未保存密钥，避免把上一服务的输入写入新服务。
-watch(() => draft.value.endpoint, () => { secret.value = ''; configured.value = null }, { flush: 'sync' })
+watch(() => [draft.value.endpoint, draft.value.provider], () => {
+  credentialStatusRevision++; secret.value = ''; configured.value = null
+}, { flush: 'sync' })
 const busy = ref(false), ready = ref(false), error = ref(''), message = ref('')
 async function loadSettings() {
   try {
@@ -34,8 +36,9 @@ async function loadSettings() {
     if (disposed) return
     draft.value = { ...settings.settings.ai }; ready.value = true
     if (!local.value) {
+      const revision = credentialStatusRevision
       const value = await api.aiProviderStatus()
-      if (!disposed) configured.value = value
+      if (!disposed && revision === credentialStatusRevision) configured.value = value
     }
   }
   catch (e) { if (!disposed) error.value = String(e) }
@@ -65,14 +68,15 @@ onUnmounted(() => { disposed = true })
 /** 只覆盖 AI 字段，读取最新配置以保留其他页面已保存的设置。密钥从不进入 settings。 */
 const autosave = useAutoSave(async () => {
   if (!ready.value) return
-  const ai = { ...draft.value }, key = secret.value
+  const ai = { ...draft.value }, key = secret.value, revision = credentialStatusRevision
   await updateSettings(current => ({ ...current, ai }))
   if (ai.provider !== 'local-ctranslate2' && key) {
     await api.aiCredentialSet(key, ai.endpoint)
-    if (secret.value === key) secret.value = ''
+    // 旧服务写入结束时，不能清空用户已为新服务重新输入的同一段密钥。
+    if (revision === credentialStatusRevision && secret.value === key) secret.value = ''
   }
   const status = ai.provider === 'local-ctranslate2' ? false : await api.aiProviderStatus()
-  if (!disposed && ai.endpoint === draft.value.endpoint && ai.provider === draft.value.provider) configured.value = status
+  if (!disposed && revision === credentialStatusRevision && ai.endpoint === draft.value.endpoint && ai.provider === draft.value.provider) configured.value = status
 }, () => validateAiSettings(draft.value))
 /** 密钥在结束编辑后保存，避免逐字符写入系统凭据库。 */
 function providerChanged() {

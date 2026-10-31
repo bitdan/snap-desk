@@ -37,6 +37,18 @@ pub fn copy(app: &AppHandle, image: &RgbaImage) -> Result<(), String> {
         .map_err(|e| format!("复制失败，请重试或保存图片：{e}"))
 }
 
+/// 内部导出流程复用刚编码的 PNG；非 Windows 仍由平台插件提交原始像素。
+pub(crate) fn copy_png(app: &AppHandle, image: &RgbaImage, png: &[u8]) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    return windows_clipboard::copy_png(app, image, png);
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = png;
+        copy(app, image)
+    }
+}
+
 impl ExportFormat {
     fn extension(self) -> &'static str {
         match self {

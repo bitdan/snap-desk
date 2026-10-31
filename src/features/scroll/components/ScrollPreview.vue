@@ -17,6 +17,7 @@ const error = ref('')
 const cancelling = ref(false)
 // 恢复时仍持续取样，用户滚回重叠区即可接续，无需另点“继续”。
 const recovering = computed(() => view.value?.collecting && view.value.status === 'recovering')
+const failed = computed(() => view.value?.status === 'failed')
 const status = computed(() => busy.value ? (cancelling.value ? '正在取消…' : '正在保存…')
   : !view.value ? '准备中…' : view.value.status === 'failed' ? '输出失败' : view.value.status === 'finishing' ? '正在保存…' : view.value.status === 'sampling' ? '请停一下' : view.value.status === 'no_progress' ? '暂无新增' : view.value.status === 'waiting' ? '请稍候' : view.value.status === 'recovering' ? '请往回滚' : !view.value.collecting ? '采集结束' : '自动拼接')
 const hint = computed(() => error.value || view.value?.message || '慢慢滚动，停一下再继续。')
@@ -25,12 +26,16 @@ let offClosed: (() => void) | undefined
 let disposed = false
 let updates = 0
 let closedThroughId = 0
+let actionGeneration = 0
 function receive(next: ScrollView) {
   if (disposed) return
   const accepted = newerScrollPreview(view.value, next, closedThroughId)
   if (accepted !== next) return
   updates++
-  if (next.id !== view.value?.id) { busy.value = false; error.value = '' }
+  // 新失败版本表示后台已经结束本轮输出，恢复重试/取消入口；重复快照不打断新请求。
+  if (next.id !== view.value?.id || (next.status === 'failed' && next.revision > (view.value?.revision ?? -1))) {
+    actionGeneration++; busy.value = false; error.value = ''
+  }
   view.value = next
 }
 // 单轴回滚时移动视口框，不重复增长画布。
@@ -38,11 +43,12 @@ const marker = computed(() => view.value ? scrollViewportStyle(view.value) : {})
 async function finish(cancel: boolean) {
   if (!view.value || (busy.value && (!cancel || cancelling.value))) return
   const id = view.value.id
+  const action = ++actionGeneration
   busy.value = true; cancelling.value = cancel; error.value = ''
   // Esc 可中断尚在等待的完成操作；旧请求失败不能覆盖取消状态或下一会话。
   try { await api.controlScroll(id, cancel, !!recovering.value) }
   catch (e) {
-    if (view.value?.id === id && cancelling.value === cancel) {
+    if (actionGeneration === action && view.value?.id === id && cancelling.value === cancel) {
       error.value = String(e); busy.value = false
     }
   }
@@ -64,6 +70,7 @@ onMounted(async () => {
       closedThroughId = Math.max(closedThroughId, id)
       updates++
       if (view.value && view.value.id <= id) {
+        actionGeneration++
         view.value = null; busy.value = false; error.value = ''
       }
     }, controls ? 'scroll-controls' : 'scroll-preview')
@@ -90,7 +97,7 @@ onUnmounted(() => { disposed = true; window.removeEventListener('keydown', key);
         <span v-else>{{ t("准备采集…") }}</span>
       </div>
       <p v-if="view" class="coverage">{{ t("已拼接 {0} 帧", { 0: view.frames }) }}</p>
-      <p class="preview-hint" :class="{ error, recovering }" :role="error ? 'alert' : recovering ? 'status' : undefined" :title="te(hint)">{{ te(hint) }}</p>
+      <p class="preview-hint" :class="{ error: error || failed, recovering }" :role="error || failed ? 'alert' : recovering ? 'status' : undefined" :title="te(hint)">{{ te(hint) }}</p>
     </template>
     <footer v-else>
       <div class="progress" :title="te(hint)">
@@ -98,8 +105,8 @@ onUnmounted(() => { disposed = true; window.removeEventListener('keydown', key);
         <small v-if="view" aria-live="polite">{{ te(view.message) || t("{0} 帧 · {1} px", { 0: view.frames, 1: view.height }) }}</small>
       </div>
       <span v-if="error" class="error-indicator" role="alert" :title="te(error)" :aria-label="te(error)"><AlertCircle :size="16" /></span>
-      <button class="save" :disabled="busy || !view" :title="recovering ? t('保存并复制已拼接内容（Ctrl+C）') : t('完成并复制（Ctrl+C）')" @click="finish(false)"><Save :size="15" />{{ recovering ? t("保存已确认部分") : t("完成") }}</button>
-      <button class="cancel" :disabled="busy || !view" :title='t("取消（Esc，不保存）")' :aria-label='t("取消滚动截图")' @click="finish(true)"><X :size="17" /><span v-if="recovering">{{ t("取消") }}</span></button>
+      <button class="save" :disabled="busy || !view || view.status === 'finishing'" :title="recovering ? t('保存并复制已拼接内容（Ctrl+C）') : t('完成并复制（Ctrl+C）')" @click="finish(false)"><Save :size="15" />{{ failed ? t("重试") : recovering ? t("保存已确认部分") : t("完成") }}</button>
+      <button class="cancel" :disabled="!view || (busy && cancelling)" :title='t("取消（Esc，不保存）")' :aria-label='t("取消滚动截图")' @click="finish(true)"><X :size="17" /><span v-if="recovering || failed">{{ t("取消") }}</span></button>
     </footer>
   </main>
 </template>

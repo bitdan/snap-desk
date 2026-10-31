@@ -74,7 +74,7 @@ export function logFrontendFailure(event: Exclude<keyof EventMeta, 'ipc.failed'>
 
 /** 只识别后端现有的精确取消契约，不能用包含“取消”的模糊匹配隐藏真实故障。 */
 export function logIpcFailure(command: IpcCommand, message: string, session?: unknown): void {
-  if (command === 'translate_text' && message === '翻译已取消。') return
+  if ((command === 'translate_text' || command === 'translate_texts') && message === '翻译已取消。') return
   appLog('error', 'ipc.failed', { command, session })
 }
 

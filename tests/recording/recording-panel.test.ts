@@ -44,6 +44,15 @@ beforeEach(() => {
 afterEach(() => { memoryRenderer.render(null, root); vi.clearAllTimers(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
 describe('录屏页设置与录制入口', () => {
+  it('来源中断后显示已保存片段路径和中断原因，并允许重新录制', async () => {
+    const path = 'D:/partial.mp4'
+    const message = `录屏已中断：显示器位置、尺寸或 DPI 改变，请重新录屏。 已保存可用部分：${path}`
+    api.currentRecording.mockResolvedValue({ id: 9, revision: 3, phase: 'failed', seconds: 12, path, message })
+    memoryRenderer.render(h(Component), root); await flush()
+    expect(findNode(root, node => node.props.role === 'alert' && node.text === message)).toBeDefined()
+    expect(button('选择录制范围')?.props.disabled).toBe(false)
+    expect(button('停止并导出')).toBeUndefined()
+  })
   it('仅显示录制设置与控制，不查询或展示最近录屏和恢复记录', async () => {
     api.currentRecording.mockResolvedValue({ id: 9, revision: 1, phase: 'recording', seconds: 12, systemAudio: false, microphone: false, message: '' })
     memoryRenderer.render(h(Component), root); await flush()

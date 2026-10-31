@@ -1020,5 +1020,6 @@
   "译文将在这里显示": "Translation will appear here",
   "移出输入框完成；单击选中，双击文字编辑": "Move outside to finish; click to select, double-click text to edit",
   "单击标注拖动；Alt 拖动叠加绘制": "Click annotations to drag; Alt-drag to draw over them",
-  "已到选区边界，可缩小字号继续输入": "Selection boundary reached; reduce the font size to continue typing"
+  "已到选区边界，可缩小字号继续输入": "Selection boundary reached; reduce the font size to continue typing",
+  "内容已更新，点击刷新。": "Content updated. Click Refresh."
 }

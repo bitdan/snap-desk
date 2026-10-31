@@ -40,6 +40,8 @@ pub struct Service {
     running: Mutex<Option<Running>>,
     pub settings: Mutex<ClipboardSettings>,
     pub error: Mutex<Option<String>>,
+    /// 单次复制失败与监听/维护故障独立，正常记录恢复时不能掩盖持续故障。
+    capture_error: Mutex<Option<String>>,
     pub revision: AtomicU64,
     /// 恢复操作在写入锁内记录内容摘要，worker 使用同一锁避免先读后标记的竞态。
     pub restored: Mutex<Option<(u32, String)>>,
@@ -57,6 +59,17 @@ pub fn image_hash(image: &RgbaImage) -> String {
     hash.update(image.as_raw());
     hash.finalize().to_hex().to_string()
 }
+
+/// 单次复制恢复只撤下自己的错误；持续故障仍作为页面当前错误发布。
+fn capture_recovery_message(
+    capture_error: &mut Option<String>,
+    persistent_error: Option<&str>,
+) -> Option<String> {
+    capture_error
+        .take()
+        .map(|_| persistent_error.unwrap_or_default().to_string())
+}
+
 impl Service {
     pub fn new(app: &AppHandle) -> Self {
         let data = (|| {
@@ -79,6 +92,7 @@ impl Service {
             running: Mutex::new(None),
             settings: Mutex::new(ClipboardSettings::default()),
             error: Mutex::new(None),
+            capture_error: Mutex::new(None),
             revision: AtomicU64::new(0),
             restored: Mutex::new(None),
             write_gate: Mutex::new(()),
@@ -104,7 +118,8 @@ impl Service {
                 .as_ref()
                 .err()
                 .cloned()
-                .or_else(|| self.error.lock().ok().and_then(|e| e.clone())),
+                .or_else(|| self.error.lock().ok().and_then(|e| e.clone()))
+                .or_else(|| self.capture_error.lock().ok().and_then(|e| e.clone())),
         }
     }
     pub fn changed(&self, app: &AppHandle) {
@@ -121,6 +136,30 @@ impl Service {
         }
         let _ = app.emit_to("main", "clipboard-error", error);
     }
+    fn report_capture(&self, app: &AppHandle, error: String) {
+        if let Ok(mut current) = self.capture_error.lock() {
+            *current = Some(error.clone());
+        }
+        let _ = app.emit_to("main", "clipboard-error", error);
+    }
+    /// 保持既有字符串事件契约；有持续故障就继续显示，否则空字符串撤下单次错误。
+    /// 不调用 status()，避免 worker 被 configure 等待退出时重入 running 锁。
+    fn recovered_capture(&self, app: &AppHandle) {
+        let Ok(mut capture_error) = self.capture_error.lock() else {
+            return;
+        };
+        if capture_error.is_none() {
+            return;
+        }
+        let Ok(persistent_error) = self.error.lock() else {
+            return;
+        };
+        if let Some(message) =
+            capture_recovery_message(&mut capture_error, persistent_error.as_deref())
+        {
+            let _ = app.emit_to("main", "clipboard-error", message);
+        }
+    }
     /// 只由后台命令或 setup 调用。先停旧监听并等待在途写入，再替换配置。
     pub fn configure(&self, app: &AppHandle, settings: ClipboardSettings) -> Result<(), String> {
         settings.validate()?;
@@ -129,6 +168,7 @@ impl Service {
         *self.settings.lock().map_err(|_| "历史设置不可用。")? = settings.clone();
         if !settings.enabled {
             *self.error.lock().map_err(|_| "历史状态不可用。")? = None;
+            *self.capture_error.lock().map_err(|_| "历史状态不可用。")? = None;
             return Ok(());
         }
         self.data()?;
@@ -172,7 +212,7 @@ impl Service {
                     }
                     match service.capture(&handle, &worker_stop) {
                         Ok(()) => last = seq,
-                        Err(e) => service.report(&handle, e),
+                        Err(e) => service.report_capture(&handle, e),
                     }
                 }
             })
@@ -183,6 +223,7 @@ impl Service {
             worker: Some(worker),
         });
         *self.error.lock().map_err(|_| "历史状态不可用。")? = None;
+        *self.capture_error.lock().map_err(|_| "历史状态不可用。")? = None;
         Ok(())
     }
     pub fn shutdown(&self) {
@@ -263,7 +304,7 @@ impl Service {
                 return Ok(());
             }
             if !data.repo.refresh(kind, &hash, now())? {
-                match content {
+                let removed = match content {
                     Content::Files(paths) => {
                         let text = paths.join("\n");
                         data.repo.insert(
@@ -279,7 +320,7 @@ impl Service {
                             },
                             &settings,
                             now(),
-                        )?;
+                        )?
                     }
                     Content::Text(text) => data.repo.insert(
                         NewItem {
@@ -297,7 +338,7 @@ impl Service {
                     )?,
                     Content::Image(image) => {
                         let saved = data.blobs.save(&hash, &image)?;
-                        data.repo.insert(
+                        let removed = data.repo.insert(
                             NewItem {
                                 kind,
                                 hash: &hash,
@@ -312,10 +353,17 @@ impl Service {
                             now(),
                         )?;
                         saved.commit();
+                        removed
                     }
+                };
+                // 数据库提交后只删除本次淘汰的路径，不在每次复制时全目录扫描。
+                let cleanup = data.blobs.remove(&removed);
+                if let Err(error) = cleanup {
+                    self.changed(app);
+                    return Err(error);
                 }
-                // 配额淘汰后的孤儿文件统一由启动/每小时维护回收，写入不扫描素材目录。
             }
+            self.recovered_capture(app);
             self.changed(app);
             return Ok(());
         }
@@ -351,5 +399,31 @@ impl Data {
                 &self.blobs.path(&item.blob.ok_or("图片引用损坏。")?)?,
             )?)),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn capture_recovery_preserves_persistent_failure_and_only_clears_a_reported_capture_error() {
+        let mut transient = Some("上一次复制失败。".to_string());
+        assert_eq!(
+            capture_recovery_message(&mut transient, Some("历史素材维护失败。")),
+            Some("历史素材维护失败。".to_string())
+        );
+        assert!(transient.is_none());
+        // 未报告新复制故障时不发恢复事件，避免覆盖页面其他操作的错误。
+        assert_eq!(
+            capture_recovery_message(&mut transient, Some("历史素材维护失败。")),
+            None
+        );
+        transient = Some("文本超过大小限制。".to_string());
+        assert_eq!(
+            capture_recovery_message(&mut transient, None),
+            Some(String::new())
+        );
+        assert!(transient.is_none());
     }
 }
