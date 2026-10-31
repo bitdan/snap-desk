@@ -2,7 +2,7 @@
 import type { RecordingAnnotationView, RecordingAnnotationTools, RecordingAnnotationEditorAction, RecordingAnnotationEditorStatus } from '@/features/recording/recording-annotations'
 import type { Rect } from '@/shared/geometry/selection'
 import type { Annotation } from '@/features/annotations/annotations'
-import type { RecorderCapabilities, RecorderConfig, RecordingAction, RecordingDirectory, RecordingView, RecoverableRecording } from '@/features/recording/recording'
+import type { RecorderCapabilities, RecorderConfig, RecordingAction, RecordingDirectory, RecordingView } from '@/features/recording/recording'
 import type { RecordingResult, RecordingResultAction } from '@/features/recording/recording'
 import { invoke } from '@/services/ipc'
 
@@ -10,9 +10,6 @@ export const recordingApi = {
   latestRecordingResult: () => invoke<RecordingResult | null>('latest_recording_result'),
   recordingResultAction: (id: number, action: RecordingResultAction) => invoke<void>('recording_result_action', { id, action }),
   selectRecordingArea: () => invoke<void>('select_recording_area'),
-  recoverableRecordings: () => invoke<RecoverableRecording[]>('recoverable_recordings'),
-  retryRecordingExport: (id: string) => invoke<string>('retry_recording_export', { id }),
-  discardRecordingRecovery: (id: string) => invoke<void>('discard_recording_recovery', { id }),
   startRecording: (id: number, rect: Rect, config?: RecorderConfig, target?: number, annotations?: Annotation[]) => invoke<void>('start_recording', { id, rect, config, ...(target === undefined ? {} : { target }), ...(annotations?.length ? { annotations } : {}) }),
   recordingCapabilities: () => invoke<RecorderCapabilities>('recording_capabilities'),
   currentRecordingDirectory: () => invoke<RecordingDirectory>('current_recording_directory'),

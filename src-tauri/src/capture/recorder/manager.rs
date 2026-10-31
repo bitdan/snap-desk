@@ -20,7 +20,6 @@ mod gif;
 mod input;
 pub mod live_annotations;
 pub mod output;
-pub mod recovery;
 pub mod result;
 mod stats;
 mod timeline;

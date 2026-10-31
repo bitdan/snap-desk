@@ -149,7 +149,7 @@ impl Device {
     }
 
     /// 默认设备切换不保证使旧 client 失效；每 500 ms（暂停时也检查）以及恢复前
-    /// 核对身份。明确失败而非继续录旧设备或悄悄导出静音，沿用现有失败恢复记录。
+    /// 核对身份。明确失败而非继续录旧设备或悄悄导出静音，随后清理本次临时输出。
     fn validate_endpoint(&self, enumerator: &IMMDeviceEnumerator) -> Result<(), String> {
         unsafe {
             if self.endpoint.GetState().map_err(error)? != DEVICE_STATE_ACTIVE {

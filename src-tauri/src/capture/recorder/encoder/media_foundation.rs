@@ -468,7 +468,7 @@ mod tests {
     fn extensionless_output_muxes_aac_and_static_video_with_monotonic_timestamps() {
         use super::super::Encoder;
         let root = tempfile::tempdir().unwrap();
-        // 与恢复中心的另存临时文件一致，不允许依赖 .mp4 后缀才能初始化容器。
+        // 临时输出也显式声明容器，不允许依赖 .mp4 后缀才能初始化。
         let path = root.path().join("snapdesk-pending-audio-video");
         assert!(path.extension().is_none());
         let mut encoder = MediaFoundation::new(&path, 64, 64, 30, 1_000_000,

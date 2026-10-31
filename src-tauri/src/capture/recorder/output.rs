@@ -1,5 +1,6 @@
-//! 录屏目录偏好：沿用图片导出的独立目录记录方式，避免覆盖快捷键设置草稿。
-//! 路径只能由原生目录选择器产生；每次准备录屏取快照，整段视频在同一目录写入和发布。
+//! 录屏临时输出与目录偏好；失败和取消依靠 RAII 清理，只有成功成品才发布。
+//! 路径只能由原生目录选择器产生；临时目录与最终文件同盘，发布不复制整段视频。
+use super::config::OutputFormat;
 use crate::capture::require_window;
 use crate::settings::{RecordingExportSettings, SettingsState};
 use serde::Serialize;
@@ -22,28 +23,15 @@ pub(super) fn preferences(app: &AppHandle) -> Result<RecordingExportSettings, St
     Ok(current.value.recording_export.clone())
 }
 
-/// 本地日期时间便于排序和查找；末尾保留后台随机标识，区分同毫秒导出。
-pub(super) fn filename(token: &str, extension: &str, recovered: bool) -> String {
-    filename_with_settings(
-        token,
-        extension,
-        recovered,
-        &RecordingExportSettings::default(),
-        None,
-    )
-}
-
-/// 尺寸取实际编码区域的物理像素；前缀沿用图片导出的路径安全校验。
+/// 本地日期时间便于排序；随机标识区分同毫秒导出，尺寸取实际编码区域物理像素。
 pub(super) fn filename_with_settings(
     token: &str,
     extension: &str,
-    recovered: bool,
     settings: &RecordingExportSettings,
     dimensions: Option<(u32, u32)>,
 ) -> String {
     let now = chrono::Local::now();
     let stamp = now.format("%Y%m%d-%H%M%S-%3f");
-    let kind = if recovered { "Recovered" } else { "Recording" };
     let dimensions = if settings.include_dimensions {
         dimensions
             .map(|(width, height)| format!("-{width}x{height}"))
@@ -52,18 +40,66 @@ pub(super) fn filename_with_settings(
         String::new()
     };
     format!(
-        "{}-{kind}-{stamp}-{token}{dimensions}.{extension}",
+        "{}-Recording-{stamp}-{token}{dimensions}.{extension}",
         settings.filename_prefix
     )
 }
 
-/// 无覆盖发布现有视频，失败时关闭 TempPath 自动删除，由 Pending 保留恢复源。
-pub(super) fn publish(source: &Path, destination: &Path) -> Result<(), String> {
-    let mut temporary = tempfile::TempPath::try_from_path(source).map_err(|e| e.to_string())?;
-    temporary.disable_cleanup(true);
+/// 调用方先创建此目录，再创建媒体句柄；逆序释放句柄后才清理，不接管旧文件。
+pub(super) struct Pending {
+    directory: tempfile::TempDir,
+    path: PathBuf,
+    format: OutputFormat,
+}
+
+impl Pending {
+    pub(super) fn new(root: &Path, format: OutputFormat) -> Result<Self, String> {
+        let directory = tempfile::Builder::new()
+            .prefix("recording-")
+            .tempdir_in(root)
+            .map_err(|e| e.to_string())?;
+        let path = directory.path().join(format!("video.{}", format.extension()));
+        Ok(Self {
+            directory,
+            path,
+            format,
+        })
+    }
+
+    pub(super) fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// 消费临时输出；失败自动清理，成功后目录中已无成品，不会误删发布文件。
+    pub(super) fn publish(
+        self,
+        settings: &RecordingExportSettings,
+        dimensions: (u32, u32),
+    ) -> Result<PathBuf, String> {
+        let root = self.directory.path().parent().ok_or("录屏目录无效")?;
+        let token = self
+            .directory
+            .path()
+            .file_name()
+            .ok_or("录屏目录无效")?
+            .to_string_lossy();
+        let output = root.join(filename_with_settings(
+            token.trim_start_matches("recording-"),
+            self.format.extension(),
+            settings,
+            Some(dimensions),
+        ));
+        publish(&self.path, &output)?;
+        Ok(output)
+    }
+}
+
+/// 无覆盖发布；失败时 TempPath 与外层临时目录共同保证清理，已有成品不受影响。
+fn publish(source: &Path, destination: &Path) -> Result<(), String> {
+    let temporary = tempfile::TempPath::try_from_path(source).map_err(|e| e.to_string())?;
     temporary
         .persist_noclobber(destination)
-        .map_err(|e| format!("发布录屏失败，源文件已保留：{e}"))
+        .map_err(|e| format!("发布录屏失败：{e}"))
 }
 
 #[derive(Serialize)]
@@ -266,18 +302,42 @@ mod tests {
     use super::*;
 
     #[test]
-    fn publication_does_not_overwrite_or_delete_source_on_failure() {
+    fn publication_failure_cleans_source_without_overwriting_existing_video() {
         let root = tempfile::tempdir().unwrap();
         let source = root.path().join("pending.mp4");
         let destination = root.path().join("existing.mp4");
         fs::write(&source, b"new video").unwrap();
         fs::write(&destination, b"old video").unwrap();
         assert!(publish(&source, &destination).is_err());
-        assert_eq!(fs::read(&source).unwrap(), b"new video");
+        assert!(!source.exists());
         assert_eq!(fs::read(&destination).unwrap(), b"old video");
-        let target = root.path().join("finished.mp4");
-        publish(&source, &target).unwrap();
+    }
+
+    #[test]
+    fn committed_output_survives_temporary_directory_cleanup() {
+        let root = tempfile::tempdir().unwrap();
+        let pending = Pending::new(root.path(), OutputFormat::Mp4).unwrap();
+        let temporary_directory = pending.directory.path().to_owned();
+        fs::write(pending.path(), b"new video").unwrap();
+        let target = pending
+            .publish(&RecordingExportSettings::default(), (64, 64))
+            .unwrap();
+        assert_eq!(target.parent(), Some(root.path()));
+        assert!(!temporary_directory.exists());
         assert_eq!(fs::read(target).unwrap(), b"new video");
+    }
+
+    #[test]
+    fn dropping_uncommitted_output_removes_only_its_own_files() {
+        let root = tempfile::tempdir().unwrap();
+        let target = root.path().join("finished.mp4");
+        fs::write(&target, b"existing video").unwrap();
+        let pending = Pending::new(root.path(), OutputFormat::Gif).unwrap();
+        let temporary_directory = pending.directory.path().to_owned();
+        fs::write(pending.path(), b"unfinished video").unwrap();
+        drop(pending);
+        assert!(!temporary_directory.exists());
+        assert_eq!(fs::read(target).unwrap(), b"existing video");
     }
 
     #[test]
@@ -319,13 +379,12 @@ mod tests {
             remember_directory: false,
         };
         assert!(settings.validate().is_ok());
-        let name = filename_with_settings("abc123", "mp4", false, &settings, Some((1920, 1080)));
+        let name = filename_with_settings("abc123", "mp4", &settings, Some((1920, 1080)));
         assert!(name.starts_with("Demo-Recording-"));
         assert!(name.ends_with("-abc123-1920x1080.mp4"));
         let name = filename_with_settings(
             "abc123",
             "gif",
-            false,
             &RecordingExportSettings::default(),
             Some((1920, 1080)),
         );

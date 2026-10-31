@@ -2,8 +2,23 @@
 use std::path::PathBuf;
 use tauri::AppHandle;
 
+static STATUS: crate::resources::status_cache::StatusCache<bool> =
+    crate::resources::status_cache::StatusCache::new();
+
+fn root(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(crate::resources::directory(app)?.join("translator-runtime"))
+}
+
 pub fn supported() -> bool {
     cfg!(all(windows, target_arch = "x86_64"))
+}
+
+/// 仅设置页复用引擎目录的近期校验；启动执行仍直接调用 executable 完整验证。
+pub(super) fn status_ready(app: &AppHandle) -> Result<bool, String> {
+    if !supported() {
+        return Ok(false);
+    }
+    STATUS.read(&[root(app)?], || Ok(executable(app).is_ok()))
 }
 
 pub fn executable(app: &AppHandle) -> Result<PathBuf, String> {
@@ -70,10 +85,6 @@ mod windows {
             return Err("内置翻译引擎清单无效。".into());
         }
         Ok(value)
-    }
-
-    fn root(app: &AppHandle) -> Result<PathBuf, String> {
-        Ok(resources::directory(app)?.join("translator-runtime"))
     }
 
     /// ZIP 必须先匹配内置摘要；之后才允许读取里面的路径与文件内容。

@@ -16,7 +16,9 @@ use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
 use tauri_plugin_dialog::DialogExt;
 
 static OPERATION: Mutex<()> = Mutex::new(());
-static STATUS: status_cache::StatusCache<ResourceStatus> = status_cache::StatusCache::new();
+// OCR 与字体分开观察依赖，替换字体不会重新校验模型/DLL。
+static OCR_STATUS: status_cache::StatusCache<(bool, bool, u64)> = status_cache::StatusCache::new();
+static FONT_STATUS: status_cache::StatusCache<bool> = status_cache::StatusCache::new();
 const MAX_FONT: u64 = 64 * 1024 * 1024;
 
 /// 前端只能选择资源类别，下载地址、文件名和摘要由内置清单决定。
@@ -131,28 +133,62 @@ pub fn ocr_paths(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(dir)
 }
 
-fn status(app: &AppHandle) -> Result<ResourceStatus, String> {
-    STATUS.read(&directory(app)?, || check_status(app))
-}
-
-fn check_status(app: &AppHandle) -> Result<ResourceStatus, String> {
-    let dir = directory(app)?;
-    let models_ready = manifest()?
+/// 只观察实际校验的 OCR 文件和当前架构运行库；根目录及其他资源不属于本分区。
+fn ocr_status_paths(dir: &Path, assets: &[Asset]) -> Result<Vec<PathBuf>, String> {
+    let paths: Vec<_> = assets
         .iter()
         .filter(|a| a.kind == ResourceKind::Ocr)
-        .all(|a| verified(&dir.join(&a.name), a));
+        .map(|a| dir.join(&a.name))
+        .collect();
     #[cfg(windows)]
-    let (runtime_ready, runtime_download_mib) = (
-        crate::recognition::ocr_runtime::ready(&dir),
-        crate::recognition::ocr_runtime::download_mib(),
-    );
-    #[cfg(not(windows))]
-    let (runtime_ready, runtime_download_mib) = (true, 0);
+    let paths = {
+        let mut paths = paths;
+        #[derive(Deserialize)]
+        struct RuntimeDirectory {
+            arch: String,
+            directory: String,
+        }
+        // 与 ocr_runtime 使用同一份内置清单，避免在缓存层另写一份版本/目录常量。
+        let runtimes: Vec<RuntimeDirectory> =
+            serde_json::from_str(include_str!("../../assets/onnxruntime.json"))
+                .map_err(|e| e.to_string())?;
+        if let Some(runtime) = runtimes
+            .iter()
+            .find(|runtime| runtime.arch == std::env::consts::ARCH)
+        {
+            paths.push(dir.join(&runtime.directory));
+        }
+        paths
+    };
+    Ok(paths)
+}
+
+fn status(app: &AppHandle) -> Result<ResourceStatus, String> {
+    let dir = directory(app)?;
+    let assets = manifest()?;
+    let (models_ready, runtime_ready, runtime_download_mib) =
+        OCR_STATUS.read(&ocr_status_paths(&dir, &assets)?, || {
+            let models_ready = assets
+                .iter()
+                .filter(|a| a.kind == ResourceKind::Ocr)
+                .all(|a| verified(&dir.join(&a.name), a));
+            #[cfg(windows)]
+            let (runtime_ready, runtime_download_mib) = (
+                crate::recognition::ocr_runtime::ready(&dir),
+                crate::recognition::ocr_runtime::download_mib(),
+            );
+            #[cfg(not(windows))]
+            let (runtime_ready, runtime_download_mib) = (true, 0);
+            Ok((models_ready, runtime_ready, runtime_download_mib))
+        })?;
+    let font = dir.join("export-font.ttf");
+    let font_ready =
+        FONT_STATUS.read(std::slice::from_ref(&font), || Ok(read_font(&font).is_ok()))?;
     Ok(ResourceStatus {
         models_ready,
         runtime_ready,
         runtime_download_mib,
-        font_ready: read_font(&dir.join("export-font.ttf")).is_ok(),
+        font_ready,
         ocr_ready: models_ready && runtime_ready,
         directory: dir.to_string_lossy().into_owned(),
     })

@@ -11,7 +11,9 @@ use tauri::{AppHandle, Manager, WebviewWindow};
 use tauri_plugin_dialog::DialogExt;
 
 const IDS: [&str; 2] = ["opus-mt-en-zh-int8", "opus-mt-zh-en-int8"];
-static STATUS: resources::status_cache::StatusCache<LocalStatus> = resources::status_cache::StatusCache::new();
+// 两个语言包各自缓存；安装/删除一个方向不触发另一个模型的整文件摘要。
+static MODEL_STATUS: [resources::status_cache::StatusCache<ModelStatus>; IDS.len()] =
+    [const { resources::status_cache::StatusCache::new() }; IDS.len()];
 const FILES: [&str; 8] = [
     "model.bin",
     "config.json",
@@ -238,31 +240,31 @@ pub struct LocalStatus {
     models: Vec<ModelStatus>,
 }
 fn status(app: &AppHandle) -> Result<LocalStatus, String> {
-    STATUS.read(&resources::directory(app)?, || check_status(app))
-}
-
-fn check_status(app: &AppHandle) -> Result<LocalStatus, String> {
     let catalog = catalog()?;
+    let directory = root(app)?;
     let models = IDS
         .iter()
-        .map(|id| {
-            let installed = read_pack(&root(app)?.join(id)).ok();
-            let available = catalog
-                .iter()
-                .find(|p| p.model_id == *id && p.validate().is_ok());
-            Ok(ModelStatus {
-                model_id: id.to_string(),
-                ready: verified_directory(app, id).is_ok(),
-                downloadable: available.is_some(),
-                revision: installed.map(|p| p.source_revision),
-                download_bytes: available
-                    .map(|p| p.files.iter().map(|f| f.size).sum())
-                    .unwrap_or(0),
+        .enumerate()
+        .map(|(index, id)| {
+            MODEL_STATUS[index].read(&[directory.join(id)], || {
+                let installed = read_pack(&directory.join(id)).ok();
+                let available = catalog
+                    .iter()
+                    .find(|p| p.model_id == *id && p.validate().is_ok());
+                Ok(ModelStatus {
+                    model_id: id.to_string(),
+                    ready: verified_directory(app, id).is_ok(),
+                    downloadable: available.is_some(),
+                    revision: installed.map(|p| p.source_revision),
+                    download_bytes: available
+                        .map(|p| p.files.iter().map(|f| f.size).sum())
+                        .unwrap_or(0),
+                })
             })
         })
         .collect::<Result<Vec<_>, String>>()?;
     Ok(LocalStatus {
-        runtime_ready: crate::recognition::local_translation::executable(app).is_ok(),
+        runtime_ready: crate::recognition::translation_runtime::status_ready(app)?,
         runtime_supported: crate::recognition::translation_runtime::supported(),
         models,
     })

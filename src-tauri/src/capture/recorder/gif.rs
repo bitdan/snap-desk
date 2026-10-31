@@ -138,7 +138,7 @@ impl Encoder for GifEncoder {
             return Err("尚未捕获任何 GIF 帧。".into());
         }
         self.flush_until(end)?;
-        // 显式写入结束标记并 flush，写盘错误必须反馈给统一恢复流程。
+        // 显式写入结束标记并 flush，写盘错误交给流水线清理临时输出。
         let mut file = self
             .writer
             .take()

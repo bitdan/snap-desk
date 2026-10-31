@@ -4,7 +4,7 @@ import { h, nextTick } from 'vue'
 import { clientComponent, findNode, MemoryNode, memoryRenderer } from '../helpers/component-host'
 
 const api = vi.hoisted(() => ({ status: vi.fn(), saveSettings: vi.fn(), currentRecording: vi.fn(), latestRecordingResult: vi.fn(),
-  currentRecordingDirectory: vi.fn(), recordingCapabilities: vi.fn(), recoverableRecordings: vi.fn(),
+  currentRecordingDirectory: vi.fn(), recordingCapabilities: vi.fn(),
   recordingResultAction: vi.fn(), selectRecordingArea: vi.fn(), controlRecording: vi.fn() }))
 vi.mock('../../src/shared/ui/SelectControl.vue', async () => ({ default: (await import('../helpers/select-control')).SelectControlStub }))
 vi.mock('../../src/services/api', () => ({ api, desktop: true }))
@@ -39,19 +39,18 @@ beforeEach(() => {
   api.latestRecordingResult.mockResolvedValue({ id: 7, filename: 'recording.mp4', path: 'D:/recording.mp4' })
   api.currentRecordingDirectory.mockResolvedValue({ path: 'D:/', isDefault: true })
   api.recordingCapabilities.mockResolvedValue({ available: true })
-  api.recoverableRecordings.mockResolvedValue([{ id: 'pending', path: 'D:/pending/video.mp4', finalized: true, sourceExists: true, exported: null }])
 })
 afterEach(() => { memoryRenderer.render(null, root); vi.clearAllTimers(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
 describe('录屏页设置与录制入口', () => {
-  it('来源中断后显示已保存片段路径和中断原因，并允许重新录制', async () => {
-    const path = 'D:/partial.mp4'
-    const message = `录屏已中断：显示器位置、尺寸或 DPI 改变，请重新录屏。 已保存可用部分：${path}`
-    api.currentRecording.mockResolvedValue({ id: 9, revision: 3, phase: 'failed', seconds: 12, path, message })
+  it('来源中断后显示失败原因并允许重新录制，不展示失败文件或恢复入口', async () => {
+    const message = '录屏失败：显示器位置、尺寸或 DPI 改变，请重新录屏。'
+    api.currentRecording.mockResolvedValue({ id: 9, revision: 3, phase: 'failed', seconds: 12, path: null, message })
     memoryRenderer.render(h(Component), root); await flush()
     expect(findNode(root, node => node.props.role === 'alert' && node.text === message)).toBeDefined()
     expect(button('选择录制范围')?.props.disabled).toBe(false)
     expect(button('停止并导出')).toBeUndefined()
+    for (const label of ['重试导出', '清理残留']) expect(button(label)).toBeUndefined()
   })
   it('仅显示录制设置与控制，不查询或展示最近录屏和恢复记录', async () => {
     api.currentRecording.mockResolvedValue({ id: 9, revision: 1, phase: 'recording', seconds: 12, systemAudio: false, microphone: false, message: '' })
@@ -59,14 +58,12 @@ describe('录屏页设置与录制入口', () => {
     for (const label of ['打开目录', '复制路径', '重试导出', '清理残留']) expect(button(label)).toBeUndefined()
     expect(findNode(root, node => node.text.includes('最近完成的录屏') || node.text.includes('可恢复录制'))).toBeUndefined()
     expect(api.latestRecordingResult).not.toHaveBeenCalled()
-    expect(api.recoverableRecordings).not.toHaveBeenCalled()
 
     expect(button('停止并导出')).toBeDefined()
     api.currentRecording.mockResolvedValue({ id: 9, revision: 2, phase: 'completed', seconds: 12, message: '' })
     button('停止并导出')!.props.onClick(); await flush()
     expect(button('选择录制范围')).toBeDefined()
     expect(api.latestRecordingResult).not.toHaveBeenCalled()
-    expect(api.recoverableRecordings).not.toHaveBeenCalled()
   })
   it('保留选择录制范围入口，直接进入既有录制流程', async () => {
     memoryRenderer.render(h(Component), root); await flush()

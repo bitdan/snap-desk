@@ -75,7 +75,7 @@ pub(super) fn exit_timed_out(stage: &str, idle: Duration, total: Duration) -> bo
     idle >= Duration::from_secs(limit) || total >= Duration::from_secs(600)
 }
 
-/// 退出按真实帧提交、阶段切换及文件增长延长等待，保留超时源文件与恢复记录。
+/// 退出按真实帧提交、阶段切换及文件增长延长等待，让正常停止有机会发布成品。
 pub fn request_exit(app: &AppHandle) {
     let state = app.state::<ExitState>();
     if state.requested.swap(true, Ordering::SeqCst) {
@@ -132,7 +132,7 @@ pub fn request_exit(app: &AppHandle) {
             };
             last_progress = last_progress.max(updated);
             if exit_timed_out(stage, last_progress.elapsed(), started.elapsed()) {
-                log::error!("退出超时：阶段={stage}，无进展={:.1}s，总等待={:.1}s；源视频与恢复记录保留，下次启动可检查。", last_progress.elapsed().as_secs_f64(), started.elapsed().as_secs_f64());
+                log::error!("退出超时：阶段={stage}，无进展={:.1}s，总等待={:.1}s；强制退出，未完成录制不会发布为成品。", last_progress.elapsed().as_secs_f64(), started.elapsed().as_secs_f64());
                 watchdog.exit(1);
                 return;
             }

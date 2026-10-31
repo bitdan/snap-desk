@@ -13,7 +13,6 @@ export function recordingRegion(region: Rect, mode: RecordingSelection, displays
 }
 
 export interface RecordingDirectory { path: string; isDefault: boolean }
-export interface RecoverableRecording { id: string; path: string; finalized: boolean; stage: string; exported: string | null; sourceExists: boolean }
 
 export function recordingAudioStatus(view: Pick<RecordingView, 'systemAudio' | 'microphone'>): string {
   return [view.systemAudio && '系统声音', view.microphone && '麦克风'].filter((value): value is string => !!value).map(value => t(value)).join(' + ') || t('无声')
@@ -75,7 +74,7 @@ export function recordingSpaceAction(event: KeyboardEvent, phase?: RecordingPhas
   if ((event.target as HTMLElement)?.closest?.('input, textarea, select, [contenteditable=true]')) return null
   return phase === 'ready' ? 'start' : phase === 'recording' ? 'pause' : phase === 'paused' ? 'resume' : null
 }
-/** 本次运行最近一次成功导出，包含恢复导出；路径只供展示，操作只传 ID。 */
+/** 本次运行最近一次成功导出；路径只供展示，操作只传 ID。 */
 export interface RecordingResult { id: number; path: string; filename: string }
 export type RecordingResultAction = 'openDirectory' | 'copyPath'
 /** 与 Rust RecordingStats 一致，耗时为累计毫秒；空取样不是丢帧。 */
