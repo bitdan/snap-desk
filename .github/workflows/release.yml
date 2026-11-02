@@ -154,7 +154,11 @@ jobs:
           $notesPath = 'src-tauri/target/release/update-release-notes.txt'
           $releaseBody | Set-Content $notesPath -Encoding utf8
           $manifest = 'src-tauri/target/release/updater.json'
-          node scripts/windows-update.mjs $installers[0].FullName $standalone $notesPath $manifest
+          # GitHub 会规范化上传文件名，更新地址必须取自实际附件，避免含空格的安装包出现 404。
+          $assetsPath = 'src-tauri/target/release/update-assets.json'
+          gh api "repos/$env:GITHUB_REPOSITORY/releases/tags/$env:GITHUB_REF_NAME" --jq '.assets' | Set-Content $assetsPath -Encoding utf8
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node scripts/windows-update.mjs $installers[0].FullName $standalone $notesPath $manifest $assetsPath
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $signatures = @($installers | ForEach-Object { "$($_.FullName).sig" }) + "$standalone.sig"
           gh release upload $env:GITHUB_REF_NAME $manifest @signatures
