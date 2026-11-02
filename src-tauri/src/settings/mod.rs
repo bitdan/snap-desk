@@ -206,6 +206,8 @@ pub struct Appearance {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", try_from = "SettingsWire")]
 pub struct Settings {
+    /// 默认只接收正式版；开启后也接收 alpha、beta 和 rc 应用更新。
+    pub receive_prerelease_updates: bool,
     pub appearance: Appearance,
     pub ai: crate::recognition::translation::AiSettings,
     pub shortcuts: Shortcuts,
@@ -226,6 +228,8 @@ pub struct Settings {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct SettingsWire {
+    #[serde(default)]
+    receive_prerelease_updates: bool,
     #[serde(default)]
     appearance: Appearance,
     #[serde(default)]
@@ -263,6 +267,7 @@ impl TryFrom<SettingsWire> for Settings {
             shortcuts.preserve_legacy_mapping();
         }
         Ok(Self {
+            receive_prerelease_updates: wire.receive_prerelease_updates,
             shortcuts,
             shortcuts_enabled: wire.shortcuts_enabled,
             delay_seconds: wire.delay_seconds,
@@ -284,6 +289,7 @@ fn enabled_by_default() -> bool {
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            receive_prerelease_updates: false,
             shortcuts: Shortcuts::default(),
             shortcuts_enabled: true,
             delay_seconds: 0,
@@ -847,6 +853,7 @@ mod tests {
         assert_eq!(old.shortcuts.record, "F3");
         assert_eq!(old.shortcuts.history, "F4");
         assert!(!old.clipboard.enabled);
+        assert!(!old.receive_prerelease_updates);
         for json in [
             r#"{"shortcut":"F4"}"#,
             r#"{"shortcuts":{"capture":"F4","pin":"F2","record":"F3"}}"#,

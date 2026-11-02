@@ -1,6 +1,7 @@
 //! 应用组装入口：插件、托盘、窗口生命周期与 IPC 命令注册。
 mod actions;
 mod commands;
+mod updater;
 
 use actions::{trigger, trigger_pin, trigger_recording};
 use crate::{capture, clipboard, diagnostics, pins, resources, settings};
@@ -19,6 +20,8 @@ use tauri_plugin_global_shortcut::ShortcutState;
 
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .manage(updater::AppUpdateState::default())
         .manage(pins::html::RenderState::default())
         .plugin(tauri_plugin_single_instance::init(|app, args, _| {
             // 登录自启与已有实例相遇时保持安静；手动再次启动仍唤起主窗口。
@@ -134,6 +137,7 @@ pub fn run() {
             })?;
             clipboard::initialize(app.handle());
             resource_lifecycle::initialize(app.handle());
+            updater::initialize(app.handle());
             let capture = MenuItem::with_id(
                 app,
                 "capture",
@@ -374,6 +378,10 @@ pub fn run() {
             translation::ai_provider_test,
             ocr::copy_ocr_text,
             commands::app_status,
+            updater::app_update_status,
+            updater::check_app_update,
+            updater::download_app_update,
+            updater::install_app_update,
             clipboard::clipboard_status,
             clipboard::clipboard_list,
             clipboard::clipboard_get_text,
@@ -466,10 +474,20 @@ pub fn run() {
             // 录屏的退出流程完成后才收到 Exit；等待历史在途写入释放。
             if matches!(event, tauri::RunEvent::Exit) {
                 log::info!("event=app.exiting module=app");
-                resource_lifecycle::shutdown(app);
-                translation::cancel_all(app);
-                local_translation::shutdown(app);
-                app.state::<clipboard::Service>().shutdown();
+                shutdown(app);
             }
         });
+}
+
+/// 原生安装器直接退出进程前也需执行正常退出的资源收尾。
+fn shutdown(app: &tauri::AppHandle) {
+    resource_lifecycle::shutdown(app);
+    prepare_installer_exit(app);
+}
+
+/// 安装器可能因 UAC 取消而启动失败，此处只停止可重新启动的服务。
+fn prepare_installer_exit(app: &tauri::AppHandle) {
+    translation::cancel_all(app);
+    local_translation::shutdown(app);
+    app.state::<clipboard::Service>().shutdown();
 }

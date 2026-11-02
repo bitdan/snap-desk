@@ -41,8 +41,12 @@ fn parse(bytes: &[u8]) -> Result<Backup, String> {
     if bytes.len() as u64 > MAX_BYTES {
         return Err("配置文件超过 512 KiB，请检查所选文件。".into());
     }
-    let json: serde_json::Value = serde_json::from_slice(bytes)
+    let mut json: serde_json::Value = serde_json::from_slice(bytes)
         .map_err(|_| "配置格式无效，请选择当前版本导出的配置文件。".to_string())?;
+    // 新增更新偏好不使旧版完整备份失效；只为这个新增字段补默认值，其他字段仍须完整。
+    if let Some(settings) = json.get_mut("settings").and_then(|value| value.as_object_mut()) {
+        settings.entry("receivePrereleaseUpdates").or_insert(false.into());
+    }
     // 导入要求当前完整结构，不借用启动配置的缺省补齐来悄悄重置遗漏字段。
     let shape = serde_json::to_value(Backup {
         schema_version: VERSION,
@@ -387,6 +391,14 @@ mod tests {
             .unwrap()
             .remove("captures");
         assert!(parse(&serde_json::to_vec(&value).unwrap()).is_err());
+    }
+    #[test]
+    fn old_backups_default_to_stable_updates() {
+        let mut value = serde_json::to_value(backup()).unwrap();
+        value["settings"].as_object_mut().unwrap().remove("receivePrereleaseUpdates");
+        assert!(!parse(&serde_json::to_vec(&value).unwrap()).unwrap().settings.receive_prerelease_updates);
+        value["settings"]["receivePrereleaseUpdates"] = true.into();
+        assert!(parse(&serde_json::to_vec(&value).unwrap()).unwrap().settings.receive_prerelease_updates);
     }
     #[test]
     fn rollback_restores_existing_preferences_and_removes_only_new_records() {

@@ -26,6 +26,20 @@ import { defaultSettings, exportFilenamePreview, validateExportSettings, validat
 import { errorMessage } from '@/services/errors'
 import AppearanceSettings from '@/features/settings/components/AppearanceSettings.vue'
 import { applyAppearance, type Appearance } from '@/shared/ui/appearance'
+import { onAppUpdate } from '@/features/settings/events'
+
+const availableUpdate = ref<string | null>(null)
+/** 独立于主设置初始化，更新服务失败不影响截图和快捷键。 */
+async function initializeUpdateNotice() {
+  if (!desktop) return
+  try {
+    const off = await onAppUpdate(view => { availableUpdate.value = view.availableVersion })
+    if (disposed) { off(); return }
+    disposers.push(off)
+    const view = await api.appUpdateStatus()
+    if (!disposed) availableUpdate.value = view.availableVersion
+  } catch { /* 更新状态在关于页中提供重试入口。 */ }
+}
 
 const page = ref('截图')
 /** 导航悬停或键盘聚焦时只预取模块，不挂载页面，也不提前查询设备或启动轮询。 */
@@ -196,7 +210,7 @@ async function completeOnboarding() {
 }
 // 表单输入框同样使用 Esc 收起；弹窗、快捷键录入等内层交互可先消费该事件。
 function key(event: KeyboardEvent) { handleEscape(event, () => { if (desktop) void hide() }) }
-onMounted(() => { window.addEventListener('keydown', key); void initialize() })
+onMounted(() => { window.addEventListener('keydown', key); void initialize(); void initializeUpdateNotice() })
 onUnmounted(() => { disposed = true; window.removeEventListener('keydown', key); disposers.splice(0).forEach(off => off()) })
 </script>
 
@@ -206,6 +220,7 @@ onUnmounted(() => { disposed = true; window.removeEventListener('keydown', key);
       <div class="brand"><span class="brand-icon"><Scan :size="23" /></span><div>Snap Desk</div></div>
       <nav v-for="group in groups" :key="group.name" :aria-label="t(group.name)"><div class="nav-caption">{{ t(group.name) }}</div><button v-for="item in group.items" :key="item.name" :class="['nav-item', { active: page === item.name }]" :aria-current="page === item.name ? 'page' : undefined" @pointerenter="prefetchPage(item.name)" @focus="prefetchPage(item.name)" @click="page = item.name"><component :is="item.icon" :size="18" />{{ t(item.name) }}</button></nav>
       <div class="sidebar-bottom"><span v-if="status" class="version-dot" /> {{ status ? `v${status.version}` : t('版本待读取') }}</div>
+      <Button v-if="availableUpdate" variant="ghost" @click="page = '关于'">{{ t('发现新版本') }} · v{{ availableUpdate }}</Button>
     </aside>
     <main class="workspace">
       <header class="topbar"><div class="page-breadcrumb"><span>{{ t(pageGroup) }}</span><span aria-hidden="true">/</span><h1>{{ t(page) }}</h1></div><div class="flex items-center gap-2"><Button variant="ghost" :disabled="locked" :aria-pressed="status?.settings.shortcutsEnabled" :title="t(status?.settings.shortcutsEnabled ? '禁用全部全局快捷键' : '启用全部全局快捷键')" @click="toggleShortcuts"><Check v-if="status?.settings.shortcutsEnabled && !status.shortcutError" :size="15" class="status-check" /><Keyboard v-else :size="15" />{{ t('快捷键') }} {{ !status ? t('未读取') : status.shortcutError ? t('注册异常') : status.settings.shortcutsEnabled ? t('已启用') : t('已禁用') }}</Button><Button variant="ghost" :title="t('隐藏主窗口，保留托盘运行')" :disabled="!desktop" @click="hide"><PanelLeftClose :size="15" />{{ t('收起') }}</Button></div></header>

@@ -11,7 +11,7 @@
     "check": "npm run check:architecture && npm run check:contracts && vue-tsc --noEmit",
     "check:architecture": "node scripts/check-architecture.mjs",
     "check:contracts": "node scripts/check-ipc-contracts.mjs",
-    "test": "npm run check:architecture && npm run check:contracts && vitest run && node --test scripts/sync-version.test.mjs scripts/check-architecture.test.mjs scripts/check-ipc-contracts.test.mjs",
+    "test": "npm run check:architecture && npm run check:contracts && vitest run && node --test scripts/sync-version.test.mjs scripts/windows-update.test.mjs scripts/check-architecture.test.mjs scripts/check-ipc-contracts.test.mjs",
     "tauri": "tauri",
     "version:sync": "node scripts/sync-version.mjs",
     "predesktop:dev": "npm run version:sync",

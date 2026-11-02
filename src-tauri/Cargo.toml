@@ -53,6 +53,9 @@ gif = "=0.14.2"
 rqrr = { version = "=0.10.1", default-features = false }
 open = "5"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
+# 使用带版本绑定验签的更新器；只接收原生安装包，不启用旧版 ZIP 更新格式。
+tauri-plugin-updater = { version = "2.14.1", default-features = false, features = ["rustls-tls", "system-proxy"] }
+semver = "1"
 
 [dev-dependencies]
 qrcode = { version = "0.14", default-features = false }

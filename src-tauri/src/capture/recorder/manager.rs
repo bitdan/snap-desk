@@ -31,7 +31,7 @@ use lifecycle::{progress, WorkerGuard};
 use lifecycle::exit_timed_out;
 use pipeline::collect;
 use super::scroll::chrome;
-use config::{CaptureSource, OutputFormat, RecorderCapabilities, RecorderConfig};
+use config::{CaptureSource, RecorderCapabilities, RecorderConfig};
 use frame::QueuedFrame;
 use timeline::Timeline;
 

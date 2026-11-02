@@ -3,6 +3,7 @@ import { Camera, Video, Pin, Folder, ArrowUpRight, Scan, Github } from 'lucide-v
 import Button from '@/shared/ui/button/Button.vue'
 import { t } from '@/shared/i18n/i18n'
 import type { Shortcuts } from '@/features/settings/settings'
+import UpdateSettings from '@/features/settings/components/UpdateSettings.vue'
 defineProps<{ page: string; version?: string; shortcuts?: Shortcuts; busy: boolean }>()
 const emit = defineEmits<{ navigate: [page: string]; onboarding: []; project: [] }>()
 // 帮助直接连接到可操作页面，快捷键使用已生效配置。
@@ -31,6 +32,7 @@ const guides = [
   <section v-else class="about-page">
     <div class="about-identity"><span class="brand-icon"><Scan :size="28" /></span><div><h2>Snap Desk</h2><span class="pill">{{ version ? `v${version}` : t('桌面版本待读取') }}</span></div></div>
     <p class="support-note">{{ t('截图、标注、贴图、滚动截图与录屏，本地处理。') }}</p>
+    <UpdateSettings />
     <h2 class="section-heading">{{ t('应用信息') }}</h2>
     <div class="setting-row"><span>{{ t('开源许可') }}</span><span>GPL-3.0-only</span></div>
     <div class="setting-row"><span>{{ t('录屏系统要求') }}</span><span>Windows 10 2004+</span></div>

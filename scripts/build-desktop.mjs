@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { resolve } from 'node:path'
 import { rustEnvironment } from './rust-env.mjs'
 import { syncVersion } from './sync-version.mjs'
+import { wixVersion } from './windows-update.mjs'
 
 const root = fileURLToPath(new URL('../', import.meta.url))
 const require = createRequire(import.meta.url)
@@ -14,11 +15,13 @@ const target = resolve(root, 'src-tauri', 'target')
 const version = syncVersion(root)
 const buildArgs = process.argv.slice(2)
 // 翻译引擎在设置中按需下载或导入，不再随主程序打包，也不依赖本机准备的 runtime。
-// MSI 不接受 beta.1 / rc.1 等文本后缀；Windows 测试版仅生成 NSIS EXE。
-// 参数放在 Cargo 的 `-- --locked` 分隔符之前；仅构建程序时保留 --no-bundle。
-if (process.platform === 'win32' && version.includes('-') && !buildArgs.includes('--no-bundle')) {
-  buildArgs.unshift('--bundles', 'nsis')
-  console.log('测试版仅生成 NSIS EXE 安装包，跳过不支持文本预发布版本的 MSI。')
+// 正式版和测试版都生成 NSIS/MSI，MSI 另用纯数字版本，原始 SemVer 保留在应用内。
+// 本地无签名密钥时允许正常打包，CI 提供密钥后才生成可在线安装的签名产物。
+if (process.platform === 'win32') {
+  buildArgs.unshift('--config', JSON.stringify({ bundle: {
+    windows: { wix: { version: wixVersion(version) } },
+    createUpdaterArtifacts: Boolean(process.env.TAURI_SIGNING_PRIVATE_KEY),
+  } }))
 }
 const env = rustEnvironment()
 console.log(`构建输出：${target}`)

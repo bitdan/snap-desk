@@ -1,10 +1,14 @@
 /** 本功能拥有的 IPC 命令；底层调用统一经过 services/ipc。 */
 import type { Settings } from '@/features/settings/settings'
 import type { ShortcutProbeReport } from '@/features/settings/shortcut-probe'
-import type { AppDirectory, DirectoryView, AppStatus } from '@/features/settings/types'
+import type { AppDirectory, DirectoryView, AppStatus, AppUpdateView } from '@/features/settings/types'
 import { invoke } from '@/services/ipc'
 
 export const settingsApi = {
+  appUpdateStatus: () => invoke<AppUpdateView>('app_update_status'),
+  checkAppUpdate: () => invoke<AppUpdateView>('check_app_update'),
+  downloadAppUpdate: () => invoke<AppUpdateView>('download_app_update'),
+  installAppUpdate: () => invoke<void>('install_app_update'),
   autostartEnabled: () => invoke<boolean>('autostart_enabled'),
   setAutostartEnabled: (enabled: boolean) => invoke<boolean>('set_autostart_enabled', { enabled }),
   completeOnboarding: () => invoke<Settings>('complete_onboarding'),

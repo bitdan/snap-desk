@@ -4,11 +4,47 @@ use super::*;
 /// 退出意图独立于录屏阶段：Completed 可能早于窗口和资源清理。
 #[derive(Default)]
 pub struct ExitState {
+    /// 更新安装与录屏任务互斥，独立于正常退出意图，失败时可安全撤销。
+    updating: AtomicBool,
     pub(super) requested: AtomicBool,
     pub(super) workers: std::sync::atomic::AtomicUsize,
     progress: Mutex<Progress>,
 }
+
+#[cfg(test)]
+mod update_tests {
+    use super::*;
+
+    #[test]
+    fn updates_refuse_active_workers_and_can_retry_after_failure() {
+        let state = ExitState::default();
+        state.workers.store(1, Ordering::SeqCst);
+        assert!(state.begin_update().is_err());
+        assert!(!state.updating.load(Ordering::SeqCst));
+        assert!(!state.release_worker());
+        assert!(state.begin_update().is_ok());
+        assert!(state.begin_update().is_err());
+        state.cancel_update();
+        assert!(state.begin_update().is_ok());
+        assert!(!state.requested.load(Ordering::SeqCst));
+    }
+}
 impl ExitState {
+    pub(crate) fn begin_update(&self) -> Result<(), String> {
+        if self.updating.swap(true, Ordering::SeqCst) {
+            return Err("更新正在安装。".into());
+        }
+        if self.requested.load(Ordering::SeqCst) || self.workers.load(Ordering::SeqCst) != 0 {
+            self.updating.store(false, Ordering::SeqCst);
+            return Err("请先结束录屏并等待视频保存完成。".into());
+        }
+        Ok(())
+    }
+
+    pub(crate) fn cancel_update(&self) {
+        self.updating.store(false, Ordering::SeqCst);
+    }
+
     /// 最后一个任务释放时才允许正常退出，不能依赖可能提前更新的视频状态。
     pub(super) fn release_worker(&self) -> bool {
         self.workers.fetch_sub(1, Ordering::SeqCst) == 1 && self.requested.load(Ordering::SeqCst)
@@ -22,7 +58,7 @@ impl WorkerGuard {
         let state = app.state::<ExitState>();
         state.workers.fetch_add(1, Ordering::SeqCst);
         let guard = Self(app.clone());
-        if state.requested.load(Ordering::SeqCst) {
+        if state.requested.load(Ordering::SeqCst) || state.updating.load(Ordering::SeqCst) {
             return Err("程序正在退出，不能启动录屏。".into());
         }
         Ok(guard)

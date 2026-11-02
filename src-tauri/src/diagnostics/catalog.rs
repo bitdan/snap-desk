@@ -123,6 +123,10 @@ pub const CODES: &[&str] = &[
     "TRANSLATION_REQUEST_FAILED",
 ];
 pub const COMMANDS: &[&str] = &[
+    "app_update_status",
+    "check_app_update",
+    "download_app_update",
+    "install_app_update",
     "set_pin_recognition_open",
     "replay_capture",
     "finish_html_render",

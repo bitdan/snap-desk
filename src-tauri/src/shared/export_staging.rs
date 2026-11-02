@@ -55,8 +55,9 @@ pub(crate) fn no_links(path: &Path) -> Result<(), String> {
     }
     Ok(())
 }
-/// 各恢复目录共用有界读取；损坏、链接或超大 JSON 不能被当成可信来源路径。
-pub(crate) fn read<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T, String> {
+/// 测试中有界读取暂存记录，核对导出失败后保留的状态。
+#[cfg(test)]
+fn read<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T, String> {
     no_links(path)?;
     if fs::metadata(path).map_err(error)?.len() > 64 * 1024 {
         return Err("恢复记录过大。".into());
@@ -207,7 +208,8 @@ impl TrackedFile {
     pub fn id(&self) -> &str {
         &self.value.id
     }
-    pub fn path(&self) -> &Path {
+    #[cfg(test)]
+    fn path(&self) -> &Path {
         &self.value.path
     }
     pub fn finalize(&mut self) -> Result<(), String> {

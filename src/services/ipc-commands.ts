@@ -1,5 +1,9 @@
 /** 审计过的命令名白名单；API 与日志共享，禁止任意字符串写盘。 */
 export const ipcCommands = [
+  "app_update_status",
+  "check_app_update",
+  "download_app_update",
+  "install_app_update",
   "set_pin_recognition_open",
   "replay_capture",
   "finish_html_render",

@@ -1,4 +1,5 @@
 {
+  "预览": "Preview",
   "记录级别": "Recording level",
   "显示级别": "Display level",
   "自动刷新": "Auto refresh",
@@ -1019,5 +1020,21 @@
   "移出输入框完成；单击选中，双击文字编辑": "Move outside to finish; click to select, double-click text to edit",
   "单击标注拖动；Alt 拖动叠加绘制": "Click annotations to drag; Alt-drag to draw over them",
   "已到选区边界，可缩小字号继续输入": "Selection boundary reached; reduce the font size to continue typing",
-  "内容已更新，点击刷新。": "Content updated. Click Refresh."
+  "内容已更新，点击刷新。": "Content updated. Click Refresh.",
+  "应用更新": "App updates",
+  "检查更新": "Check for updates",
+  "接收测试版本更新": "Receive prerelease updates",
+  "独立 EXE": "Standalone EXE",
+  "尚未检查更新": "Updates not checked",
+  "正在检查更新…": "Checking for updates…",
+  "发现新版本": "New version available",
+  "当前渠道暂无更新": "No updates on this channel",
+  "正在下载更新…": "Downloading update…",
+  "更新已下载并通过校验": "Update downloaded and verified",
+  "正在退出并安装…": "Exiting and installing…",
+  "更新失败，可重试": "Update failed; retry available",
+  "下载更新": "Download update",
+  "退出并安装": "Exit and install",
+  "下载进度": "Download progress",
+  "安装会退出应用，请先保存工作并结束录屏。": "Installation exits the app. Save your work and finish recording first."
 }
