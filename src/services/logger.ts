@@ -15,7 +15,7 @@ type EventMeta = {
 const events = new Set(['ipc.failed', 'frontend.uncaught_error', 'frontend.unhandled_rejection', 'frontend.mount_failed', 'frontend.appearance_listener_failed', 'vue.component_error'])
 const commands = new Set<string>(ipcCommands)
 const writers = { debug, error, info, warn }
-const errorKinds = new Set(['Error', 'TypeError', 'ReferenceError', 'SyntaxError', 'RangeError', 'URIError', 'EvalError', 'AggregateError', 'DOMException', 'non_error', 'unknown'])
+const errorKinds = new Set(['Error', 'TypeError', 'ReferenceError', 'SyntaxError', 'RangeError', 'URIError', 'EvalError', 'AggregateError', 'DOMException', 'ResourceError', 'ResizeObserverLoop', 'non_error', 'unknown'])
 let windowKind = 'unknown'
 /** 只接受应用固定窗口类别，不记录带用户数据的窗口标签或 URL。 */
 export function setLogWindowKind(kind: string): void {
@@ -85,7 +85,17 @@ export function installGlobalErrorLogging(target: EventTarget): void {
   installed.add(target)
   target.addEventListener('error', event => {
     const error = event as ErrorEvent
-    appLog('error', 'frontend.uncaught_error', { kind: errorKind(error.error), line: error.lineno, column: error.colno })
-  })
+    // 浏览器布局通知没有 error/行列；资源失败也不是 JS 异常，只记录固定类别，不写 URL 或正文。
+    const layout = !error.error && [
+      'ResizeObserver loop completed with undelivered notifications.',
+      'ResizeObserver loop limit exceeded',
+    ].includes(error.message)
+    const tag = (event.target as { tagName?: string } | null)?.tagName
+    const resource = typeof tag === 'string' && ['IMG', 'SCRIPT', 'LINK', 'VIDEO', 'AUDIO', 'SOURCE'].includes(tag)
+    appLog(layout ? 'warn' : 'error', 'frontend.uncaught_error', {
+      kind: layout ? 'ResizeObserverLoop' : resource ? 'ResourceError' : errorKind(error.error),
+      line: error.lineno, column: error.colno,
+    })
+  }, true)
   target.addEventListener('unhandledrejection', event => appLog('error', 'frontend.unhandled_rejection', { kind: errorKind((event as PromiseRejectionEvent).reason) }))
 }

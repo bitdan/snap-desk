@@ -59,29 +59,8 @@ pub fn run() {
                 responder.respond(capture::preview::serve(&app.state::<CaptureState>(), allowed, request));
             });
         })
-        .plugin(
-            tauri_plugin_log::Builder::new()
-                .level(log::LevelFilter::Debug)
-                .filter(diagnostics::runtime::enabled)
-                // 默认追加写入；保留 stdout 与 LogDir 两个目标，约 30 MB 总预算。
-                .max_file_size(5_000_000)
-                .rotation_strategy(tauri_plugin_log::RotationStrategy::KeepSome(5))
-                .timezone_strategy(tauri_plugin_log::TimezoneStrategy::UseLocal)
-                // 依赖库可能输出模型路径或网络正文，仅持久化已审计的应用事件。
-                .filter(|metadata| metadata.target().starts_with("snap_desk_lib")
-                    || metadata.target() == tauri_plugin_log::WEBVIEW_TARGET
-                    || metadata.target().starts_with("webview::"))
-                .format(|out, message, record| {
-                    // JS 绑定自动将调用位置附在 target；不能把 URL/源码路径带进日志。
-                    let target = if record.target().starts_with("webview") {
-                        "frontend"
-                    } else { record.target() };
-                    out.finish(format_args!("{} [{}] [{}] {}",
-                        chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3f%:z"),
-                        record.level(), target, message));
-                })
-                .build(),
-        )
+        // IPC 日志入口照常注册，原生 logger 在 setup 中安装故障隔离层。
+        .plugin(tauri_plugin_log::Builder::new().skip_logger().build())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(
@@ -128,8 +107,8 @@ pub fn run() {
                 .build(),
         )
         .setup(|app| {
+            diagnostics::logger::initialize(app.handle());
             diagnostics::runtime::initialize(app.handle());
-            diagnostics::runtime::install_panic_hook();
             log::info!("event=app.starting module=app version={} platform={}", app.package_info().version, std::env::consts::OS);
             settings::initialize(app.handle()).map_err(|error| {
                 log::error!("event=app.initialize_failed module=app code=SETTINGS_INIT_FAILED");

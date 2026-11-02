@@ -33,6 +33,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           persist-credentials: false
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
@@ -52,6 +53,10 @@ jobs:
       # 先从 package.json 同步版本，再执行 npm ci 和 Cargo --locked。
       - name: Check tag and sync version
         run: node scripts/check-release-version.mjs
+
+      # 标签注释是更新内容的唯一来源，缺失时在构建前停止；正文同时用于应用内更新清单。
+      - name: Prepare release notes from tag
+        run: node scripts/release-notes.mjs $env:GITHUB_REF_NAME "$env:RUNNER_TEMP/snap-desk-release-notes.md"
 
       # Windows runner 已安装 rustup 和 MSVC；显式选择 x64 MSVC stable 工具链。
       - name: Setup Rust
@@ -126,21 +131,13 @@ jobs:
           $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
           node node_modules/@tauri-apps/cli/tauri.js signer sign --app-version $version $standalone
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          # 过渡期仍保留裸 EXE；明确说明资源限制，不宣称它是完整便携版。
-          $engine = Get-Content scripts/ci/translation-engine.json -Raw | ConvertFrom-Json
-          $notes = @(
-            "Translation engine: $($engine.tag) (Windows x64 CPU, protocol 1).",
-            'Download or import the translation engine ZIP and language packs in Recognition & Translation settings.',
-            'NSIS and standalone EXE use the same on-demand translation resources; no runtime is bundled.',
-            'Model sources and licenses are recorded in each model pack.json and LICENSE.txt.'
-          )
-          $notes | Set-Content src-tauri/target/release/translation-release-notes.txt -Encoding utf8
+          $releaseNotesPath = Join-Path $env:RUNNER_TEMP 'snap-desk-release-notes.md'
           # 版本后缀决定发布渠道；校验步骤已确保标签符合版本格式。
           $channel = if ($isTestRelease) { '测试版' } else { '正式版' }
           $releaseArgs = @(
             'release', 'create', $env:GITHUB_REF_NAME, '--draft',
             '--verify-tag', '--title', "Snap Desk $env:GITHUB_REF_NAME（$channel）",
-            '--generate-notes', '--notes-file', 'src-tauri/target/release/translation-release-notes.txt'
+            '--generate-notes', '--notes-file', $releaseNotesPath
           )
           # v0.2.0-beta.1 等标签发布为预发布版本，不设为 Latest。
           if ($isTestRelease) {

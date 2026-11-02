@@ -69,6 +69,15 @@ describe('日志隐私与异常隔离', () => {
     ])
   })
 
+  it('空贴图错误遇到日志失败仍返回原始提示，后续命令仍能成功', async () => {
+    mocks.invoke.mockRejectedValueOnce('剪贴板没有可读取的图片或文字。')
+    mocks.write.mockRejectedValueOnce(new Error('console unavailable'))
+    await expect(api.pinClipboard()).rejects.toThrow('剪贴板没有可读取的图片或文字。')
+    mocks.invoke.mockResolvedValueOnce(undefined)
+    await expect(api.pinClipboard()).resolves.toBeUndefined()
+    expect(mocks.invoke).toHaveBeenCalledTimes(2)
+  })
+
   it('区分窗口、运行时异常和 Promise 异常，只保留有效数字位置', () => {
     const target = new EventTarget()
     setLogWindowKind('recording-controls')
@@ -102,6 +111,22 @@ describe('日志隐私与异常隔离', () => {
     Object.defineProperty(error, 'name', { get() { throw new Error('secret') } })
     expect(() => logFrontendFailure('frontend.mount_failed', error)).not.toThrow()
     expect(mocks.write).toHaveBeenCalledExactlyOnceWith('event=frontend.mount_failed module=frontend window=unknown error_kind=unknown')
+  })
+
+  it('资源加载和布局循环各有固定类别，不把 URL 或浏览器错误正文写入日志', () => {
+    class ResourceTarget extends EventTarget { tagName = 'IMG'; src = 'file:///private.png' }
+    const resource = new ResourceTarget()
+    installGlobalErrorLogging(resource)
+    resource.dispatchEvent(new Event('error'))
+    const target = new EventTarget()
+    installGlobalErrorLogging(target)
+    target.dispatchEvent(Object.assign(new Event('error'), { message: 'ResizeObserver loop completed with undelivered notifications.' }))
+    target.dispatchEvent(Object.assign(new Event('error'), { message: 'private error text' }))
+    expect(mocks.write.mock.calls).toEqual([
+      ['event=frontend.uncaught_error module=frontend window=unknown error_kind=ResourceError'],
+      ['event=frontend.uncaught_error module=frontend window=unknown error_kind=ResizeObserverLoop'],
+      ['event=frontend.uncaught_error module=frontend window=unknown error_kind=unknown'],
+    ])
   })
 
   it('日志目录沿用固定种类 IPC', async () => {

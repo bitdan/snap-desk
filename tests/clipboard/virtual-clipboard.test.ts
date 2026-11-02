@@ -45,6 +45,12 @@ afterEach(() => vi.unstubAllGlobals())
 it.each(['list', 'grid'] as const)('%s mounts a bounded range and focuses an unmounted item', async layout => {
   vi.stubGlobal('HTMLElement', ElementNode)
   const disconnect = vi.fn()
+  let nextFrame = 0
+  const frames = new Map<number, FrameRequestCallback>()
+  vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { frames.set(++nextFrame, callback); return nextFrame })
+  const cancelFrame = vi.fn((id: number) => { frames.delete(id) })
+  vi.stubGlobal('cancelAnimationFrame', cancelFrame)
+  function paint() { const pending = [...frames.values()]; frames.clear(); pending.forEach(callback => callback(0)) }
   let resized!: (entries: unknown[]) => void
   vi.stubGlobal('ResizeObserver', class {
     constructor(callback: typeof resized) { resized = callback }
@@ -80,7 +86,11 @@ it.each(['list', 'grid'] as const)('%s mounts a bounded range and focuses an unm
   app.mount(host)
   try {
     const viewport = host.children[0]
+    // 同一轮两次通知只排一帧，测量前不写响应式布局，使用最新容器宽度。
+    resized([{ target: viewport, contentRect: { width: 496, height: 300 } }])
     resized([{ target: viewport, contentRect: { width: 992, height: 300 } }])
+    expect(frames.size).toBe(1)
+    paint()
     await nextTick()
     expect(list.value!.columns).toBe(layout === 'grid' ? 4 : 1)
     const rows = () => viewport.children.filter(node => node.dataset.historyId !== undefined)
@@ -100,6 +110,10 @@ it.each(['list', 'grid'] as const)('%s mounts a bounded range and focuses an unm
     await nextTick()
     expect(viewport.scrollTop).toBe(0)
     expect(rows()[0].dataset.historyId).toBe('0')
+    resized([{ target: viewport, contentRect: { width: 496, height: 300 } }])
+    expect(frames.size).toBe(1)
   } finally { app.unmount() }
   expect(disconnect).toHaveBeenCalledOnce()
+  expect(cancelFrame).toHaveBeenCalledOnce()
+  expect(frames.size).toBe(0)
 })

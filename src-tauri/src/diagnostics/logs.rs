@@ -315,6 +315,8 @@ pub fn sanitize(line: &str) -> Option<Entry> {
                 "EvalError",
                 "AggregateError",
                 "DOMException",
+                "ResourceError",
+                "ResizeObserverLoop",
                 "non_error",
                 "unknown",
             ]
@@ -425,6 +427,8 @@ mod tests {
     fn failure_details_survive_export_without_free_text() {
         let prefix = "2026-10-29T12:00:00+08:00 [ERROR] [test]";
         for (fields, expected) in [
+            ("event=frontend.uncaught_error module=frontend error_kind=ResourceError url=private", "event=frontend.uncaught_error error_kind=ResourceError"),
+            ("event=frontend.uncaught_error module=frontend error_kind=ResizeObserverLoop message=private", "event=frontend.uncaught_error error_kind=ResizeObserverLoop"),
             ("event=frontend.uncaught_error module=frontend window=pin error_kind=TypeError line=42 column=7 message=secret stack=private", "event=frontend.uncaught_error window=pin error_kind=TypeError line=42 column=7"),
             ("event=translation.failed module=translation op=tr-12 provider=local code=LOCAL_INPUT_TOO_LONG text=secret", "event=translation.failed op=tr-12 provider=local code=LOCAL_INPUT_TOO_LONG"),
             ("event=recording.step_failed module=recording op=rec-7 code=RECORDING_STEP_FAILED stage=encoder_init path=private", "event=recording.step_failed op=rec-7 code=RECORDING_STEP_FAILED stage=encoder_init"),

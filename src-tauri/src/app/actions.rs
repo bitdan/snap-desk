@@ -26,17 +26,17 @@ pub(super) fn trigger(app: &AppHandle) {
 /// 托盘和全局贴图键优先使用当前截图选区；没有截图会话时读取剪贴板。
 pub(super) fn trigger_pin(app: &AppHandle) {
     let app = app.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        let result = pins::restore_click_through(&app).and_then(|restored| {
-            if restored { return Ok(()); }
-            capture::request_pin(&app).and_then(|handled| {
-            if handled {
-                Ok(())
-            } else {
-                pins::clipboard_pin(&app)
-            }
+    tauri::async_runtime::spawn(async move {
+        let worker_app = app.clone();
+        // 必须接收 JoinError：剪贴板解码或窗口创建 panic 后提示失败，不能悄悄丢失任务。
+        let result = tauri::async_runtime::spawn_blocking(move || {
+            pins::restore_click_through(&worker_app).and_then(|restored| {
+                if restored { return Ok(()); }
+                capture::request_pin(&worker_app).and_then(|handled| {
+                    if handled { Ok(()) } else { pins::clipboard_pin(&worker_app) }
+                })
             })
-        });
+        }).await.unwrap_or_else(|_| Err("贴图处理失败，请重新复制内容后重试。".into()));
         if let Err(error) = result {
             capture::report_error(&app, error);
         }

@@ -33,6 +33,19 @@ beforeEach(() => {
 })
 afterEach(() => { memoryRenderer.render(null, root); vi.clearAllTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.useRealTimers() })
 describe('贴图管理与外观', () => {
+  it('空剪贴板贴图失败保留现有贴图，随后可以重新创建', async () => {
+    memoryRenderer.render(h(Component), root); await flush()
+    api.pinClipboard.mockRejectedValueOnce(new Error('剪贴板没有可读取的图片或文字。'))
+    button('剪贴板贴图')!.props.onClick(); await flush()
+    expect(text(findNode(root, node => node.props.role === 'alert')!)).toContain('剪贴板没有可读取的图片或文字。')
+    expect(entries()).toHaveLength(2)
+    expect(button('剪贴板贴图')!.props.disabled).toBe(false)
+    api.pinClipboard.mockResolvedValueOnce(undefined)
+    button('剪贴板贴图')!.props.onClick(); await flush()
+    expect(api.pinClipboard).toHaveBeenCalledTimes(2)
+    expect(findNode(root, node => node.props.role === 'alert')).toBeUndefined()
+    expect(entries()).toHaveLength(2)
+  })
   it('穿透贴图无需点击图片本身即可从管理页恢复鼠标操作', async () => {
     api.listPins.mockResolvedValue([{ label: 'pin-1', width: 640, height: 480, visible: true, group: '', thumbnail: '', clickThrough: true }])
     memoryRenderer.render(h(Component), root); await flush()

@@ -109,20 +109,6 @@ pub fn sample_debug() -> bool {
             .is_ok()
 }
 
-/// 保留原 panic 行为；仅额外记录行列，不输出 payload、文件路径或环境变量。
-pub fn install_panic_hook() {
-    let previous = std::panic::take_hook();
-    std::panic::set_hook(Box::new(move |panic| {
-        let (line, column) = panic
-            .location()
-            .map(|p| (p.line(), p.column()))
-            .unwrap_or((0, 0));
-        log::error!("event=app.panic module=app code=RUST_PANIC line={line} column={column}");
-        log::logger().flush();
-        previous(panic);
-    }));
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -21,6 +21,21 @@ const range = computed(() => visibleRows(offsets.value, top.value, height.value)
 const rows = computed(() => groups.value.slice(range.value.start, range.value.end))
 const elements = new Map<number, HTMLElement>()
 let observer: ResizeObserver | undefined, disposed = false
+let measurementFrame: number | undefined
+const pendingMeasurements = new Map<Element, ResizeObserverEntry>()
+/** 行高写回会改变观察目标尺寸；延后到下一帧合并，避免同一轮 ResizeObserver 反复触发布局。 */
+function scheduleMeasure(entries: ResizeObserverEntry[]) {
+  if (disposed) return
+  entries.forEach(entry => pendingMeasurements.set(entry.target, entry))
+  if (measurementFrame !== undefined) return
+  measurementFrame = requestAnimationFrame(() => {
+    measurementFrame = undefined
+    if (disposed) return
+    const latest = [...pendingMeasurements.values()]
+    pendingMeasurements.clear()
+    measure(latest)
+  })
+}
 function scroll() { top.value = viewport.value?.scrollTop ?? 0 }
 /** 动态插槽/缩略图高度变化后保留视口首行位置，避免上方测量值改变引起跳动。 */
 function measure(entries: ResizeObserverEntry[]) {
@@ -79,11 +94,14 @@ watch(() => props.items, items => {
   measured.value = new Map([...measured.value].filter(([id]) => ids.has(id)))
 })
 onMounted(() => {
-  observer = new ResizeObserver(measure)
+  observer = new ResizeObserver(scheduleMeasure)
   if (viewport.value) observer.observe(viewport.value)
   elements.forEach(element => observer!.observe(element))
 })
-onUnmounted(() => { disposed = true; observer?.disconnect(); elements.clear() })
+onUnmounted(() => {
+  disposed = true; observer?.disconnect(); elements.clear(); pendingMeasurements.clear()
+  if (measurementFrame !== undefined) cancelAnimationFrame(measurementFrame)
+})
 defineExpose({ focusIndex, resetScroll, columns })
 </script>
 

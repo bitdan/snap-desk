@@ -3,6 +3,7 @@ mod catalog;
 #[cfg(windows)]
 mod export;
 mod logs;
+pub(crate) mod logger;
 pub mod runtime;
 
 use crate::capture::require_window;

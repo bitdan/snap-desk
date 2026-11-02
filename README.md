@@ -35,6 +35,8 @@ npm run desktop:dev
 构建前从托盘退出旧程序。生成安装包使用 `npm run desktop:package`；Windows 正式版和测试版统一采用 NSIS 安装包与独立 EXE 双分发。
 主程序构建不依赖本地翻译引擎，使用本地翻译时在“识别与翻译”设置中下载或导入引擎，并安装对应语言包。
 
+发布时先修改 `package.json` 版本并运行 `npm run version:sync`，提交后创建同版本的附注标签，例如 `git tag -a v0.2.0-beta.5 -m "Snap Desk v0.2.0-beta.5" -m "- 本次新增或修复的内容"`，再推送提交和标签。流水线将标签注释自动写入 Releases 正文及应用内更新说明；没有更新说明的标签会在构建前报错。
+
 ## 代码组织
 
 ```text
