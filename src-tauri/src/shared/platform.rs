@@ -50,6 +50,42 @@ pub fn open_directory(path: &std::path::Path) -> Result<(), String> {
     Ok(())
 }
 
+/// 目录直接打开；文件交给文件管理器定位，始终不调用文件关联程序。
+pub fn reveal_path(path: &std::path::Path) -> Result<(), String> {
+    if !path.is_absolute() {
+        return Err("此条目不是有效文件路径。".into());
+    }
+    let metadata = std::fs::metadata(path).map_err(|_| "路径不存在或无法访问。".to_string())?;
+    if metadata.is_dir() {
+        return open_directory(path);
+    }
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        // /select, 与路径使用独立参数，文件名中的空格由系统参数编码处理。
+        std::process::Command::new("explorer.exe")
+            .arg("/select,")
+            .arg(path)
+            .creation_flags(0x08000000)
+            .spawn()
+            .map_err(|e| format!("无法打开目录：{e}"))?;
+        Ok(())
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg("-R")
+            .arg(path)
+            .spawn()
+            .map_err(|e| format!("无法打开目录：{e}"))?;
+        Ok(())
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        open_directory(path.parent().ok_or("此条目不是有效文件路径。")?)
+    }
+}
+
 /// 非 Windows 平台的主屏捕获回退；Windows 使用 desktop_capture 的多屏实现。
 #[cfg(not(windows))]
 pub fn capture_primary() -> Result<RgbaImage, String> {

@@ -3,7 +3,7 @@ import { h } from 'vue'
 import { clientComponent, findNode, flushComponent, MemoryNode, memoryRenderer } from '../helpers/component-host'
 import type { ClipboardItem as Item } from '../../src/features/clipboard/clipboard'
 
-const api = vi.hoisted(() => ({ clipboardImage: vi.fn(), clipboardText: vi.fn(), clipboardThumbnail: vi.fn() }))
+const api = vi.hoisted(() => ({ clipboardImage: vi.fn(), clipboardText: vi.fn(), clipboardThumbnail: vi.fn(), clipboardOpenLink: vi.fn(), clipboardOpenPath: vi.fn() }))
 vi.mock('../../src/services/api', () => ({ api }))
 vi.mock('reka-ui', async () => {
   const { defineComponent, h } = await import('vue')
@@ -56,6 +56,145 @@ it('文字预览读取全文并保留换行，允许选中复制，不用列表�
   const text = findNode(root, node => node.type === 'textarea')!
   expect(text.props.value).toBe(full)
   expect(text.props.readonly).toBeDefined()
+})
+
+it.each([
+  ['F:\\download\\ja-netfilter', 'F:\\download\\ja-netfilter'],
+  ['"C:\\my files\\report.pdf"', 'C:\\my files\\report.pdf'],
+  ['\\\\server\\share\\a.txt', '\\\\server\\share\\a.txt'],
+  ['/home/user/a.txt', '/home/user/a.txt'],
+])('文件路径显示可点击预览，定位时只提交历史 ID：%s', async (value, path) => {
+  api.clipboardText.mockResolvedValue(value)
+  memoryRenderer.render(h(ClipboardPreview, { item: { ...image, kind: 'text' } }), root)
+  await flushComponent()
+  const text = (node: MemoryNode): string => node.text + node.children.map(text).join('')
+  const button = findNode(root, node => node.props['aria-label'] === '在资源管理器中打开路径')!
+  expect(text(button)).toBe(path)
+  expect(findNode(root, node => node.type === 'textarea')).toBeUndefined()
+  const header = findNode(root, node => node.props.class === 'history-preview-header')!
+  expect(text(header)).toContain('预览')
+  expect(text(header)).not.toContain('文字预览')
+  let finish!: () => void
+  api.clipboardOpenPath.mockImplementationOnce(() => new Promise<void>(resolve => { finish = resolve }))
+  button.props.onClick(); await flushComponent()
+  button.props.onClick(); await flushComponent()
+  expect(api.clipboardOpenPath).toHaveBeenCalledExactlyOnceWith(7)
+  expect(api.clipboardOpenLink).not.toHaveBeenCalled()
+  expect(button.props.disabled).toBe(true)
+  finish(); await flushComponent()
+  expect(button.props.disabled).toBe(false)
+})
+
+it.each(['C:relative.txt', 'relative/a.txt', 'C:\\a.txt\nother text', '\\\\.\\pipe\\name', '\\\\?\\C:\\a.txt'])('非绝对路径或设备路径仍作为普通文本：%s', async value => {
+  api.clipboardText.mockResolvedValue(value)
+  memoryRenderer.render(h(ClipboardPreview, { item: { ...image, kind: 'text' } }), root)
+  await flushComponent()
+  expect(findNode(root, node => node.props['aria-label'] === '在资源管理器中打开路径')).toBeUndefined()
+  expect(findNode(root, node => node.type === 'textarea')?.props.value).toBe(value)
+})
+
+it('路径不可访问时保留预览并展示错误，允许再次点击', async () => {
+  api.clipboardText.mockResolvedValue('C:\\missing')
+  api.clipboardOpenPath.mockRejectedValueOnce(new Error('路径不存在或无法访问。')).mockResolvedValueOnce(undefined)
+  memoryRenderer.render(h(ClipboardPreview, { item: { ...image, kind: 'text' } }), root)
+  await flushComponent()
+  const button = findNode(root, node => node.props['aria-label'] === '在资源管理器中打开路径')!
+  await button.props.onClick(); await flushComponent()
+  expect(findNode(root, node => node.props.role === 'alert')?.text).toContain('路径不存在或无法访问。')
+  expect(button.props.disabled).toBe(false)
+  await button.props.onClick(); await flushComponent()
+  expect(findNode(root, node => node.props.role === 'alert')).toBeUndefined()
+})
+
+it.each([
+  ['#fff', '#fff'], [' #12AB3480 ', '#12ab3480'], ['#abcd', '#abcd'],
+  ['rgb(255, 0, 12)', 'rgb(255, 0, 12)'], ['rgba(100%, 0%, 0%, 0)', 'rgba(255, 0, 0, 0)'],
+  ['hsl(120, 50%, 30%)', 'hsl(120, 50%, 30%)'], ['hsla(240, 100%, 50%, 50%)', 'hsla(240, 100%, 50%, 0.5)'],
+])('颜色全文渲染色块并保留原值供选择复制：%s', async (value, backgroundColor) => {
+  api.clipboardText.mockResolvedValue(value)
+  memoryRenderer.render(h(ClipboardPreview, { item: { ...image, kind: 'text', preview: '摘要不用于解析' } }), root)
+  await flushComponent()
+  expect(api.clipboardText).toHaveBeenCalledExactlyOnceWith(7)
+  expect(findNode(root, node => node.props.class === 'history-color-swatch')?.props.style).toEqual({ backgroundColor })
+  expect(findNode(root, node => node.props.class === 'history-color-checkerboard')?.props.role).toBe('img')
+  const input = findNode(root, node => node.props['aria-label'] === '颜色值')!
+  expect(input.props.value).toBe(value)
+  expect(input.props.readonly).toBeDefined()
+  expect(findNode(root, node => node.type === 'textarea')).toBeUndefined()
+})
+
+it.each(['#12', '#ggg', 'rgb(256,0,0)', 'rgba(1,2,3,2)', 'hsl(1,2,3)', 'red', '#fff; background:url(test)', '第一行\n#fff'])('无效颜色或普通文字继续显示原文：%s', async value => {
+  api.clipboardText.mockResolvedValue(value)
+  memoryRenderer.render(h(ClipboardPreview, { item: { ...image, kind: 'text' } }), root)
+  await flushComponent()
+  expect(findNode(root, node => node.props.class === 'history-color-swatch')).toBeUndefined()
+  expect(findNode(root, node => node.type === 'textarea')?.props.value).toBe(value)
+})
+
+it('从颜色切换到普通文本时立即清除色块，等待新条目全文', async () => {
+  let finish!: (value: string) => void
+  api.clipboardText.mockResolvedValueOnce('#fff').mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+  memoryRenderer.render(h(ClipboardPreview, { item: { ...image, kind: 'text' } }), root)
+  await flushComponent()
+  memoryRenderer.render(h(ClipboardPreview, { item: { ...image, id: 8, kind: 'text' } }), root)
+  await flushComponent()
+  expect(findNode(root, node => node.props.class === 'history-color-swatch')).toBeUndefined()
+  finish('普通文本'); await flushComponent()
+  expect(findNode(root, node => node.type === 'textarea')?.props.value).toBe('普通文本')
+})
+
+it.each(['https://example.com/a?q=中文', 'www.example.com/a'])('链接预览可点击打开，原生只接收记录 ID：%s', async value => {
+  api.clipboardText.mockResolvedValue(value)
+  memoryRenderer.render(h(ClipboardPreview, { item: { ...image, kind: 'text' } }), root)
+  await flushComponent()
+  const link = findNode(root, node => node.type === 'a')!
+  expect(link.props.href).toBe(new URL(value.startsWith('www.') ? `https://${value}` : value).href)
+  expect(findNode(root, node => node.type === 'textarea')).toBeUndefined()
+  let finish!: () => void
+  api.clipboardOpenLink.mockImplementationOnce(() => new Promise<void>(resolve => { finish = resolve }))
+  const event = { preventDefault: vi.fn() }
+  link.props.onClick(event); await flushComponent()
+  link.props.onClick(event); await flushComponent()
+  expect(event.preventDefault).toHaveBeenCalled()
+  expect(api.clipboardOpenLink).toHaveBeenCalledExactlyOnceWith(7)
+  expect(link.props['aria-disabled']).toBe(true)
+  finish(); await flushComponent()
+  expect(link.props['aria-disabled']).toBe(false)
+})
+
+it.each(['javascript:alert(1)', 'file:///C:/a.txt', 'data:text/html,test', '请看 https://example.com', 'https://example.com\n其他文字'])('非链接或不支持的协议保持文字预览：%s', async value => {
+  api.clipboardText.mockResolvedValue(value)
+  memoryRenderer.render(h(ClipboardPreview, { item: { ...image, kind: 'text' } }), root)
+  await flushComponent()
+  expect(findNode(root, node => node.type === 'a')).toBeUndefined()
+  expect(findNode(root, node => node.type === 'textarea')?.props.value).toBe(value)
+})
+
+it('打开失败保留链接供重试', async () => {
+  api.clipboardText.mockResolvedValue('https://example.com')
+  api.clipboardOpenLink.mockRejectedValueOnce(new Error('open failed')).mockResolvedValueOnce(undefined)
+  memoryRenderer.render(h(ClipboardPreview, { item: { ...image, kind: 'text' } }), root)
+  await flushComponent()
+  const link = () => findNode(root, node => node.type === 'a')!
+  await link().props.onClick({ preventDefault: vi.fn() }); await flushComponent()
+  expect(findNode(root, node => node.props.role === 'alert')?.text).toContain('open failed')
+  await link().props.onClick({ preventDefault: vi.fn() }); await flushComponent()
+  expect(findNode(root, node => node.props.role === 'alert')).toBeUndefined()
+  expect(api.clipboardOpenLink).toHaveBeenCalledTimes(2)
+})
+
+it('切换条目后丢弃上一条链接迟到的打开错误', async () => {
+  let reject!: (error: Error) => void
+  api.clipboardText.mockResolvedValue('https://example.com')
+  api.clipboardOpenLink.mockImplementation(() => new Promise((_, fail) => { reject = fail }))
+  memoryRenderer.render(h(ClipboardPreview, { item: { ...image, kind: 'text' } }), root)
+  await flushComponent()
+  findNode(root, node => node.type === 'a')!.props.onClick({ preventDefault: vi.fn() })
+  memoryRenderer.render(h(ClipboardPreview, { item: { ...image, id: 8, kind: 'text' } }), root)
+  await flushComponent()
+  reject(new Error('old failure')); await flushComponent()
+  expect(findNode(root, node => node.props.role === 'alert')).toBeUndefined()
+  expect(findNode(root, node => node.type === 'a')?.props['aria-disabled']).toBe(false)
 })
 
 it.each(['image', 'text'] as const)('%s 加载中按 Esc 退出并丢弃迟到内容，输入法组词不退出', async kind => {

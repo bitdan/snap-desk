@@ -377,6 +377,8 @@ pub fn run() {
             clipboard::clipboard_status,
             clipboard::clipboard_list,
             clipboard::clipboard_get_text,
+            clipboard::clipboard_open_link,
+            clipboard::clipboard_open_path,
             clipboard::clipboard_get_thumbnail,
             clipboard::clipboard_get_image,
             clipboard::clipboard_restore,

@@ -60,11 +60,30 @@ impl Kind {
     }
 }
 
+/// 文本的内容分类；不改变复制、预览和导出使用的基础类型。
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum TextCategory {
+    Link,
+    Color,
+    Path,
+}
+impl TextCategory {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Link => "link",
+            Self::Color => "color",
+            Self::Path => "path",
+        }
+    }
+}
+
 #[derive(Default, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields, default)]
 pub struct Query {
     pub keyword: String,
     pub kind: Option<Kind>,
+    pub text_category: Option<TextCategory>,
     pub favorites_only: bool,
     pub limit: Option<u32>,
     pub cursor: Option<String>,

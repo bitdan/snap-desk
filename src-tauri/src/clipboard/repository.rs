@@ -183,7 +183,7 @@ impl Repository {
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .map_err(err)?;
-        if version > 2 {
+        if version > 3 {
             return Err("历史数据库来自较新版本，请升级应用。".into());
         }
         if version == 0 {
@@ -198,6 +198,29 @@ impl Repository {
             tx.execute_batch(include_str!("migrations/002.sql"))
                 .map_err(err)?;
             tx.pragma_update(None, "user_version", 2).map_err(err)?;
+            tx.commit().map_err(err)?;
+        }
+        if version < 3 {
+            let tx = conn.transaction().map_err(err)?;
+            tx.execute_batch(include_str!("migrations/003.sql"))
+                .map_err(err)?;
+            // 逐行读取完整正文，迁移与回填共同提交，失败时不留下半完成的分类。
+            {
+                let mut select = tx
+                    .prepare("SELECT id,text_content FROM clipboard_items WHERE kind='text'")
+                    .map_err(err)?;
+                let mut update = tx
+                    .prepare("UPDATE clipboard_items SET text_category=?1 WHERE id=?2")
+                    .map_err(err)?;
+                let mut rows = select.query([]).map_err(err)?;
+                while let Some(row) = rows.next().map_err(err)? {
+                    let id: i64 = row.get(0).map_err(err)?;
+                    let text: String = row.get(1).map_err(err)?;
+                    let category = super::classification::classify(&text).map(TextCategory::as_str);
+                    update.execute(params![category, id]).map_err(err)?;
+                }
+            }
+            tx.pragma_update(None, "user_version", 3).map_err(err)?;
             tx.commit().map_err(err)?;
         }
         Ok(Self(Mutex::new(conn)))
@@ -217,6 +240,12 @@ impl Repository {
         if !q.keyword.is_empty() {
             sql.push_str(" AND instr(lower(coalesce(text_content,'')),lower(?3))>0");
         }
+        // 分类使用等值条件命中索引；无分类时仍保留第七个绑定参数。
+        sql.push_str(if q.text_category.is_some() {
+            " AND text_category=?7"
+        } else {
+            " AND ?7 IS NULL"
+        });
         sql.push_str(" ORDER BY last_seen_at DESC,id DESC LIMIT ?6");
         let mut stmt = conn.prepare(&sql).map_err(err)?;
         let mut items = stmt
@@ -227,7 +256,8 @@ impl Repository {
                     q.keyword,
                     time,
                     id,
-                    limit + 1
+                    limit + 1,
+                    q.text_category.map(TextCategory::as_str)
                 ],
                 |r| item(r, r.get::<_, Option<String>>("file_content")?.as_deref()),
             )
@@ -274,7 +304,14 @@ impl Repository {
             Kind::Image => "image/png",
             Kind::File => "application/x-snap-desk-file-list",
         };
-        tx.execute("INSERT INTO clipboard_items(kind,content_hash,text_content,blob_rel_path,thumb_rel_path,mime_type,width,height,byte_size,created_at,last_seen_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?10)", params![item.kind.as_str(),item.hash,item.text,item.blob,item.thumb,mime,item.width,item.height,item.bytes,now]).map_err(err)?;
+        let category = if item.kind == Kind::Text {
+            item.text
+                .and_then(super::classification::classify)
+                .map(TextCategory::as_str)
+        } else {
+            None
+        };
+        tx.execute("INSERT INTO clipboard_items(text_category,kind,content_hash,text_content,blob_rel_path,thumb_rel_path,mime_type,width,height,byte_size,created_at,last_seen_at) VALUES(?11,?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?10)", params![item.kind.as_str(),item.hash,item.text,item.blob,item.thumb,mime,item.width,item.height,item.bytes,now,category]).map_err(err)?;
         let inserted = tx.last_insert_rowid();
         let mut removed = expire(&tx, settings, now)?;
         removed.extend(enforce_quota(&tx, settings, Some(inserted))?);
@@ -646,6 +683,96 @@ mod tests {
             bytes: value.len() as u64,
         }
     }
+    #[test]
+    fn text_categories_backfill_old_rows_and_preserve_filtered_pagination() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(include_str!("migrations/001.sql"))
+            .unwrap();
+        conn.execute_batch(include_str!("migrations/002.sql"))
+            .unwrap();
+        conn.pragma_update(None, "user_version", 2).unwrap();
+        conn.execute("INSERT INTO clipboard_items(kind,content_hash,text_content,mime_type,byte_size,created_at,last_seen_at,is_favorite) VALUES('text','old','https://example.com/old','text/plain',23,1,1,1)", []).unwrap();
+        let repo = Repository::from_connection(conn).unwrap();
+        let settings = ClipboardSettings::default();
+        for value in [
+            "ordinary text",
+            "#abcdef",
+            r"C:\资料\a.txt",
+            "https://example.com/new",
+        ] {
+            repo.insert(text(value), &settings, 2).unwrap();
+        }
+        // 与链接同一时刻的普通文本不能占用分类页名额。
+        repo.insert(text("newest ordinary text"), &settings, 2)
+            .unwrap();
+        let query = Query {
+            text_category: Some(TextCategory::Link),
+            keyword: "EXAMPLE".into(),
+            limit: Some(1),
+            ..Query::default()
+        };
+        let first = repo.list(&query, 8).unwrap();
+        assert_eq!(first.items[0].preview, "https://example.com/new");
+        assert!(first.next_cursor.is_some());
+        let second = repo
+            .list(
+                &Query {
+                    cursor: first.next_cursor,
+                    ..query
+                },
+                8,
+            )
+            .unwrap();
+        assert_eq!(second.items[0].preview, "https://example.com/old");
+        assert!(second.next_cursor.is_none());
+        assert!(second.items[0].favorite);
+        assert_eq!(second.items[0].kind, Kind::Text);
+        for category in [TextCategory::Link, TextCategory::Color, TextCategory::Path] {
+            let page = repo
+                .list(
+                    &Query {
+                        text_category: Some(category),
+                        ..Query::default()
+                    },
+                    0,
+                )
+                .unwrap();
+            assert_eq!(
+                page.items.len(),
+                if category == TextCategory::Link { 2 } else { 1 }
+            );
+        }
+        let page = repo
+            .list(
+                &Query {
+                    text_category: Some(TextCategory::Link),
+                    favorites_only: true,
+                    ..Query::default()
+                },
+                0,
+            )
+            .unwrap();
+        assert_eq!(page.items.len(), 1);
+        assert_eq!(page.items[0].id, 1);
+        assert_eq!(
+            repo.list(
+                &Query {
+                    kind: Some(Kind::Text),
+                    ..Query::default()
+                },
+                0
+            )
+            .unwrap()
+            .items
+            .len(),
+            6
+        );
+        assert_eq!(
+            repo.get(1).unwrap().text.as_deref(),
+            Some("https://example.com/old")
+        );
+    }
+
     #[test]
     fn version_one_migration_preserves_records_and_adds_file_search() {
         let conn = Connection::open_in_memory().unwrap();

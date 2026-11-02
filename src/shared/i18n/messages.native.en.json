@@ -1,4 +1,7 @@
 {
+  "此条目不是有效链接。": "This item is not a valid link.",
+  "此条目不是有效文件路径。": "This item is not a valid file path.",
+  "路径不存在或无法访问。": "The path does not exist or cannot be accessed.",
   "已收到屏幕画面，但帧时间戳校验未通过，请查看录屏诊断日志。": "Screen frames were received, but timestamp validation failed. Check the recording diagnostic log.",
   "无法读取 Windows 凭证库。": "Cannot read the Windows credential store.",
   "凭证为空，请重新保存。": "Credential is empty. Save it again.",

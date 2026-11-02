@@ -150,6 +150,8 @@ pub const COMMANDS: &[&str] = &[
     "clipboard_delete",
     "clipboard_export",
     "clipboard_get_text",
+    "clipboard_open_link",
+    "clipboard_open_path",
     "clipboard_get_thumbnail",
     "clipboard_get_image",
     "clipboard_list",

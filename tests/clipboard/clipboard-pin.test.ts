@@ -45,6 +45,7 @@ import History from '../../src/features/clipboard/components/ClipboardHistory.vu
 const Component = clientComponent(History, new URL('../../src/features/clipboard/components/ClipboardHistory.vue', import.meta.url))
 clientComponent(ConfirmDialog, new URL('../../src/shared/ui/ConfirmDialog.vue', import.meta.url))
 let root: MemoryNode
+let savedPreferences: Map<string, string>
 const pinButton = () => findNode(root, node => node.props['aria-label'] === '将所选文字和图片贴图')!
 const nodeText = (node: MemoryNode): string => node.text + node.children.map(nodeText).join('')
 const refreshButton = () => findNode(root, node => node.type === 'button' && nodeText(node) === '刷新')!
@@ -54,6 +55,9 @@ async function select(...ids: number[]) {
 }
 beforeEach(async () => {
   vi.resetAllMocks()
+  vi.stubGlobal('window', new EventTarget())
+  savedPreferences = new Map()
+  vi.stubGlobal('localStorage', { getItem: (key: string) => savedPreferences.get(key) ?? null, setItem: (key: string, value: string) => savedPreferences.set(key, value) })
   vi.stubGlobal('Document', class {}); vi.stubGlobal('ShadowRoot', class {})
   Object.assign(MemoryNode.prototype, { select: vi.fn() })
   root = new MemoryNode('root')
@@ -66,6 +70,73 @@ beforeEach(async () => {
   memoryRenderer.render(h(Component), root); await flushComponent()
 })
 afterEach(() => { memoryRenderer.render(null, root); vi.useRealTimers(); vi.unstubAllGlobals() })
+
+const categoryButtons = () => findNode(root, node => node.props.class === 'history-categories')!.children.filter(node => node.props['data-clipboard-category'] !== undefined)
+const categoryKeys = () => categoryButtons().map(node => node.props['data-clipboard-category'])
+const categoryTab = (key: string) => categoryButtons().find(node => node.props['data-clipboard-category'] === key)!
+
+it('默认分类顺序为全部、文本、图片、文件、链接、文件路径、颜色、收藏', () => {
+  expect(categoryKeys()).toEqual(['', 'text', 'image', 'file', 'link', 'path', 'color', 'favorites'])
+})
+
+it('拖拽调整分类顺序并持久保存，拖动产生的点击不切换分类', async () => {
+  const parent = {}, source = { parentElement: parent, dataset: { clipboardCategory: 'link' }, setPointerCapture: vi.fn(), hasPointerCapture: () => true, releasePointerCapture: vi.fn() }
+  const destination = { parentElement: parent, dataset: { clipboardCategory: 'image' } }
+  vi.stubGlobal('document', { elementFromPoint: () => ({ closest: () => destination }) })
+  const button = categoryTab('link')
+  const event = { button: 0, pointerId: 1, clientX: 10, clientY: 10, currentTarget: source }
+  api.clipboardList.mockClear()
+  button.props.onPointerdown(event)
+  button.props.onPointermove({ ...event, clientX: 100 })
+  button.props.onPointerup({ ...event, clientX: 100 })
+  button.props.onClick({ detail: 1 }); await flushComponent()
+  const expected = ['', 'text', 'link', 'image', 'file', 'path', 'color', 'favorites']
+  expect(categoryKeys()).toEqual(expected)
+  expect(categoryTab('').props['aria-pressed']).toBe(true)
+  expect(api.clipboardList).not.toHaveBeenCalled()
+  expect(source.releasePointerCapture).toHaveBeenCalledWith(1)
+  expect(JSON.parse(savedPreferences.get('snap-desk.clipboard-category-order.v1')!)).toEqual(expected)
+  memoryRenderer.render(null, root)
+  memoryRenderer.render(h(Component), root); await flushComponent()
+  expect(categoryKeys()).toEqual(expected)
+})
+
+it('拖到分类栏外不改顺序，取消拖动后仍可以用键盘选择', async () => {
+  const source = { parentElement: {}, setPointerCapture: vi.fn(), hasPointerCapture: () => true, releasePointerCapture: vi.fn() }
+  vi.stubGlobal('document', { elementFromPoint: () => null })
+  const button = categoryTab('link'), before = categoryKeys()
+  const event = { button: 0, pointerId: 1, clientX: 10, clientY: 10, currentTarget: source }
+  button.props.onPointerdown(event)
+  button.props.onPointerup({ ...event, clientX: 100 }); await flushComponent()
+  expect(categoryKeys()).toEqual(before)
+  button.props.onClick({ detail: 0 }); await flushComponent()
+  expect(categoryTab('link').props['aria-pressed']).toBe(true)
+})
+
+it('Alt 加方向键排序，损坏或过时存储自动补齐分类', async () => {
+  const event = { altKey: true, key: 'ArrowLeft', preventDefault: vi.fn(), stopPropagation: vi.fn(), currentTarget: { focus: vi.fn() } }
+  categoryTab('image').props.onKeydown(event); await flushComponent()
+  expect(categoryKeys().slice(0, 3)).toEqual(['', 'image', 'text'])
+  expect(event.currentTarget.focus).toHaveBeenCalled()
+  savedPreferences.set('snap-desk.clipboard-category-order.v1', '["link","link","unknown"]')
+  memoryRenderer.render(null, root)
+  memoryRenderer.render(h(Component), root); await flushComponent()
+  expect(categoryKeys()).toEqual(['link', '', 'text', 'image', 'file', 'path', 'color', 'favorites'])
+})
+
+it.each([
+  ['链接', 'text', 'link'], ['颜色', 'text', 'color'], ['文件路径', 'text', 'path'],
+  ['文件', 'file', undefined], ['图片', 'image', undefined], ['文本', 'text', undefined],
+] as const)('%s 分类向后端发送筛选条件，切回全部清除分类和游标', async (label, kind, textCategory) => {
+  const tab = (label: string) => findNode(root, node => node.type === 'button' && nodeText(node) === label)!
+  await select(1)
+  api.clipboardList.mockClear()
+  tab(label).props.onClick({ detail: 0 }); await flushComponent()
+  expect(api.clipboardList).toHaveBeenLastCalledWith(expect.objectContaining({ kind, textCategory, cursor: undefined }))
+  expect(pinButton()).toBeUndefined()
+  tab('全部').props.onClick({ detail: 0 }); await flushComponent()
+  expect(api.clipboardList).toHaveBeenLastCalledWith(expect.objectContaining({ kind: undefined, textCategory: undefined, cursor: undefined }))
+})
 
 it('清空确认和导出弹窗先响应 Esc，焦点不在弹窗内也不直接退出主窗口', async () => {
   const text = (node: MemoryNode): string => node.text + node.children.map(text).join('')

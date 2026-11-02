@@ -1,5 +1,6 @@
 //! 剪贴板历史的受限 Tauri 入口；每个命令只允许 main 窗口访问。
 mod blob_store;
+mod classification;
 pub mod export;
 mod files;
 pub mod model;
@@ -73,6 +74,42 @@ pub async fn clipboard_get_text(
             return Err("此条目不是文本。".into());
         }
         stored.text.ok_or("历史文本损坏。".into())
+    })
+    .await
+}
+/// 用户点击预览链接后，按记录 ID 读取原文并校验协议，再交给系统浏览器。
+#[tauri::command]
+pub async fn clipboard_open_link(
+    app: AppHandle,
+    window: WebviewWindow,
+    id: i64,
+) -> Result<(), String> {
+    work(app, window, move |_, s| {
+        let stored = s.data()?.repo.get(id)?;
+        if stored.item.kind != Kind::Text {
+            return Err("此条目不是文本。".into());
+        }
+        let url = classification::link_url(stored.text.as_deref().ok_or("历史文本损坏。")?)
+            .ok_or("此条目不是有效链接。")?;
+        open::that(url).map_err(|e| format!("打开链接失败：{e}"))
+    })
+    .await
+}
+/// 按历史 ID 读取路径，文件只在资源管理器中定位，不执行文件本身。
+#[tauri::command]
+pub async fn clipboard_open_path(
+    app: AppHandle,
+    window: WebviewWindow,
+    id: i64,
+) -> Result<(), String> {
+    work(app, window, move |_, s| {
+        let stored = s.data()?.repo.get(id)?;
+        if stored.item.kind != Kind::Text {
+            return Err("此条目不是文本。".into());
+        }
+        let path = classification::file_path(stored.text.as_deref().ok_or("历史文本损坏。")?)
+            .ok_or("此条目不是有效文件路径。")?;
+        crate::shared::platform::reveal_path(std::path::Path::new(path))
     })
     .await
 }

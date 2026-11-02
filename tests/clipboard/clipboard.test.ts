@@ -42,10 +42,19 @@ describe('历史 IPC 契约', () => {
   it('查询、操作与导出只提交类型化参数和 ID', async () => {
     await api.clipboardImage(9)
     expect(mocks.invoke).toHaveBeenLastCalledWith('clipboard_get_image', { id: 9 })
+    await api.clipboardOpenLink(9)
+    expect(mocks.invoke).toHaveBeenLastCalledWith('clipboard_open_link', { id: 9 })
+    await api.clipboardOpenPath(9)
+    expect(mocks.invoke).toHaveBeenLastCalledWith('clipboard_open_path', { id: 9 })
     await api.clipboardList({ keyword: '中文%', kind: 'text', limit: 40, cursor: '123:9' })
     expect(mocks.invoke).toHaveBeenLastCalledWith('clipboard_list', { query: { keyword: '中文%', kind: 'text', limit: 40, cursor: '123:9' } })
     await api.clipboardList({ keyword: 'report.pdf', kind: 'file', limit: 40 })
     expect(mocks.invoke).toHaveBeenLastCalledWith('clipboard_list', { query: { keyword: 'report.pdf', kind: 'file', limit: 40 } })
+    for (const textCategory of ['link', 'color', 'path'] as const) {
+      const query = { kind: 'text' as const, textCategory, keyword: 'value', limit: 1, cursor: '123:9' }
+      await api.clipboardList(query)
+      expect(mocks.invoke).toHaveBeenLastCalledWith('clipboard_list', { query })
+    }
     await api.clipboardClear(false)
     expect(mocks.invoke).toHaveBeenLastCalledWith('clipboard_clear', { includeFavorites: false })
     await api.clipboardFavorite(9, true)

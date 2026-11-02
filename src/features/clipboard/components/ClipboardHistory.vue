@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import SelectControl from '@/shared/ui/SelectControl.vue'
+import { useCategoryOrder, type ClipboardCategory } from '@/features/clipboard/use-category-order'
 import { t, te } from '@/shared/i18n/i18n'
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { DialogRoot, DialogPortal, DialogOverlay, DialogContent, DialogTitle, DialogDescription, DialogTrigger } from 'reka-ui'
 import ConfirmDialog from '@/shared/ui/ConfirmDialog.vue'
 import { PopoverRoot, PopoverTrigger, PopoverPortal, PopoverContent } from 'reka-ui'
 import { api, desktop, onClipboardChanged, onClipboardError, onClipboardState, onClipboardOpen } from '@/services/api'
-import { defaultClipboardSettings, selectClipboardItems, type ClipboardSelectionGesture, type ClipboardItem as Item, type ClipboardStatus, type ClipboardKind, type ClipboardExportOptions } from '@/features/clipboard/clipboard'
-import { Search, ClipboardList, Type, Image, Star, X, Download, Pin, Trash2, Files, List, LayoutGrid, Ellipsis, LoaderCircle } from 'lucide-vue-next'
+import { defaultClipboardSettings, selectClipboardItems, type ClipboardSelectionGesture, type ClipboardItem as Item, type ClipboardStatus, type ClipboardKind, type ClipboardTextCategory, type ClipboardExportOptions } from '@/features/clipboard/clipboard'
+import { Link, Palette, Folder, Search, ClipboardList, Type, Image, Star, X, Download, Pin, Trash2, Files, List, LayoutGrid, Ellipsis, LoaderCircle } from 'lucide-vue-next'
 import ClipboardItem from '@/features/clipboard/components/ClipboardItem.vue'
 import VirtualClipboardList from '@/features/clipboard/components/VirtualClipboardList.vue'
 import ClipboardPreview from '@/features/clipboard/components/ClipboardPreview.vue'
@@ -34,12 +35,16 @@ async function closePreview() {
   if (index >= 0) await list.value?.focusIndex(index)
 }
 const status = ref<ClipboardStatus | null>(null), settings = ref(defaultClipboardSettings())
-const keyword = ref(''), category = ref<'' | ClipboardKind | 'favorites'>('')
-const kind = computed(() => category.value === 'favorites' ? '' : category.value)
+const keyword = ref(''), category = ref<ClipboardCategory>('')
+const textCategory = computed(() => ['link', 'color', 'path'].includes(category.value) ? category.value as ClipboardTextCategory : undefined)
+const kind = computed(() => textCategory.value ? 'text' : category.value === 'favorites' ? undefined : category.value as ClipboardKind | '')
 const favorites = computed(() => category.value === 'favorites')
-const categories = [{ value: '' as const, label: '全部', icon: ClipboardList }, { value: 'text' as const, label: '文本', icon: Type }, { value: 'image' as const, label: '图像', icon: Image }, { value: 'file' as const, label: '文件', icon: Files }, { value: 'favorites' as const, label: '收藏', icon: Star }]
+const categoryOptions = [{ value: '' as const, label: '全部', icon: ClipboardList }, { value: 'text' as const, label: '文本', icon: Type }, { value: 'link' as const, label: '链接', icon: Link }, { value: 'color' as const, label: '颜色', icon: Palette }, { value: 'path' as const, label: '文件路径', icon: Folder }, { value: 'image' as const, label: '图片', icon: Image }, { value: 'file' as const, label: '文件', icon: Files }, { value: 'favorites' as const, label: '收藏', icon: Star }]
 const canExport = computed(() => selected.value.length > 0 && selected.value.every(id => ['text', 'image'].includes(selectedItems.value[id]?.kind)))
 const busy = ref(false), loading = ref(false), error = ref(''), message = ref('')
+const categoryOrder = useCategoryOrder(() => busy.value || !desktop, value => { category.value = value })
+const { sorting, target: sortingTarget, orderError } = categoryOrder
+const categories = computed(() => categoryOrder.order.value.map(value => categoryOptions.find(tab => tab.value === value)!))
 const foregroundLoading = ref(false), loadingMore = ref(false)
 const updatesPending = ref(false)
 const confirm = ref<'delete' | 'clear' | null>(null), includeFavorites = ref(false), exportOpen = ref(false)
@@ -123,7 +128,7 @@ async function refresh(append = false, background = false) {
   loading.value = true
   foregroundLoading.value = !background; loadingMore.value = append
   try {
-    const [page, state] = await Promise.all([api.clipboardList({ keyword: keyword.value, kind: kind.value || undefined, favoritesOnly: favorites.value, limit: 40, cursor: append ? cursor.value ?? undefined : undefined }), api.clipboardStatus()])
+    const [page, state] = await Promise.all([api.clipboardList({ keyword: keyword.value, kind: kind.value || undefined, textCategory: textCategory.value, favoritesOnly: favorites.value, limit: 40, cursor: append ? cursor.value ?? undefined : undefined }), api.clipboardStatus()])
     if (disposed || request !== revision) return
     // 请求在途期间也可能开始选择或翻页，迟到的后台结果不能覆盖新的浏览现场。
     if (background && !canRefreshInBackground()) return
@@ -252,13 +257,14 @@ onUnmounted(() => { disposed = true; revision++; clearTimeout(refreshTimer); cle
     <p v-if="updatesPending" class="history-count" role="status">{{ t("内容已更新，点击刷新。") }}</p>
     <p v-if="status && !status.supported" class="notice">{{ t("当前平台尚未支持自动监听；现有手动贴图不受影响。") }}</p>
     <p v-if="error || status?.error" class="notice error" role="alert">{{ te(error || status?.error) }}</p>
+    <p v-if="orderError" role="status">{{ t(orderError) }}</p>
     <p v-if="message" role="status">{{ t(message) }}</p>
     <form class="history-search" role="search" @submit.prevent="applyFilter">
       <Search :size="16" aria-hidden="true" /><input ref="searchInput" v-model="keyword" :aria-label='t("搜索文本或文件路径")' :placeholder='t("搜索文本或文件路径（Ctrl+F）")' maxlength="200" /><button v-if="keyword" type="button" :aria-label='t("清除搜索")' @click="keyword = ''; focusSearch()"><X :size="16" /></button>
     </form>
     <div class="history-viewbar">
     <nav class="history-categories" :aria-label='t("历史分类")'>
-      <button v-for="tab in categories" :key="tab.value" :class="{ active: category === tab.value }" :aria-pressed="category === tab.value" :disabled="busy || !desktop" @click="category = tab.value"><component :is="tab.icon" :size="16" aria-hidden="true" />{{ t(tab.label) }}</button>
+      <button v-for="tab in categories" :key="tab.value" :class="{ active: category === tab.value, 'sorting-source': sorting === tab.value, 'sorting-target': sortingTarget === tab.value && sorting !== tab.value }" :data-clipboard-category="tab.value" :title="t('{0}（拖动排序，Alt+←/→调整顺序）', { 0: t(tab.label) })" :aria-pressed="category === tab.value" :disabled="busy || !desktop" @pointerdown="categoryOrder.start($event, tab.value)" @pointermove="categoryOrder.move" @pointerup="categoryOrder.finish" @pointercancel="categoryOrder.cancel" @lostpointercapture="categoryOrder.cancel" @dragstart.prevent @keydown="categoryOrder.key($event, tab.value)" @click="categoryOrder.choose($event, tab.value)"><component :is="tab.icon" :size="16" aria-hidden="true" />{{ t(tab.label) }}</button>
       <PopoverRoot v-model:open="helpOpen">
         <PopoverTrigger class="history-help-trigger" :aria-label='t("帮助")' :title='t("帮助")'>?</PopoverTrigger>
         <PopoverPortal>
@@ -372,10 +378,12 @@ onUnmounted(() => { disposed = true; revision++; clearTimeout(refreshTimer); cle
 .history-search button { display:flex; align-items:center; justify-content:center; min-width:24px; min-height:24px; }
 .clipboard-history .history-search input { border:0; outline:none; max-width:none; min-width:0; width:100%; background:transparent; }
 .history-search:focus-within { box-shadow:0 1px #2563eb; }
-.history-categories { display:flex; flex:1; min-width:0; gap:8px; overflow-x:auto; }
-.history-categories button { white-space:nowrap; flex-shrink:0; display:flex; gap:8px; align-items:center; justify-content:center; padding:10px 20px; border-bottom:2px solid transparent; color:#71717a; }
+.history-categories { display:flex; flex:1; flex-wrap:wrap; min-width:0; gap:2px; }
+.history-categories button { white-space:nowrap; flex-shrink:0; display:flex; touch-action:none; user-select:none; gap:6px; align-items:center; justify-content:center; min-height:32px; padding:6px 10px; line-height:18px; border-bottom:2px solid transparent; color:#71717a; }
+.history-categories button.sorting-source { opacity:.5; }
+.history-categories button.sorting-target { box-shadow:inset 2px 0 #2563eb; }
 .history-categories button.active { color:#2563eb; border-bottom-color:#2563eb; background:#eff6ff; }
-@media (max-width:600px) { .history-categories { gap:0; }.history-categories button { flex:1; padding:10px 8px; } }
+@media (max-width:600px) { .history-categories button { padding-inline:8px; } }
 .history-categories .history-help-trigger { flex:0 0 32px; align-self:center; height:32px; margin-left:auto; padding:0; border:0; border-radius:4px; font-size:16px; }
 .history-categories .history-help-trigger:hover { background:#f6f7f8; }
 [data-theme=dark] .history-categories .history-help-trigger:hover { background:#2b333d; }
