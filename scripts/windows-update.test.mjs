@@ -28,6 +28,11 @@ test('双分发清单分别指向同一版本，缺包或签名版本不一致�
   const published = createUpdateManifest({ ...options, nsis: spacedInstaller, assets })
   assert.equal(published.platforms['windows-x86_64-nsis'].url, prefix + 'Snap.Desk_0.2.0-beta.2_x64-setup.exe')
   assert.equal(published.platforms['windows-x86_64-nsis'].signature, result.platforms['windows-x86_64-nsis'].signature)
+  const draft = assets.map(asset => ({ ...asset, browser_download_url: asset.browser_download_url.replace('/v0.2.0-beta.2/', '/untagged-933b61e2e9b2b416bd8c/') }))
+  assert.deepEqual(createUpdateManifest({ ...options, assets: draft }).platforms, createUpdateManifest({ ...options, assets }).platforms)
+  for (const address of [assets[0].browser_download_url.replace('/v0.2.0-beta.2/', '/v0.1.0/'), assets[0].browser_download_url + '?download=1', assets[0].browser_download_url.replace('/bitdan/', '/other/')]) {
+    assert.throws(() => createUpdateManifest({ ...options, assets: [{ ...assets[0], browser_download_url: address }, assets[1]] }), /下载地址无效/)
+  }
   assert.throws(() => createUpdateManifest({ ...options, assets: [] }), /必须包含一个/)
   assert.throws(() => createUpdateManifest({ ...options, assets: [...assets, assets[0]] }), /必须包含一个/)
   assert.throws(() => createUpdateManifest({ ...options, assets: [{ ...assets[0], browser_download_url: 'https://example.com/file' }, assets[1]] }), /下载地址无效/)

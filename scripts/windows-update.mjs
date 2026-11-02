@@ -19,10 +19,21 @@ export function createUpdateManifest({ version, repository, nsis, standalone, no
     const uploaded = assets?.filter(asset => typeof asset.name === 'string' && asset.name.endsWith(suffix))
     if (uploaded && uploaded.length !== 1) throw new Error(`发布附件必须包含一个 ${kind} 产物。`)
     const prefix = `https://github.com/${repository}/releases/download/v${version}/`
-    const url = uploaded ? uploaded[0].browser_download_url : `${prefix}${encodeURIComponent(basename(file))}`
-    if (typeof url !== 'string' || !url.startsWith(prefix)
-      || (uploaded && decodeURIComponent(url.slice(prefix.length)) !== uploaded[0].name)) {
-      throw new Error(`${kind} 发布附件下载地址无效。`)
+    let url = `${prefix}${encodeURIComponent(basename(file))}`
+    if (uploaded) {
+      const asset = uploaded[0]
+      let address
+      try { address = new URL(asset.browser_download_url) } catch { throw new Error(`${kind} 发布附件下载地址无效。`) }
+      const path = address.pathname.split('/')
+      // 草稿地址使用 untagged-* 临时标识；保留 GitHub 规范化后的附件名，预写正式发布地址。
+      const tag = path[5]
+      if (address.origin !== 'https://github.com' || path.slice(1, 5).join('/') !== `${repository}/releases/download`
+        || path.length !== 7 || (tag !== `v${version}` && !/^untagged-[0-9a-f]+$/.test(tag))
+        || decodeURIComponent(path[6]) !== asset.name || address.search || address.hash
+        || asset.name.includes('/') || asset.name.includes('\\')) {
+        throw new Error(`${kind} 发布附件下载地址无效。`)
+      }
+      url = `${prefix}${encodeURIComponent(asset.name)}`
     }
     platforms[`windows-x86_64-${kind}`] = {
       url,

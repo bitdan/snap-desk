@@ -1,0 +1,55 @@
+name: Recover Windows Release
+run-name: 恢复发布 · ${{ inputs.tag }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 当前版本的已有 Release 草稿标签
+        required: true
+        type: string
+
+concurrency:
+  group: release-refs/tags/${{ inputs.tag }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  recover:
+    runs-on: windows-2022
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      RELEASE_TAG: ${{ inputs.tag }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install signing tools
+        run: npm ci
+      - name: Verify updater signing configuration
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          SNAP_DESK_UPDATER_PUBLIC_KEY: ${{ vars.SNAP_DESK_UPDATER_PUBLIC_KEY }}
+        run: node scripts/release-signing.mjs
+      - name: Restore signed update assets and publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          $notes = Join-Path $env:RUNNER_TEMP 'snap-desk-release-notes.md'
+          node scripts/release-notes.mjs $env:RELEASE_TAG $notes
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./scripts/publish-release.ps1 -Tag $env:RELEASE_TAG -NotesFile $notes -Recover
