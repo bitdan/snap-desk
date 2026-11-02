@@ -7,6 +7,7 @@
 .app-shell .nav-caption { margin:18px 12px 8px; color:var(--desk-muted); font-size:11px; letter-spacing:.6px; }
 .app-shell .nav-item { position:relative; min-height:36px; gap:12px; margin-bottom:4px; padding:8px 12px; border:1px solid transparent; border-radius:6px; color:var(--desk-muted); }
 .app-shell .nav-item svg { width:17px; height:17px; stroke-width:1.7; flex:none; }
+.app-shell .nav-update-dot { width:6px; height:6px; margin-left:auto; border-radius:50%; background:#dc2626; flex:none; }
 .app-shell .nav-item:hover { background:var(--desk-soft); color:var(--desk-text); }
 .app-shell .nav-item.active { background:var(--desk-selected); color:var(--desk-accent); border-color:color-mix(in srgb,var(--desk-accent) 12%,transparent); }
 .app-shell .nav-item.active::before { content:''; position:absolute; left:-6px; width:3px; height:16px; border-radius:3px; background:var(--desk-accent); }

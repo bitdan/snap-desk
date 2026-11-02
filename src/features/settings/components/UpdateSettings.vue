@@ -15,7 +15,6 @@ let disposed = false, timer: ReturnType<typeof setInterval> | undefined, refresh
 let unsubscribe: (() => void) | undefined
 const operating = computed(() => busy.value || ['checking', 'downloading', 'installing'].includes(view.value?.phase ?? ''))
 const enabled = computed(() => desktop && view.value?.supported && view.value.configured)
-const packageLabel = computed(() => ({ nsis: 'NSIS', msi: 'MSI', standalone: t('独立 EXE') })[view.value?.packageKind ?? 'standalone'])
 const phaseLabel = computed(() => ({ idle: '尚未检查更新', checking: '正在检查更新…', available: '发现新版本', latest: '当前渠道暂无更新', downloading: '正在下载更新…', ready: '更新已下载并通过校验', installing: '正在退出并安装…', error: '更新失败，可重试' })[view.value?.phase ?? 'idle'])
 const progress = computed(() => view.value?.total ? Math.min(100, Math.floor(view.value.downloaded * 100 / view.value.total)) : null)
 
@@ -73,14 +72,15 @@ onUnmounted(() => { disposed = true; if (timer) clearInterval(timer); unsubscrib
   <section class="update-settings">
     <h2 class="section-heading">{{ t('应用更新') }}</h2>
     <div class="setting-row flex-wrap gap-3">
-      <span>{{ view ? `v${view.currentVersion} · ${packageLabel}` : t('版本待读取') }}</span>
+      <span>{{ view ? `v${view.currentVersion}` : t('版本待读取') }}</span>
       <Button variant="outline" :disabled="!enabled || operating || saving" @click="run(api.checkAppUpdate)">{{ t('检查更新') }}</Button>
     </div>
     <div class="setting-row flex-wrap gap-3">
       <label for="receive-prerelease" class="min-w-0 flex-1">{{ t('接收测试版本更新') }}</label>
       <button id="receive-prerelease" type="button" class="update-switch" role="switch" :aria-label="t('接收测试版本更新')" :aria-checked="preview === true" :disabled="!desktop || preview === null || operating || saving" @click="togglePreview"><span aria-hidden="true" /></button>
     </div>
-    <p v-if="view && !view.supported" class="notice">{{ t('在线更新仅支持 Windows x64 发布版本。') }}</p>
+    <p v-if="view?.packageKind === 'unsupported'" class="notice">{{ t('当前安装方式不支持在线更新，请使用 NSIS 安装包重新安装。') }}</p>
+    <p v-else-if="view && !view.supported" class="notice">{{ t('在线更新仅支持 Windows x64 发布版本。') }}</p>
     <p v-else-if="view && !view.configured" class="notice">{{ t('此版本未配置更新签名公钥。') }}</p>
     <template v-else-if="view">
       <div class="setting-row flex-wrap gap-3" role="status">

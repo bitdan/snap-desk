@@ -97,7 +97,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": ["nsis"],
     "resources": {
       "../LICENSE": "LICENSE",
       "licenses/LXGW-OFL.txt": "licenses/LXGW-OFL.txt"

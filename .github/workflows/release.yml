@@ -97,7 +97,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
-          # 三种分发形式各有更新目标；测试版也必须提供 MSI，不能把 MSI 用户切换到 NSIS。
+          # 统一分发 NSIS 安装包和独立 EXE，分别生成对应的签名与更新目标。
           $isTestRelease = $env:GITHUB_REF_NAME.Contains('-')
           $installers = @(
             Get-ChildItem -Path 'src-tauri/target/release/bundle/nsis/*-setup.exe' -File
@@ -105,11 +105,6 @@ jobs:
           if ($installers.Count -ne 1) {
             throw '应生成一个 NSIS EXE 安装包，请检查构建输出。'
           }
-          $msi = @(Get-ChildItem -Path 'src-tauri/target/release/bundle/msi/*.msi' -File)
-          if ($msi.Count -ne 1) {
-            throw '应生成一个 MSI 安装包，请检查构建输出。'
-          }
-          $installers += $msi
           # 打包本身已经生成主程序，无需再编译；复制并命名以区别于 *-setup.exe。
           $executable = 'src-tauri/target/release/snap-desk.exe'
           if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) {
@@ -126,7 +121,7 @@ jobs:
           $notes = @(
             "Translation engine: $($engine.tag) (Windows x64 CPU, protocol 1).",
             'Download or import the translation engine ZIP and language packs in Recognition & Translation settings.',
-            'NSIS/MSI and standalone EXE use the same on-demand translation resources; no runtime is bundled.',
+            'NSIS and standalone EXE use the same on-demand translation resources; no runtime is bundled.',
             'Model sources and licenses are recorded in each model pack.json and LICENSE.txt.'
           )
           $notes | Set-Content src-tauri/target/release/translation-release-notes.txt -Encoding utf8
@@ -152,7 +147,7 @@ jobs:
           $notesPath = 'src-tauri/target/release/update-release-notes.txt'
           $releaseBody | Set-Content $notesPath -Encoding utf8
           $manifest = 'src-tauri/target/release/updater.json'
-          node scripts/windows-update.mjs $installers[0].FullName $msi[0].FullName $standalone $notesPath $manifest
+          node scripts/windows-update.mjs $installers[0].FullName $standalone $notesPath $manifest
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $signatures = @($installers | ForEach-Object { "$($_.FullName).sig" }) + "$standalone.sig"
           gh release upload $env:GITHUB_REF_NAME $manifest @signatures

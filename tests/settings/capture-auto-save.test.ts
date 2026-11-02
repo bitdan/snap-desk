@@ -3,7 +3,12 @@ import { h } from 'vue'
 import { clientComponent, findNode, MemoryNode, memoryRenderer } from '../helpers/component-host'
 import { defaultSettings } from '../../src/features/settings/settings'
 
-const api = vi.hoisted(() => ({ status: vi.fn(), saveSettings: vi.fn(), setShortcutEditing: vi.fn(), start: vi.fn() }))
+const api = vi.hoisted(() => ({ status: vi.fn(), saveSettings: vi.fn(), setShortcutEditing: vi.fn(), start: vi.fn(), appUpdateStatus: vi.fn() }))
+const updateEvent = vi.hoisted(() => ({ receive: (_view: { availableVersion: string | null }) => {} }))
+vi.mock('../../src/features/settings/events', () => ({ onAppUpdate: vi.fn(async (fn: typeof updateEvent.receive) => {
+  updateEvent.receive = fn
+  return () => { updateEvent.receive = () => {} }
+}) }))
 const recordingPage = vi.hoisted(() => ({ loaded: vi.fn(), mounted: vi.fn() }))
 const subscribe = vi.hoisted(() => vi.fn(async () => () => {}))
 const importedEvent = vi.hoisted(() => ({ receive: (_settings: any) => {} }))
@@ -52,12 +57,24 @@ beforeEach(() => {
   vi.spyOn(MemoryNode.prototype, 'getRootNode').mockReturnValue(root)
   let settings = defaultSettings(); settings.onboardingVersion = 1
   api.status.mockImplementation(async () => ({ settings: structuredClone(settings), version: 'test', platform: 'windows', delayRemaining: 0 }))
+  api.appUpdateStatus.mockResolvedValue({ availableVersion: null })
   api.saveSettings.mockImplementation(async value => { settings = structuredClone(value); return structuredClone(settings) })
   memoryRenderer.render(h(Component), root)
 })
 afterEach(() => { memoryRenderer.render(null, root); vi.clearAllTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.useRealTimers() })
 
 describe('截图设置自动生效', () => {
+  it('有更新时只在关于导航显示红点，更新消失后清除', async () => {
+    await flush()
+    const about = findNode(root, node => node.type === 'button' && text(node) === '关于')!
+    const dot = () => findNode(about, node => String(node.props.class).includes('nav-update-dot'))
+    expect(dot()).toBeUndefined()
+    updateEvent.receive({ availableVersion: '0.2.0' }); await flush()
+    expect(dot()?.props['aria-label']).toBe('发现新版本')
+    expect(findNode(root, node => node.type === 'button' && text(node).includes('发现新版本'))).toBeUndefined()
+    updateEvent.receive({ availableVersion: null }); await flush()
+    expect(dot()).toBeUndefined()
+  })
   it('悬停和聚焦录屏导航只预取模块，点击后才挂载页面', async () => {
     await flush()
     const recording = findNode(root, node => node.type === 'button' && text(node) === '录屏')!

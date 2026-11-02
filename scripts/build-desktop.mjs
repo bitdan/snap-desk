@@ -5,21 +5,20 @@ import { fileURLToPath } from 'node:url'
 import { resolve } from 'node:path'
 import { rustEnvironment } from './rust-env.mjs'
 import { syncVersion } from './sync-version.mjs'
-import { wixVersion } from './windows-update.mjs'
 
 const root = fileURLToPath(new URL('../', import.meta.url))
 const require = createRequire(import.meta.url)
 // 直接用 Node 执行本地 CLI，不经过 shell 拼接，Windows 路径带空格也能正确传递。
 const cli = require.resolve('@tauri-apps/cli/tauri.js')
 const target = resolve(root, 'src-tauri', 'target')
-const version = syncVersion(root)
+syncVersion(root)
 const buildArgs = process.argv.slice(2)
 // 翻译引擎在设置中按需下载或导入，不再随主程序打包，也不依赖本机准备的 runtime。
-// 正式版和测试版都生成 NSIS/MSI，MSI 另用纯数字版本，原始 SemVer 保留在应用内。
+// Windows 正式版和测试版统一生成 NSIS，独立 EXE 直接复用主程序。
 // 本地无签名密钥时允许正常打包，CI 提供密钥后才生成可在线安装的签名产物。
 if (process.platform === 'win32') {
   buildArgs.unshift('--config', JSON.stringify({ bundle: {
-    windows: { wix: { version: wixVersion(version) } },
+    targets: ['nsis'],
     createUpdaterArtifacts: Boolean(process.env.TAURI_SIGNING_PRIVATE_KEY),
   } }))
 }

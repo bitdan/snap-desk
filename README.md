@@ -32,7 +32,7 @@ npm run desktop:dev
 
 构建独立可运行的调试程序：`npm run desktop:build:fast`，输出为
 `src-tauri/target/debug/snap-desk.exe`；发布优化程序使用 `npm run desktop:build`。
-构建前从托盘退出旧程序。生成安装包使用 `npm run desktop:package`；Windows 测试版仅生成 NSIS EXE 安装包。
+构建前从托盘退出旧程序。生成安装包使用 `npm run desktop:package`；Windows 正式版和测试版统一采用 NSIS 安装包与独立 EXE 双分发。
 主程序构建不依赖本地翻译引擎，使用本地翻译时在“识别与翻译”设置中下载或导入引擎，并安装对应语言包。
 
 ## 代码组织

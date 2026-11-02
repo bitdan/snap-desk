@@ -1,4 +1,5 @@
 {
+  "当前安装方式不支持在线更新，请使用 NSIS 安装包重新安装。": "This installation type does not support online updates. Reinstall using the NSIS installer.",
   "此条目不是有效链接。": "This item is not a valid link.",
   "此条目不是有效文件路径。": "This item is not a valid file path.",
   "路径不存在或无法访问。": "The path does not exist or cannot be accessed.",

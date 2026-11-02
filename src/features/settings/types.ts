@@ -8,7 +8,7 @@ export interface AppUpdateView {
   currentVersion: string
   availableVersion: string | null
   notes: string | null
-  packageKind: 'nsis' | 'msi' | 'standalone'
+  packageKind: 'nsis' | 'standalone' | 'unsupported'
   supported: boolean
   configured: boolean
   phase: 'idle' | 'checking' | 'available' | 'latest' | 'downloading' | 'ready' | 'installing' | 'error'

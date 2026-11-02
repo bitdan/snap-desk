@@ -63,15 +63,17 @@ fn error(e: impl std::fmt::Display) -> String {
     e.to_string()
 }
 fn supported() -> bool {
-    cfg!(all(target_os = "windows", target_arch = "x86_64")) && !cfg!(debug_assertions)
+    cfg!(all(target_os = "windows", target_arch = "x86_64"))
+        && !cfg!(debug_assertions)
+        && package_kind() != "unsupported"
 }
 
 fn package_kind() -> &'static str {
     use tauri::utils::{config::BundleType, platform::bundle_type};
     match bundle_type() {
         Some(BundleType::Nsis) => "nsis",
-        Some(BundleType::Msi) => "msi",
-        _ => "standalone",
+        None => "standalone",
+        _ => "unsupported",
     }
 }
 
@@ -118,6 +120,9 @@ fn view(app: &AppHandle) -> Result<AppUpdateView, String> {
 }
 
 fn ready() -> Result<(), String> {
+    if package_kind() == "unsupported" {
+        return Err("当前安装方式不支持在线更新，请使用 NSIS 安装包重新安装。".into());
+    }
     if !supported() {
         return Err("在线更新仅支持 Windows x64 发布版本。".into());
     }
@@ -254,7 +259,6 @@ async fn discover(app: &AppHandle, include_preview: bool) -> Result<Option<Updat
     update.timeout = Some(Duration::from_secs(300));
     // 清单不能借另一个 tag 发布不同版本，也不能切换包类型或仓库。
     let expected_suffix = match package_kind() {
-        "msi" => ".msi",
         "nsis" => "-setup.exe",
         _ => "-standalone.exe",
     };
