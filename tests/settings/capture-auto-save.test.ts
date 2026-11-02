@@ -5,7 +5,7 @@ import { clientComponent, findNode, MemoryNode, memoryRenderer } from '../helper
 import { defaultSettings } from '../../src/features/settings/settings'
 import type { AppUpdateView } from '../../src/features/settings/types'
 
-const api = vi.hoisted(() => ({ status: vi.fn(), saveSettings: vi.fn(), setShortcutEditing: vi.fn(), start: vi.fn(), appUpdateStatus: vi.fn() }))
+const api = vi.hoisted(() => ({ status: vi.fn(), saveSettings: vi.fn(), setShortcutEditing: vi.fn(), start: vi.fn(), appUpdateStatus: vi.fn(), completeOnboarding: vi.fn() }))
 const updateEvent = vi.hoisted(() => ({ receive: (_view: AppUpdateView) => {} }))
 vi.mock('../../src/features/settings/events', () => ({ onUpdateWindowRequested: () => () => {}, onAppUpdate: vi.fn(async (fn: typeof updateEvent.receive) => {
   updateEvent.receive = fn
@@ -46,7 +46,19 @@ vi.mock('../../src/features/settings/components/ConfigTransferSettings.vue', asy
   }, 'Import') }) }
 })
 import Compatibility from '../../src/features/settings/components/ShortcutCompatibility.vue'
+vi.mock('../../src/app/components/OnboardingGuide.vue', async () => {
+  const { defineComponent, h, onMounted } = await import('vue')
+  return { default: defineComponent({ props: ['busy', 'error'], emits: ['complete', 'navigate'], setup: (props, { emit }) => {
+    onMounted(() => emit('navigate', '截图'))
+    return () => h('section', { 'data-guide': true }, [
+      h('button', { 'data-finish-guide': true, disabled: props.busy, onClick: () => emit('complete') }, 'Finish'),
+      props.error ? h('p', { role: 'alert' }, props.error) : null,
+    ])
+  } }) }
+})
 clientComponent(Compatibility, new URL('../../src/features/settings/components/ShortcutCompatibility.vue', import.meta.url))
+import SupportPages from '../../src/app/components/SupportPages.vue'
+clientComponent(SupportPages, new URL('../../src/app/components/SupportPages.vue', import.meta.url))
 import UpdateNotice from '../../src/features/settings/components/UpdateNotice.vue'
 clientComponent(UpdateNotice, new URL('../../src/features/settings/components/UpdateNotice.vue', import.meta.url))
 import App from '../../src/app/App.vue'
@@ -63,11 +75,31 @@ beforeEach(() => {
   api.status.mockImplementation(async () => ({ settings: structuredClone(settings), version: 'test', platform: 'windows', delayRemaining: 0 }))
   api.appUpdateStatus.mockResolvedValue({ availableVersion: null })
   api.saveSettings.mockImplementation(async value => { settings = structuredClone(value); return structuredClone(settings) })
+  api.completeOnboarding.mockImplementation(async () => { settings.onboardingVersion = 1; return structuredClone(settings) })
   memoryRenderer.render(h(Component), root)
 })
 afterEach(() => { memoryRenderer.render(null, root); vi.clearAllTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.useRealTimers() })
 
 describe('截图设置自动生效', () => {
+  it('帮助页可重开引导，完成保存失败保留引导，重试成功后关闭', async () => {
+    await flush()
+    const help = () => findNode(root, node => node.type === 'button' && text(node) === '帮助')!
+    help().props.onClick(); await flush()
+    const restart = () => findNode(root, node => node.type === 'button' && text(node) === '重新打开新手引导')!
+    restart().props.onClick(); await flush()
+    expect(findNode(root, node => node.props['data-guide'])).toBeDefined()
+    api.completeOnboarding.mockRejectedValueOnce(new Error('无法保存引导状态'))
+    findNode(root, node => node.props['data-finish-guide'])!.props.onClick(); await flush()
+    expect(text(root)).toContain('无法保存引导状态')
+    expect(findNode(root, node => node.props['data-guide'])).toBeDefined()
+    findNode(root, node => node.props['data-finish-guide'])!.props.onClick(); await flush()
+    expect(api.completeOnboarding).toHaveBeenCalledTimes(2)
+    expect(findNode(root, node => node.props['data-guide'])).toBeUndefined()
+    help().props.onClick(); await flush()
+    restart().props.onClick(); await flush()
+    expect(findNode(root, node => node.props['data-guide'])).toBeDefined()
+    expect(text(root)).not.toContain('无法保存引导状态')
+  })
   it('有更新时显示简洁下载提示和关于导航红点，更新消失后清除', async () => {
     await flush()
     const about = findNode(root, node => node.type === 'button' && text(node) === '关于')!

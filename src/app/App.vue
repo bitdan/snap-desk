@@ -48,6 +48,7 @@ const saving = ref(false)
 const editingShortcut = ref(false)
 const testingShortcuts = ref(false)
 const onboarding = ref(false)
+const onboardingError = ref('')
 const completingOnboarding = ref(false)
 const remaining = ref(0)
 // 表单草稿与已生效配置分开：保存失败时快捷键提示仍显示原来的值。
@@ -188,13 +189,13 @@ async function initialize() {
 /** 后端合并引导版本，不提交其他页面的未保存草稿。 */
 async function completeOnboarding() {
   if (completingOnboarding.value || !status.value) return
-  completingOnboarding.value = true
+  completingOnboarding.value = true; onboardingError.value = ''
   try {
     const saved = await api.completeOnboarding()
     status.value.settings.onboardingVersion = saved.onboardingVersion
     draft.value.onboardingVersion = saved.onboardingVersion
     onboarding.value = false
-  } catch (e) { error.value = String(e) }
+  } catch (e) { onboardingError.value = String(e) }
   finally { completingOnboarding.value = false }
 }
 // 表单输入框同样使用 Esc 收起；弹窗、快捷键录入等内层交互可先消费该事件。
@@ -207,7 +208,7 @@ onUnmounted(() => { disposed = true; window.removeEventListener('keydown', key);
   <div class="app-shell">
     <aside class="sidebar">
       <div class="brand"><span class="brand-icon"><Scan :size="23" /></span><div>Snap Desk</div></div>
-      <nav v-for="group in groups" :key="group.name" :aria-label="t(group.name)"><div class="nav-caption">{{ t(group.name) }}</div><button v-for="item in group.items" :key="item.name" :class="['nav-item', { active: page === item.name }]" :aria-current="page === item.name ? 'page' : undefined" @pointerenter="prefetchPage(item.name)" @focus="prefetchPage(item.name)" @click="page = item.name"><component :is="item.icon" :size="18" />{{ t(item.name) }}<span v-if="item.name === '关于' && availableUpdate" class="nav-update-dot" role="status" :aria-label="t('发现新版本')" :title="t('发现新版本')" /></button></nav>
+      <nav v-for="group in groups" :key="group.name" :aria-label="t(group.name)"><div class="nav-caption">{{ t(group.name) }}</div><button v-for="item in group.items" :key="item.name" :class="['nav-item', { active: page === item.name }]" :aria-current="page === item.name ? 'page' : undefined" :data-onboarding="`nav-${item.name}`" @pointerenter="prefetchPage(item.name)" @focus="prefetchPage(item.name)" @click="page = item.name"><component :is="item.icon" :size="18" />{{ t(item.name) }}<span v-if="item.name === '关于' && availableUpdate" class="nav-update-dot" role="status" :aria-label="t('发现新版本')" :title="t('发现新版本')" /></button></nav>
       <div class="sidebar-bottom"><span v-if="status" class="version-dot" /> {{ status ? `v${status.version}` : t('版本待读取') }}</div>
     </aside>
     <main class="workspace">
@@ -220,10 +221,10 @@ onUnmounted(() => { disposed = true; window.removeEventListener('keydown', key);
         <div v-if="status?.configWarning" class="notice" role="alert">{{ te(status.configWarning) }}</div>
         <div v-if="remaining > 0" class="notice flex items-center justify-between" role="status"><span>{{ remaining }} {{ t('秒后截图，可切换到目标窗口；再次按截图快捷键可取消。') }}</span><Button variant="outline" @click="cancelPending">{{ t('取消截图') }}</Button></div>
 
-        <OnboardingGuide v-if="onboarding && status" :settings="status.settings" :busy="completingOnboarding" @complete="completeOnboarding" @navigate="page = $event" />
+        <OnboardingGuide v-if="onboarding && status" :busy="completingOnboarding" :error="onboardingError" @complete="completeOnboarding" @navigate="page = $event" />
         <template v-if="page === '截图'">
           <section class="capture-panel" :aria-label='t("截图操作")'>
-            <div class="capture-controls">
+            <div class="capture-controls" data-onboarding="capture-controls">
               <div class="capture-delay">
                 <label for="quick-delay"><Timer :size="16" aria-hidden="true" />{{ t('延时') }}</label>
                 <!-- 主页使用同一设置保存接口，确保按钮、托盘和快捷键的延时一致。 -->
@@ -255,12 +256,12 @@ onUnmounted(() => { disposed = true; window.removeEventListener('keydown', key);
         </GeneralSettings>
         <ConfigTransferSettings v-else-if="page === '导入/导出'" :prepare-transfer="prepareConfigTransfer" />
         <AiProviderSettings v-else-if="page === '识别与翻译'" />
-        <SupportPages v-else-if="page === '帮助' || page === '关于'" :page="page" :version="status?.version" :shortcuts="status?.settings.shortcuts" :busy="!status || completingOnboarding" @navigate="page = $event" @onboarding="onboarding = true" @project="openProject" />
+        <SupportPages v-else-if="page === '帮助' || page === '关于'" :page="page" :version="status?.version" :shortcuts="status?.settings.shortcuts" :busy="!status || completingOnboarding" @navigate="page = $event" @onboarding="onboardingError = ''; onboarding = true" @project="openProject" />
         <RecordingPanel v-else-if="page === '录屏'" />
         <PinManager v-else-if="page === '贴图'" />
         <template v-else-if="page === '快捷键'">
           <form class="settings-card" @submit.prevent>
-            <div v-for="action in shortcutActions" :key="action.key" class="setting-row flex-wrap gap-3">
+            <div v-for="action in shortcutActions" :key="action.key" class="setting-row flex-wrap gap-3" :data-onboarding="action.key === 'capture' ? 'shortcut-settings' : undefined">
               <label>{{ t(action.label) }}<small>{{ t(action.description) }}</small></label>
               <div class="flex flex-wrap items-center gap-2">
                 <ShortcutInput v-model="draft.shortcuts[action.key]" :label="action.label" :disabled="locked" :validate="value => validateShortcuts({ ...draft.shortcuts, [action.key]: value })" @editing="editingShortcut = $event; if (!$event) shortcutAutoSave.flush()" @error="error = $event" @update:model-value="shortcutAutoSave.schedule" />
