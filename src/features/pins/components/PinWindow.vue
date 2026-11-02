@@ -40,22 +40,11 @@ async function recognize(mode: 'ocr' | 'qr' | 'translate', event: MouseEvent) {
   if (!frame.value || busy.value || editor.pending || editor.interacting) return
   recognitionTrigger = event.currentTarget as HTMLElement
   closeMenu()
-  const revision = frame.value.revision
-  await run(async () => {
-    await api.setPinRecognitionOpen(true)
-    if (disposed) return
-    if (!frame.value?.dataUrl || frame.value.revision !== revision) {
-      await api.setPinRecognitionOpen(false)
-      return
-    }
-    recognitionMode.value = mode
-  })
+  recognitionMode.value = mode
 }
 async function closeRecognition(restoreFocus = true) {
   if (!recognitionMode.value) return
   recognitionMode.value = null
-  try { await api.setPinRecognitionOpen(false) }
-  catch (e) { if (!disposed) error.value = String(e) }
   if (restoreFocus && !disposed) void nextTick(() => recognitionTrigger?.isConnected ? recognitionTrigger.focus() : menuTrigger?.focus())
 }
 const error = ref('')
@@ -329,7 +318,7 @@ function closeOnResize() {
       <button role="menuitemcheckbox" :aria-checked="frame?.view.topmost" :disabled="busy || editor.pending || editor.interacting" @click="closeMenu(true); setView({ topmost: !frame?.view.topmost })"><Check v-if="frame?.view.topmost" :size="14" class="menu-check" aria-hidden="true" />{{ t("窗口置顶") }}</button>
       <button role="menuitemcheckbox" :aria-checked="frame?.view.locked" :disabled="busy || editor.pending || editor.interacting" @click="closeMenu(true); setView({ locked: !frame?.view.locked })"><Check v-if="frame?.view.locked" :size="14" class="menu-check" aria-hidden="true" />{{ t("锁定贴图") }}</button>
       <button role="menuitemcheckbox" :aria-checked="controls" :disabled="busy || editor.pending || editor.interacting" @click="closeMenu(true); toggleControls()"><Check v-if="controls" :size="14" class="menu-check" aria-hidden="true" />{{ t("显示工具栏") }}<span>Tab</span></button>
-      <button role="menuitemcheckbox" :aria-checked="!!frame?.view.clickThrough" :disabled="busy || editor.pending || editor.interacting" :title="t('用全局贴图快捷键或托盘恢复鼠标操作')" @click="closeMenu(); setView({ clickThrough: !frame?.view.clickThrough })"><Check v-if="frame?.view.clickThrough" :size="14" class="menu-check" aria-hidden="true" />{{ t("鼠标穿透") }}<span>Ctrl+Alt+P</span></button>
+      <button role="menuitemcheckbox" :aria-checked="!!frame?.view.clickThrough" :disabled="busy || editor.pending || editor.interacting" :title="t('用全局贴图快捷键恢复鼠标操作')" @click="closeMenu(); setView({ clickThrough: !frame?.view.clickThrough })"><Check v-if="frame?.view.clickThrough" :size="14" class="menu-check" aria-hidden="true" />{{ t("鼠标穿透") }}<span>Ctrl+Alt+P</span></button>
       <div role="separator" />
       <button role="menuitem" @click="closeMenu(true); action('hide')">{{ t("隐藏贴图") }}<span>Esc</span></button>
       <button role="menuitem" @click="closeMenu(true); action('close')">{{ t("关闭贴图") }}<span>Ctrl/⌘+W</span></button>

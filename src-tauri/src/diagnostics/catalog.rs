@@ -127,7 +127,6 @@ pub const COMMANDS: &[&str] = &[
     "check_app_update",
     "download_app_update",
     "install_app_update",
-    "set_pin_recognition_open",
     "replay_capture",
     "finish_html_render",
     "diagnostics_status",

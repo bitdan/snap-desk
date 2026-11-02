@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { t, te } from '@/shared/i18n/i18n'
 import ConfirmDialog from '@/shared/ui/ConfirmDialog.vue'
+import DetachedWindow from '@/shared/ui/DetachedWindow.vue'
 import { handleEscape } from '@/shared/ui/escape'
 import { nextTick, onMounted, onUnmounted, ref } from 'vue'
 import ImageTranslation from '@/features/recognition/components/ImageTranslation.vue'
@@ -62,20 +63,20 @@ function key(event: KeyboardEvent) {
   const nodes = [...(panel.value?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), textarea:not(:disabled)') ?? [])]
   if (!nodes.length) { event.preventDefault(); return }
   const first = nodes[0], last = nodes[nodes.length - 1]
-  if (event.shiftKey && (document.activeElement === first || document.activeElement === panel.value)) { event.preventDefault(); last?.focus() }
-  else if (!event.shiftKey && (document.activeElement === last || document.activeElement === panel.value)) { event.preventDefault(); first?.focus() }
+  if (event.shiftKey && ((event.currentTarget as HTMLElement).ownerDocument.activeElement === first || (event.currentTarget as HTMLElement).ownerDocument.activeElement === panel.value)) { event.preventDefault(); last?.focus() }
+  else if (!event.shiftKey && ((event.currentTarget as HTMLElement).ownerDocument.activeElement === last || (event.currentTarget as HTMLElement).ownerDocument.activeElement === panel.value)) { event.preventDefault(); first?.focus() }
 }
 onMounted(() => { void nextTick(() => panel.value?.focus()); void recognize() })
 onUnmounted(() => { disposed = true })
 </script>
 
 <template>
-  <div class="pin-recognition-shade" @pointerdown.stop @wheel.stop @contextmenu.stop.prevent>
-    <section v-if="mode !== 'qr' && ocr" class="pin-recognition result-shell" role="dialog" aria-modal="true" :aria-label="translating ? t('文字翻译') : t('文字识别结果')">
+  <DetachedWindow :open="true" :title="mode === 'qr' ? t('图片二维码识别') : translating ? t('文字翻译') : t('文字识别结果')" :width="1000" :height="650" @close="emit('close')">
+    <section v-if="mode !== 'qr' && ocr" class="pin-recognition result-shell" :aria-label="translating ? t('文字翻译') : t('文字识别结果')">
       <ImageTranslation v-if="translating" :recognition="ocr" :source-text="draft" :image="frame" @close="emit('close')" @back="backToRecognition" />
       <OcrResultCard v-else v-model:text="draft" @translate="translating = true" @close="emit('close')" />
     </section>
-    <section v-else ref="panel" class="pin-recognition" role="dialog" aria-modal="true" :aria-label="mode !== 'qr' ? t('图片文字识别') : t('图片二维码识别')" tabindex="-1" @keydown.stop="key">
+    <section v-else ref="panel" class="pin-recognition" :aria-label="mode !== 'qr' ? t('图片文字识别') : t('图片二维码识别')" tabindex="-1" @keydown.stop="key">
       <header><strong>{{ mode !== 'qr' ? t("图片文字识别") : t("图片二维码识别") }}</strong><button @click="emit('close')">{{ t("关闭") }}</button></header>
       <div class="pin-recognition-body">
         <p v-if="busy" role="status">{{ t("正在处理…") }}</p>
@@ -92,12 +93,11 @@ onUnmounted(() => { disposed = true })
       <footer><button :disabled="busy" @click="recognize">{{ t("重新识别") }}</button></footer>
     </section>
     <ConfirmDialog :open="pendingLink !== null" :title="t('确认打开链接')" :description="t('将在浏览器打开：') + '\n' + (qr?.items[pendingLink ?? -1]?.url ?? '')" :confirm-label="t('确认打开')" :busy="busy" :error="te(error)" @update:open="updateLinkOpen" @confirm="pendingLink !== null && qrAction(pendingLink, 'open')" />
-  </div>
+  </DetachedWindow>
 </template>
 
 <style scoped>
-.pin-recognition-shade { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; background: #0003; padding: 8px; }
-.pin-recognition { width: min(1280px, calc(100vw - 16px), calc((100vh - 16px) / 0.618)); aspect-ratio: 1 / 0.618; max-height: 100%; display: flex; flex-direction: column; min-height: 0; overflow: hidden; padding: 12px; background: #fff; border: 1px solid #d8dee4; border-radius: 8px; color: #24292f; font-size: 13px; user-select: text; }
+.pin-recognition { width: 100%; height: 100%; box-sizing: border-box; display: flex; flex-direction: column; min-height: 0; overflow: hidden; padding: 12px; background: #fff; color: #24292f; font-size: 13px; user-select: text; }
 .pin-recognition-body { flex: 1; min-height: 0; overflow: auto; }
 .result-shell { padding: 0; border: 0; }
 .result-shell :deep(.recognition-result) { flex: 1; min-height: 0; }

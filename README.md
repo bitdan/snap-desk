@@ -1,23 +1,20 @@
 # Snap Desk
 
-基于 **Tauri 2 + Rust + Vue 3** 开发的开源桌面工具，集截图、标注、贴图、录屏和文字识别于一体。
-
-目前优先支持 **Windows**，macOS / Linux 仍在适配中。
+基于 **Tauri 2 + Rust + Vue 3** 的开源桌面工具，目前优先支持 **Windows**。
 
 ## 功能
 
-- **截图与标注**：区域 / 全屏截图、窗口识别、快捷键，以及文字、箭头、马赛克等标注工具。
-- **滚动截图**：在所选显示器区域手动横向或纵向滚动，首次滚轮方向锁定单轴，自动拼接并实时预览；支持同轴折返、白底 / 透明 PNG 导出，以及匹配失败时保存已确认部分。
-- **贴图**：将截图、图片或剪贴板内容固定在桌面，支持缩放和编辑。
-- **Windows 录屏**：录制所选显示器区域或完整显示器，支持 MP4 30 / 60 FPS、GIF 10 / 20 FPS、倒计时和暂停 / 恢复；MP4 可选系统声音与麦克风，GIF 无声。支持键鼠操作可视化、录制中实时标注，以及标注保留时间和淡出设置。
-- **录屏保存**：正常结束后直接保存带标注的 MP4 / GIF，不再进入录后回放和编辑；失败或取消时清理临时文件，不保留恢复副本。
-- **OCR、二维码与翻译**：截图、贴图和导入图片可本地识别文字及二维码；支持本地中英互译、OpenAI-compatible 文本服务和 DeepL 官方 API（Free / Pro）。进入翻译面板后按已保存的服务配置自动开始；在线服务仅接收识别文字，不上传图片。图片翻译展示原文 / 译文文本对照，支持复制与取消翻译请求。
-- **剪贴板管理**：保存和搜索文本、图片及文件路径历史，支持分类、收藏、贴图，以及文本 / 图片的批量 PDF、长 PNG 或独立文件导出。文件历史只保存路径，不备份原文件。
-- **外观与引导**：通用设置可保存浅色 / 深色 / 跟随系统主题及中英文偏好。操作页、辅助窗口、托盘、应用定义的对话框和已知错误提示支持中英文；用户内容、文件路径及未知系统 / 驱动错误详情保留原文。帮助页可重新打开新手引导。
+- **截图与标注**：区域 / 全屏截图、窗口吸附、多显示器、延时截图、取色及常用标注工具。
+- **滚动截图**：手动横向或纵向滚动、自动拼接、实时预览，支持同轴折返和白底 / 透明 PNG 导出。
+- **贴图**：将截图、图片或剪贴板内容固定在桌面，支持分组、缩放、图像调整与继续标注。
+- **录屏**：Windows 区域 / 显示器录制，支持 MP4、GIF、暂停 / 恢复、键鼠可视化和实时标注；MP4 可录制系统声音与麦克风。
+- **识别与翻译**：本地 OCR、二维码、本地中英互译，以及 OpenAI-compatible 文本服务和 DeepL API；在线翻译仅发送识别文字。
+- **剪贴板**：文本、图片和文件路径历史，支持分类、搜索、收藏、预览、贴图及 PDF / 长 PNG / 独立文件导出；文件历史只保存路径。
+- **设置与更新**：自定义快捷键、中英文、浅色 / 深色主题、配置导入 / 导出、日志诊断及正式版 / 测试版在线更新。更新、确认和结果弹窗使用独立窗口。
 
 ## 下载
 
-前往 [Releases](https://github.com/bitdan/snap-desk/releases) 获取 Windows 版本。OCR 模型与运行库、本地翻译引擎及语言包在应用内按需安装；本地翻译引擎下载 / 导入目前仅支持 Windows x64。
+前往 [Releases](https://github.com/bitdan/snap-desk/releases) 下载 Windows x64 NSIS 安装包或独立 EXE。OCR 模型、运行库、本地翻译引擎及语言包在应用内按需安装。
 
 ## 本地开发
 
@@ -30,43 +27,37 @@ npm ci
 npm run desktop:dev
 ```
 
-构建独立可运行的调试程序：`npm run desktop:build:fast`，输出为
-`src-tauri/target/debug/snap-desk.exe`；发布优化程序使用 `npm run desktop:build`。
-构建前从托盘退出旧程序。生成安装包使用 `npm run desktop:package`；Windows 正式版和测试版统一采用 NSIS 安装包与独立 EXE 双分发。
-主程序构建不依赖本地翻译引擎，使用本地翻译时在“识别与翻译”设置中下载或导入引擎，并安装对应语言包。
+- `npm run dev:update`：启动浏览器模拟更新，演示下载进度与安装完成，不下载文件或退出应用。
+- `npm run check`：目录边界、IPC 契约和 TypeScript 静态检查。
+- `npm test`：前端与脚本测试。
+- `npm run desktop:build:fast`：生成调试程序 `src-tauri/target/debug/snap-desk.exe`。
+- `npm run desktop:build` / `npm run desktop:package`：生成发布程序 / 安装包；构建前从托盘退出旧程序。
 
-发布时先修改 `package.json` 版本并运行 `npm run version:sync`，提交后创建同版本的附注标签，例如 `git tag -a v0.2.0-beta.5 -m "Snap Desk v0.2.0-beta.5" -m "- 本次新增或修复的内容"`，再推送提交和标签。流水线将标签注释自动写入 Releases 正文及应用内更新说明；没有更新说明的标签会在构建前报错。
+发布以 `package.json` 为版本来源，修改后运行 `npm run version:sync`。使用同版本附注标签 `v<version>`，标签注释填写中文更新内容；流水线同步到 Releases 和更新清单，缺少内容时停止发布。
 
 ## 代码组织
 
 ```text
 src/
   main.ts              # WebView 启动与窗口选择
-  app/                 # 主界面、引导和全局样式
-  features/<功能>/     # 业务逻辑、components、api、events 与通信类型
-  shared/              # 通用 UI、几何、集合、语言与窗口标签解析
-  services/            # IPC 错误处理、命令白名单、日志与 API 汇总
+  app/                 # 主界面、引导与全局样式
+  features/<功能>/     # 业务组件、逻辑、API、事件与类型
+  shared/              # 通用 UI、独立窗口、几何与语言
+  services/            # IPC、命令白名单、日志与 API 汇总
 src-tauri/src/
-  lib.rs / main.rs     # 模块地图与原生启动入口
-  app/                 # Tauri 组装、应用命令、托盘/快捷键动作
-  capture/             # 截图会话、桌面采集、预览；含 recorder/ 和 scroll/
-  pins/                # 桌面贴图与内容读取
-  clipboard/           # 剪贴板历史、持久化、导出与平台适配
-  recognition/         # OCR、二维码、翻译、模型、引擎与凭据
-  settings/            # 设置、快捷键、自启与目录访问
-  resources/           # 资源下载与空闲资源回收
-  diagnostics/         # 日志查询、诊断与导出
-  shared/              # 标注渲染、图像导出、安全暂存、窗口和系统基础设施
-tests/<功能>/          # 对应功能的前端测试
+  app/                 # Tauri 组装、在线更新、托盘与快捷键
+  capture/             # 截图；含 recorder/ 和 scroll/
+  pins/                # 桌面贴图
+  clipboard/           # 剪贴板历史与导出
+  recognition/         # OCR、二维码、翻译与凭据
+  settings/            # 配置、快捷键、自启与目录
+  resources/           # 资源安装与空闲回收
+  diagnostics/         # 日志与诊断
+  shared/              # 渲染、导出、窗口与系统基础设施
+tests/<功能>/          # 前端测试
 ```
 
-前端功能目录为 `capture`、`annotations`、`scroll`、`recording`、`pins`、`clipboard`、`recognition`、`settings`、`resources` 和 `diagnostics`。新增功能先找所属目录，组件与业务逻辑放在一起；跨功能通用代码才进入 `shared`。通信命令与事件由各功能维护，通过 `services/ipc.ts` 统一处理错误，`services/api.ts` 只汇总导出。
-
-`npm run check` 执行目录边界、IPC 契约和 TypeScript 静态检查；`npm test` 先检查目录边界与 IPC 契约，再运行前端及构建检查脚本测试。具体协作规则见 [AGENTS.md](AGENTS.md)。
-
-## 项目进度
-
-项目仍在开发和测试中，部分功能及跨平台支持尚未完善。详情见 [TODO](Snap_Desk_TODO.md)。
+组件和业务逻辑归属对应功能；命令与事件通过 `services/ipc.ts` 调用，`services/api.ts` 仅汇总。协作规则见 [AGENTS.md](AGENTS.md)，开发进度见 [TODO](Snap_Desk_TODO.md)。
 
 ## 许可证
 

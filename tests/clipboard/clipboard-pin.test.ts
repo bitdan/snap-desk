@@ -1,3 +1,5 @@
+vi.mock('../../src/shared/ui/DetachedWindow.vue', async () => ({ default: (await import('../helpers/detached-window')).DetachedWindowStub }))
+vi.mock('../../src/shared/ui/SelectControl.vue', async () => ({ default: (await import('../helpers/select-control')).SelectControlStub }))
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import ConfirmDialog from '../../src/shared/ui/ConfirmDialog.vue'
 import { h } from 'vue'
@@ -149,13 +151,14 @@ it('清空确认和导出弹窗先响应 Esc，焦点不在弹窗内也不直接
   await flushComponent()
   expect(findNode(root, node => node.props.role === 'alertdialog')).toBeUndefined()
   expect(exit).not.toHaveBeenCalled()
-  const dialog = () => findNode(root, node => typeof node.props['onUpdate:open'] === 'function')!
-  dialog().props['onUpdate:open'](true)
+  await select(1)
+  findNode(root, node => node.props['aria-label'] === '组合导出所选条目')!.props.onClick()
   await flushComponent()
-  expect(dialog().props.open).toBe(true)
+  const dialog = () => findNode(root, node => node.props['data-window'] === '组合导出')
+  expect(dialog()).toBeDefined()
   handleWindowEscape(key(), exit)
   await flushComponent()
-  expect(dialog().props.open).toBe(false)
+  expect(dialog()).toBeUndefined()
   expect(exit).not.toHaveBeenCalled()
 })
 
@@ -365,9 +368,11 @@ it('删除失败保留确认框和错误，忙碌期间阻止关闭与重复提�
   remove.props.onClick(); await flushComponent()
   expect(remove.props.disabled).toBe(true)
   remove.props.onClick()
-  const event = { preventDefault: vi.fn() }
-  dialog.props.onEscapeKeyDown(event)
+  const event = { key: 'Escape', defaultPrevented: false, isComposing: false, repeat: false, preventDefault: vi.fn(), stopPropagation: vi.fn() }
+  dialog.props.onKeydown(event)
   expect(event.preventDefault).toHaveBeenCalledOnce()
+  await flushComponent()
+  expect(findNode(root, node => node.props.role === 'alertdialog')).toBeDefined()
   expect(api.clipboardDelete).toHaveBeenCalledExactlyOnceWith([1, 2])
   reject(new Error('删除失败')); await flushComponent()
   expect(findNode(dialog, node => node.props.role === 'alert')?.text).toContain('删除失败')

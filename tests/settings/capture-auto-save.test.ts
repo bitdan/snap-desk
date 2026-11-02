@@ -1,11 +1,13 @@
+vi.mock('../../src/shared/ui/DetachedWindow.vue', async () => ({ default: (await import('../helpers/detached-window')).DetachedWindowStub }))
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { h } from 'vue'
 import { clientComponent, findNode, MemoryNode, memoryRenderer } from '../helpers/component-host'
 import { defaultSettings } from '../../src/features/settings/settings'
+import type { AppUpdateView } from '../../src/features/settings/types'
 
 const api = vi.hoisted(() => ({ status: vi.fn(), saveSettings: vi.fn(), setShortcutEditing: vi.fn(), start: vi.fn(), appUpdateStatus: vi.fn() }))
-const updateEvent = vi.hoisted(() => ({ receive: (_view: { availableVersion: string | null }) => {} }))
-vi.mock('../../src/features/settings/events', () => ({ onAppUpdate: vi.fn(async (fn: typeof updateEvent.receive) => {
+const updateEvent = vi.hoisted(() => ({ receive: (_view: AppUpdateView) => {} }))
+vi.mock('../../src/features/settings/events', () => ({ onUpdateWindowRequested: () => () => {}, onAppUpdate: vi.fn(async (fn: typeof updateEvent.receive) => {
   updateEvent.receive = fn
   return () => { updateEvent.receive = () => {} }
 }) }))
@@ -45,6 +47,8 @@ vi.mock('../../src/features/settings/components/ConfigTransferSettings.vue', asy
 })
 import Compatibility from '../../src/features/settings/components/ShortcutCompatibility.vue'
 clientComponent(Compatibility, new URL('../../src/features/settings/components/ShortcutCompatibility.vue', import.meta.url))
+import UpdateNotice from '../../src/features/settings/components/UpdateNotice.vue'
+clientComponent(UpdateNotice, new URL('../../src/features/settings/components/UpdateNotice.vue', import.meta.url))
 import App from '../../src/app/App.vue'
 const Component = clientComponent(App, new URL('../../src/app/App.vue', import.meta.url))
 const root = new MemoryNode('root')
@@ -64,15 +68,22 @@ beforeEach(() => {
 afterEach(() => { memoryRenderer.render(null, root); vi.clearAllTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.useRealTimers() })
 
 describe('截图设置自动生效', () => {
-  it('有更新时只在关于导航显示红点，更新消失后清除', async () => {
+  it('有更新时显示简洁下载提示和关于导航红点，更新消失后清除', async () => {
     await flush()
     const about = findNode(root, node => node.type === 'button' && text(node) === '关于')!
     const dot = () => findNode(about, node => String(node.props.class).includes('nav-update-dot'))
     expect(dot()).toBeUndefined()
-    updateEvent.receive({ availableVersion: '0.2.0' }); await flush()
+    const view: AppUpdateView = { currentVersion: '0.1.9', availableVersion: '0.2.0', notes: '不展示的日志', packageKind: 'nsis',
+      supported: true, configured: true, phase: 'available', downloaded: 0, total: null, error: null }
+    updateEvent.receive(view); await flush()
     expect(dot()?.props['aria-label']).toBe('发现新版本')
     expect(findNode(root, node => node.type === 'button' && text(node).includes('发现新版本'))).toBeUndefined()
-    updateEvent.receive({ availableVersion: null }); await flush()
+    const update = findNode(root, node => node.type === 'button' && text(node) === '有更新')!
+    expect(update).toBeDefined()
+    update.props.onClick(); await flush()
+    expect(findNode(root, node => node.type === 'button' && text(node) === '下载更新')).toBeDefined()
+    expect(text(root)).not.toContain(view.notes)
+    updateEvent.receive({ ...view, availableVersion: null }); await flush()
     expect(dot()).toBeUndefined()
   })
   it('悬停和聚焦录屏导航只预取模块，点击后才挂载页面', async () => {
@@ -106,7 +117,7 @@ describe('截图设置自动生效', () => {
 
 it('导入成功替换截图页草稿和快捷键状态，返回原页面不显示旧配置', async () => {
   await flush()
-  findNode(root, node => node.type === 'button' && text(node) === '导出/导入')!.props.onClick()
+  findNode(root, node => node.type === 'button' && text(node) === '导入/导出')!.props.onClick()
   await vi.dynamicImportSettled(); await flush()
   const importedSettings = defaultSettings(); importedSettings.export.filenamePrefix = 'Imported'; importedSettings.shortcutsEnabled = false; importedSettings.onboardingVersion = 1
   api.status.mockResolvedValue({ settings: importedSettings, version: 'test', platform: 'windows', delayRemaining: 0 })

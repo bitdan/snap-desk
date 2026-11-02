@@ -26,20 +26,9 @@ import { defaultSettings, exportFilenamePreview, validateExportSettings, validat
 import { errorMessage } from '@/services/errors'
 import AppearanceSettings from '@/features/settings/components/AppearanceSettings.vue'
 import { applyAppearance, type Appearance } from '@/shared/ui/appearance'
-import { onAppUpdate } from '@/features/settings/events'
+import UpdateNotice from '@/features/settings/components/UpdateNotice.vue'
 
 const availableUpdate = ref<string | null>(null)
-/** 独立于主设置初始化，更新服务失败不影响截图和快捷键。 */
-async function initializeUpdateNotice() {
-  if (!desktop) return
-  try {
-    const off = await onAppUpdate(view => { availableUpdate.value = view.availableVersion })
-    if (disposed) { off(); return }
-    disposers.push(off)
-    const view = await api.appUpdateStatus()
-    if (!disposed) availableUpdate.value = view.availableVersion
-  } catch { /* 更新状态在关于页中提供重试入口。 */ }
-}
 
 const page = ref('截图')
 /** 导航悬停或键盘聚焦时只预取模块，不挂载页面，也不提前查询设备或启动轮询。 */
@@ -49,7 +38,7 @@ function prefetchPage(name: string) {
 // 导航按操作、配置与支持分组，日志拥有独立页面。
 const groups = [
   { name: '工具', items: [{ name: '截图', icon: Camera }, { name: '录屏', icon: Video }, { name: '贴图', icon: Pin }, { name: '剪贴板', icon: Folder }] },
-  { name: '设置', items: [{ name: '通用', icon: SettingsIcon }, { name: '快捷键', icon: Keyboard }, { name: '导出/导入', icon: ArrowLeftRight }, { name: '识别与翻译', icon: Scan }] },
+  { name: '设置', items: [{ name: '通用', icon: SettingsIcon }, { name: '快捷键', icon: Keyboard }, { name: '导入/导出', icon: ArrowLeftRight }, { name: '识别与翻译', icon: Scan }] },
   { name: '支持', items: [{ name: '日志', icon: FileText }, { name: '帮助', icon: CircleHelp }, { name: '关于', icon: Info }] },
 ]
 const pageGroup = computed(() => groups.find(group => group.items.some(item => item.name === page.value))?.name ?? '')
@@ -210,7 +199,7 @@ async function completeOnboarding() {
 }
 // 表单输入框同样使用 Esc 收起；弹窗、快捷键录入等内层交互可先消费该事件。
 function key(event: KeyboardEvent) { handleEscape(event, () => { if (desktop) void hide() }) }
-onMounted(() => { window.addEventListener('keydown', key); void initialize(); void initializeUpdateNotice() })
+onMounted(() => { window.addEventListener('keydown', key); void initialize() })
 onUnmounted(() => { disposed = true; window.removeEventListener('keydown', key); disposers.splice(0).forEach(off => off()) })
 </script>
 
@@ -224,6 +213,7 @@ onUnmounted(() => { disposed = true; window.removeEventListener('keydown', key);
     <main class="workspace">
       <header class="topbar"><div class="page-breadcrumb"><span>{{ t(pageGroup) }}</span><span aria-hidden="true">/</span><h1>{{ t(page) }}</h1></div><div class="flex items-center gap-2"><Button variant="ghost" :disabled="locked" :aria-pressed="status?.settings.shortcutsEnabled" :title="t(status?.settings.shortcutsEnabled ? '禁用全部全局快捷键' : '启用全部全局快捷键')" @click="toggleShortcuts"><Check v-if="status?.settings.shortcutsEnabled && !status.shortcutError" :size="15" class="status-check" /><Keyboard v-else :size="15" />{{ t('快捷键') }} {{ !status ? t('未读取') : status.shortcutError ? t('注册异常') : status.settings.shortcutsEnabled ? t('已启用') : t('已禁用') }}</Button><Button variant="ghost" :title="t('隐藏主窗口，保留托盘运行')" :disabled="!desktop" @click="hide"><PanelLeftClose :size="15" />{{ t('收起') }}</Button></div></header>
       <div class="page-content" :data-page="page" :class="{ 'clipboard-page': page === '剪贴板', 'logs-page': page === '日志' }">
+        <UpdateNotice :show-trigger="page !== '关于'" @version="availableUpdate = $event" />
         <div v-if="initializing" class="notice" role="status">{{ t("正在读取应用设置…") }}</div>
         <div v-if="!desktop" class="notice">{{ t('请在桌面应用中使用截图和快捷键。') }}</div>
         <div v-if="error || status?.shortcutError" class="notice error" role="alert">{{ te(error || status?.shortcutError) }}<Button v-if="initializationFailed" variant="outline" :disabled="initializing" @click="initialize">{{ t('重新连接') }}</Button></div>
@@ -263,7 +253,7 @@ onUnmounted(() => { disposed = true; window.removeEventListener('keydown', key);
         <GeneralSettings v-else-if="page === '通用'">
           <AppearanceSettings :busy="locked" :saved="savedSection === '通用'" @save="saveAppearance" />
         </GeneralSettings>
-        <ConfigTransferSettings v-else-if="page === '导出/导入'" :prepare-transfer="prepareConfigTransfer" />
+        <ConfigTransferSettings v-else-if="page === '导入/导出'" :prepare-transfer="prepareConfigTransfer" />
         <AiProviderSettings v-else-if="page === '识别与翻译'" />
         <SupportPages v-else-if="page === '帮助' || page === '关于'" :page="page" :version="status?.version" :shortcuts="status?.settings.shortcuts" :busy="!status || completingOnboarding" @navigate="page = $event" @onboarding="onboarding = true" @project="openProject" />
         <RecordingPanel v-else-if="page === '录屏'" />

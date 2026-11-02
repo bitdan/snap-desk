@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import SelectControl from '@/shared/ui/SelectControl.vue'
+import DetachedWindow from '@/shared/ui/DetachedWindow.vue'
 import { handleWindowEscape as handleEscape } from '@/shared/ui/escape'
 import { t, te } from '@/shared/i18n/i18n'
 import { convertFileSrc } from '@tauri-apps/api/core'
@@ -184,12 +185,6 @@ const activeDisplay = computed(() => {
 const pointerDisplay = computed(() => frame.value && pointer.value ? displayBounds(frame.value.displays,
   { x: frame.value.originX, y: frame.value.originY },
   { x: pointer.value.x * frame.value.width / viewport.value.width, y: pointer.value.y * frame.value.height / viewport.value.height }, frame.value, viewport.value) : activeDisplay.value)
-const dialogStyle = computed(() => ({ position: 'absolute' as const,
-  left: `${activeDisplay.value.x + activeDisplay.value.width / 2}px`,
-  top: `${activeDisplay.value.y + activeDisplay.value.height / 2}px`, transform: 'translate(-50%, -50%)',
-  maxWidth: `${activeDisplay.value.width - 32}px`, maxHeight: `${activeDisplay.value.height - 32}px`,
-  // 宽度同时受所在显示器的宽和高限制，保持高/宽 = 0.618，不挤出屏幕。
-  '--recognition-width': `${Math.max(1, Math.min(1280, activeDisplay.value.width - 32, (activeDisplay.value.height - 32) / 0.618))}px` }))
 const toolbar = ref<HTMLElement | null>(null)
 const { style: floatingToolbarStyle, start: floatToolbar, reset: resetToolbarPosition } = useFloatingToolbar(toolbar)
 const toolbarSize = ref({ width: 800, height: 46 })
@@ -578,17 +573,17 @@ onUnmounted(() => { releaseFrame(); disposed = true; offClosed?.(); off?.(); off
       </template>
     </AnnotationWorkspace>
     <CaptureMagnifier v-if="showMagnifier && screenImage && pointer && frame" :image="screenImage" :point="pointer" :viewport="viewport" :image-size="frame" :format="colorFormat" :relative="relativeCoordinates" :origin="pixels" :copied="colorCopied" :bounds="pointerDisplay" />
-    <div v-if="ocrResult !== null" class="qr-shade" @pointerdown.stop @pointermove.stop @pointerup.stop @contextmenu.stop.prevent>
-      <div :class="['qr-dialog', 'ocr-dialog', { 'translation-dialog': translationMode }]" :style="dialogStyle" role="dialog" aria-modal="true" :aria-label="translationMode ? t('文字翻译') : t('文字识别结果')">
+    <DetachedWindow :open="ocrResult !== null" :title="translationMode ? t('文字翻译') : t('文字识别结果')" :width="1000" :height="650" @close="closeOcr">
+      <div v-if="ocrResult" :class="['qr-dialog', 'ocr-dialog', { 'translation-dialog': translationMode }]">
         <ImageTranslation v-if="translationMode && frame && pixels" :key="ocrResult.requestId" :recognition="ocrResult" :source-text="ocrDraft" :image="{ dataUrl: imageUrl, width: frame.width, height: frame.height, crop: pixels }" @back="translationMode = false" @close="closeOcr" />
         <OcrResultCard v-else v-model:text="ocrDraft" @translate="translationMode = true" @close="closeOcr" />
       </div>
-    </div>
-    <div v-if="qrResult" class="qr-shade" @pointerdown.stop @pointermove.stop @pointerup.stop @contextmenu.stop.prevent>
-      <div class="qr-dialog" :style="dialogStyle" role="dialog" aria-modal="true" :aria-label='t("二维码识别结果")'>
+    </DetachedWindow>
+    <DetachedWindow :open="!!qrResult" :title="t('二维码识别结果')" :width="480" :height="420" @close="qrResult = null">
+      <div v-if="qrResult" class="qr-dialog">
         <QrResultCard :capture-result="qrResult" @close="qrResult = null" @opened="cancel" />
       </div>
-    </div>
+    </DetachedWindow>
     <div v-if="error" class="overlay-error" :style="{ left: `${activeDisplay.x + activeDisplay.width / 2}px`, bottom: 'auto', top: `${activeDisplay.y + 16}px`, maxWidth: `${activeDisplay.width - 32}px` }" role="alert" @pointerdown.stop>{{ te(error) }}</div>
   </div>
 </template>
@@ -624,9 +619,8 @@ onUnmounted(() => { releaseFrame(); disposed = true; offClosed?.(); off?.(); off
 :global([data-theme=dark]) .recording-toggles button[aria-pressed=true] { color:#bfdbfe; background:#263f60; box-shadow:inset 0 0 0 1px #45658b; }
 :global([data-theme=dark]) .recording-toggles button[aria-pressed=false] { color:#a8b3c2; }
 :global([data-theme=dark]) .recording-ready-row select:hover:enabled { background:#303f56; }
-.qr-shade { position: absolute; inset: 0; z-index: 10; display: grid; place-items: center; cursor: default; background: #0003; }
-.qr-dialog { width: min(440px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow-y: auto; color: #20232b; }
-.ocr-dialog { width: var(--recognition-width); aspect-ratio: 1 / 0.618; overflow: hidden; }
+.qr-dialog { width: 100%; height: 100%; overflow-y: auto; color: #20232b; }
+.ocr-dialog { overflow: hidden; }
 
 .capture-modebar { position: absolute; top: 8px; left: 8px; z-index: 4; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; max-width: calc(100vw - 16px); border-radius: 6px; padding: 6px 8px; background: #242330ed; color: white; font-size: 12px; cursor: default; }
 .capture-modebar button { display: flex; align-items: center; gap: 5px; padding: 3px; }

@@ -1,5 +1,5 @@
 <script setup lang="ts" generic="T extends string | number | null">
-import { computed, ref } from 'vue'
+import { computed, inject, ref, type ShallowRef } from 'vue'
 import { handleEscape } from './escape'
 import { useEscapeLayer } from './use-escape-layer'
 import { Check, ChevronDown, ChevronUp } from 'lucide-vue-next'
@@ -10,6 +10,7 @@ const props = defineProps<{ modelValue: T; options: { value: T; label: string; d
 const emit = defineEmits<{ 'update:modelValue': [value: T]; openChange: [open: boolean] }>()
 const selected = computed(() => props.options.findIndex(option => option.value === props.modelValue))
 const open = ref(false)
+const popup = inject<ShallowRef<Window | null> | null>('detached-window-owner', null)
 function setOpen(value: boolean) {
   if (open.value === value) return
   open.value = value; emit('openChange', value)
@@ -35,7 +36,7 @@ function choose(value: unknown) {
     <SelectTrigger v-bind="$attrs" class="select-trigger" @pointerdown.stop @keydown="triggerKey" @contextmenu.stop>
       <span class="select-label">{{ options[selected]?.label ?? String(modelValue ?? '') }}</span><ChevronDown :size="14" aria-hidden="true" />
     </SelectTrigger>
-    <SelectPortal>
+    <SelectPortal :to="popup?.document.body">
       <SelectContent class="select-menu" position="popper" :side-offset="5" :collision-padding="8" @pointerdown.stop @pointermove.stop @keydown.stop="menuKey" @contextmenu.stop>
         <SelectScrollUpButton class="select-scroll"><ChevronUp :size="14" /></SelectScrollUpButton>
         <SelectViewport class="select-viewport">

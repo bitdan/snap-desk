@@ -31,7 +31,7 @@ const guides = [
   </section>
   <section v-else class="about-page">
     <div class="about-identity"><span class="brand-icon"><Scan :size="28" /></span><div><h2>Snap Desk</h2><span class="pill">{{ version ? `v${version}` : t('桌面版本待读取') }}</span></div></div>
-    <p class="support-note">{{ t('截图、标注、贴图、滚动截图与录屏，本地处理。') }}</p>
+    <p class="support-note">{{ t('截图、标注、贴图、滚动截图与录屏。') }}</p>
     <UpdateSettings />
     <h2 class="section-heading">{{ t('应用信息') }}</h2>
     <div class="setting-row"><span>{{ t('开源许可') }}</span><span>GPL-3.0-only</span></div>

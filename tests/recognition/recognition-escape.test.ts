@@ -1,3 +1,4 @@
+vi.mock('../../src/shared/ui/DetachedWindow.vue', async () => ({ default: (await import('../helpers/detached-window')).DetachedWindowStub }))
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import ConfirmDialog from '../../src/shared/ui/ConfirmDialog.vue'
 import { h, type Component } from 'vue'

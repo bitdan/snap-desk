@@ -3,9 +3,8 @@ import SelectControl from '@/shared/ui/SelectControl.vue'
 import { useCategoryOrder, type ClipboardCategory } from '@/features/clipboard/use-category-order'
 import { t, te } from '@/shared/i18n/i18n'
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
-import { DialogRoot, DialogPortal, DialogOverlay, DialogContent, DialogTitle, DialogDescription, DialogTrigger } from 'reka-ui'
+import DetachedWindow from '@/shared/ui/DetachedWindow.vue'
 import ConfirmDialog from '@/shared/ui/ConfirmDialog.vue'
-import { PopoverRoot, PopoverTrigger, PopoverPortal, PopoverContent } from 'reka-ui'
 import { api, desktop, onClipboardChanged, onClipboardError, onClipboardState, onClipboardOpen } from '@/services/api'
 import { defaultClipboardSettings, selectClipboardItems, type ClipboardSelectionGesture, type ClipboardItem as Item, type ClipboardStatus, type ClipboardKind, type ClipboardTextCategory, type ClipboardExportOptions } from '@/features/clipboard/clipboard'
 import { Link, Palette, Folder, Search, ClipboardList, Type, Image, Star, X, Download, Pin, Trash2, Files, List, LayoutGrid, Ellipsis, LoaderCircle } from 'lucide-vue-next'
@@ -56,9 +55,6 @@ function helpKey(event: KeyboardEvent) { handleEscape(event, () => { helpOpen.va
 /** 事件中的条件分支放在脚本内，避免被模板编译器当成 JavaScript 表达式解析。 */
 function updateExportOpen(open: boolean) {
   if (!busy.value) exportOpen.value = open
-}
-function guardExportDismiss(event: Event) {
-  if (busy.value) event.preventDefault()
 }
 const options = ref<Omit<ClipboardExportOptions, 'ids'>>({ mode: 'pdf', pageSize: 'A4', gapPx: 16, marginMm: 12, background: 'white' })
 const searchInput = ref<HTMLInputElement | null>(null)
@@ -246,8 +242,6 @@ onMounted(async () => {
 onUnmounted(() => { disposed = true; revision++; clearTimeout(refreshTimer); clearTimeout(searchTimer); disposers.forEach(off => off()); clipboardThumbnails.clear() })
 </script>
 <template>
-  <!-- 复用模态组件管理焦点与遮罩；导出期间保持弹窗，避免重复提交或误关闭。 -->
-  <DialogRoot :open="exportOpen" @update:open="updateExportOpen">
   <section class="clipboard-history" @keydown="navigate">
     <header class="history-header">
       <span class="history-count">{{ status?.count ?? 0 }} {{ t("条 ·") }} {{ ((status?.byteSize ?? 0) / 1048576).toFixed(1) }} MiB</span>
@@ -265,34 +259,31 @@ onUnmounted(() => { disposed = true; revision++; clearTimeout(refreshTimer); cle
     <div class="history-viewbar">
     <nav class="history-categories" :aria-label='t("历史分类")'>
       <button v-for="tab in categories" :key="tab.value" :class="{ active: category === tab.value, 'sorting-source': sorting === tab.value, 'sorting-target': sortingTarget === tab.value && sorting !== tab.value }" :data-clipboard-category="tab.value" :title="t('{0}（拖动排序，Alt+←/→调整顺序）', { 0: t(tab.label) })" :aria-pressed="category === tab.value" :disabled="busy || !desktop" @pointerdown="categoryOrder.start($event, tab.value)" @pointermove="categoryOrder.move" @pointerup="categoryOrder.finish" @pointercancel="categoryOrder.cancel" @lostpointercapture="categoryOrder.cancel" @dragstart.prevent @keydown="categoryOrder.key($event, tab.value)" @click="categoryOrder.choose($event, tab.value)"><component :is="tab.icon" :size="16" aria-hidden="true" />{{ t(tab.label) }}</button>
-      <PopoverRoot v-model:open="helpOpen">
-        <PopoverTrigger class="history-help-trigger" :aria-label='t("帮助")' :title='t("帮助")'>?</PopoverTrigger>
-        <PopoverPortal>
-          <PopoverContent class="history-help-popup" side="bottom" align="end" :side-offset="6" :collision-padding="8" :aria-label='t("帮助")' @keydown.stop="helpKey">
+        <button @click="helpOpen = true" class="history-help-trigger" :aria-label='t("帮助")' :title='t("帮助")'>?</button>
+        <DetachedWindow :open="helpOpen" :title="t('帮助')" :width="480" :height="220" @close="helpOpen = false">
+          <section class="history-help-popup" :aria-label='t("帮助")' @keydown.stop="helpKey">
             <p>{{ t("单击选中 · Ctrl 多选 · Shift 连选 · 双击文字或图片预览 · Ctrl+C 复制") }}</p>
             <p v-if="category === 'file'">{{ t("仅记录文件路径，原文件移动或删除后失效。") }}</p>
-          </PopoverContent>
-        </PopoverPortal>
-      </PopoverRoot>
+          </section>
+        </DetachedWindow>
     </nav>
     <div class="history-layout-switch" role="group" :aria-label="t('显示方式')">
       <button type="button" :aria-pressed="layout === 'list'" :aria-label="t('列表视图')" :title="t('列表视图')" @click="setLayout('list')"><List :size="16" /></button>
       <button type="button" :aria-pressed="layout === 'grid'" :aria-label="t('网格视图')" :title="t('网格视图')" @click="setLayout('grid')"><LayoutGrid :size="16" /></button>
     </div>
     </div>
-    <DialogPortal>
-    <DialogOverlay class="history-export-overlay" />
-    <DialogContent class="history-export-dialog" @keydown.stop="exportKey" @escape-key-down="guardExportDismiss" @interact-outside="guardExportDismiss">
-      <DialogTitle class="history-export-title">{{ t("导出") }} {{ selected.length }} {{ t("个素材") }}</DialogTitle>
-      <DialogDescription class="history-export-description">{{ t("按选择顺序导出，图片使用原图。") }}</DialogDescription>
+    <DetachedWindow :open="exportOpen" :title="t('组合导出')" :width="640" :height="360" :busy="busy" @close="updateExportOpen(false)">
+    <section class="history-export-dialog" @keydown.stop="exportKey">
+      <h2 class="history-export-title">{{ t("导出") }} {{ selected.length }} {{ t("个素材") }}</h2>
+      <p class="history-export-description">{{ t("按选择顺序导出，图片使用原图。") }}</p>
       <fieldset :disabled="busy">
       <div class="history-tools"><SelectControl v-model="options.mode" :aria-label="t('导出方式')" :options="[{ value: 'pdf', label: t('多页 PDF') }, { value: 'longPng', label: t('纵向长图 PNG') }, { value: 'separate', label: t('分别导出 PNG / TXT') }]" /><SelectControl v-if="options.mode === 'pdf'" v-model="options.pageSize" :aria-label="t('页面大小')" :options="[{ value: 'A4', label: 'A4' }, { value: 'original', label: t('图片原始比例') }]" /><label v-if="options.mode === 'pdf'">{{ t("边距 mm") }}<input v-model.number="options.marginMm" type="number" min="0" max="30" /></label><label v-if="options.mode === 'longPng'">{{ t("间距 px") }}<input v-model.number="options.gapPx" type="number" min="0" max="200" /></label><SelectControl v-if="options.mode === 'longPng'" v-model="options.background" :aria-label="t('背景')" :options="[{ value: 'white', label: t('白底') }, { value: 'transparent', label: t('透明背景') }]" /></div>
       </fieldset>
       <p v-if="error" class="notice error" role="alert">{{ te(error) }}</p>
       <p v-else-if="message" role="status">{{ t(message) }}</p>
       <div class="history-export-actions"><Button :disabled="busy || !selected.length" @click="exportItems">{{ busy ? t("正在导出…") : t("选择位置并导出") }}</Button><Button variant="outline" :disabled="busy" @click="exportOpen = false">{{ t("关闭") }}</Button></div>
-    </DialogContent>
-    </DialogPortal>
+    </section>
+    </DetachedWindow>
     <div class="history-browser">
     <VirtualClipboardList ref="list" :items="items" :layout="layout" role="region" :aria-label='t("历史记录列表")' :aria-busy="foregroundLoading" @scroll="listScroll">
       <template #default="{ item }">
@@ -309,7 +300,7 @@ onUnmounted(() => { disposed = true; revision++; clearTimeout(refreshTimer); cle
     <aside class="history-action-rail" :aria-label='t("所选条目操作")'>
       <template v-if="selected.length">
         <span class="history-selected-count" role="status" :title="t('已选 {0} / 100 条', { 0: selected.length })">{{ t("已选") }}<br />{{ selected.length }}</span>
-        <DialogTrigger as-child><Button class="history-action" :disabled="busy || !canExport" :title="canExport ? t('组合导出') : t('组合导出仅支持文本和图片，文件引用请复制后粘贴')" :aria-label='t("组合导出所选条目")' @click="error = ''; message = ''"><Download :size="18" /></Button></DialogTrigger>
+        <Button class="history-action" :disabled="busy || !canExport" :title="canExport ? t('组合导出') : t('组合导出仅支持文本和图片，文件引用请复制后粘贴')" :aria-label='t("组合导出所选条目")' @click="error = ''; message = ''; exportOpen = true"><Download :size="18" /></Button>
         <Button class="history-action" variant="outline" :disabled="busy || !selected.some(id => ['image', 'text'].includes(selectedItems[id]?.kind))" :title='t("悬浮贴图")' :aria-label='t("将所选文字和图片贴图")' @click="pinSelected"><Pin :size="18" /></Button>
         <Button class="history-action history-delete" variant="outline" :disabled="busy" :title='t("删除所选")' :aria-label='t("删除所选条目")' @click="requestDelete('delete')"><Trash2 :size="18" /></Button>
         <Button class="history-action" variant="ghost" :disabled="busy" :title='t("取消选择")' :aria-label='t("取消选择")' @click="selected = []; selectedItems = {}"><X :size="18" /></Button>
@@ -317,15 +308,13 @@ onUnmounted(() => { disposed = true; revision++; clearTimeout(refreshTimer); cle
     </aside>
     </div>
   </section>
-  </DialogRoot>
   <ConfirmDialog :open="!!confirm" :title="confirm === 'clear' ? t('清空') : t('删除所选')" :description="(confirm === 'clear' ? t('清空历史记录？默认保留收藏。') : t('删除选中的 {0} 条记录（包含选中的收藏）？', { 0: selected.length })) + ' ' + t('此操作不可撤销。')" :confirm-label="t('确认删除')" :busy="busy" destructive :error="te(error)" @update:open="updateConfirmOpen" @confirm="remove">
     <label v-if="confirm === 'clear'" class="history-confirm-option"><input v-model="includeFavorites" type="checkbox" :disabled="busy" />{{ t("同时删除收藏") }}</label>
   </ConfirmDialog>
   <ClipboardPreview :item="previewItem" @close="closePreview" />
 </template>
 <style>
-.history-export-overlay { position:fixed; inset:0; z-index:110; background:#0006; }
-.history-export-dialog { position:fixed; z-index:111; top:50%; left:50%; transform:translate(-50%,-50%); width:min(600px, calc(100vw - 32px)); max-height:calc(100vh - 32px); overflow-y:auto; border:1px solid #d8dee4; border-radius:6px; background:#fff; box-shadow:0 12px 40px #0003; font-size:13px; }
+.history-export-dialog { width:100%; min-height:100%; box-sizing:border-box; overflow-y:auto; background:#fff; font-size:13px; }
 .history-export-dialog { padding:20px; }
 .history-confirm-option { display:flex; align-items:center; gap:8px; min-height:32px; }
 .history-confirm-option input[type=checkbox] { width:16px; height:16px; margin:0; accent-color:#2563eb; }
@@ -345,7 +334,7 @@ onUnmounted(() => { disposed = true; revision++; clearTimeout(refreshTimer); cle
 .history-count { color:#57606a; font-size:12px; white-space:nowrap; }
 .history-header-actions { display:flex; margin-left:auto; }
 .history-header-actions button { padding:4px 8px; height:28px; font-size:12px; }
-.history-help-popup { z-index:111; max-width:calc(100vw - 16px); padding:10px 12px; border:1px solid #d8dee4; border-radius:6px; background:#fff; color:#57606a; box-shadow:0 4px 16px #0002; font-size:12px; line-height:1.6; }
+.history-help-popup { padding:16px; background:#fff; color:#57606a; font-size:12px; line-height:1.6; }
 .history-help-popup p { margin:0; }
 .history-help-popup p + p { margin-top:4px; }
 [data-theme=dark] .history-help-popup { background:#20252c; color:#a8b3c2; border-color:#39424e; }

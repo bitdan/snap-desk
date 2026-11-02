@@ -27,8 +27,8 @@ function key(event: KeyboardEvent) {
   if (event.key === 'Tab') {
     const nodes = [...(event.currentTarget as HTMLElement).querySelectorAll<HTMLElement>('textarea:not(:disabled), button:not(:disabled)')]
     const first = nodes[0], last = nodes[nodes.length - 1]
-    if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus() }
-    else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus() }
+    if (event.shiftKey && (event.currentTarget as HTMLElement).ownerDocument.activeElement === first) { event.preventDefault(); last?.focus() }
+    else if (!event.shiftKey && (event.currentTarget as HTMLElement).ownerDocument.activeElement === last) { event.preventDefault(); first?.focus() }
   }
 }
 </script>

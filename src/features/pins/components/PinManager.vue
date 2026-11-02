@@ -96,14 +96,13 @@ onUnmounted(() => { disposed = true; off?.() })
       <form v-if="selected.length" class="pin-group-assignment" @submit.prevent="assignGroup"><label for="pin-group-name">{{ t('移动到分组') }}</label><input id="pin-group-name" v-model="groupName" list="pin-groups" :disabled="busy" :placeholder="t('分组名称，留空移出分组')" /><datalist id="pin-groups"><option v-for="group in groups" :key="group" :value="group" /></datalist><Button type="submit" variant="outline" :disabled="!desktop || busy">{{ t('应用分组') }}</Button></form>
     </template>
     <PinAppearanceSettings @preview="appearance = $event" />
-    <p class="pin-session-note">{{ t('退出会清空贴图，请先保存需要保留的内容。') }}</p>
   </section>
 </template>
 
 <style scoped>
 .pin-toolbar, .pin-actions, .pin-filters, .pin-entry-actions, .pin-selection-row, .pin-selection-row label { display:flex; align-items:center; flex-wrap:wrap; gap:8px; }
 .pin-toolbar { justify-content:space-between; padding-bottom:16px; border-bottom:1px solid var(--desk-border); }
-.pin-count, .pin-selection-row, .pin-session-note { color:var(--desk-muted); font-size:12px; }
+.pin-count, .pin-selection-row { color:var(--desk-muted); font-size:12px; }
 .pin-filters { justify-content:space-between; gap:12px; margin:14px 0; }
 .pin-tabs { display:flex; gap:4px; }
 .pin-tabs button { padding:6px 12px; min-height:32px; border-radius:6px; color:var(--desk-muted); }
@@ -127,6 +126,5 @@ onUnmounted(() => { disposed = true; off?.() })
 .app-shell .pin-empty { display:flex; flex-direction:column; gap:12px; min-height:160px; }
 .pin-group-assignment { display:flex; align-items:center; flex-wrap:wrap; gap:8px; margin-top:12px; font-size:12px; }
 .pin-group-assignment input { padding:4px 8px; width:220px; max-width:100%; }
-.pin-session-note { margin-top:20px; line-height:1.6; }
 @media (max-width:640px) { .pin-entry { gap:10px; flex-wrap:wrap; } .pin-thumbnail { width:64px; height:48px; } .pin-entry-actions { margin-left:auto; } }
 </style>

@@ -143,8 +143,8 @@ fn ensure_overlay(app: &AppHandle) -> Result<WebviewWindow, String> {
             .iter()
             .find(|config| config.label == "capture")
             .ok_or("截图窗口不可用，请重启应用。")?;
-        WebviewWindowBuilder::from_config(app, config)
-            .map_err(err)?
+        crate::shared::dialog_windows::attach(WebviewWindowBuilder::from_config(app, config)
+            .map_err(err)?, app, "capture")
             .visible(false)
             .focused(false)
             .build()

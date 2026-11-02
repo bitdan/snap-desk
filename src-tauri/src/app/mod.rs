@@ -167,7 +167,6 @@ pub fn run() {
                 enabled,
                 None::<&str>,
             )?;
-            let restore_pins = MenuItem::with_id(app, "restore-pins", native_i18n::text(app.handle(), "恢复贴图鼠标操作"), true, None::<&str>)?;
             let quit = MenuItem::with_id(
                 app,
                 "quit",
@@ -178,7 +177,7 @@ pub fn run() {
             let menu = Menu::with_items(
                 app,
                 &[
-                    &capture, &pin, &restore_pins, &recording, &history, &open, &shortcuts, &quit,
+                    &capture, &pin, &recording, &history, &open, &shortcuts, &quit,
                 ],
             )?;
             app.manage(settings::ShortcutMenu(shortcuts));
@@ -215,12 +214,6 @@ pub fn run() {
                         });
                     }
                     "pin" => trigger_pin(app),
-                    "restore-pins" => {
-                        let app = app.clone();
-                        tauri::async_runtime::spawn_blocking(move || {
-                            if let Err(error) = pins::restore_click_through(&app) { capture::report_error(&app, error); }
-                        });
-                    },
                     "recording" => trigger_recording(app),
                     "shortcuts" => {
                         let app = app.clone();
@@ -265,7 +258,7 @@ pub fn run() {
             let automatic = autostart::is_autostart(std::env::args_os().skip(1));
             app.state::<capture::MainWindowState>()
                 .show_requested.store(!automatic, Ordering::SeqCst);
-            WebviewWindowBuilder::from_config(app.handle(), main_config)?
+            crate::shared::dialog_windows::attach(WebviewWindowBuilder::from_config(app.handle(), main_config)?, app.handle(), "main")
                 .visible(false)
                 .focused(false)
                 .build()?;
@@ -434,7 +427,6 @@ pub fn run() {
             pins::set_pin_group,
             pins::current_pin,
             pins::recognize_pin_text,
-            pins::recognition::set_pin_recognition_open,
             pins::recognize_pin_qr,
             pins::pin_qr_action,
             pins::set_pin_annotations,

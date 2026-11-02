@@ -1,3 +1,4 @@
+vi.mock('../../src/shared/ui/DetachedWindow.vue', async () => ({ default: (await import('../helpers/detached-window')).DetachedWindowStub }))
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { h } from 'vue'
 import { clientComponent, findNode, flushComponent, MemoryNode, memoryRenderer } from '../helpers/component-host'

@@ -4,9 +4,10 @@ import { clientComponent, findNode, MemoryNode, memoryRenderer, flushComponent }
 import { defaultSettings } from '../../src/features/settings/settings'
 import type { AppUpdateView } from '../../src/features/settings/types'
 
+const openWindow = vi.hoisted(() => vi.fn())
 const api = vi.hoisted(() => ({ status: vi.fn(), saveSettings: vi.fn(), appUpdateStatus: vi.fn(), checkAppUpdate: vi.fn(), downloadAppUpdate: vi.fn(), installAppUpdate: vi.fn() }))
 vi.mock('../../src/services/api', () => ({ api, desktop: true }))
-vi.mock('../../src/features/settings/events', () => ({ onSettingsImported: vi.fn(async () => () => {}) }))
+vi.mock('../../src/features/settings/events', () => ({ requestUpdateWindow: openWindow, onSettingsImported: vi.fn(async () => () => {}) }))
 vi.mock('../../src/shared/ui/button/Button.vue', async () => {
   const { defineComponent, h } = await import('vue')
   return { default: defineComponent({ setup: (_, { attrs, slots }) => () => h('button', attrs, slots.default?.()) }) }
@@ -31,6 +32,13 @@ beforeEach(() => {
 afterEach(() => { memoryRenderer.render(null, root); vi.useRealTimers() })
 
 describe('在线更新设置', () => {
+  it('只显示简洁更新信息，不展示更新日志', async () => {
+    native.availableVersion = '0.2.1'; native.phase = 'available'; native.notes = '不应显示的更新日志'
+    await mount()
+    expect(text(root)).toContain('有更新')
+    expect(action('有更新')).toBeDefined()
+    expect(text(root)).not.toContain(native.notes)
+  })
   it('默认稳定渠道，切换只保存更新偏好并立即重新检查', async () => {
     const settings = defaultSettings(); settings.delaySeconds = 5
     api.status.mockResolvedValue({ settings })
@@ -48,43 +56,25 @@ describe('在线更新设置', () => {
     expect(text(root)).toContain('无法保存设置')
     expect(api.checkAppUpdate).not.toHaveBeenCalled()
   })
-  it('验签失败不会出现安装按钮，允许重新下载', async () => {
-    native.availableVersion = '0.2.0'; native.phase = 'available'
-    api.downloadAppUpdate.mockImplementation(async () => {
-      native.phase = 'error'; native.error = '更新签名校验失败'
-      throw new Error(native.error)
-    })
-    await mount(); await action('下载更新').props.onClick(); await flushComponent()
-    expect(action('退出并安装')).toBeUndefined()
-    expect(action('下载更新').props.disabled).toBe(false)
-    expect(text(root)).toContain('更新签名校验失败')
-  })
-  it('显示原生下载进度，下载完成后才允许显式安装', async () => {
-    vi.useFakeTimers()
-    native.availableVersion = '0.2.0'; native.phase = 'available'
-    let finish!: () => void
-    api.downloadAppUpdate.mockImplementation(() => {
-      native.phase = 'downloading'; native.downloaded = 40; native.total = 100
-      return new Promise(resolve => { finish = () => { native.phase = 'ready'; resolve({ ...native }) } })
-    })
-    await mount()
-    const download = action('下载更新').props.onClick()
-    await vi.advanceTimersByTimeAsync(1000); await flushComponent()
-    expect(text(root)).toContain('40%')
-    expect(toggle().props.disabled).toBe(true)
-    expect(action('退出并安装')).toBeUndefined()
-    finish(); await download; await flushComponent()
-    expect(action('退出并安装')).toBeDefined()
+  it('有更新只打开独立窗口，由窗口负责下载与安装', async () => {
+    native.availableVersion = '0.2.1'; native.phase = 'available'
+    await mount(); await action('有更新').props.onClick(); await flushComponent()
+    expect(openWindow).toHaveBeenCalledOnce()
+    expect(api.downloadAppUpdate).not.toHaveBeenCalled()
     expect(api.installAppUpdate).not.toHaveBeenCalled()
-    await action('退出并安装').props.onClick()
-    expect(api.installAppUpdate).toHaveBeenCalledOnce()
   })
-  it('安装因录屏被拒绝时保留重试按钮', async () => {
-    native.availableVersion = '0.2.0'; native.phase = 'ready'
-    api.installAppUpdate.mockRejectedValueOnce(new Error('请先结束录屏并等待视频保存完成。'))
-    await mount(); await action('退出并安装').props.onClick(); await flushComponent()
-    expect(text(root)).toContain('请先结束录屏')
-    expect(action('退出并安装').props.disabled).toBe(false)
+  it('后台下载和下载完成仍可重开独立窗口', async () => {
+    vi.useFakeTimers()
+    native.availableVersion = '0.2.1'; native.phase = 'downloading'
+    await mount()
+    expect(action('有更新').props.disabled).toBe(false)
+    expect(toggle().props.disabled).toBe(true)
+    await action('有更新').props.onClick()
+    native.phase = 'ready'
+    await vi.advanceTimersByTimeAsync(1000); await flushComponent()
+    await action('有更新').props.onClick()
+    expect(openWindow).toHaveBeenCalledTimes(2)
+    expect(action('退出并安装')).toBeUndefined()
   })
   it('未配置签名或开发版本禁用更新操作', async () => {
     vi.useFakeTimers()
@@ -94,6 +84,8 @@ describe('在线更新设置', () => {
     expect(text(root)).toContain('此版本未配置更新签名公钥。')
     native.supported = false
     await vi.advanceTimersByTimeAsync(1000); await flushComponent()
-    expect(text(root)).toContain('Windows x64 发布版本')
+    expect(action('检查更新').props.disabled).toBe(true)
+    expect(text(root)).not.toContain('Windows x64 发布版本')
+    expect(text(root)).not.toContain('此版本未配置更新签名公钥。')
   })
 })

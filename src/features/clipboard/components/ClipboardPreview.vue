@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onUnmounted, ref, watch } from 'vue'
-import { DialogRoot, DialogPortal, DialogOverlay, DialogContent, DialogTitle, DialogDescription } from 'reka-ui'
+import DetachedWindow from '@/shared/ui/DetachedWindow.vue'
 import { X, LoaderCircle, ExternalLink, FolderOpen } from 'lucide-vue-next'
 import { api } from '@/services/api'
 import { t, te } from '@/shared/i18n/i18n'
@@ -49,7 +49,6 @@ function close() {
   revision++; image.value = ''; text.value = ''; loading.value = false; opening.value = false; openError.value = ''
   emit('close')
 }
-function updateOpen(open: boolean) { if (!open) close() }
 useEscapeLayer(() => !!props.item, close)
 function key(event: KeyboardEvent) { handleEscape(event, close) }
 async function load() {
@@ -71,13 +70,11 @@ onUnmounted(() => { revision++; image.value = ''; text.value = '' })
 </script>
 
 <template>
-  <DialogRoot :open="!!item" @update:open="updateOpen">
-    <DialogPortal>
-      <DialogOverlay class="history-preview-overlay" />
-      <DialogContent class="history-preview-dialog" @keydown.stop="key">
+  <DetachedWindow :open="!!item" :title="t('预览')" :width="900" :height="640" @close="close">
+      <section class="history-preview-dialog" @keydown.stop="key">
         <header class="history-preview-header">
-          <DialogTitle>{{ t('预览') }}</DialogTitle>
-          <DialogDescription>{{ item?.kind === 'text' ? `${item.byteSize} B` : `${item?.width} × ${item?.height} px` }} · {{ t('Esc 关闭') }}</DialogDescription>
+          <h2>{{ t('预览') }}</h2>
+          <p>{{ item?.kind === 'text' ? `${item.byteSize} B` : `${item?.width} × ${item?.height} px` }} · {{ t('Esc 关闭') }}</p>
           <Button variant="ghost" :aria-label="t('关闭预览')" :title="t('Esc 关闭')" @click="close"><X :size="18" /></Button>
         </header>
         <div class="history-preview-body" :aria-busy="loading">
@@ -100,14 +97,12 @@ onUnmounted(() => { revision++; image.value = ''; text.value = '' })
           </div>
           <textarea v-else-if="item?.kind === 'text'" class="history-preview-text" readonly :aria-label="t('历史完整文字')" :value="text" spellcheck="false" />
         </div>
-      </DialogContent>
-    </DialogPortal>
-  </DialogRoot>
+      </section>
+  </DetachedWindow>
 </template>
 
 <style>
-.history-preview-overlay { position:fixed; inset:0; z-index:120; background:#10182899; }
-.history-preview-dialog { position:fixed; inset:24px; z-index:121; display:flex; flex-direction:column; max-width:1280px; max-height:960px; margin:auto; overflow:hidden; border:1px solid #d8dee4; border-radius:8px; background:#fff; color:#24292f; box-shadow:0 12px 40px #0003; font:13px 'Segoe UI','Microsoft YaHei',sans-serif; }
+.history-preview-dialog { display:flex; flex-direction:column; width:100%; height:100%; overflow:hidden; background:#fff; color:#24292f; font:13px 'Segoe UI','Microsoft YaHei',sans-serif; }
 .history-preview-header { display:flex; align-items:center; gap:12px; padding:8px 12px; border-bottom:1px solid #e1e4e8; }
 .history-preview-header h2 { margin:0; font-size:14px; font-weight:600; }
 .history-preview-header p { margin:0; color:#57606a; font-size:12px; }

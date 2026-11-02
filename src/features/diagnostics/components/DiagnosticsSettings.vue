@@ -123,7 +123,6 @@ onUnmounted(() => { disposed = true; if (timer) clearInterval(timer) })
       <Button variant="outline" :disabled="!desktop || busy || !status || !!status.error || !status.archives" @click="run(clearArchives)">{{ t("清理历史归档") }}</Button>
 
     </div>
-    <p class="text-xs text-zinc-500">{{ t('记录级别控制后续写入，显示级别仅筛选已有日志；记录级别会在本机保留。') }}</p>
     <p v-if="status && !status.exportSupported" class="mt-2 text-xs text-zinc-500">{{ t("此平台不支持导出，请打开日志目录。") }}</p>
   </section>
 </template>

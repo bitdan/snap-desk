@@ -76,8 +76,8 @@ function key(event: KeyboardEvent) {
   const nodes = [...(panel.value?.querySelectorAll<HTMLElement>('textarea:not(:disabled), input:not(:disabled), button:not(:disabled)') ?? [])]
   const first = nodes[0], last = nodes[nodes.length - 1]
   if (!nodes.length) { event.preventDefault(); return }
-  if (event.shiftKey && (document.activeElement === first || document.activeElement === panel.value)) { event.preventDefault(); last?.focus() }
-  else if (!event.shiftKey && (document.activeElement === last || document.activeElement === panel.value)) { event.preventDefault(); first?.focus() }
+  if (event.shiftKey && ((event.currentTarget as HTMLElement).ownerDocument.activeElement === first || (event.currentTarget as HTMLElement).ownerDocument.activeElement === panel.value)) { event.preventDefault(); last?.focus() }
+  else if (!event.shiftKey && ((event.currentTarget as HTMLElement).ownerDocument.activeElement === last || (event.currentTarget as HTMLElement).ownerDocument.activeElement === panel.value)) { event.preventDefault(); first?.focus() }
 }
 // 面板只呈现原文和译文，退出时仍取消当前请求并停止后续片段。
 onMounted(() => { void nextTick(() => panel.value?.focus()); void loadConfig() })
