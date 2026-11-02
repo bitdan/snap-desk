@@ -133,22 +133,54 @@ fn overlay(app: &AppHandle) -> Result<WebviewWindow, String> {
 /// 隐藏 HWND 不代表 WebView2 的初始合成表面已经稳定；先抓屏可避免把默认
 /// 800×600 白色表面收进底图。调用方位于阻塞线程，不占用主线程等待创建完成。
 fn ensure_overlay(app: &AppHandle) -> Result<WebviewWindow, String> {
-    if let Some(window) = app.get_webview_window("capture") {
-        return Ok(window);
+    let window = if let Some(window) = app.get_webview_window("capture") {
+        window
+    } else {
+        let config = app
+            .config()
+            .app
+            .windows
+            .iter()
+            .find(|config| config.label == "capture")
+            .ok_or("截图窗口不可用，请重启应用。")?;
+        WebviewWindowBuilder::from_config(app, config)
+            .map_err(err)?
+            .visible(false)
+            .focused(false)
+            .build()
+            .map_err(err)?
+    };
+    #[cfg(windows)]
+    if let Err(error) = disable_overlay_transitions(&window) {
+        // 视觉优化失败时仍允许截图；保留原因供日志排查。
+        log::warn!("关闭截图窗口过渡动画失败: {error}");
     }
-    let config = app
-        .config()
-        .app
-        .windows
-        .iter()
-        .find(|config| config.label == "capture")
-        .ok_or("截图窗口不可用，请重启应用。")?;
-    WebviewWindowBuilder::from_config(app, config)
-        .map_err(err)?
-        .visible(false)
-        .focused(false)
-        .build()
+    Ok(window)
+}
+
+/// 蒙层展示的是整张桌面快照，系统显隐过渡会让退出截图看起来像桌面缩放。
+/// 在首次显示前按 HWND 禁用 DWM 过渡，复用时重施；不修改系统或其他窗口的动画。
+#[cfg(windows)]
+fn disable_overlay_transitions(window: &WebviewWindow) -> Result<(), String> {
+    use windows::{
+        core::BOOL,
+        Win32::{
+            Foundation::HWND,
+            Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_TRANSITIONS_FORCEDISABLED},
+        },
+    };
+    let hwnd = HWND(window.hwnd().map_err(err)?.0);
+    // DWM 要求 32 位 Win32 BOOL，不能传入 Rust 的单字节 bool。
+    let disabled = BOOL(1);
+    unsafe {
+        DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_TRANSITIONS_FORCEDISABLED,
+            &disabled as *const BOOL as *const _,
+            std::mem::size_of::<BOOL>() as u32,
+        )
         .map_err(err)
+    }
 }
 pub fn require_window(window: &WebviewWindow, label: &str) -> Result<(), String> {
     if window.label() == label {
