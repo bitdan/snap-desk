@@ -6025,7 +6025,7 @@ dependencies = [
 
 [[package]]
 name = "snap-desk"
-version = "0.2.0-beta.3"
+version = "0.2.0-beta.4"
 dependencies = [
  "ab_glyph",
  "base64 0.22.1",

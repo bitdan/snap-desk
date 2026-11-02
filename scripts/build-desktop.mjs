@@ -20,7 +20,8 @@ if (process.platform === 'win32') {
   buildArgs.unshift('--config', JSON.stringify({ bundle: {
     targets: ['nsis'],
     createUpdaterArtifacts: Boolean(process.env.TAURI_SIGNING_PRIVATE_KEY),
-  } }))
+  }, plugins: { updater: { pubkey: process.env.SNAP_DESK_UPDATER_PUBLIC_KEY?.trim() ?? '' } },
+  build: { beforeBundleCommand: 'node scripts/prepare-standalone.mjs' } }))
 }
 const env = rustEnvironment()
 console.log(`构建输出：${target}`)
@@ -29,7 +30,8 @@ console.log('请先从托盘退出 Snap Desk，避免 Windows 阻止覆盖正在
 console.log('Windows 录屏使用系统 Media Foundation；无需附带外部编码程序。')
 const result = spawnSync(process.execPath, [cli, 'build', ...buildArgs], {
   cwd: root,
-  env: { ...env, CARGO_TARGET_DIR: target },
+  env: { ...env, CARGO_TARGET_DIR: target,
+    SNAP_DESK_BUILD_EXECUTABLE: resolve(target, buildArgs.includes('--debug') ? 'debug' : 'release', 'snap-desk.exe') },
   stdio: 'inherit',
   windowsHide: true,
 })

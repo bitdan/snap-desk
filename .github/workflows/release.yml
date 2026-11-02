@@ -69,6 +69,14 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      # 先校验密钥/密码及公钥匹配，避免 Rust 构建十几分钟后才发现签名配置错误。
+      - name: Verify updater signing configuration
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          SNAP_DESK_UPDATER_PUBLIC_KEY: ${{ vars.SNAP_DESK_UPDATER_PUBLIC_KEY }}
+        run: node scripts/release-signing.mjs
+
       # 测试失败时停止发布；Rust 默认跳过需要实机桌面或模型资源的 ignored 测试。
       - name: Test frontend
         run: npm test
@@ -111,7 +119,9 @@ jobs:
             throw '缺少可运行的 snap-desk.exe，请检查构建输出。'
           }
           $standalone = "src-tauri/target/release/snap-desk-$env:GITHUB_REF_NAME-windows-x64-standalone.exe"
-          Copy-Item -LiteralPath $executable -Destination $standalone
+          if (-not (Test-Path -LiteralPath $standalone -PathType Leaf)) {
+            throw '缺少 NSIS 打包前保留的独立 EXE，请检查 beforeBundleCommand。'
+          }
           # 独立 EXE 与安装包同样绑定应用版本并签名，客户端验签后才替换文件。
           $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
           node node_modules/@tauri-apps/cli/tauri.js signer sign --app-version $version $standalone
