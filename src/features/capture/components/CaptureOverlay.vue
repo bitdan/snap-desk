@@ -7,7 +7,6 @@ import { convertFileSrc } from '@tauri-apps/api/core'
 import ScrollCaptureIcon from '@/features/scroll/components/ScrollCaptureIcon.vue'
 import QrResultCard from '@/features/recognition/components/QrResultCard.vue'
 import OcrResultCard from '@/features/recognition/components/OcrResultCard.vue'
-import ImageTranslation from '@/features/recognition/components/ImageTranslation.vue'
 import type { OcrResult } from '@/features/recognition/ai'
 import { computed, nextTick, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue'
 import { Copy, Save, X, Monitor, RotateCcw, Scan, Pin, Video, QrCode, ScanText, Languages, AppWindow, GripVertical, Check, MousePointer2, Volume2, VolumeX, Mic, MicOff, ArrowLeft } from 'lucide-vue-next'
@@ -75,8 +74,8 @@ const qrResult = ref<QrResult | null>(null)
 const ocrResult = ref<OcrResult | null>(null)
 // 识别与翻译共享可编辑草稿，切换面板不重复 OCR，也不丢失修正后的文字。
 const ocrDraft = ref('')
+const openingTranslation = ref(false)
 const ocrEntryWasTranslation = ref(false)
-const translationMode = ref(false)
 const translationTrigger = ref<HTMLButtonElement | null>(null)
 const ocrTrigger = ref<HTMLButtonElement | null>(null)
 function closeOcr() {
@@ -87,14 +86,28 @@ function closeOcr() {
 async function recognizeText(translate = false) {
   if (!frame.value || !pixels.value || busy.value || editor.pending || editor.interacting || gesture.value) return
   const id = frame.value.id
-  translationMode.value = translate
   ocrEntryWasTranslation.value = translate
   busy.value = true; error.value = ''
   try {
     const text = await api.recognizeCapture(id, pixels.value)
-    if (frame.value?.id === id) { ocrDraft.value = text.fullText; ocrResult.value = text }
+    if (frame.value?.id === id) {
+      ocrDraft.value = text.fullText; ocrResult.value = text
+      if (translate) await sendTranslation(id)
+    }
   } catch (e) { error.value = String(e) }
   finally { busy.value = false }
+}
+/** 原文交接成功后再释放截图；打开失败时保留 OCR 草稿供重试。 */
+async function sendTranslation(id = frame.value?.id) {
+  if (openingTranslation.value) return
+  if (id === undefined || !ocrDraft.value.trim()) { error.value = '未识别到文字。'; return }
+  openingTranslation.value = true
+  try {
+    await api.openTranslation(ocrDraft.value)
+    await api.cancel(id)
+    releaseFrame(id)
+  } catch (e) { error.value = String(e) }
+  finally { openingTranslation.value = false }
 }
 watch(() => frame.value?.id, () => { qrResult.value = null; ocrResult.value = null; ocrDraft.value = '' })
 /** 主动识别保留截图现场；结果面板隔离选区拖动与截图快捷键。 */
@@ -330,6 +343,7 @@ function up(e: PointerEvent) {
   const drawn = gesture.value?.mode === 'draw'
   gesture.value = null
   if (drawn) void selectedRecordingRegion()
+  if (drawn && frame.value?.translation && valid.value) void recognizeText(true)
 }
 function abortGesture() { if (gesture.value) selection.value = gesture.value.initial; gesture.value = null }
 function selectAll() { selectedTarget.value = null; if (!busy.value && !marked.value && !editor.interacting) { editor.reset(); selection.value = { x: 0, y: 0, ...viewport.value }; void selectedRecordingRegion() } }
@@ -423,7 +437,7 @@ function key(e: KeyboardEvent) {
   if ((e.target as HTMLElement).closest('.recording-inline-options')) return
   if ((e.target as HTMLElement).closest('input, textarea, select')) return
   if (!e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && !e.repeat && [',', '.'].includes(e.key)
-    && !annotating.value && !qrResult.value && !ocrResult.value) {
+    && !frame.value?.translation && !annotating.value && !qrResult.value && !ocrResult.value) {
     e.preventDefault(); void replay(e.key === ',' ? 'previous' : 'next'); return
   }
   if (e.key === 'Alt') windowsOnly.value = true
@@ -441,6 +455,7 @@ function key(e: KeyboardEvent) {
     if (e.key === 'Enter' && (e.target as HTMLElement).tagName !== 'BUTTON') { e.preventDefault(); if (!e.repeat) void startRecording(); return }
     if (command && ['c', 's', 'p'].includes(e.key.toLowerCase())) { e.preventDefault(); return }
   }
+  if (frame.value?.translation && e.key === 'Enter' && !e.repeat) { e.preventDefault(); void recognizeText(true); return }
   // 取色快捷键仅在放大镜可用时生效；复制后保留选区，修饰键组合仍用于截图操作。
   if (showMagnifier.value && !gesture.value && !command && !e.altKey && !e.repeat) {
     if (e.key === 'Shift') { e.preventDefault(); colorFormat.value = colorFormat.value === 'rgb' ? 'hex' : 'rgb'; colorCopied.value = false; return }
@@ -539,8 +554,8 @@ onUnmounted(() => { releaseFrame(); disposed = true; offClosed?.(); off?.(); off
           <button v-if="!frame?.replay" ref="recordingTrigger" class="recording-mode-trigger" :disabled="busy || !!gesture || editor.pending || editor.interacting" :title="t(recordingMode ? '返回截图' : '切换到录屏')" :aria-label="t(recordingMode ? '返回截图' : '展开录屏工具栏')" :aria-pressed="recordingMode" :aria-expanded="recordingMode" @click="recordingMode ? leaveRecordingMode() : enterRecordingMode()"><Video :size="16" /></button>
         <template v-if="!recordingMode">
         <button :disabled="busy || !!gesture" :title='t("贴图 Ctrl/⌘+P")' :aria-label='t("贴图")' @click="finish('pin')"><Pin :size="16" /></button>
-        <button ref="ocrTrigger" :disabled="busy || !!gesture" :title='t("识别文字")' :aria-label='t("识别文字")' aria-haspopup="dialog" :aria-expanded="ocrResult !== null && !translationMode" @click="recognizeText(false)"><ScanText :size="16" /></button>
-        <button ref="translationTrigger" :disabled="busy || !!gesture" :title='t("截图翻译")' :aria-label='t("截图翻译")' aria-haspopup="dialog" :aria-expanded="ocrResult !== null && translationMode" @click="recognizeText(true)"><Languages :size="16" /></button>
+        <button ref="ocrTrigger" :disabled="busy || !!gesture" :title='t("识别文字")' :aria-label='t("识别文字")' aria-haspopup="dialog" :aria-expanded="ocrResult !== null" @click="recognizeText(false)"><ScanText :size="16" /></button>
+        <button ref="translationTrigger" :disabled="busy || !!gesture" :title='t("截图翻译")' :aria-label='t("截图翻译")' @click="recognizeText(true)"><Languages :size="16" /></button>
         <button :disabled="busy || !!gesture" :title='t("识别二维码")' :aria-label='t("识别二维码")' aria-haspopup="dialog" :aria-expanded="!!qrResult" @click="recognizeQr"><QrCode :size="16" /></button>
         <button :disabled="busy || !!gesture" :title='t("保存图片 Ctrl/⌘+S")' :aria-label='t("保存图片")' @click="finish('save')"><Save :size="16" /></button>
         <button class="copy-button" :disabled="busy || !!gesture" :title="busy ? t('处理中…') : t('复制图片 Enter')" :aria-label="busy ? t('处理中') : t('复制图片')" :aria-busy="busy" @click="finish('copy')"><Copy :size="16" /></button>
@@ -573,10 +588,10 @@ onUnmounted(() => { releaseFrame(); disposed = true; offClosed?.(); off?.(); off
       </template>
     </AnnotationWorkspace>
     <CaptureMagnifier v-if="showMagnifier && screenImage && pointer && frame" :image="screenImage" :point="pointer" :viewport="viewport" :image-size="frame" :format="colorFormat" :relative="relativeCoordinates" :origin="pixels" :copied="colorCopied" :bounds="pointerDisplay" />
-    <DetachedWindow :open="ocrResult !== null" :title="translationMode ? t('文字翻译') : t('文字识别结果')" :width="1000" :height="650" @close="closeOcr">
-      <div v-if="ocrResult" :class="['qr-dialog', 'ocr-dialog', { 'translation-dialog': translationMode }]">
-        <ImageTranslation v-if="translationMode && frame && pixels" :key="ocrResult.requestId" :recognition="ocrResult" :source-text="ocrDraft" :image="{ dataUrl: imageUrl, width: frame.width, height: frame.height, crop: pixels }" @back="translationMode = false" @close="closeOcr" />
-        <OcrResultCard v-else v-model:text="ocrDraft" @translate="translationMode = true" @close="closeOcr" />
+    <DetachedWindow :open="ocrResult !== null" :title="t('文字识别结果')" :width="1000" :height="650" @close="closeOcr">
+      <div v-if="ocrResult" class="qr-dialog ocr-dialog">
+        <OcrResultCard v-model:text="ocrDraft" @translate="sendTranslation()" @close="closeOcr" />
+        <p v-if="error" class="result-error" role="alert">{{ te(error) }}</p>
       </div>
     </DetachedWindow>
     <DetachedWindow :open="!!qrResult" :title="t('二维码识别结果')" :width="480" :height="420" @close="qrResult = null">

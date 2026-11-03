@@ -176,10 +176,10 @@ fn recognize_regions(engine: &OAROCR, image: &image::RgbaImage) -> Result<OcrRes
     })
 }
 
-/// 结果允许用户编辑；主窗口、截图或仍存在的贴图可复制文字，且限制消息大小。
+/// 结果允许用户编辑；主窗口、翻译、截图或仍存在的贴图可复制文字，且限制消息大小。
 #[tauri::command]
 pub fn copy_ocr_text(app: AppHandle, window: WebviewWindow, text: String) -> Result<(), String> {
-    if !matches!(window.label(), "main" | "capture") {
+    if !matches!(window.label(), "main" | "capture" | "translation") {
         crate::pins::require_pin(&app, &window)?;
     }
     if text.is_empty() || text.len() > 1024 * 1024 {

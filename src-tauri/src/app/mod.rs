@@ -147,6 +147,13 @@ pub fn run() {
                 true,
                 None::<&str>,
             )?;
+            let translation_menu = MenuItem::with_id(
+                app,
+                "translation",
+                native_i18n::text(app.handle(), "翻译"),
+                true,
+                None::<&str>,
+            )?;
             let open = MenuItem::with_id(
                 app,
                 "open",
@@ -179,7 +186,7 @@ pub fn run() {
             let menu = Menu::with_items(
                 app,
                 &[
-                    &capture, &pin, &recording, &history, &open, &shortcuts, &quit,
+                    &capture, &pin, &recording, &history, &translation_menu, &open, &shortcuts, &quit,
                 ],
             )?;
             app.manage(settings::ShortcutMenu(shortcuts));
@@ -227,6 +234,14 @@ pub fn run() {
                     }
                     "open" => show_main(app),
                     "history" => clipboard::open_history(app),
+                    "translation" => {
+                        let app = app.clone();
+                        tauri::async_runtime::spawn_blocking(move || {
+                            if let Err(error) = recognition::text_input::publish(&app, None) {
+                                capture::report_error(&app, error);
+                            }
+                        });
+                    }
                     // 先完成正在录制的视频，避免退出截断输出。
                     "quit" => {
                         capture::recording::request_exit(app);
@@ -240,6 +255,7 @@ pub fn run() {
                     ("贴图", pin),
                     ("录屏", recording),
                     ("剪贴板", history),
+                    ("翻译", translation_menu),
                     ("打开 Snap Desk", open),
                     ("退出", quit),
                 ],
@@ -268,7 +284,7 @@ pub fn run() {
         })
         .on_window_event(|window, event| {
             // 关闭截图/贴图时仅取消本窗口的文字任务；退出应用仍由统一出口取消全部任务。
-            if (window.label() == "capture" || window.label().starts_with("pin-"))
+            if (matches!(window.label(), "capture" | "translation") || window.label().starts_with("pin-"))
                 && matches!(event, tauri::WindowEvent::Destroyed | tauri::WindowEvent::CloseRequested { .. })
             {
                 translation::cancel_window(window.app_handle(), window.label());
@@ -335,6 +351,10 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            recognition::text_input::open_translation,
+            recognition::text_input::close_translation,
+            recognition::text_input::control_translation_window,
+            recognition::text_input::start_translation_capture,
             recognition::text_input::read_translation_input,
             capture::main_window_ready,
             resources::resource_status,

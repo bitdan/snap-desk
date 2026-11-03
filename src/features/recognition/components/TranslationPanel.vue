@@ -3,19 +3,19 @@ import { t, te } from '@/shared/i18n/i18n'
 import { handleEscape } from '@/shared/ui/escape'
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { api } from '@/services/api'
-import { onlineTranslationReady, targetLanguages, type AiSettings } from '@/features/recognition/ai'
-import { ArrowLeft, Check, Copy, Languages, LoaderCircle, X } from 'lucide-vue-next'
+import { onlineTranslationReady, targetLanguages, translationPresets, type AiSettings } from '@/features/recognition/ai'
+import { ArrowLeft, ArrowLeftRight, Check, ClipboardPaste, Copy, Languages, LoaderCircle, RefreshCw, RotateCcw, Trash2, WrapText, X } from 'lucide-vue-next'
 import Button from '@/shared/ui/button/Button.vue'
 import SelectControl from '@/shared/ui/SelectControl.vue'
 import { updateSettings } from '@/features/settings/settings-write'
 import { automaticTarget, detectTextLanguage } from '@/features/recognition/translation-direction'
-import '@/features/recognition/components/recognition-results.css'
 
-const emit = defineEmits<{ close: []; back: [] }>()
-const props = withDefaults(defineProps<{ workspace?: boolean; autoTranslate?: boolean }>(), { workspace: false, autoTranslate: true })
+const emit = defineEmits<{ close: []; back: []; busy: [value: boolean] }>()
+const props = withDefaults(defineProps<{ workspace?: boolean; standalone?: boolean; autoTranslate?: boolean }>(), { workspace: false, autoTranslate: true })
 const source = defineModel<string>('text', { required: true })
 const translated = ref('')
 const busy = ref(false), error = ref(''), message = ref(''), target = ref('')
+watch(busy, value => emit('busy', value))
 const loading = ref(false), copying = ref(false)
 const sourceLanguage = ref(''), savingDefault = ref(false), readingClipboard = ref(false)
 const input = ref<HTMLTextAreaElement | null>(null)
@@ -28,6 +28,7 @@ const sourceOptions = computed(() => [{ value: '', label: t('检测语言') }, .
 const targetOptions = computed(() => languages.value.map(item => ({ ...item, label: t(item.label) })))
 const canTranslate = computed(() => !!config.value && (!loading.value && (local.value || onlineTranslationReady(config.value))))
 const targetLabel = computed(() => targetLanguages.find(item => item.value === (target.value || config.value?.targetLanguage))?.label ?? '目标语言')
+const providerLabel = computed(() => !config.value ? '翻译服务' : local.value ? '本地翻译' : config.value.provider === 'deepl' ? 'DeepL' : translationPresets.find(item => item.endpoint === config.value?.endpoint)?.label ?? '兼容服务')
 const swapSource = computed(() => sourceLanguage.value || (autoDirection.value && ['zh-CN', 'en'].includes(detectedLanguage.value)
   ? detectedLanguage.value : local.value ? (target.value === 'en' ? 'zh-CN' : 'en') : ''))
 watch(source, () => applyAutomaticDirection(), { flush: 'sync' })
@@ -88,11 +89,12 @@ async function translate() {
 /** 修改原文或方向即清除旧结果，避免复制到与当前语言不匹配的译文。 */
 function invalidate() { translated.value = ''; message.value = ''; error.value = '' }
 function swap() {
-  if (busy.value || !translated.value) return
+  if (busy.value || !swapSource.value) return
   const previousSource = swapSource.value
   if (!previousSource) return
   autoDirection.value = false
-  source.value = translated.value; sourceLanguage.value = target.value; target.value = previousSource; invalidate()
+  if (translated.value) source.value = translated.value
+  sourceLanguage.value = target.value; target.value = previousSource; invalidate()
 }
 async function paste() {
   if (busy.value || readingClipboard.value) return
@@ -117,16 +119,34 @@ async function cancel() {
   try { await api.cancelAiJob(requestId) }
   catch (e) { error.value = String(e) }
 }
-async function copy() {
-  if (copying.value || !translated.value) return
+/** 原文和译文复用复制通道，按钮分别标识内容，避免误复制。 */
+async function copyText(value: string, success: string) {
+  if (copying.value || !value.trim()) return
   copying.value = true; message.value = ''; error.value = ''
-  try { await api.copyOcrText(translated.value); message.value = '译文已复制。' }
+  try { await api.copyOcrText(value); message.value = success }
   catch (e) { error.value = String(e) }
   finally { copying.value = false }
 }
+function copy() { return copyText(translated.value, '译文已复制。') }
+function mergeLines() {
+  source.value = source.value.replace(/-\s*\r?\n\s*/g, '').replace(/\r?\n\s*/g, ' ')
+  invalidate()
+}
+/** 结果卡片的回译操作以当前译文为原文，交换方向后立即提交。 */
+async function reverse() {
+  if (busy.value || !translated.value || !swapSource.value) return
+  swap()
+  // defineModel 的新原文需要父窗口回传；等待更新后再提交，避免回译仍发送旧原文。
+  await nextTick()
+  if (!disposed) await translate()
+}
 function key(event: KeyboardEvent) {
+  if (props.standalone && event.key === 'Enter' && !event.shiftKey && !event.isComposing && !event.repeat
+    && (event.target as HTMLElement)?.tagName === 'TEXTAREA' && (event.target as HTMLElement).id === 'translation-source') {
+    event.preventDefault(); void translate(); return
+  }
   if ((event.ctrlKey || event.metaKey) && event.key === 'Enter' && !event.isComposing) { event.preventDefault(); void translate(); return }
-  if (props.workspace) return
+  if (props.workspace) { handleEscape(event, () => emit('close')); return }
   if (handleEscape(event, () => emit('close'))) return
   if (event.key === 'Tab') {
     const nodes = [...(event.currentTarget as HTMLElement).querySelectorAll<HTMLElement>('textarea:not(:disabled), input:not(:disabled), button:not(:disabled)')]
@@ -138,39 +158,104 @@ function key(event: KeyboardEvent) {
 </script>
 
 <template>
-  <section class="recognition-result translation-result" :class="{ 'translation-workspace': workspace }" @keydown.stop="key">
-    <header v-if="!workspace" class="result-header"><h2><Languages :size="17" />{{ t("文字翻译") }}</h2><Button class="result-close" variant="ghost" :title='t("关闭（Esc）")' :aria-label='t("关闭翻译")' @click="emit('close')"><X :size="16" /></Button></header>
-    <div class="result-body">
-      <div class="translation-languages">
+  <section class="translation-panel" :aria-label="t('文字翻译')" @keydown.stop="key">
+    <header v-if="!workspace" class="panel-heading"><span>{{ t('文字翻译') }}</span><Button variant="ghost" :aria-label="t('关闭翻译')" @click="emit('close')"><X :size="16" /></Button></header>
+    <div class="source-card">
+      <label class="sr-only" for="translation-source">{{ t('原文') }}</label>
+      <textarea id="translation-source" ref="input" v-model="source" :disabled="busy || readingClipboard" :aria-label="t('原文，可编辑')" :placeholder="t('输入需要翻译的文字…')" spellcheck="false" @input="invalidate" />
+      <div class="source-tools">
+        <div class="icon-group">
+          <Button variant="ghost" :disabled="!source.trim() || copying" :title="t('复制原文')" :aria-label="t('复制原文')" @click="copyText(source, '原文已复制。')"><Copy :size="15" /></Button>
+          <Button variant="ghost" :disabled="busy || readingClipboard" :title="t('读取剪贴板')" :aria-label="t('读取剪贴板')" @click="paste"><ClipboardPaste :size="15" /></Button>
+          <Button variant="ghost" :disabled="busy || !source.trim()" :title="t('合并换行')" :aria-label="t('合并换行')" @click="mergeLines"><WrapText :size="15" /></Button>
+          <Button variant="ghost" :disabled="busy || readingClipboard || !source" :title="t('清空')" :aria-label="t('清空')" @click="source = ''; invalidate()"><Trash2 :size="15" /></Button>
+          <slot name="source-actions" />
+        </div>
+        <span v-if="['zh-CN', 'en'].includes(detectedLanguage)" class="detected-language">{{ t(detectedLanguage === 'en' ? '英语' : '简体中文') }}</span>
+        <Button class="translate-action" variant="ghost" :disabled="busy || copying || readingClipboard || savingDefault || !canTranslate || !source.trim()" :aria-label="translated ? t('重新翻译') : t('翻译')" :title="standalone ? t('Enter 翻译，Shift+Enter 换行') : t('Ctrl+Enter 翻译')" @click="translate"><Languages :size="18" /></Button>
+      </div>
+    </div>
+    <div class="language-area">
+      <div class="language-selectors">
         <SelectControl v-model="sourceLanguage" :options="sourceOptions" :disabled="busy || loading || !config" :aria-label="t('原文语言')" @update:model-value="sourceChanged" />
-        <Button variant="ghost" :disabled="busy || !translated || !swapSource" :aria-label="t('交换语言和文字')" @click="swap">⇄</Button>
+        <Button variant="ghost" :disabled="busy || !swapSource" :title="t('交换语言和文字')" :aria-label="t('交换语言和文字')" @click="swap"><ArrowLeftRight :size="17" /></Button>
         <SelectControl v-model="target" :options="targetOptions" :disabled="busy || loading || savingDefault || !config" :aria-label="t('目标语言')" @update:model-value="targetChanged" />
+      </div>
+      <div class="language-options">
         <label class="translation-auto"><input v-model="autoDirection" type="checkbox" :disabled="busy || loading || !config" @change="automaticChanged" />{{ t('中英自动互译') }}</label>
-        <Button v-if="workspace" variant="ghost" :disabled="busy || loading || !config || savingDefault || target === config.targetLanguage" @click="saveDefault">{{ t('设为默认语言') }}</Button>
+        <Button v-if="workspace && !standalone" variant="ghost" :disabled="busy || loading || !config || savingDefault || target === config.targetLanguage" @click="saveDefault">{{ t('设为默认语言') }}</Button>
       </div>
       <p v-if="autoDirection && detectedLanguage === 'mixed'" class="translation-hint">{{ t('中英比例接近，使用默认目标语言。') }}</p>
-      <div class="translation-stack">
-        <div class="translation-text source-text"><div class="text-heading"><label for="translation-source">{{ t("原文") }}</label><span v-if="loading" role="status">{{ t("正在读取配置…") }}</span></div><textarea id="translation-source" ref="input" v-model="source" :disabled="busy || readingClipboard" :aria-label='t("原文，可编辑")' :placeholder='t("输入或修正需要翻译的文字")' spellcheck="false" @input="invalidate" /></div>
-        <div class="translation-text translated-text" :aria-busy="busy"><div class="text-heading"><label for="translation-output">{{ t("译文") }} · {{ t(targetLabel) }}</label><span v-if="busy" class="result-progress" role="status"><LoaderCircle :size="13" class="result-spinner" />{{ t("翻译中") }}</span><span v-else-if="translated" class="result-success" role="status"><Check :size="13" />{{ t("已完成") }}</span></div><textarea id="translation-output" :value="translated" readonly :aria-label='t("译文")' :placeholder="busy ? t('正在翻译，请稍候…') : t('译文将在这里显示')" /></div>
-      </div>
-      <p v-if="workspace && config && !local" class="translation-hint">{{ t('在线翻译会发送原文，可能产生费用。') }}</p>
-      <p v-if="error" class="result-error" role="alert">{{ te(error) }}</p>
     </div>
-    <footer class="result-footer"><Button v-if="!workspace" variant="ghost" :disabled="copying" @click="emit('back')"><ArrowLeft :size="15" />{{ t("返回识别") }}</Button><template v-else><Button variant="outline" :disabled="busy || readingClipboard" @click="paste">{{ t('读取剪贴板') }}</Button><Button variant="ghost" :disabled="busy || readingClipboard" @click="source = ''; invalidate()">{{ t('清空') }}</Button></template><span v-if="message" class="result-success" role="status"><Check :size="14" />{{ t(message) }}</span><div class="result-actions"><Button v-if="busy" variant="outline" @click="cancel">{{ t("取消翻译") }}</Button><Button variant="outline" :disabled="!translated || copying" @click="copy"><Copy :size="15" />{{ t("复制译文") }}</Button><Button :disabled="busy || copying || readingClipboard || savingDefault || !canTranslate || !source.trim()" :title="t('Ctrl+Enter 翻译')" @click="translate"><LoaderCircle v-if="busy" :size="15" class="result-spinner" /><Languages v-else :size="15" />{{ busy ? t("翻译中…") : translated ? t("重新翻译") : t("翻译") }}</Button><Button v-if="!loading" variant="ghost" :disabled="busy" @click="loadConfig">{{ t("重新读取配置") }}</Button></div></footer>
+    <section class="provider-card" :aria-label="t('译文')" :aria-busy="busy">
+      <header class="provider-heading">
+        <span class="provider-name"><Languages :size="16" />{{ t(providerLabel) }}</span>
+        <span v-if="busy" class="translation-status" role="status"><LoaderCircle :size="14" class="translation-spinner" />{{ t('翻译中') }}</span>
+        <span v-else-if="loading" class="translation-status" role="status">{{ t('正在读取配置…') }}</span>
+        <span v-else-if="translated" class="translation-success" role="status"><Check :size="13" />{{ t('已完成') }}</span>
+        <Button variant="ghost" :disabled="busy || loading" :title="t('重新读取配置')" :aria-label="t('重新读取配置')" @click="loadConfig"><RefreshCw :size="14" /></Button>
+      </header>
+      <label class="sr-only" for="translation-output">{{ t('译文') }} · {{ t(targetLabel) }}</label>
+      <textarea id="translation-output" :value="translated" readonly :aria-label="t('译文')" :placeholder="busy ? t('正在翻译，请稍候…') : t('译文将在这里显示')" />
+      <p v-if="error" class="translation-error" role="alert">{{ te(error) }}</p>
+      <footer class="provider-tools">
+        <div class="icon-group">
+          <Button variant="ghost" :disabled="!translated || copying" :title="t('复制译文')" :aria-label="t('复制译文')" @click="copy"><Copy :size="15" /></Button>
+          <Button variant="ghost" :disabled="busy || !translated || !swapSource" :title="t('回译')" :aria-label="t('回译')" @click="reverse"><ArrowLeftRight :size="15" /></Button>
+          <Button variant="ghost" :disabled="busy || loading || !canTranslate || !source.trim()" :title="t('重新翻译')" :aria-label="t('重新翻译')" @click="translate"><RotateCcw :size="15" /></Button>
+        </div>
+        <Button v-if="busy" variant="ghost" @click="cancel">{{ t('取消翻译') }}</Button>
+        <span v-else-if="message" class="translation-success" role="status"><Check :size="13" />{{ t(message) }}</span>
+        <span v-else class="target-language">{{ t(targetLabel) }}</span>
+      </footer>
+    </section>
+    <p v-if="config && !local" class="translation-hint online-hint">{{ t('在线翻译会发送原文，可能产生费用。') }}</p>
+    <Button v-if="!workspace" class="back-action" variant="ghost" @click="emit('back')"><ArrowLeft :size="15" />{{ t('返回识别') }}</Button>
   </section>
 </template>
 
 <style scoped>
-.translation-languages { display:flex; align-items:center; flex-wrap:wrap; gap:8px; }
-.translation-languages :deep(.select-trigger) { width:150px; }
-.translation-auto { display:inline-flex; align-items:center; gap:6px; font-size:12px; }
-.translation-workspace { flex:1 0 420px; height:auto; min-height:420px; aspect-ratio:auto; border:0; border-radius:0; background:var(--desk-bg, #fff); color:var(--desk-text, #24292f); }
-.translation-workspace .result-body { padding:0 0 12px; }
-.translation-workspace .result-footer { padding:8px 0; }
-.translation-workspace .translation-stack { grid-template-columns:minmax(0,1fr); grid-template-rows:minmax(140px,1fr) minmax(140px,1fr); min-height:288px; }
-.translation-workspace .translated-text textarea { font-size:14px; font-weight:400; }
-.translation-workspace .translation-text { background:var(--desk-soft, #f6f7f8); }
-.translation-workspace textarea { color:inherit; }
-.translation-workspace .result-footer { border-color:var(--desk-border, #e1e4e8); }
-.translation-hint { margin:0; color:var(--ui-muted-fg, #57606a); font-size:12px; }
+/* 参考 Pot 的纵向浮窗：原文、语言条、服务结果卡；所有操作贴近对应文字。 */
+.translation-panel { --panel-bg:#f5f5f7; --card-bg:#fff; --bar-bg:#eeeef1; --panel-fg:#27272a; --panel-muted:#71717a; --panel-border:#e4e4e7; display:flex; flex-direction:column; gap:8px; min-height:0; color:var(--panel-fg); font-size:13px; }
+:global([data-theme=dark]) .translation-panel { --panel-bg:#18181b; --card-bg:#27272a; --bar-bg:#323237; --panel-fg:#f4f4f5; --panel-muted:#a1a1aa; --panel-border:#3f3f46; }
+.source-card, .provider-card { flex-shrink:0; border-radius:10px; overflow:hidden; background:var(--card-bg); }
+.translation-panel textarea { display:block; width:100%; border:0; border-radius:0; padding:12px; resize:vertical; font:inherit; font-size:14px; line-height:1.65; background:transparent; color:inherit; user-select:text; }
+.translation-panel textarea::placeholder { color:var(--panel-muted); }
+.translation-panel textarea { scrollbar-width:none; }
+.translation-panel textarea::-webkit-scrollbar { display:none; }
+.source-card textarea { min-height:104px; height:140px; max-height:40vh; }
+.provider-card textarea { min-height:120px; height:180px; max-height:50vh; }
+.source-tools, .provider-tools, .provider-heading, .panel-heading { display:flex; align-items:center; gap:6px; padding:4px 8px; }
+.source-tools, .provider-tools { flex-wrap:wrap; }
+.icon-group { display:flex; align-items:center; gap:2px; }
+.translation-panel :deep(button), .translation-panel :deep(.source-action) { min-width:28px; min-height:28px; height:28px; padding:5px; border-radius:6px; color:var(--panel-muted); background:transparent; }
+.translation-panel :deep(button:hover:enabled) { background:var(--bar-bg); color:var(--panel-fg); }
+.translation-panel :deep(button:disabled) { opacity:.4; }
+.translation-panel textarea:focus-visible, .translation-panel :deep(button:focus-visible) { outline:2px solid #2563eb; outline-offset:-2px; }
+.source-tools .translate-action { margin-left:auto; color:#2563eb; }
+.detected-language { font-size:11px; color:var(--panel-muted); border:1px solid var(--panel-border); padding:1px 6px; border-radius:10px; }
+.language-area { flex-shrink:0; }
+.language-selectors { display:grid; grid-template-columns:minmax(0,1fr) 32px minmax(0,1fr); align-items:center; gap:4px; padding:2px 4px; background:var(--bar-bg); border-radius:10px; }
+.language-selectors :deep(.select-trigger) { width:100%; min-width:0; height:32px; border:0; background:transparent; color:var(--panel-fg); }
+.language-selectors :deep(.select-trigger:last-child) { text-align:right; }
+.language-options { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:6px 4px 0; }
+.translation-auto { display:inline-flex; align-items:center; gap:6px; font-size:11px; color:var(--panel-muted); }
+.translation-auto input { width:13px; height:13px; }
+.provider-heading { background:var(--bar-bg); min-height:32px; }
+.provider-name { display:inline-flex; align-items:center; gap:6px; font-weight:600; margin-right:auto; }
+.provider-name svg { color:#2563eb; }
+.translation-status, .translation-success { display:inline-flex; align-items:center; gap:4px; font-size:11px; }
+.translation-status, .target-language { color:var(--panel-muted); }
+.translation-success { color:var(--ui-success-fg, #24834b); }
+.provider-tools > :last-child:not(.icon-group) { margin-left:auto; }
+.target-language { font-size:11px; }
+.translation-error { margin:0; padding:8px 12px; font-size:12px; color:#b42318; overflow-wrap:anywhere; }
+:global([data-theme=dark]) .translation-error { color:#fda29b; }
+.translation-hint { margin:4px 4px 0; color:var(--panel-muted); font-size:11px; line-height:1.5; }
+.online-hint { padding-bottom:8px; }
+.panel-heading { justify-content:space-between; }
+.back-action { align-self:flex-start; }
+.translation-spinner { animation:translation-spin 1s linear infinite; }
+@keyframes translation-spin { to { transform:rotate(360deg); } }
+@media (prefers-reduced-motion:reduce) { .translation-spinner { animation:none; } }
 </style>

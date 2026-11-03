@@ -2,7 +2,7 @@
 use std::sync::Mutex;
 use tauri::{AppHandle, Manager, WebviewWindow, WebviewWindowBuilder};
 
-const CONFIGURED: [&str; 3] = ["recording-controls", "scroll-preview", "scroll-controls"];
+const CONFIGURED: [&str; 4] = ["recording-controls", "scroll-preview", "scroll-controls", "translation"];
 
 #[derive(Clone, Copy, PartialEq)]
 enum Policy {

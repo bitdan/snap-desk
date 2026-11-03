@@ -4,7 +4,6 @@ import ConfirmDialog from '@/shared/ui/ConfirmDialog.vue'
 import DetachedWindow from '@/shared/ui/DetachedWindow.vue'
 import { handleEscape } from '@/shared/ui/escape'
 import { nextTick, onMounted, onUnmounted, ref } from 'vue'
-import ImageTranslation from '@/features/recognition/components/ImageTranslation.vue'
 import OcrResultCard from '@/features/recognition/components/OcrResultCard.vue'
 import { api } from '@/services/api'
 import type { PinFrame } from '@/features/pins/types'
@@ -19,8 +18,15 @@ let disposed = false
 const ocr = ref<OcrResult | null>(null), qr = ref<QrResult | null>(null)
 // 与截图一致：识别结果是可编辑草稿，翻译来回切换不会丢失修正。
 const draft = ref('')
-const translating = ref(props.mode === 'translate')
-function backToRecognition() { translating.value = false }
+const openingTranslation = ref(false)
+/** 贴图识别后也交给同一个独立窗口，保留用户修正过的 OCR 草稿。 */
+async function translate() {
+  if (openingTranslation.value) return
+  openingTranslation.value = true; error.value = ''
+  try { await api.openTranslation(draft.value); emit('close') }
+  catch (e) { if (!disposed) error.value = String(e) }
+  finally { openingTranslation.value = false }
+}
 const pendingLink = ref<number | null>(null)
 async function run(task: () => Promise<void>) {
   if (busy.value) return
@@ -33,7 +39,10 @@ async function recognize() {
     pendingLink.value = null
     if (props.mode !== 'qr') {
       const result = await api.recognizePinText()
-      if (!disposed) { ocr.value = result; draft.value = result.fullText }
+      if (!disposed) {
+        ocr.value = result; draft.value = result.fullText
+        if (props.mode === 'translate' && draft.value.trim()) await translate()
+      }
     } else {
       const result = await api.recognizePinQr()
       if (!disposed) qr.value = result
@@ -71,10 +80,10 @@ onUnmounted(() => { disposed = true })
 </script>
 
 <template>
-  <DetachedWindow :open="true" :title="mode === 'qr' ? t('图片二维码识别') : translating ? t('文字翻译') : t('文字识别结果')" :width="1000" :height="650" @close="emit('close')">
-    <section v-if="mode !== 'qr' && ocr" class="pin-recognition result-shell" :aria-label="translating ? t('文字翻译') : t('文字识别结果')">
-      <ImageTranslation v-if="translating" :recognition="ocr" :source-text="draft" :image="frame" @close="emit('close')" @back="backToRecognition" />
-      <OcrResultCard v-else v-model:text="draft" @translate="translating = true" @close="emit('close')" />
+  <DetachedWindow :open="true" :title="mode === 'qr' ? t('图片二维码识别') : t('文字识别结果')" :width="1000" :height="650" @close="emit('close')">
+    <section v-if="mode !== 'qr' && ocr" class="pin-recognition result-shell" :aria-label="t('文字识别结果')">
+      <OcrResultCard v-model:text="draft" @translate="translate" @close="emit('close')" />
+      <p v-if="error" role="alert" class="recognition-error">{{ te(error) }}</p>
     </section>
     <section v-else ref="panel" class="pin-recognition" :aria-label="mode !== 'qr' ? t('图片文字识别') : t('图片二维码识别')" tabindex="-1" @keydown.stop="key">
       <header><strong>{{ mode !== 'qr' ? t("图片文字识别") : t("图片二维码识别") }}</strong><button @click="emit('close')">{{ t("关闭") }}</button></header>

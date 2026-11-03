@@ -1,5 +1,9 @@
 /** 审计过的命令名白名单；API 与日志共享，禁止任意字符串写盘。 */
 export const ipcCommands = [
+  "open_translation",
+  "close_translation",
+  "control_translation_window",
+  "start_translation_capture",
   "read_translation_input",
   "app_update_status",
   "check_app_update",

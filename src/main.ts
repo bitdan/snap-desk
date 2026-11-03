@@ -38,6 +38,7 @@ async function mount() {
     await import('@/app/styles/main.css')
     component = kind === 'capture' ? (await import('@/features/capture/components/CaptureOverlay.vue')).default
       : kind === 'pin' ? (await import('@/features/pins/components/PinWindow.vue')).default
+      : kind === 'translation' ? (await import('@/features/recognition/components/TranslationWindow.vue')).default
       : kind === 'scroll-preview' || kind === 'scroll-controls' ? (await import('@/features/scroll/components/ScrollPreview.vue')).default
       : (await import('@/app/App.vue')).default
   }

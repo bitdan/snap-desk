@@ -16,7 +16,7 @@ const Component = clientComponent(TranslationPanel, new URL('../../src/features/
 let root: MemoryNode, settings: ReturnType<typeof defaultSettings>
 const source = ref('hello')
 const text = (node: MemoryNode): string => node.text + node.children.map(text).join('')
-const button = (label: string) => findNode(root, node => node.type === 'button' && text(node).trim() === label)!
+const button = (label: string) => findNode(root, node => node.type === 'button' && (text(node).trim() === label || node.props['aria-label'] === label))!
 const select = (label: string) => findNode(root, node => node.type === 'select-control' && node.props['aria-label'] === label)!
 const output = () => findNode(root, node => node.props.id === 'translation-output')!.value
 const mount = async (autoTranslate = false) => {

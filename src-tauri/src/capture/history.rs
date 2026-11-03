@@ -112,7 +112,7 @@ pub async fn replay_capture(
         let mut current = state.session.lock().map_err(err)?;
         let session = current
             .as_ref()
-            .filter(|s| s.frame.id == id && !s.frame.recording)
+            .filter(|s| s.frame.id == id && !s.frame.recording && !s.frame.translation)
             .ok_or("当前截图不能回放。")?;
         let mut history = state.history.lock().map_err(err)?;
         if history.entries.is_empty() {
@@ -182,6 +182,7 @@ mod tests {
                 height: 1,
                 preview_revision: 0,
                 recording: false,
+                translation: false,
                 snap_enabled: false,
                 origin_x: 0,
                 origin_y: 0,

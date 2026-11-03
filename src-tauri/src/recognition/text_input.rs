@@ -1,4 +1,4 @@
-//! 文字翻译入口：快捷键先复制当前选区，再唤起主窗口自动翻译。
+//! 文字翻译入口：输入、划词及截图识别共用独立窗口，原文只由该窗口领取。
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Mutex,
@@ -16,14 +16,14 @@ pub enum TextInputKind {
     Pending,
 }
 
-/// 挂起文本由主窗口一次性领取；通知只负责导航，避免异步页面挂载丢失原文。
+/// 挂起文本由翻译窗口一次性领取，兼容冷启动时事件早于监听器注册。
 #[tauri::command]
 pub fn read_translation_input(
     app: AppHandle,
     window: WebviewWindow,
     kind: TextInputKind,
 ) -> Result<Option<String>, String> {
-    crate::capture::require_window(&window, "main")?;
+    crate::capture::require_window(&window, "translation")?;
     match kind {
         TextInputKind::Clipboard => clipboard(&app).map(Some),
         TextInputKind::Pending => app
@@ -53,15 +53,62 @@ fn clipboard(app: &AppHandle) -> Result<String, String> {
     )
 }
 
-/// 按翻译快捷键后发布原文，由主窗口读取配置并自动翻译。
-fn publish(app: &AppHandle, text: String) -> Result<(), String> {
-    *app.state::<TextInputState>()
+/// 先确保窗口存在，再写入原文；普通打开保留当前内容，不自动读取剪贴板。
+pub fn publish(app: &AppHandle, text: Option<String>) -> Result<(), String> {
+    let window = crate::shared::auxiliary_windows::ensure(app, "translation")?;
+    if let Some(text) = text {
+        *app.state::<TextInputState>()
         .0
         .lock()
         .map_err(|_| "翻译输入正在使用。")? = Some(text);
-    crate::capture::show_main(app);
-    app.emit_to("main", "translation-open", ())
-        .map_err(|_| "无法打开翻译页面。".into())
+    }
+    window.show().map_err(|e| e.to_string())?;
+    window.unminimize().map_err(|e| e.to_string())?;
+    window.set_focus().map_err(|e| e.to_string())?;
+    app.emit_to("translation", "translation-open", ())
+        .map_err(|_| "无法打开翻译窗口。".into())
+}
+
+/// 创建 WebView 放到后台，避免命令运行在 UI 线程时等待窗口创建而阻塞。
+#[tauri::command]
+pub async fn open_translation(app: AppHandle, window: WebviewWindow, text: Option<String>) -> Result<(), String> {
+    if !matches!(window.label(), "main" | "capture" | "translation") {
+        crate::pins::require_pin(&app, &window)?;
+    }
+    let text = text.map(validate).transpose()?;
+    tauri::async_runtime::spawn_blocking(move || publish(&app, text))
+        .await.map_err(|e| e.to_string())?
+}
+
+/// Esc 与系统关闭按钮都销毁翻译窗口，原生窗口事件取消它持有的任务。
+#[tauri::command]
+pub fn close_translation(window: WebviewWindow) -> Result<(), String> {
+    crate::capture::require_window(&window, "translation")?;
+    window.close().map_err(|e| e.to_string())
+}
+
+/// 无标题栏翻译浮窗仅开放拖动与置顶，不接受任意窗口标签或属性。
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TranslationWindowAction { Drag, Pin, Unpin }
+
+#[tauri::command]
+pub fn control_translation_window(window: WebviewWindow, action: TranslationWindowAction) -> Result<(), String> {
+    crate::capture::require_window(&window, "translation")?;
+    match action {
+        TranslationWindowAction::Drag => window.start_dragging(),
+        TranslationWindowAction::Pin => window.set_always_on_top(true),
+        TranslationWindowAction::Unpin => window.set_always_on_top(false),
+    }.map_err(|e| e.to_string())
+}
+
+/// 截图意图随会话帧传递，框选完成即 OCR；取消截图后恢复原翻译内容。
+#[tauri::command]
+pub async fn start_translation_capture(app: AppHandle, window: WebviewWindow) -> Result<(), String> {
+    crate::capture::require_window(&window, "translation")?;
+    let result = crate::capture::begin_translation(app.clone()).await;
+    if result.is_err() { let _ = publish(&app, None); }
+    result
 }
 
 /// 一次只执行一个选区复制任务，防止长按快捷键重复复制和打开翻译。
@@ -78,7 +125,7 @@ pub fn open(app: &AppHandle) {
             .and_then(validate);
         match result {
             Ok(text) => {
-                if let Err(error) = publish(&app, text) {
+                if let Err(error) = publish(&app, Some(text)) {
                     crate::capture::report_error(&app, error);
                 }
             }

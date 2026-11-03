@@ -190,9 +190,9 @@ impl Jobs {
         self.cancelled.push_back(request_id);
     }
 }
-/// 主窗口、截图与仍存在的贴图共享翻译，其他窗口不能提交或取消任务。
+/// 主窗口、独立翻译、截图与仍存在的贴图共享翻译，其他窗口不能提交或取消任务。
 fn require_translation_window(app: &AppHandle, window: &WebviewWindow) -> Result<(), String> {
-    if matches!(window.label(), "main" | "capture") {
+    if matches!(window.label(), "main" | "capture" | "translation") {
         return Ok(());
     }
     crate::pins::require_pin(app, window)

@@ -22,6 +22,19 @@
         "center": true
       },
       {
+        "label": "translation",
+        "create": false,
+        "title": "Snap Desk · 翻译",
+        "url": "index.html?window=translation",
+        "visible": false,
+        "decorations": false,
+        "width": 380,
+        "height": 560,
+        "minWidth": 340,
+        "minHeight": 420,
+        "center": true
+      },
+      {
         "label": "capture",
         "create": false,
         "title": "Snap Desk Capture",

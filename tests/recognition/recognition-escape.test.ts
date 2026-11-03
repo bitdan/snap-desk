@@ -11,7 +11,7 @@ import { appearance } from '../../src/shared/ui/appearance'
 import { handleEscape } from '../../src/shared/ui/escape'
 import { defaultAiSettings } from '../../src/features/recognition/ai'
 import { clientComponent, MemoryNode, memoryRenderer, findNode, flushComponent } from '../helpers/component-host'
-const api = vi.hoisted(() => ({ recognizePinText: vi.fn(), recognizePinQr: vi.fn(), pinQrAction: vi.fn(), aiTranslationConfig: vi.fn(), translateText: vi.fn(), translateTexts: vi.fn(), cancelAiJob: vi.fn(), copyOcrText: vi.fn() }))
+const api = vi.hoisted(() => ({ openTranslation: vi.fn(), recognizePinText: vi.fn(), recognizePinQr: vi.fn(), pinQrAction: vi.fn(), aiTranslationConfig: vi.fn(), translateText: vi.fn(), translateTexts: vi.fn(), cancelAiJob: vi.fn(), copyOcrText: vi.fn() }))
 vi.mock('../../src/services/api', () => ({ api }))
 vi.mock('../../src/shared/ui/button/Button.vue', async () => {
   const { defineComponent, h } = await import('vue')
@@ -131,29 +131,29 @@ describe('识别与翻译面板真实交互', () => {
     copy.props.onClick(); await flushComponent()
     expect(api.copyOcrText).toHaveBeenCalledExactlyOnceWith('修正后的原文')
   })
-  it('贴图将编辑草稿送入共享翻译流程，返回识别不重复 OCR 或丢失草稿', async () => {
+  it('贴图将修正后的原文送入独立窗口，成功后关闭识别面板', async () => {
     api.recognizePinText.mockResolvedValueOnce({ ...recognition, fullText: '识别原文' })
     await mount('PinRecognition')
     findNode(root, node => node.type === 'textarea')!.props['onUpdate:modelValue']('修正后的原文')
     await flushComponent()
     findNode(root, node => node.type === 'button' && content(node).trim() === '翻译文字')!.props.onClick()
     await flushComponent()
-    expect(content(root)).toContain('修正后的原文')
-    expect(api.translateText).toHaveBeenCalledOnce()
-    expect(api.translateText.mock.calls[0][1]).toBe('修正后的原文')
-    findNode(root, node => node.type === 'button' && content(node).trim() === '返回识别')!.props.onClick()
-    await flushComponent()
-    expect(findNode(root, node => node.type === 'textarea')!.value).toBe('修正后的原文')
+    expect(api.openTranslation).toHaveBeenCalledExactlyOnceWith('修正后的原文')
+    expect(close).toHaveBeenCalledOnce()
     expect(api.recognizePinText).toHaveBeenCalledOnce()
+    expect(api.translateText).not.toHaveBeenCalled()
   })
-  it('贴图直接翻译入口仍可返回同一份可编辑识别结果', async () => {
+  it('贴图直接翻译入口识别后打开独立窗口，失败保留可编辑原文供重试', async () => {
     api.recognizePinText.mockResolvedValueOnce({ ...recognition, fullText: '直接翻译的原文' })
+    api.openTranslation.mockRejectedValueOnce(new Error('窗口打开失败'))
     await mount('PinRecognition', { mode: 'translate' })
-    expect(content(root)).toContain('直接翻译的原文')
-    expect(api.translateText).toHaveBeenCalledOnce()
-    findNode(root, node => node.type === 'button' && content(node).trim() === '返回识别')!.props.onClick()
-    await flushComponent()
+    expect(api.openTranslation).toHaveBeenCalledExactlyOnceWith('直接翻译的原文')
+    expect(close).not.toHaveBeenCalled()
     expect(findNode(root, node => node.type === 'textarea')!.value).toBe('直接翻译的原文')
+    expect(content(root)).toContain('窗口打开失败')
+    findNode(root, node => node.type === 'button' && content(node).trim() === '翻译文字')!.props.onClick()
+    await flushComponent()
+    expect(close).toHaveBeenCalledOnce()
     expect(api.recognizePinText).toHaveBeenCalledOnce()
   })
   it('贴图空识别结果与截图一致，允许手动输入后复制或翻译', async () => {

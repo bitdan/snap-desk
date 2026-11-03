@@ -4,6 +4,7 @@
   "description": "Local UI event subscriptions only; native operations are validated Rust commands.",
   "windows": [
     "main",
+    "translation",
     "capture",
     "pin-*",
     "scroll-preview",

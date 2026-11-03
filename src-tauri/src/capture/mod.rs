@@ -82,6 +82,8 @@ pub struct Frame {
     preview_revision: u64,
     /// F3 进入录屏框选；随帧传递意图，窗口重新加载也不会丢失入口状态。
     recording: bool,
+    /// 从翻译窗口发起时，框选完成立即识别并送回独立翻译窗口。
+    translation: bool,
     /// 窗口候选始终提供给录屏列表；此开关独立控制截图的鼠标吸附。
     snap_enabled: bool,
     origin_x: i32,
@@ -230,17 +232,23 @@ pub async fn begin(app: AppHandle) -> Result<(), String> {
 
 /// 快捷键入口在派发异步任务前记录时间，包含运行时排队耗时。
 pub(crate) async fn begin_at(app: AppHandle, requested_at: Instant) -> Result<(), String> {
-    begin_with_mode(app, false, requested_at).await
+    begin_with_mode(app, false, false, requested_at).await
 }
 
 /// 录屏快捷键复用截图的选区能力，确认范围后再交给录屏设置与采集器。
 pub async fn begin_recording(app: AppHandle) -> Result<(), String> {
-    begin_with_mode(app, true, Instant::now()).await
+    begin_with_mode(app, true, false, Instant::now()).await
+}
+
+/// 翻译截图复用现有采集和 DPI 坐标契约，不叠加截图倒计时。
+pub async fn begin_translation(app: AppHandle) -> Result<(), String> {
+    begin_with_mode(app, false, true, Instant::now()).await
 }
 
 async fn begin_with_mode(
     app: AppHandle,
     recording: bool,
+    translation: bool,
     requested_at: Instant,
 ) -> Result<(), String> {
     let state = app.state::<CaptureState>();
@@ -255,8 +263,8 @@ async fn begin_with_mode(
             return Err("截图正在进行中，请先完成或取消当前截图。".into());
         }
         state.delay_cancelled.store(false, Ordering::SeqCst);
-        // 录屏有独立倒计时，选区入口不叠加截图延时。
-        let delay = if recording {
+        // 录屏有独立倒计时，截图翻译直接框选；两个入口都不叠加截图延时。
+        let delay = if recording || translation {
             0
         } else {
             settings.value.delay_seconds
@@ -291,7 +299,7 @@ async fn begin_with_mode(
         }
         let mut latency = Latency::new(requested_at);
         latency.delay_ms = elapsed_ms(delay_started);
-        prepare(&worker_app, recording, latency)
+        prepare(&worker_app, recording, translation, latency)
     })
     .await
     .map_err(err)
@@ -373,7 +381,7 @@ fn hide_remaining(hidden: Option<Instant>, now: Instant) -> Duration {
         .unwrap_or_default()
 }
 
-fn prepare(app: &AppHandle, recording: bool, mut latency: Latency) -> Result<(), String> {
+fn prepare(app: &AppHandle, recording: bool, translation: bool, mut latency: Latency) -> Result<(), String> {
     let started = latency.started;
     let hide_started = Instant::now();
     recording::live_annotations::remember_desktop_focus(app);
@@ -382,6 +390,13 @@ fn prepare(app: &AppHandle, recording: bool, mut latency: Latency) -> Result<(),
         // 录制复用过的窗口可能处于鼠标穿透/捕获排除状态；新截图恢复普通交互。
         window.set_ignore_cursor_events(false).map_err(err)?;
         window.set_content_protected(false).map_err(err)?;
+    }
+    // 翻译窗口先隐藏，并沿用合成等待，避免把自己的文字收进截图。
+    if let Some(window) = app.get_webview_window("translation") {
+        if window.is_visible().map_err(err)? {
+            window.hide().map_err(err)?;
+            *app.state::<CaptureState>().hidden_at.lock().map_err(err)? = Some(Instant::now());
+        }
     }
     // 旧控制条属于捕获排除窗口，先真正收起再截图；部分桌面截图路径会把可见的排除窗口画成黑矩形。
     let controls_visible = app
@@ -462,6 +477,7 @@ fn prepare(app: &AppHandle, recording: bool, mut latency: Latency) -> Result<(),
         replay: None,
         id,
         recording,
+        translation,
         snap_enabled: recording || snap,
         origin_x: desktop.x,
         origin_y: desktop.y,
@@ -708,6 +724,7 @@ fn cleanup(app: &AppHandle) -> Result<(), String> {
     let scroll_id = state.scroll.lock().map_err(err)?.take().map(|s| s.id);
     let session = state.session.lock().map_err(err)?.take();
     let closed_id = session.as_ref().map(|session| session.frame.id);
+    let restore_translation = session.as_ref().is_some_and(|session| session.frame.translation);
     // 先释放原生 RGBA/PNG，再通知常驻 WebView 清空图片和标注历史。
     // 关闭窗口/全局取消也会经过这里，不能只依赖前端按钮的成功回调。
     drop(session);
@@ -723,6 +740,13 @@ fn cleanup(app: &AppHandle) -> Result<(), String> {
     }
     scroll::chrome::release(app);
     state.active.store(false, Ordering::SeqCst);
+    // 用户可能在框选期间关闭翻译窗口；取消截图只恢复仍存在的窗口，不重建它。
+    if restore_translation {
+        if let Some(window) = app.get_webview_window("translation") {
+            window.show().map_err(err)?;
+            window.set_focus().map_err(err)?;
+        }
+    }
     Ok(())
 }
 

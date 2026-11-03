@@ -1,4 +1,16 @@
 {
+  "输入需要翻译的文字…": "Enter text to translate\u2026",
+  "复制原文": "Copy source",
+  "原文已复制。": "Source text copied.",
+  "合并换行": "Merge line breaks",
+  "回译": "Translate back",
+  "翻译服务": "Translation service",
+  "本地翻译": "Local translation",
+  "兼容服务": "Compatible service",
+  "置顶窗口": "Keep on top",
+  "取消置顶": "Stop keeping on top",
+
+  "Enter 翻译，Shift+Enter 换行": "Enter to translate, Shift+Enter for a new line",
   "中英自动互译": "Auto Chinese ↔ English",
   "中英比例接近，使用默认目标语言。": "Chinese and English are balanced. Using the default target language.",
   "选中文字后按快捷键自动复制并翻译": "Select text, then press the shortcut to copy and translate automatically",

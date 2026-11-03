@@ -3,7 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { h } from 'vue'
 import { clientComponent, findNode, flushComponent, MemoryNode, memoryRenderer } from '../helpers/component-host'
 
-const api = vi.hoisted(() => ({ current: vi.fn(), currentScroll: vi.fn(), recordingCapabilities: vi.fn(), startScroll: vi.fn(), startRecording: vi.fn() }))
+const api = vi.hoisted(() => ({ recognizeCapture: vi.fn(), openTranslation: vi.fn(), cancel: vi.fn(), current: vi.fn(), currentScroll: vi.fn(), recordingCapabilities: vi.fn(), startScroll: vi.fn(), startRecording: vi.fn() }))
 const captureEvents = vi.hoisted(() => ({ frame: (_value: unknown) => {} }))
 vi.mock('../../src/services/api', () => ({ api,
   onFrame: async (callback: typeof captureEvents.frame) => { captureEvents.frame = callback; return () => { captureEvents.frame = () => {} } },
@@ -15,11 +15,17 @@ vi.mock('../../src/features/annotations/components/AnnotationWorkspace.vue', asy
   return { default: defineComponent({ setup: (_, { attrs, slots }) => () => h('workspace', attrs, [slots.actions?.(), slots.footer?.()]) }) }
 })
 vi.mock('../../src/shared/ui/SelectControl.vue', async () => ({ default: (await import('../helpers/select-control')).SelectControlStub }))
+vi.mock('../../src/shared/ui/button/Button.vue', async () => {
+  const { defineComponent, h } = await import('vue')
+  return { default: defineComponent({ setup: (_, { attrs, slots }) => () => h('button', attrs, slots.default?.()) }) }
+})
 vi.mock('../../src/features/recording/components/RecordingSetupMenu.vue', () => ({ default: { render: () => null } }))
 vi.mock('../../src/features/recording/components/RecordingSourceSelect.vue', () => ({ default: { render: () => null } }))
 vi.mock('../../src/features/recording/components/RecordingAnnotations.vue', () => ({ default: { render: () => null } }))
 vi.mock('../../src/features/scroll/components/ScrollCaptureIcon.vue', () => ({ default: { render: () => null } }))
 import Capture from '../../src/features/capture/components/CaptureOverlay.vue'
+import OcrResultCard from '../../src/features/recognition/components/OcrResultCard.vue'
+clientComponent(OcrResultCard, new URL('../../src/features/recognition/components/OcrResultCard.vue', import.meta.url))
 const Component = clientComponent(Capture, new URL('../../src/features/capture/components/CaptureOverlay.vue', import.meta.url))
 let root: MemoryNode
 const workspace = () => findNode(root, node => node.type === 'workspace')!
@@ -144,4 +150,34 @@ it('绘制标注期间保留工具栏和定位；指针工具空白拖动可调�
   expect(workspace().props['toolbar-visible']).toBe(true)
   expect(workspace().props.bounds).toEqual({ x: 100, y: 100, width: 400, height: 300 })
   expect(editor.history.present).toHaveLength(1)
+})
+
+it('截图翻译将 OCR 原文交给独立窗口，成功交接后才释放截图', async () => {
+  api.recognizeCapture.mockResolvedValueOnce({ fullText: 'screen text', requestId: 'ocr' })
+  findNode(root, node => node.props['aria-label'] === '截图翻译')!.props.onClick()
+  await flushComponent()
+  expect(api.recognizeCapture).toHaveBeenCalledExactlyOnceWith(1, { x: 100, y: 100, width: 400, height: 300 })
+  expect(api.openTranslation).toHaveBeenCalledExactlyOnceWith('screen text')
+  expect(api.cancel).toHaveBeenCalledExactlyOnceWith(1)
+  expect(api.openTranslation.mock.invocationCallOrder[0]).toBeLessThan(api.cancel.mock.invocationCallOrder[0])
+})
+it('翻译窗口打开失败时保留截图与识别草稿', async () => {
+  api.recognizeCapture.mockResolvedValueOnce({ fullText: 'screen text', requestId: 'ocr' })
+  api.openTranslation.mockRejectedValueOnce(new Error('窗口打开失败'))
+  findNode(root, node => node.props['aria-label'] === '截图翻译')!.props.onClick()
+  await flushComponent()
+  expect(api.cancel).not.toHaveBeenCalled()
+  expect(overlay()).toBeDefined()
+  expect(nodeText(root)).toContain('窗口打开失败')
+})
+it('翻译截图模式在框选完成后自动 OCR，无需再点截图工具栏', async () => {
+  captureEvents.frame({ id: 2, width: 1000, height: 800, previewRevision: 1, originX: 0, originY: 0, displays: [], targets: [], recording: false, translation: true })
+  await flushComponent()
+  api.recognizeCapture.mockResolvedValueOnce({ fullText: 'automatic capture', requestId: 'ocr-2' })
+  overlay().props.onPointerdown(event(50, 60))
+  overlay().props.onPointermoveCapture(event(350, 260))
+  overlay().props.onPointerup(event(350, 260))
+  await flushComponent()
+  expect(api.openTranslation).toHaveBeenCalledExactlyOnceWith('automatic capture')
+  expect(api.cancel).toHaveBeenCalledExactlyOnceWith(2)
 })
