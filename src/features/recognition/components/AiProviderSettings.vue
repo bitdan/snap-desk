@@ -15,7 +15,7 @@ import { deepLEndpoints, defaultAiSettings, targetLanguages, translationPresets,
 import type { LocalTranslationStatus } from '@/features/recognition/ai'
 import { Check } from 'lucide-vue-next'
 import Button from '@/shared/ui/button/Button.vue'
-import ResourceSettings from '@/features/resources/components/ResourceSettings.vue'
+import OcrSettings from '@/features/recognition/components/OcrSettings.vue'
 
 const draft = ref(defaultAiSettings()), secret = ref(''), configured = ref<boolean | null>(null)
 const localStatus = ref<LocalTranslationStatus | null>(latestLocalStatus)
@@ -145,7 +145,7 @@ async function modelAction(modelId: string, action: 'download' | 'import' | 'del
   <section class="ai-settings">
     <section class="recognition-section">
       <h3>{{ t("文字识别") }}</h3>
-      <ResourceSettings kind="ocr" />
+      <OcrSettings />
     </section>
     <section class="recognition-section translation-section">
     <h3>{{ t("文本翻译") }}</h3>

@@ -236,6 +236,7 @@ pub struct Settings {
     pub receive_prerelease_updates: bool,
     pub appearance: Appearance,
     pub ai: crate::recognition::translation::AiSettings,
+    pub ocr: crate::recognition::ocr_config::OcrSettings,
     pub shortcuts: Shortcuts,
     pub shortcuts_enabled: bool,
     pub delay_seconds: u8,
@@ -260,6 +261,8 @@ struct SettingsWire {
     appearance: Appearance,
     #[serde(default)]
     ai: crate::recognition::translation::AiSettings,
+    #[serde(default)]
+    ocr: crate::recognition::ocr_config::OcrSettings,
     shortcut: Option<String>,
     shortcuts: Option<Shortcuts>,
     #[serde(default = "enabled_by_default")]
@@ -306,6 +309,7 @@ impl TryFrom<SettingsWire> for Settings {
             clipboard: wire.clipboard,
             onboarding_version: wire.onboarding_version,
             ai: wire.ai,
+            ocr: wire.ocr,
             appearance: wire.appearance,
         })
     }
@@ -328,6 +332,7 @@ impl Default for Settings {
             clipboard: crate::clipboard::model::ClipboardSettings::default(),
             onboarding_version: 0,
             ai: crate::recognition::translation::AiSettings::default(),
+            ocr: crate::recognition::ocr_config::OcrSettings::default(),
             appearance: Appearance::default(),
         }
     }
@@ -357,6 +362,7 @@ fn parse_shortcut(value: &str) -> Result<Option<Shortcut>, String> {
 impl Settings {
     pub fn validate(&self) -> Result<(), String> {
         self.ai.validate()?;
+        self.ocr.validate()?;
         self.export.validate()?;
         self.recording_export.validate()?;
         self.pin_appearance.validate()?;
@@ -962,6 +968,7 @@ mod tests {
         assert!(!value.screenshot_cursor);
         assert!(value.screenshot_snap);
         assert!(value.shortcuts_enabled);
+        assert_eq!(value.ocr, crate::recognition::ocr_config::OcrSettings::default());
         assert_eq!(value.export, ExportSettings::default());
         assert_eq!(
             value.ai,

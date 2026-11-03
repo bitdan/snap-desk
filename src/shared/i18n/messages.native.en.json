@@ -1,4 +1,12 @@
 {
+  "OCR 语言标签无效。": "Invalid OCR language tag.",
+  "无法读取 OCR 设置。": "Unable to read OCR settings.",
+  "Windows OCR 调用失败（{0}）。": "Windows OCR call failed ({0}).",
+  "无法创建 Windows OCR 引擎，请检查系统首选语言的 OCR 语言包。": "Unable to create the Windows OCR engine. Check the OCR pack for your system preferred language.",
+  "所选 Windows OCR 语言包未安装，请在 Windows 语言设置中安装后重试。": "The selected Windows OCR language pack is not installed. Install it in Windows language settings and try again.",
+  "无法创建 Windows OCR 引擎，请检查所选系统 OCR 语言包。": "Unable to create the Windows OCR engine. Check the selected system OCR language pack.",
+  "Windows OCR 返回了无效的图像尺寸限制。": "Windows OCR returned an invalid image dimension limit.",
+
   "没有可复制文字的前台窗口。": "No active window to copy text from.",
   "当前平台暂不支持自动复制选中文字，请在翻译页读取剪贴板。": "Automatic selection copying is not supported on this platform. Read the clipboard from the translation page.",
   "请松开快捷键后重新尝试翻译。": "Release the shortcut keys and try translating again.",

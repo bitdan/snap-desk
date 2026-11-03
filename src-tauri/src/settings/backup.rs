@@ -46,6 +46,8 @@ fn parse(bytes: &[u8]) -> Result<Backup, String> {
     // 新增更新偏好不使旧版完整备份失效；只为这个新增字段补默认值，其他字段仍须完整。
     if let Some(settings) = json.get_mut("settings").and_then(|value| value.as_object_mut()) {
         settings.entry("receivePrereleaseUpdates").or_insert(false.into());
+        // 旧备份没有 OCR 引擎偏好时保留原 PaddleOCR 行为，不擅自切换新引擎。
+        settings.entry("ocr").or_insert(serde_json::to_value(crate::recognition::ocr_config::OcrSettings::default()).map_err(|e| e.to_string())?);
     }
     // 导入要求当前完整结构，不借用启动配置的缺省补齐来悄悄重置遗漏字段。
     let shape = serde_json::to_value(Backup {
@@ -399,6 +401,18 @@ mod tests {
         assert!(!parse(&serde_json::to_vec(&value).unwrap()).unwrap().settings.receive_prerelease_updates);
         value["settings"]["receivePrereleaseUpdates"] = true.into();
         assert!(parse(&serde_json::to_vec(&value).unwrap()).unwrap().settings.receive_prerelease_updates);
+    }
+    #[test]
+    fn old_backups_preserve_paddle_and_new_backups_keep_explicit_system_selection() {
+        let mut value = serde_json::to_value(backup()).unwrap();
+        value["settings"].as_object_mut().unwrap().remove("ocr");
+        assert_eq!(parse(&serde_json::to_vec(&value).unwrap()).unwrap().settings.ocr.provider, "local-ppocr");
+        value["settings"]["ocr"] = serde_json::json!({"provider":"windows-media", "language":"en-US"});
+        let restored = parse(&serde_json::to_vec(&value).unwrap()).unwrap();
+        assert_eq!(restored.settings.ocr.provider, "windows-media");
+        assert_eq!(restored.settings.ocr.language, "en-US");
+        value["settings"]["ocr"].as_object_mut().unwrap().remove("language");
+        assert!(parse(&serde_json::to_vec(&value).unwrap()).is_err());
     }
     #[test]
     fn rollback_restores_existing_preferences_and_removes_only_new_records() {

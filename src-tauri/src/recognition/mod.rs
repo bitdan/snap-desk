@@ -1,5 +1,8 @@
 //! OCR 的稳定 IPC 契约。坐标始终相对裁剪原图，单位为像素，不能当作屏幕 CSS 坐标。
 pub(crate) mod ocr;
+pub(crate) mod ocr_config;
+#[cfg(windows)]
+mod windows_ocr;
 pub(crate) mod qr;
 pub(crate) mod translation;
 pub(crate) mod text_input;
@@ -14,12 +17,13 @@ pub(crate) mod ocr_runtime;
 
 use serde::Serialize;
 
-/// Provider 边界让后续视觉 OCR 复用相同结果；首版只注册本地引擎，不自动联网。
+/// 引擎共享结果契约；严格使用已保存配置，不跨引擎重试或自动联网。
 pub trait OcrProvider {
     fn recognize(
         &self,
         app: &tauri::AppHandle,
         image: &image::RgbaImage,
+        settings: &ocr_config::OcrSettings,
     ) -> Result<OcrResult, String>;
 }
 pub struct LocalOcrProvider;
@@ -28,13 +32,30 @@ impl OcrProvider for LocalOcrProvider {
         &self,
         app: &tauri::AppHandle,
         image: &image::RgbaImage,
+        _settings: &ocr_config::OcrSettings,
     ) -> Result<OcrResult, String> {
         crate::recognition::ocr::recognize_structured(app, image)
     }
 }
+pub struct WindowsOcrProvider;
+impl OcrProvider for WindowsOcrProvider {
+    fn recognize(&self, _app: &tauri::AppHandle, image: &image::RgbaImage, settings: &ocr_config::OcrSettings) -> Result<OcrResult, String> {
+        #[cfg(windows)]
+        return windows_ocr::recognize(image, &settings.language);
+        #[cfg(not(windows))]
+        { let _ = (image, settings); Err("Windows 系统 OCR 仅支持 Windows。".into()) }
+    }
+}
+
+/// 截图文字、截图翻译及贴图使用同一入口，设置快照只读取一次。
+pub fn recognize_selected(app: &tauri::AppHandle, image: &image::RgbaImage) -> Result<OcrResult, String> {
+    let settings = ocr_config::snapshot(app)?;
+    provider(&settings.provider)?.recognize(app, image, &settings)
+}
 pub fn provider(id: &str) -> Result<&'static dyn OcrProvider, String> {
     match id {
         "local-ppocr" => Ok(&LocalOcrProvider),
+        "windows-media" => Ok(&WindowsOcrProvider),
         _ => Err("此 OCR 引擎尚未接入。".into()),
     }
 }
@@ -74,8 +95,9 @@ pub struct OcrResult {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn only_the_maintained_local_engine_is_registered() {
+    fn only_explicit_ocr_engines_are_registered() {
         assert!(super::provider("local-ppocr").is_ok());
+        assert!(super::provider("windows-media").is_ok());
         for id in ["ppocrv5", "online", "", "unknown"] {
             assert!(super::provider(id).is_err());
         }

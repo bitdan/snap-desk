@@ -10,6 +10,9 @@ use tauri_plugin_clipboard_manager::ClipboardExt;
 
 static REQUEST_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
+/// 两个 OCR 引擎共用递增编号，切换引擎后日志与结果仍能唯一关联。
+pub(super) fn next_request() -> u64 { REQUEST_SEQUENCE.fetch_add(1, Ordering::Relaxed) }
+
 /// 模型首次使用时加载；识别和回收共用锁，避免卸载正在推理的会话。
 #[derive(Default)]
 pub struct OcrState(Mutex<Option<CachedEngine>>);
@@ -35,8 +38,13 @@ pub fn release_idle(app: &AppHandle) {
     };
 }
 
-pub fn recognize(app: &AppHandle, image: &image::RgbaImage) -> Result<String, String> {
-    Ok(recognize_structured(app, image)?.full_text)
+/// 两个离线引擎共用输入边界，先检查原图大小再进行缩放或分配像素缓冲区。
+pub(super) fn validate_image(image: &image::RgbaImage) -> Result<(), String> {
+    if image.width() == 0 || image.height() == 0 { return Err("OCR 选区不能为空。".into()); }
+    if u64::from(image.width()) * u64::from(image.height()) > 16_000_000 {
+        return Err("OCR 选区超过 1600 万像素，请缩小范围。".into());
+    }
+    Ok(())
 }
 
 /// 新旧入口共享模型锁与过滤规则，结构化识别不会额外加载模型。
@@ -45,15 +53,10 @@ pub fn recognize_structured(
     image: &image::RgbaImage,
 ) -> Result<OcrResult, String> {
     let started = Instant::now();
-    let op = REQUEST_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let op = next_request();
     let mut code = "OCR_INVALID_REGION";
     let result = (|| {
-        if image.width() == 0 || image.height() == 0 {
-            return Err("OCR 选区不能为空。".into());
-        }
-        if u64::from(image.width()) * u64::from(image.height()) > 16_000_000 {
-            return Err("OCR 选区超过 1600 万像素，请缩小范围。".into());
-        }
+        validate_image(image)?;
         code = "OCR_BUSY";
         let state = app.state::<OcrState>();
         let mut engine = state.0.try_lock().map_err(|_| "已有文字识别正在进行。")?;
@@ -161,7 +164,7 @@ fn recognize_regions(engine: &OAROCR, image: &image::RgbaImage) -> Result<OcrRes
         })
         .collect();
     Ok(OcrResult {
-        request_id: format!("ocr-{}", REQUEST_SEQUENCE.fetch_add(1, Ordering::Relaxed)),
+        request_id: String::new(), // 外层在识别完成后统一填入本次任务编号。
         provider: "local-ppocr".into(),
         image_width: image.width(),
         image_height: image.height(),

@@ -654,7 +654,7 @@ pub async fn recognize_pin_text(
 ) -> Result<crate::recognition::OcrResult, String> {
     let image = own(&app, &window)?.image;
     tauri::async_runtime::spawn_blocking(move || {
-        let result = crate::recognition::provider("local-ppocr")?.recognize(&app, &image)?;
+        let result = crate::recognition::recognize_selected(&app, &image)?;
         let current = own(&app, &window)?;
         if !Arc::ptr_eq(&current.image, &image) {
             return Err("图片已更新，请重新识别。".into());

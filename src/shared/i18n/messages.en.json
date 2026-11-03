@@ -1,4 +1,15 @@
 {
+  "OCR 引擎": "OCR engine",
+  "Windows 系统 OCR": "Windows system OCR",
+  "识别语言": "Recognition language",
+  "跟随系统首选语言": "Use system preferred language",
+  "正在检查系统语言包…": "Checking system language packs\u2026",
+  "Windows 系统 OCR 仅支持 Windows。": "Windows system OCR is only available on Windows.",
+  "已安装 {0} 个 OCR 语言包": "{0} OCR language packs installed",
+  "未安装 Windows OCR 语言包，请在 Windows 语言设置中安装。": "No Windows OCR language packs installed. Install one in Windows language settings.",
+  "刷新语言包": "Refresh languages",
+  "使用系统离线识别，图片不上传；失败时不切换其他引擎。": "Recognizes locally using Windows. Images are not uploaded; failures do not switch engines.",
+
   "输入需要翻译的文字…": "Enter text to translate\u2026",
   "复制原文": "Copy source",
   "原文已复制。": "Source text copied.",

@@ -11,7 +11,7 @@ vi.mock('../../src/shared/ui/button/Button.vue', async () => {
   const { defineComponent, h } = await import('vue')
   return { default: defineComponent({ setup: (_, { attrs, slots }) => () => h('button', attrs, slots.default?.()) }) }
 })
-vi.mock('../../src/features/resources/components/ResourceSettings.vue', async () => {
+vi.mock('../../src/features/recognition/components/OcrSettings.vue', async () => {
   const { defineComponent, h } = await import('vue')
   return { default: defineComponent({ setup: () => () => h('ocr-settings') }) }
 })

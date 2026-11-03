@@ -885,7 +885,7 @@ pub async fn recognize_capture_v2(
         let state = app.state::<CaptureState>();
         let _operation = Operation::acquire(&state.operation)?;
         let cropped = crop_source(&app, id, rect)?;
-        crate::recognition::provider("local-ppocr")?.recognize(&app, &cropped)
+        crate::recognition::recognize_selected(&app, &cropped)
     })
     .await
     .map_err(err)?
@@ -905,7 +905,7 @@ pub async fn recognize_capture_text(
         let state = app.state::<CaptureState>();
         let _operation = Operation::acquire(&state.operation)?;
         let cropped = crop(&app, id, rect, &annotations)?;
-        crate::recognition::ocr::recognize(&app, &cropped)
+        Ok(crate::recognition::recognize_selected(&app, &cropped)?.full_text)
     })
     .await
     .map_err(err)?

@@ -52,6 +52,7 @@ export const ipcCommands = [
   "copy_capture",
   "copy_capture_color",
   "copy_ocr_text",
+  "system_ocr_status",
   "copy_shortcut_example",
   "current_capture",
   "capture_native_window",

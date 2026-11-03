@@ -372,6 +372,7 @@ pub fn run() {
             translation::ai_translation_config,
             translation::ai_provider_test,
             ocr::copy_ocr_text,
+            recognition::ocr_config::system_ocr_status,
             commands::app_status,
             updater::app_update_status,
             updater::check_app_update,

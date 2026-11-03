@@ -365,6 +365,11 @@ mod tests {
 
 /// 导出只投影实际校验结果，不序列化含绝对目录的 ResourceStatus。
 pub(crate) fn diagnostic_summary(app: &AppHandle) -> serde_json::Value {
+    if let Ok(selected) = crate::recognition::ocr_config::snapshot(app) {
+        if selected.provider == "windows-media" {
+            return serde_json::json!({"provider": selected.provider, "language": selected.language});
+        }
+    }
     match status(app) {
         Ok(value) => serde_json::json!({"provider":"local-ppocr", "model":"pp-ocrv6-small", "ready":value.ocr_ready, "runtimeReady":value.runtime_ready, "modelsReady":value.models_ready}),
         Err(_) => serde_json::json!({"provider":"local-ppocr", "state":"unavailable"}),
