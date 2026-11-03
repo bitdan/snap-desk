@@ -57,16 +57,34 @@ describe('全局快捷键动作映射与录入', () => {
     expect(captureShortcut(event('Control', 'ControlLeft', { ctrlKey: true }))).toEqual({ preview: 'Ctrl' })
     expect(captureShortcut(event('S', 'KeyS', { ctrlKey: true, shiftKey: true }))).toEqual({ value: 'Ctrl+Shift+S' })
     expect(captureShortcut(event('!', 'Digit1', { shiftKey: true }))).toEqual({ value: 'Shift+1' })
-    for (let n = 1; n <= 12; n++) expect(captureShortcut(event(`F${n}`))).toEqual({ value: `F${n}` })
+    for (let n = 1; n <= 24; n++) expect(captureShortcut(event(`F${n}`))).toEqual({ value: `F${n}` })
   })
-  it('取消与清除有不同语义，拒绝普通字母和不支持的主键', () => {
+  it('裸按取消和清除键保留编辑语义，带修饰键可直接录入', () => {
     expect(captureShortcut(event('Escape'))).toEqual({ cancel: true })
     for (const key of ['Backspace', 'Delete']) expect(captureShortcut(event(key))).toEqual({ value: '' })
-    for (const key of ['a', 'F', '1', 'F13', 'Enter']) expect(captureShortcut(event(key))).toHaveProperty('error')
-    expect(captureShortcut(event('a', 'KeyA')).error).toContain('修饰键')
-    expect(captureShortcut(event('f', 'KeyF')).error).toContain('修饰键')
-    expect(validateShortcuts({ capture: 'F', pin: '', record: '', history: '' })).toContain('修饰键')
+    for (const key of ['Escape', 'Backspace', 'Delete']) expect(captureShortcut(event(key, key, { ctrlKey: true }))).toEqual({ value: `Ctrl+${key}` })
+    expect(captureShortcut(event('a', 'KeyA'))).toEqual({ value: 'A' })
+    expect(validateShortcuts({ capture: 'F', pin: '', record: '', history: '' })).toBeNull()
     expect(validateShortcuts({ capture: 'Ctrl+Ctrl+S', pin: '', record: '', history: '' })).toContain('重复')
+  })
+  it.each([
+    [' ', 'Space', {}, 'Space'], ['Enter', 'Enter', {}, 'Enter'], ['1', 'Digit1', {}, '1'],
+    ['ArrowLeft', 'ArrowLeft', { ctrlKey: true, altKey: true }, 'Ctrl+Alt+ArrowLeft'],
+    ['+', 'Equal', { ctrlKey: true, shiftKey: true }, 'Ctrl+Shift+Equal'],
+    ['+', 'NumpadAdd', { altKey: true }, 'Alt+NumpadAdd'],
+    ['End', 'Numpad1', { ctrlKey: true }, 'Ctrl+Numpad1'],
+    ['/', 'Slash', { metaKey: true }, 'Super+Slash'],
+    ['Tab', 'Tab', { shiftKey: true }, 'Shift+Tab'],
+    ['MediaPlayPause', 'MediaPlayPause', {}, 'MediaPlayPause'],
+  ])('扩展按键录入并通过保存校验：%s / %s', (key, code, modifiers, value) => {
+    expect(captureShortcut(event(key, code, modifiers))).toEqual({ value })
+    expect(validateShortcuts({ capture: value, pin: '', record: '', history: '' })).toBeNull()
+  })
+  it('不接受多个主键、纯修饰键或系统库不支持的键', () => {
+    for (const key of ['F25', 'Unidentified', 'Dead', 'Ctrl', 'Ctrl+A+B']) {
+      expect(validateShortcuts({ capture: key, pin: '', record: '', history: '' })).not.toBeNull()
+    }
+    expect(captureShortcut(event('Unidentified'))).toHaveProperty('error')
   })
 })
 

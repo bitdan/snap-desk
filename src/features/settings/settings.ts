@@ -55,6 +55,18 @@ export function validateExportSettings(value: ExportSettings): string | null {
   return null
 }
 
+/** 与原生 global-hotkey 解析器的主键名称一致；符号使用物理键名，避免加号分隔和布局歧义。 */
+const shortcutKeys = new Set([
+  'Backquote', 'Backslash', 'BracketLeft', 'BracketRight', 'Comma', 'Equal', 'Minus', 'Period', 'Quote', 'Semicolon', 'Slash',
+  'Backspace', 'CapsLock', 'Enter', 'Space', 'Tab', 'Delete', 'End', 'Home', 'Insert', 'PageDown', 'PageUp',
+  'PrintScreen', 'ScrollLock', 'Pause', 'Escape', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'NumLock',
+  'NumpadAdd', 'NumpadDecimal', 'NumpadDivide', 'NumpadEnter', 'NumpadEqual', 'NumpadMultiply', 'NumpadSubtract',
+  'AudioVolumeDown', 'AudioVolumeUp', 'AudioVolumeMute', 'MediaPlay', 'MediaPause', 'MediaPlayPause', 'MediaStop', 'MediaTrackNext', 'MediaTrackPrevious',
+])
+function supportedShortcutKey(key: string): boolean {
+  return /^(?:[A-Z0-9]|F(?:[1-9]|1[0-9]|2[0-4])|Numpad[0-9])$/.test(key) || shortcutKeys.has(key)
+}
+
 /** 修饰键顺序归一化，避免漏掉同一组合的冲突。 */
 export function normalizeShortcut(value: string): string {
   const parts = value.split('+')
@@ -67,8 +79,7 @@ export function validateShortcuts(shortcuts: Shortcuts): string | null {
     const value = shortcuts[key]
     if (!value) continue
     const parts = value.split('+'), main = parts.pop()!
-    if (!/^(?:[A-Z0-9]|F[1-9]|F1[0-2])$/.test(main)) return `${label}：主键仅支持字母、数字或 F1～F12。`
-    if (!parts.length && !/^F(?:[1-9]|1[0-2])$/.test(main)) return `${label}：字母和数字必须包含修饰键。`
+    if (!supportedShortcutKey(main)) return `${label}：不支持此按键，请使用其他按键。`
     if (new Set(parts).size !== parts.length || parts.some(p => !['Ctrl', 'Alt', 'Shift', 'Super'].includes(p))) return `${label}：修饰键无效或重复。`
     const normalized = normalizeShortcut(value)
     if (used.has(normalized)) return `${label}与${used.get(normalized)}的快捷键冲突。`
@@ -79,12 +90,12 @@ export function validateShortcuts(shortcuts: Shortcuts): string | null {
 
 /** 使用物理字母和数字键，避免 Shift 改变产生的字符。 */
 export function captureShortcut(event: Pick<KeyboardEvent, 'key' | 'code' | 'ctrlKey' | 'altKey' | 'shiftKey' | 'metaKey'>): { value?: string; preview?: string; error?: string; cancel?: boolean } {
-  if (event.key === 'Escape') return { cancel: true }
-  if (event.key === 'Backspace' || event.key === 'Delete') return { value: '' }
   const modifiers = [event.ctrlKey && 'Ctrl', event.altKey && 'Alt', event.shiftKey && 'Shift', event.metaKey && 'Super'].filter(Boolean) as string[]
+  if (!modifiers.length && event.key === 'Escape') return { cancel: true }
+  if (!modifiers.length && (event.key === 'Backspace' || event.key === 'Delete')) return { value: '' }
   if (['Control', 'Alt', 'Shift', 'Meta'].includes(event.key)) return { preview: modifiers.join(' + ') }
-  const key = /^(Key[A-Z]|Digit[0-9])$/.test(event.code) ? event.code.replace(/^(Key|Digit)/, '') : event.key
-  if (!/^(?:[A-Z0-9]|F[1-9]|F1[0-2])$/.test(key)) return { error: '主键仅支持字母、数字或 F1～F12。' }
-  if (!modifiers.length && !/^F(?:[1-9]|1[0-2])$/.test(key)) return { error: '字母和数字必须包含修饰键。' }
+  const physical = /^(Key[A-Z]|Digit[0-9])$/.test(event.code) ? event.code.replace(/^(Key|Digit)/, '') : event.code
+  const key = supportedShortcutKey(physical) ? physical : event.key === ' ' ? 'Space' : /^[a-z]$/.test(event.key) ? event.key.toUpperCase() : event.key
+  if (!supportedShortcutKey(key)) return { error: '不支持此按键，请使用其他按键。' }
   return { value: [...modifiers, key].join('+') }
 }

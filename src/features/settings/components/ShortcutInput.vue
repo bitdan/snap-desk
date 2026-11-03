@@ -73,7 +73,7 @@ onBeforeUnmount(() => { window.removeEventListener('blur', cancel); disposed = t
     <button ref="button" type="button" :disabled="disabled && !editing && !busy" :aria-label="t('{0}快捷键，点击修改', { 0: t(label) })" :aria-pressed="editing" class="min-w-40 rounded-lg border px-3 py-2 text-sm focus:outline-blue-500" :class="editing ? 'border-blue-500 bg-blue-50' : 'border-zinc-200 bg-white'" @click="begin" @keydown="keydown" @keyup="keyup" @blur="finish()">
       {{ busy ? t("正在切换…") : editing ? preview : modelValue || t("已禁用 · 点击设置") }}
     </button>
-    <p v-if="editing" class="mt-1 text-xs text-zinc-500">{{ t("Esc 取消 · Backspace / Delete 禁用") }}</p>
+    <p v-if="editing" class="mt-1 text-xs text-zinc-500">{{ t("单按 Esc 取消 · 单按 Backspace / Delete 禁用") }}</p>
     <p v-if="error" class="mt-1 text-xs text-red-600" role="alert">{{ te(error) }}</p>
   </div>
 </template>

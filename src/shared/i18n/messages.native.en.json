@@ -545,6 +545,7 @@
   "不能同时指定 shortcut 和 shortcuts。": "Cannot specify both shortcut and shortcuts.",
   "快捷键组合过长。": "Shortcut combination is too long.",
   "主键仅支持字母、数字或 F1～F12。": "Main key must be a letter, number or F1–F12.",
+  "不支持此按键，请使用其他按键。": "Unsupported key. Try another key.",
   "字母和数字必须包含修饰键。": "Letters and numbers require modifiers.",
   "快捷键修饰键无效或重复。": "Invalid or duplicate shortcut modifier.",
   "快捷键格式无效：{0}": "Invalid shortcut format: {0}",

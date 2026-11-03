@@ -315,18 +315,7 @@ fn parse_shortcut(value: &str) -> Result<Option<Shortcut>, String> {
     if parts.len() > 5 {
         return Err("快捷键组合过长。".into());
     }
-    let key = parts[parts.len() - 1];
-    let letter = key.len() == 1
-        && key
-            .bytes()
-            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit());
-    let function = (1..=12).any(|n| key == format!("F{n}"));
-    if !letter && !function {
-        return Err("主键仅支持字母、数字或 F1～F12。".into());
-    }
-    if parts.len() == 1 && !function {
-        return Err("字母和数字必须包含修饰键。".into());
-    }
+    // 按系统库支持的主键解析，不额外限制为 F1～F12，也不强制字母数字带修饰键。
     let mut modifiers = std::collections::HashSet::new();
     for part in &parts[..parts.len() - 1] {
         if !["Ctrl", "Alt", "Shift", "Super"].contains(part) || !modifiers.insert(*part) {
@@ -1298,14 +1287,7 @@ mod tests {
     }
     #[test]
     fn validates_modifiers_keys_and_delay() {
-        for shortcut in [
-            "Ctrl+Ctrl+S",
-            "S",
-            "Alt+Escape",
-            "Alt+F13",
-            "Shift+",
-            "Alt+SS",
-        ] {
+        for shortcut in ["Ctrl+Ctrl+S", "Shift+", "Alt+SS", "Ctrl+A+B", "Ctrl", "F25"] {
             assert!(Settings {
                 shortcuts: Shortcuts {
                     capture: shortcut.into(),
@@ -1316,7 +1298,24 @@ mod tests {
             .validate()
             .is_err());
         }
-        for shortcut in ["Alt+Shift+S", "Super+1", "Ctrl+F12", "F1", "F12"] {
+        for shortcut in [
+            "Alt+Shift+S",
+            "Super+1",
+            "Ctrl+F12",
+            "F1",
+            "F24",
+            "A",
+            "1",
+            "Enter",
+            "Space",
+            "Ctrl+ArrowLeft",
+            "Alt+Escape",
+            "Ctrl+Delete",
+            "Shift+Tab",
+            "Ctrl+Shift+Equal",
+            "Alt+NumpadAdd",
+            "MediaPlayPause",
+        ] {
             assert!(Settings {
                 shortcuts: Shortcuts {
                     capture: shortcut.into(),
@@ -1331,12 +1330,12 @@ mod tests {
 
     #[test]
     fn function_keys_are_valid_without_modifiers() {
-        // 先验证 F1～F12 本身均可无修饰键；动作之间的占用冲突另行校验。
-        for n in 1..=12 {
+        // F1～F24 均可无修饰键；动作之间的占用冲突另行校验。
+        for n in 1..=24 {
             assert!(parse_shortcut(&format!("F{n}")).unwrap().is_some());
         }
         // 默认 F2/F3/F4 已分别被贴图、录屏和历史占用，不能重复用作截图键。
-        for n in (1..=12).filter(|n| ![2, 3, 4].contains(n)) {
+        for n in (1..=24).filter(|n| ![2, 3, 4].contains(n)) {
             assert!(Settings {
                 shortcuts: Shortcuts {
                     capture: format!("F{n}"),
@@ -1348,7 +1347,7 @@ mod tests {
             .is_ok());
         }
         // 重复动作映射及不支持的主键不能通过完整配置校验。
-        for shortcut in ["F2", "F3", "F4", "F13", "A", "1"] {
+        for shortcut in ["F2", "F3", "F4", "F25", "Ctrl+A+B"] {
             assert!(Settings {
                 shortcuts: Shortcuts {
                     capture: shortcut.into(),

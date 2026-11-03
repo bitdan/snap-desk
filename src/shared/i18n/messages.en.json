@@ -683,6 +683,8 @@
   "已禁用 · 点击设置": "Disabled · click to set",
   "{0}快捷键，点击修改": "{0} shortcut; click to change",
   "Esc 取消 · Backspace / Delete 禁用": "Esc to cancel · Backspace / Delete to disable",
+  "单按 Esc 取消 · 单按 Backspace / Delete 禁用": "Esc alone to cancel · Backspace / Delete alone to disable",
+  "{0}：不支持此按键，请使用其他按键。": "{0}: unsupported key. Try another key.",
   "请按快捷键…": "Press shortcut…",
   "快捷键恢复失败，请重新保存设置或重启应用：{0}": "Could not restore shortcuts. Save settings again or restart: {0}",
   "关闭翻译": "Close translation",
