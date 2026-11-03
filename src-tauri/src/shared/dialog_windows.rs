@@ -5,6 +5,7 @@ use tauri::{
 };
 
 const URL: &str = "about:blank#snap-desk-dialog";
+const CLOSE_URL: &str = "about:blank?snap-desk-dialog-close";
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
 /// 不允许任意链接进入应用 WebView；空白子窗口也不授予原生命令或事件权限。
@@ -23,6 +24,8 @@ pub(crate) fn attach<'a, M: Manager<Wry>>(
             return NewWindowResponse::Deny;
         };
         let label = format!("dialog-{}", NEXT_ID.fetch_add(1, Ordering::Relaxed));
+        let close_app = app.clone();
+        let close_label = label.clone();
         let builder = WebviewWindowBuilder::new(&app, &label, WebviewUrl::External(url))
             .window_features(features)
             .title("Snap Desk")
@@ -30,7 +33,21 @@ pub(crate) fn attach<'a, M: Manager<Wry>>(
             .resizable(true)
             .min_inner_size(320.0, 160.0)
             .skip_taskbar(true)
-            .on_navigation(|url| url.as_str() == URL || url.as_str() == "about:blank")
+            .on_navigation(move |url| {
+                if url.as_str() == CLOSE_URL {
+                    // JS 关闭可能仅释放 WebView 子窗口，必须销毁拥有标题栏的 Tauri 窗口。
+                    // 固定信号只作用于捕获的当前窗口，不授予空白页 IPC 或跨窗口控制权限。
+                    if let Some(window) = close_app.get_webview_window(&close_label) {
+                        if let Err(error) = window.destroy() {
+                            log::warn!(
+                                "event=app.dialog_window_close_failed module=app error={error}"
+                            );
+                        }
+                    }
+                    return false;
+                }
+                url.as_str() == URL || url.as_str() == "about:blank"
+            })
             .on_document_title_changed(|window, title| {
                 let _ = window.set_title(&title);
             });

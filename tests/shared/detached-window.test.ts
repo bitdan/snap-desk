@@ -22,6 +22,21 @@ beforeEach(() => {
 afterEach(async () => { memoryRenderer.render(null, root); await flushComponent(); vi.unstubAllGlobals() })
 
 describe('独立窗口容器', () => {
+  it('Esc 直接释放窗口，不依赖父组件更新 open，并可再次打开', async () => {
+    const opened = ref(true), close = vi.fn()
+    memoryRenderer.render(h({ setup: () => () => h(Component, { open: opened.value, title: '预览', onClose: close }, { default: () => h('p', '预览内容') }) }), root)
+    await flushComponent()
+    open.mock.calls[0][3]()
+    await flushComponent()
+    expect(close).toHaveBeenCalledOnce()
+    expect(dispose).toHaveBeenCalledOnce()
+    expect(findNode(target, node => node.type === 'p')).toBeUndefined()
+    opened.value = false; await flushComponent()
+    expect(dispose).toHaveBeenCalledOnce()
+    opened.value = true; await flushComponent()
+    expect(open).toHaveBeenCalledTimes(2)
+    expect(findNode(target, node => node.type === 'p')?.text).toBe('预览内容')
+  })
   it('内容只挂载在新窗口，业务状态变化直接更新，关闭后释放窗口', async () => {
     const opened = ref(true), value = ref('初始内容')
     memoryRenderer.render(h({ setup: () => () => h(Component, { open: opened.value, title: '预览' }, { default: () => h('p', value.value) }) }), root)

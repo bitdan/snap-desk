@@ -4,7 +4,7 @@ import { defineComponent, h } from 'vue'
 export const DetachedWindowStub = defineComponent({
   props: { open: Boolean, title: String },
   setup: (props, { slots, attrs, expose }) => {
-    expose({ focus: () => {} })
+    expose({ close: () => {}, focus: () => {} })
     return () => props.open ? h('section', { ...attrs, 'data-window': props.title }, slots.default?.()) : null
   },
 })

@@ -12,7 +12,11 @@ const popup = shallowRef<Window | null>(null), target = shallowRef<HTMLElement |
 const failed = shallowRef(false)
 provide('detached-window-owner', popup)
 let session: DetachedWindowSession | null = null
-function close() { if (!props.busy) emit('close') }
+function close() {
+  if (props.busy) return
+  dispose()
+  emit('close')
+}
 function dispose() {
   target.value = null; popup.value = null
   const previous = session; session = null
@@ -31,7 +35,7 @@ function open() {
     else failed.value = true
   } catch { dispose(); failed.value = true }
 }
-defineExpose({ focus: () => { if (session && !session.window.closed) session.window.focus(); else open() } })
+defineExpose({ close: dispose, focus: () => { if (session && !session.window.closed) session.window.focus(); else open() } })
 watch(() => props.open, value => { if (value) open(); else { dispose(); failed.value = false } }, { immediate: true, flush: 'sync' })
 watch(() => props.title, value => { if (popup.value && !popup.value.closed) popup.value.document.title = value })
 onUnmounted(dispose)

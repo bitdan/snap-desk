@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onUnmounted, ref, watch } from 'vue'
+import { computed, onUnmounted, ref, shallowRef, watch } from 'vue'
 import DetachedWindow from '@/shared/ui/DetachedWindow.vue'
 import { X, LoaderCircle, ExternalLink, FolderOpen } from 'lucide-vue-next'
 import { api } from '@/services/api'
@@ -13,6 +13,8 @@ import { useEscapeLayer } from '@/shared/ui/use-escape-layer'
 const props = defineProps<{ item: ClipboardItem | null }>()
 const emit = defineEmits<{ close: [] }>()
 const image = ref(''), text = ref(''), error = ref(''), loading = ref(false)
+const previewImage = shallowRef<HTMLImageElement | null>(null)
+const previewWindow = shallowRef<InstanceType<typeof DetachedWindow> | null>(null)
 const opening = ref(false), openError = ref('')
 const color = computed(() => clipboardColor(text.value))
 // 与原生端路径分类一致；不在预览时访问磁盘，仅点击时请求原生定位。
@@ -46,11 +48,17 @@ async function openTarget(kind: 'link' | 'path') {
 }
 /** 预览只持有当前条目的完整内容；关闭或切换时失效旧请求并立即释放。 */
 function close() {
+  // Esc 和关闭按钮直接释放独立窗口，避免只清空内容后留下空白窗。
+  previewWindow.value?.close()
   revision++; image.value = ''; text.value = ''; loading.value = false; opening.value = false; openError.value = ''
   emit('close')
 }
 useEscapeLayer(() => !!props.item, close)
 function key(event: KeyboardEvent) { handleEscape(event, close) }
+/** 切换条目或重试后，已卸载图片的迟到解码错误不能覆盖当前预览。 */
+function imageFailed(event: Event) {
+  if (event.currentTarget === previewImage.value && image.value) error.value = '历史图片预览失败。'
+}
 async function load() {
   const request = ++revision, id = props.item?.id, kind = props.item?.kind
   image.value = ''; text.value = ''; error.value = ''; loading.value = id !== undefined
@@ -70,7 +78,7 @@ onUnmounted(() => { revision++; image.value = ''; text.value = '' })
 </script>
 
 <template>
-  <DetachedWindow :open="!!item" :title="t('预览')" :width="900" :height="640" @close="close">
+  <DetachedWindow ref="previewWindow" :open="!!item" :title="t('预览')" :width="900" :height="640" @close="close">
       <section class="history-preview-dialog" @keydown.stop="key">
         <header class="history-preview-header">
           <h2>{{ t('预览') }}</h2>
@@ -80,7 +88,7 @@ onUnmounted(() => { revision++; image.value = ''; text.value = '' })
         <div class="history-preview-body" :aria-busy="loading">
           <span v-if="loading" class="history-preview-status" role="status"><LoaderCircle :size="20" class="history-spinner" />{{ t('正在加载…') }}</span>
           <div v-else-if="error" class="history-preview-status" role="alert"><span>{{ te(error) }}</span><Button variant="outline" @click="load">{{ t('重试') }}</Button></div>
-          <img v-else-if="image" :src="image" :alt="t('历史图片原图')" @error="error = '历史图片预览失败。'" />
+          <img v-else-if="image" :key="item?.id" ref="previewImage" :src="image" :alt="t('历史图片原图')" @error="imageFailed" />
           <div v-else-if="color" class="history-preview-color">
             <div class="history-color-checkerboard" role="img" :aria-label="t('颜色预览：{0}', { 0: text.trim() })"><div class="history-color-swatch" :style="{ backgroundColor: color }" /></div>
             <input class="history-color-value" readonly :aria-label="t('颜色值')" :value="text" spellcheck="false" />
@@ -103,7 +111,7 @@ onUnmounted(() => { revision++; image.value = ''; text.value = '' })
 
 <style>
 .history-preview-dialog { display:flex; flex-direction:column; width:100%; height:100%; overflow:hidden; background:#fff; color:#24292f; font:13px 'Segoe UI','Microsoft YaHei',sans-serif; }
-.history-preview-header { display:flex; align-items:center; gap:12px; padding:8px 12px; border-bottom:1px solid #e1e4e8; }
+.history-preview-header { display:flex; flex-shrink:0; flex-wrap:wrap; align-items:center; gap:8px 12px; padding:8px 12px; border-bottom:1px solid #e1e4e8; }
 .history-preview-header h2 { margin:0; font-size:14px; font-weight:600; }
 .history-preview-header p { margin:0; color:#57606a; font-size:12px; }
 .history-preview-header button { margin-left:auto; min-width:32px; min-height:32px; padding:4px; }
@@ -122,15 +130,15 @@ onUnmounted(() => { revision++; image.value = ''; text.value = '' })
 .history-preview-link a:focus-visible { outline:2px solid #2563eb; outline-offset:3px; }
 .history-preview-link a[aria-disabled=true] { opacity:.6; cursor:wait; }
 .history-preview-link p[role=alert] { color:#b42318; }
-.history-preview-path { width:100%; max-width:640px; min-width:0; line-height:1.7; }
+.history-preview-path { display:flex; flex-direction:column; align-items:center; gap:8px; width:100%; max-width:640px; min-width:0; line-height:1.7; }
 .history-preview-path button { display:flex; align-items:flex-start; gap:10px; max-width:100%; padding:12px 16px; border:1px solid var(--desk-border, #e1e4e8); border-radius:6px; background:var(--desk-bg, #fff); color:var(--desk-accent, #2563eb); text-align:left; overflow-wrap:anywhere; }
 .history-preview-path button svg { flex-shrink:0; margin-top:2px; }
 .history-preview-path button span { min-width:0; }
 .history-preview-path button:hover { text-decoration:underline; }
 .history-preview-path button:focus-visible { outline:2px solid #2563eb; outline-offset:3px; }
 .history-preview-path button:disabled { opacity:.6; cursor:wait; }
-.history-preview-path p[role=alert] { color:#b42318; }
-.history-preview-status { display:flex; align-items:center; justify-content:center; flex-wrap:wrap; gap:12px; }
+.history-preview-path p[role=alert] { max-width:100%; margin:0; color:#b42318; overflow-wrap:anywhere; }
+.history-preview-status { display:flex; align-items:center; justify-content:center; flex-wrap:wrap; gap:12px; min-width:0; max-width:100%; overflow-wrap:anywhere; }
 .history-spinner { animation:history-spin 1s linear infinite; }
 @keyframes history-spin { to { transform:rotate(360deg); } }
 @media (prefers-reduced-motion:reduce) { .history-spinner { animation:none; } }
