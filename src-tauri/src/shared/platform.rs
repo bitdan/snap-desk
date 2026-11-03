@@ -4,7 +4,11 @@ use image::RgbaImage;
 /// 使用系统 URL 处理器打开固定地址，不接受前端传入路径或命令。
 /// 在阻塞任务中等待启动器结束，避免阻塞主窗口，并将启动失败反馈给界面。
 pub fn open_project_homepage() -> Result<(), String> {
-    const URL: &str = "https://github.com/bitdan/snap-desk";
+    open_web_page("https://github.com/bitdan/snap-desk")
+}
+
+/// 由功能模块传入受信的固定页面，复用系统浏览器启动方式，不经过 shell 拼接。
+pub fn open_web_page(url: &'static str) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     let mut command = {
         use std::os::windows::process::CommandExt;
@@ -19,13 +23,13 @@ pub fn open_project_homepage() -> Result<(), String> {
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     let mut command = std::process::Command::new("xdg-open");
     let status = command
-        .arg(URL)
+        .arg(url)
         .status()
         .map_err(|e| format!("无法打开浏览器：{e}"))?;
     if status.success() {
         Ok(())
     } else {
-        Err("无法打开项目主页，请检查系统默认浏览器设置。".into())
+        Err("无法打开网页，请检查系统默认浏览器设置。".into())
     }
 }
 

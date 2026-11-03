@@ -82,7 +82,7 @@ onUnmounted(() => { disposed = true })
 <template>
   <DetachedWindow :open="true" :title="mode === 'qr' ? t('图片二维码识别') : t('文字识别结果')" :width="1000" :height="650" @close="emit('close')">
     <section v-if="mode !== 'qr' && ocr" class="pin-recognition result-shell" :aria-label="t('文字识别结果')">
-      <OcrResultCard v-model:text="draft" @translate="translate" @close="emit('close')" />
+      <OcrResultCard standalone v-model:text="draft" @translate="translate" @close="emit('close')" />
       <p v-if="error" role="alert" class="recognition-error">{{ te(error) }}</p>
     </section>
     <section v-else ref="panel" class="pin-recognition" :aria-label="mode !== 'qr' ? t('图片文字识别') : t('图片二维码识别')" tabindex="-1" @keydown.stop="key">

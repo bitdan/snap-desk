@@ -7,6 +7,8 @@ import Button from '@/shared/ui/button/Button.vue'
 import { api } from '@/services/api'
 import '@/features/recognition/components/recognition-results.css'
 
+// 独立结果窗口已经有系统标题栏，内部不再重复标题和关闭按钮。
+defineProps<{ standalone?: boolean }>()
 // 草稿由截图/贴图会话持有，切换到翻译或返回识别时保留用户修正。
 const text = defineModel<string>('text', { required: true })
 const emit = defineEmits<{ close: []; translate: [] }>()
@@ -34,8 +36,8 @@ function key(event: KeyboardEvent) {
 </script>
 
 <template>
-  <section class="recognition-result" @keydown.stop="key">
-    <header class="result-header"><h2><ScanText :size="17" />{{ t("文字识别") }}</h2><Button class="result-close" variant="ghost" :title='t("关闭（Esc）")' :aria-label='t("关闭文字识别")' @click="emit('close')"><X :size="16" /></Button></header>
+  <section class="recognition-result" :class="{ 'standalone-ocr-result': standalone }" @keydown.stop="key">
+    <header v-if="!standalone" class="result-header"><h2><ScanText :size="17" />{{ t("文字识别") }}</h2><Button class="result-close" variant="ghost" :title='t("关闭（Esc）")' :aria-label='t("关闭文字识别")' @click="emit('close')"><X :size="16" /></Button></header>
     <div class="result-body">
       <div class="result-editor">
         <div class="editor-heading"><label for="ocr-result-text">{{ t("识别结果") }}</label><span>{{ t("可编辑 ·") }} {{ count }} {{ t("字符") }}</span></div>

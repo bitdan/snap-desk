@@ -62,8 +62,10 @@ pub async fn translate(
     request: &TranslationRequest,
 ) -> Result<Vec<String>, String> {
     request.validate()?;
-    let secret = crate::recognition::ai_credentials::read(&settings.endpoint)?
-        .ok_or("请先保存此服务的 API Key。")?;
+    let endpoint = super::translation::endpoint_url(&settings.endpoint)?;
+    let local = matches!(endpoint.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"));
+    let secret = crate::recognition::ai_credentials::read(&super::services::credential_key(&settings.service_id, &settings.endpoint))?;
+    let secret = match secret { Some(value) => value, None if local => String::new(), None => return Err("请先保存此服务的 API Key。".into()) };
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(Duration::from_secs(10))

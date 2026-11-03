@@ -46,6 +46,12 @@ fn parse(bytes: &[u8]) -> Result<Backup, String> {
     // 新增更新偏好不使旧版完整备份失效；只为这个新增字段补默认值，其他字段仍须完整。
     if let Some(settings) = json.get_mut("settings").and_then(|value| value.as_object_mut()) {
         settings.entry("receivePrereleaseUpdates").or_insert(false.into());
+        settings.entry("recognitionServices").or_insert(serde_json::json!([]));
+        for (field, additions) in [("ai", serde_json::json!({"serviceId": ""})), ("ocr", serde_json::json!({"serviceId": ""}))] {
+            if let Some(object) = settings.get_mut(field).and_then(|value| value.as_object_mut()) {
+                for (key, value) in additions.as_object().unwrap() { object.entry(key.clone()).or_insert(value.clone()); }
+            }
+        }
         // 旧备份没有 OCR 引擎偏好时保留原 PaddleOCR 行为，不擅自切换新引擎。
         settings.entry("ocr").or_insert(serde_json::to_value(crate::recognition::ocr_config::OcrSettings::default()).map_err(|e| e.to_string())?);
     }

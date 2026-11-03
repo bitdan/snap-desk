@@ -61,7 +61,7 @@ async function loadConfig() {
     autoDirection.value = !sourceLanguage.value && ['zh-CN', 'en'].includes(value.targetLanguage)
     applyAutomaticDirection()
     loaded = true
-    if (config.value.provider !== 'local-ctranslate2' && !onlineTranslationReady(config.value)) error.value = '请先在“识别与翻译”中配置在线服务。'
+    if (config.value.provider !== 'local-ctranslate2' && !onlineTranslationReady(config.value)) error.value = '请先在“翻译”中选择服务，或在“服务管理”中添加服务。'
   } catch (e) { if (!disposed) error.value = String(e) }
   finally { loading.value = false }
   if (!disposed && loaded && props.autoTranslate) await translate()

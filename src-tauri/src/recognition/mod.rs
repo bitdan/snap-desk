@@ -1,4 +1,7 @@
 //! OCR 的稳定 IPC 契约。坐标始终相对裁剪原图，单位为像素，不能当作屏幕 CSS 坐标。
+pub(crate) mod services;
+mod online_ocr;
+mod paddle_ocr;
 pub(crate) mod ocr;
 pub(crate) mod ocr_config;
 #[cfg(windows)]
@@ -49,7 +52,8 @@ impl OcrProvider for WindowsOcrProvider {
 
 /// 截图文字、截图翻译及贴图使用同一入口，设置快照只读取一次。
 pub fn recognize_selected(app: &tauri::AppHandle, image: &image::RgbaImage) -> Result<OcrResult, String> {
-    let settings = ocr_config::snapshot(app)?;
+    let (settings, service) = ocr_config::snapshot(app)?;
+    if let Some(service) = service { return online_ocr::recognize(image, &service); }
     provider(&settings.provider)?.recognize(app, image, &settings)
 }
 pub fn provider(id: &str) -> Result<&'static dyn OcrProvider, String> {

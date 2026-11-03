@@ -111,7 +111,7 @@ pub async fn start_translation_capture(app: AppHandle, window: WebviewWindow) ->
     result
 }
 
-/// 一次只执行一个选区复制任务，防止长按快捷键重复复制和打开翻译。
+/// 有选区时带入原文，否则直接打开翻译；一次只执行一个复制任务，避免长按重复触发。
 pub fn open(app: &AppHandle) {
     static RUNNING: AtomicBool = AtomicBool::new(false);
     if RUNNING.swap(true, Ordering::AcqRel) {
@@ -120,16 +120,13 @@ pub fn open(app: &AppHandle) {
     let target = super::selected_text::foreground();
     let app = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let result = target
+        let text = target
             .and_then(|target| super::selected_text::copy(&app, target))
-            .and_then(validate);
-        match result {
-            Ok(text) => {
-                if let Err(error) = publish(&app, Some(text)) {
-                    crate::capture::report_error(&app, error);
-                }
-            }
-            Err(error) => crate::capture::report_error(&app, error),
+            .and_then(validate)
+            .ok();
+        // 未获得有效选区也允许手动输入；不以旧剪贴板内容作为自动翻译原文。
+        if let Err(error) = publish(&app, text) {
+            crate::capture::report_error(&app, error);
         }
         RUNNING.store(false, Ordering::Release);
     });

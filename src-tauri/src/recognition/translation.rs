@@ -13,6 +13,8 @@ use tauri::{AppHandle, Manager, WebviewWindow};
 pub struct AiSettings {
     /// 新配置默认本地；旧在线配置保留服务选择，发送前仍需单次授权。
     pub provider: String,
+    /// 服务管理连接；空字符串兼容旧的地址配置和凭据。
+    pub service_id: String,
     /// 完整接口地址；DeepL 仅允许官方 Free/Pro 翻译接口。
     pub endpoint: String,
     pub model: String,
@@ -26,6 +28,7 @@ pub struct AiSettings {
 #[serde(rename_all = "camelCase", deny_unknown_fields, default)]
 struct AiSettingsWire {
     provider: Option<String>,
+    service_id: String,
     endpoint: String,
     model: String,
     target_language: String,
@@ -40,6 +43,7 @@ impl Default for AiSettingsWire {
         let value = AiSettings::default();
         Self {
             provider: None,
+            service_id: String::new(),
             endpoint: value.endpoint,
             model: value.model,
             target_language: value.target_language,
@@ -62,6 +66,7 @@ impl From<AiSettingsWire> for AiSettings {
         });
         Self {
             provider,
+            service_id: wire.service_id,
             endpoint: wire.endpoint,
             model: wire.model,
             target_language: wire.target_language,
@@ -74,6 +79,7 @@ impl Default for AiSettings {
     fn default() -> Self {
         Self {
             provider: "local-ctranslate2".into(),
+            service_id: String::new(),
             endpoint: String::new(),
             model: String::new(),
             target_language: "zh-CN".into(),
@@ -119,7 +125,7 @@ impl AiSettings {
         if self.endpoint.is_empty()
             || (self.provider == "online-llm" && self.model.trim().is_empty())
         {
-            return Err("请先在主窗口的识别与翻译页配置服务地址和模型。".into());
+            return Err("请先在主窗口的翻译页选择服务，或在服务管理中添加服务。".into());
         }
         Ok(())
     }
@@ -227,15 +233,17 @@ impl Drop for JobGuard {
     }
 }
 
+/// 更新任一服务的凭据时清除已有译文，避免跨账号复用缓存。
+pub(super) fn clear_cache(app: &AppHandle) {
+    let state = app.state::<TranslationState>();
+    if let Ok(mut jobs) = state.0.lock() {
+        jobs.cache.clear(); jobs.cache_generation = jobs.cache_generation.wrapping_add(1);
+    };
+}
 fn config(app: &AppHandle) -> Result<AiSettings, String> {
-    Ok(app
-        .state::<crate::settings::SettingsState>()
-        .0
-        .lock()
-        .map_err(|_| "设置正在使用。")?
-        .value
-        .ai
-        .clone())
+    let state = app.state::<crate::settings::SettingsState>();
+    let settings = state.0.lock().map_err(|_| "设置正在使用。")?;
+    super::services::translation_config(&settings.value)
 }
 
 #[derive(Serialize)]
@@ -458,7 +466,7 @@ pub async fn ai_credential_set(
     if settings.endpoint != expected_endpoint {
         return Err("翻译配置已变更，请重新确认服务地址。".into());
     }
-    crate::recognition::ai_credentials::write(&settings.endpoint, secret)?;
+    crate::recognition::ai_credentials::write(&super::services::credential_key(&settings.service_id, &settings.endpoint), secret)?;
     let state = app.state::<TranslationState>();
     let mut jobs = state.0.lock().map_err(|_| "翻译状态不可用。")?;
     jobs.cache.clear();
@@ -472,7 +480,7 @@ pub async fn ai_provider_status(app: AppHandle, window: WebviewWindow) -> Result
     if settings.endpoint.is_empty() {
         return Ok(false);
     }
-    Ok(crate::recognition::ai_credentials::read(&settings.endpoint)?.is_some())
+    Ok(crate::recognition::ai_credentials::read(&super::services::credential_key(&settings.service_id, &settings.endpoint))?.is_some())
 }
 
 /// 翻译界面只读取非敏感配置，用于确认发送目的地，不暴露密钥。

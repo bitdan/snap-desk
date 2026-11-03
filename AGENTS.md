@@ -5,12 +5,12 @@
 ## 代码组织
 
 - 前端：`src/main.ts` 为启动入口；`app/` 负责主界面与窗口组装；`features/<功能>/` 放业务组件、逻辑与通信契约；`shared/` 放跨功能通用能力；`services/` 放 IPC、错误处理和日志。禁止恢复平铺的 `lib/`、`components/` 或另建杂物目录。
-- Rust：根目录只保留 `lib.rs`、`main.rs`；`app/` 负责启动、应用命令和托盘/快捷键入口，业务放所属功能目录，通用系统设施放 `shared/`。录屏与滚动截图保留在 `capture/recorder/`、`capture/scroll/`，对应模块为 `capture::recording`、`capture::scroll`；OCR、二维码、翻译及凭据归入 `recognition/`。完整模块地图见 README。
+- Rust：根目录只保留 `lib.rs`、`main.rs`；`app/` 负责启动、应用命令和托盘/快捷键入口，业务放所属功能目录，通用系统设施放 `shared/`。录屏与滚动截图保留在 `capture/recorder/`、`capture/scroll/`，对应模块为 `capture::recording`、`capture::scroll`；OCR、二维码、翻译及凭据归入 `recognition/`。完整模块地图见 [TECHNICAL.md](TECHNICAL.md#代码组织)。
 - 新文件先确定功能归属并复用已有实现。组件放功能内的 `components/`，测试放 `tests/<功能>/`；单功能代码不进入共享层，业务状态与交互不继续堆入应用入口。按职责拆分，不要求前后端目录机械对称。
 - 依赖保持单向：前端 `shared` 不依赖 `app/features/services`，功能模块不依赖 `app`。跨功能直接引用能力所属模块；不通过复制代码、扩大 Rust 可见性或全局兼容转发掩盖循环依赖。
 - 功能内 `api.ts` 维护命令，`events.ts` 维护订阅，`types.ts` 或领域模型维护类型。原生命令统一经过 `services/ipc.ts`；`services/api.ts` 只组合和转发，组件通过它调用 API，领域类型从所属功能直接导入。
 - 移动文件时同步静态/动态导入、样式、测试读取路径、Rust 模块声明及内嵌资源路径，不保留旧路径占位文件。保持 IPC 命令、事件和序列化语义；契约变化核对全部生产者与消费者。
-- 新增顶层领域时同步本文件、README 模块地图及目录检查脚本的原生领域名单，不放宽规则绕过检查。
+- 新增顶层领域时同步本文件、TECHNICAL.md 模块地图及目录检查脚本的原生领域名单，不放宽规则绕过检查。
 
 ## 界面与快捷键
 

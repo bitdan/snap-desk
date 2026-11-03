@@ -235,6 +235,7 @@ pub struct Settings {
     /// 默认只接收正式版；开启后也接收 alpha、beta 和 rc 应用更新。
     pub receive_prerelease_updates: bool,
     pub appearance: Appearance,
+    pub recognition_services: Vec<crate::recognition::services::RecognitionService>,
     pub ai: crate::recognition::translation::AiSettings,
     pub ocr: crate::recognition::ocr_config::OcrSettings,
     pub shortcuts: Shortcuts,
@@ -259,6 +260,8 @@ struct SettingsWire {
     receive_prerelease_updates: bool,
     #[serde(default)]
     appearance: Appearance,
+    #[serde(default)]
+    recognition_services: Vec<crate::recognition::services::RecognitionService>,
     #[serde(default)]
     ai: crate::recognition::translation::AiSettings,
     #[serde(default)]
@@ -308,6 +311,7 @@ impl TryFrom<SettingsWire> for Settings {
             pin_appearance: wire.pin_appearance,
             clipboard: wire.clipboard,
             onboarding_version: wire.onboarding_version,
+            recognition_services: wire.recognition_services,
             ai: wire.ai,
             ocr: wire.ocr,
             appearance: wire.appearance,
@@ -331,6 +335,7 @@ impl Default for Settings {
             pin_appearance: crate::pins::PinAppearance::default(),
             clipboard: crate::clipboard::model::ClipboardSettings::default(),
             onboarding_version: 0,
+            recognition_services: Vec::new(),
             ai: crate::recognition::translation::AiSettings::default(),
             ocr: crate::recognition::ocr_config::OcrSettings::default(),
             appearance: Appearance::default(),
@@ -361,6 +366,7 @@ fn parse_shortcut(value: &str) -> Result<Option<Shortcut>, String> {
 }
 impl Settings {
     pub fn validate(&self) -> Result<(), String> {
+        crate::recognition::services::validate(self)?;
         self.ai.validate()?;
         self.ocr.validate()?;
         self.export.validate()?;

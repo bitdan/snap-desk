@@ -7,6 +7,9 @@ import type { QrResult } from '@/features/recognition/types'
 import { invoke } from '@/services/ipc'
 
 export const recognitionApi = {
+  openRecognitionPortal: (preset: string) => invoke<void>('open_recognition_portal', { preset }),
+  recognitionServiceStatus: (serviceId: string) => invoke<boolean>('recognition_service_status', { serviceId }),
+  recognitionServiceCredential: (serviceId: string, expectedEndpoint: string, secret: string | null) => invoke<void>('recognition_service_credential', { serviceId, expectedEndpoint, secret }),
   systemOcrStatus: () => invoke<SystemOcrStatus>('system_ocr_status'),
   openTranslation: (text: string | null = null) => invoke<void>('open_translation', { text }),
   closeTranslation: () => invoke<void>('close_translation'),

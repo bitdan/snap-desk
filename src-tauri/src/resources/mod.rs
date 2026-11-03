@@ -127,7 +127,7 @@ pub fn ocr_paths(app: &AppHandle) -> Result<PathBuf, String> {
     let dir = directory(app)?;
     for asset in manifest()?.iter().filter(|a| a.kind == ResourceKind::Ocr) {
         if !verified(&dir.join(&asset.name), asset) {
-            return Err("OCR 模型未下载或校验失败，请在“识别与翻译”页下载识别资源。".into());
+            return Err("OCR 模型未下载或校验失败，请在“文字识别”页下载识别资源。".into());
         }
     }
     Ok(dir)
@@ -365,10 +365,17 @@ mod tests {
 
 /// 导出只投影实际校验结果，不序列化含绝对目录的 ResourceStatus。
 pub(crate) fn diagnostic_summary(app: &AppHandle) -> serde_json::Value {
-    if let Ok(selected) = crate::recognition::ocr_config::snapshot(app) {
-        if selected.provider == "windows-media" {
-            return serde_json::json!({"provider": selected.provider, "language": selected.language});
+    match crate::recognition::ocr_config::snapshot(app) {
+        Ok((selected, service)) => {
+            if let Some(service) = service {
+                // 在线服务不依赖本地模型；诊断只记录协议和模型，不导出地址、账号或凭据。
+                return serde_json::json!({"provider": service.protocol, "model": service.model});
+            }
+            if selected.provider == "windows-media" {
+                return serde_json::json!({"provider": selected.provider, "language": selected.language});
+            }
         }
+        Err(_) => return serde_json::json!({"state":"unavailable"}),
     }
     match status(app) {
         Ok(value) => serde_json::json!({"provider":"local-ppocr", "model":"pp-ocrv6-small", "ready":value.ocr_ready, "runtimeReady":value.runtime_ready, "modelsReady":value.models_ready}),

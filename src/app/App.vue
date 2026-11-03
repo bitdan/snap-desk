@@ -5,10 +5,12 @@ import SelectControl from '@/shared/ui/SelectControl.vue'
 import { updateSettings } from '@/features/settings/settings-write'
 import { t, te } from '@/shared/i18n/i18n'
 import { computed, defineAsyncComponent, onMounted, onUnmounted, ref, watch } from 'vue'
-import { Camera, Timer, Keyboard, Info, Scan, PanelLeftClose, Pin, Video, Folder, ArrowLeftRight, CircleHelp, Settings as SettingsIcon, FileText, Check } from 'lucide-vue-next'
+import { Camera, Timer, Keyboard, Info, Scan, Languages, KeyRound, PanelLeftClose, Pin, Video, Folder, ArrowLeftRight, CircleHelp, Settings as SettingsIcon, FileText, Check } from 'lucide-vue-next'
 const DiagnosticsSettings = defineAsyncComponent(() => import('@/features/diagnostics/components/DiagnosticsSettings.vue'))
 const ConfigTransferSettings = defineAsyncComponent(() => import('@/features/settings/components/ConfigTransferSettings.vue'))
 const GeneralSettings = defineAsyncComponent(() => import('@/features/settings/components/GeneralSettings.vue'))
+const OcrSettings = defineAsyncComponent(() => import('@/features/recognition/components/OcrSettings.vue'))
+const ServiceSettings = defineAsyncComponent(() => import('@/features/recognition/components/ServiceSettings.vue'))
 const AiProviderSettings = defineAsyncComponent(() => import('@/features/recognition/components/AiProviderSettings.vue'))
 import SupportPages from '@/app/components/SupportPages.vue'
 import './styles/workspace.css'
@@ -38,7 +40,7 @@ function prefetchPage(name: string) {
 // 导航按操作、配置与支持分组，日志拥有独立页面。
 const groups = [
   { name: '工具', items: [{ name: '截图', icon: Camera }, { name: '录屏', icon: Video }, { name: '贴图', icon: Pin }, { name: '剪贴板', icon: Folder }] },
-  { name: '设置', items: [{ name: '通用', icon: SettingsIcon }, { name: '快捷键', icon: Keyboard }, { name: '导入/导出', icon: ArrowLeftRight }, { name: '识别与翻译', icon: Scan }] },
+  { name: '设置', items: [{ name: '通用', icon: SettingsIcon }, { name: '快捷键', icon: Keyboard }, { name: '导入/导出', icon: ArrowLeftRight }, { name: '文字识别', icon: Scan }, { name: '翻译', icon: Languages }, { name: '服务管理', icon: KeyRound }] },
   { name: '支持', items: [{ name: '日志', icon: FileText }, { name: '帮助', icon: CircleHelp }, { name: '关于', icon: Info }] },
 ]
 const pageGroup = computed(() => groups.find(group => group.items.some(item => item.name === page.value))?.name ?? '')
@@ -255,7 +257,9 @@ onUnmounted(() => { disposed = true; window.removeEventListener('keydown', key);
           <AppearanceSettings :busy="locked" :saved="savedSection === '通用'" @save="saveAppearance" />
         </GeneralSettings>
         <ConfigTransferSettings v-else-if="page === '导入/导出'" :prepare-transfer="prepareConfigTransfer" />
-        <AiProviderSettings v-else-if="page === '识别与翻译'" />
+        <OcrSettings v-else-if="page === '文字识别'" />
+        <AiProviderSettings v-else-if="page === '翻译'" />
+        <ServiceSettings v-else-if="page === '服务管理'" />
         <SupportPages v-else-if="page === '帮助' || page === '关于'" :page="page" :version="status?.version" :shortcuts="status?.settings.shortcuts" :busy="!status || completingOnboarding" @navigate="page = $event" @onboarding="onboardingError = ''; onboarding = true" @project="openProject" />
         <RecordingPanel v-else-if="page === '录屏'" />
         <PinManager v-else-if="page === '贴图'" />

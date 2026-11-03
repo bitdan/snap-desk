@@ -1,10 +1,11 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { h } from 'vue'
+import { webcrypto } from 'node:crypto'
 import { defaultSettings } from '../../src/features/settings/settings'
 import type { SystemOcrStatus } from '../../src/features/recognition/ocr'
 import { clientComponent, findNode, flushComponent, MemoryNode, memoryRenderer } from '../helpers/component-host'
 
-const api = vi.hoisted(() => ({ status: vi.fn(), saveSettings: vi.fn(), systemOcrStatus: vi.fn() }))
+const api = vi.hoisted(() => ({ status: vi.fn(), saveSettings: vi.fn(), systemOcrStatus: vi.fn(), recognitionServiceStatus: vi.fn(), recognitionServiceCredential: vi.fn(), openRecognitionPortal: vi.fn() }))
 vi.mock('../../src/services/api', () => ({ api }))
 vi.mock('../../src/shared/ui/SelectControl.vue', async () => ({ default: (await import('../helpers/select-control')).SelectControlStub }))
 vi.mock('../../src/shared/ui/button/Button.vue', async () => {
@@ -16,33 +17,43 @@ vi.mock('../../src/features/resources/components/ResourceSettings.vue', async ()
   return { default: defineComponent({ setup: () => () => h('paddle-resources') }) }
 })
 import OcrSettings from '../../src/features/recognition/components/OcrSettings.vue'
+import ServiceSettings from '../../src/features/recognition/components/ServiceSettings.vue'
+clientComponent(ServiceSettings, new URL('../../src/features/recognition/components/ServiceSettings.vue', import.meta.url))
+import ProviderMenu from '../../src/features/recognition/components/ProviderMenu.vue'
+clientComponent(ProviderMenu, new URL('../../src/features/recognition/components/ProviderMenu.vue', import.meta.url))
 const Component = clientComponent(OcrSettings, new URL('../../src/features/recognition/components/OcrSettings.vue', import.meta.url))
 let root: MemoryNode, settings: ReturnType<typeof defaultSettings>
 const available: SystemOcrStatus = { supported: true, error: null, languages: [{ tag: 'zh-Hans-CN', name: '简体中文' }, { tag: 'en-US', name: 'English' }] }
 const text = (node: MemoryNode): string => node.text + node.children.map(text).join('')
+const engine = (value: string) => findNode(root, node => node.type === 'button' && node.props['data-provider'] === value)!
 const select = (label: string) => findNode(root, node => node.props['aria-label'] === label)!
 const button = (label: string) => findNode(root, node => node.type === 'button' && text(node).trim() === label)!
 async function mount() { memoryRenderer.render(h(Component), root); await flushComponent(); await flushComponent() }
 beforeEach(() => {
+  vi.stubGlobal('Document', class {}); vi.stubGlobal('ShadowRoot', class {}); vi.stubGlobal('crypto', webcrypto)
   vi.resetAllMocks(); root = new MemoryNode('root'); settings = defaultSettings()
   api.status.mockImplementation(async () => ({ settings }))
   api.saveSettings.mockImplementation(async value => { settings = value; return value })
   api.systemOcrStatus.mockResolvedValue(available)
+  api.recognitionServiceStatus.mockResolvedValue(false)
+  api.recognitionServiceCredential.mockResolvedValue(undefined)
 })
-afterEach(() => { memoryRenderer.render(null, root) })
+afterEach(() => { memoryRenderer.render(null, root); vi.unstubAllGlobals() })
 
 it('保留默认 PaddleOCR，切换系统引擎仅保存 OCR 配置并显示实际语言包', async () => {
   await mount()
-  expect(select('OCR 引擎').value).toBe('local-ppocr')
+  expect(engine('local-ppocr').props['aria-current']).toBe('page')
+  expect(text(engine('local-ppocr'))).toContain('离线')
+  expect(text(engine('windows-media'))).toContain('离线')
   expect(findNode(root, node => node.type === 'paddle-resources')).toBeDefined()
   settings.ai.timeoutSeconds = 60; settings.shortcuts.capture = 'F8'
-  select('OCR 引擎').props['onUpdate:modelValue']('windows-media'); await flushComponent()
-  expect(settings.ocr).toEqual({ provider: 'windows-media', language: 'auto' })
+  engine('windows-media').props.onClick(); await flushComponent()
+  expect(settings.ocr).toEqual({ provider: 'windows-media', language: 'auto', serviceId: '' })
   expect(settings.ai.timeoutSeconds).toBe(60); expect(settings.shortcuts.capture).toBe('F8')
   expect(findNode(root, node => node.type === 'paddle-resources')).toBeUndefined()
   expect(select('识别语言').props.options.map((option: any) => option.value)).toEqual(['auto', 'zh-Hans-CN', 'en-US'])
   select('识别语言').props['onUpdate:modelValue']('en-US'); await flushComponent()
-  expect(settings.ocr).toEqual({ provider: 'windows-media', language: 'en-US' })
+  expect(settings.ocr).toEqual({ provider: 'windows-media', language: 'en-US', serviceId: '' })
 })
 
 it('系统错误与语言包缺失直接显示，保持用户选择且不写入 PaddleOCR', async () => {
@@ -50,7 +61,7 @@ it('系统错误与语言包缺失直接显示，保持用户选择且不写入 
   api.systemOcrStatus.mockResolvedValueOnce({ supported: true, languages: [], error: 'Windows OCR 调用失败' })
   await mount()
   expect(text(root)).toContain('Windows OCR 调用失败')
-  expect(select('OCR 引擎').value).toBe('windows-media')
+  expect(engine('windows-media').props['aria-current']).toBe('page')
   expect(select('识别语言').props.disabled).toBe(true)
   expect(api.saveSettings).not.toHaveBeenCalled()
   api.systemOcrStatus.mockResolvedValueOnce({ supported: true, languages: [], error: null })
@@ -63,22 +74,27 @@ it('非 Windows 平台禁用系统引擎，但保留已有设置以便主动切�
   settings.ocr.provider = 'windows-media'
   api.systemOcrStatus.mockResolvedValueOnce({ supported: false, languages: [], error: null })
   await mount()
-  expect(select('OCR 引擎').props.options[1].disabled).toBe(true)
+  expect(engine('windows-media').props.disabled).toBe(true)
   expect(text(root)).toContain('Windows 系统 OCR 仅支持 Windows。')
   expect(api.saveSettings).not.toHaveBeenCalled()
-  select('OCR 引擎').props['onUpdate:modelValue']('local-ppocr'); await flushComponent()
+  engine('local-ppocr').props.onClick(); await flushComponent()
   expect(settings.ocr.provider).toBe('local-ppocr')
 })
 
 it('保存失败保留草稿并支持重试，不改写已生效的引擎', async () => {
   await mount()
   api.saveSettings.mockRejectedValueOnce(new Error('无法保存配置'))
-  select('OCR 引擎').props['onUpdate:modelValue']('windows-media'); await flushComponent()
+  engine('windows-media').props.onClick(); await flushComponent()
   expect(settings.ocr.provider).toBe('local-ppocr')
-  expect(select('OCR 引擎').value).toBe('windows-media')
+  expect(text(findNode(root, node => node.props['data-current-ocr'] !== undefined)!)).toContain('PaddleOCR · PP-OCRv6')
+  expect(text(engine('local-ppocr'))).toContain('当前使用')
+  expect(text(engine('windows-media'))).not.toContain('当前使用')
+  expect(engine('windows-media').props['aria-current']).toBe('page')
   expect(text(root)).toContain('无法保存配置')
   await button('重试').props.onClick(); await flushComponent()
   expect(settings.ocr.provider).toBe('windows-media')
+  expect(text(findNode(root, node => node.props['data-current-ocr'] !== undefined)!)).toContain('Windows OCR')
+  expect(text(engine('windows-media'))).toContain('当前使用')
 })
 
 it('语言包查询失败后可刷新恢复，不自动更换引擎或语言', async () => {
@@ -90,4 +106,87 @@ it('语言包查询失败后可刷新恢复，不自动更换引擎或语言', a
   expect(text(root)).toContain('已安装 2 个 OCR 语言包')
   expect(settings.ocr.language).toBe('en-US')
   expect(api.saveSettings).not.toHaveBeenCalled()
+})
+
+
+it('在线引擎只绑定支持图片的连接，不改变翻译配置，也不展示本地资源下载', async () => {
+  settings.recognitionServices = [
+    { id: 'text', name: 'Text', protocol: 'openai-compatible', endpoint: 'https://example.com/v1', model: 'text-model', vision: false },
+    { id: 'vision', name: 'Vision', protocol: 'openai-compatible', endpoint: 'https://example.com/v1', model: 'vision-model', vision: true },
+  ]
+  await mount()
+  expect(engine('service:vision')).toBeDefined()
+  expect(text(engine('service:vision'))).toContain('在线 API')
+  expect(engine('service:text')).toBeUndefined()
+  expect(select('OCR 引擎').type).toBe('nav')
+  engine('service:vision').props.onClick(); await flushComponent()
+  expect(settings.ocr).toMatchObject({ provider: 'service', serviceId: 'vision' })
+  expect(settings.ai.provider).toBe('local-ctranslate2')
+  expect(findNode(root, node => node.type === 'paddle-resources')).toBeUndefined()
+  expect(text(root)).toContain('OCR 会将选区图片发送到此服务')
+})
+
+
+it('未配置时也显示在线 OCR，当前页保存密钥后启用服务，不修改翻译设置', async () => {
+  await mount()
+  expect(select('OCR 引擎').children.filter(node => node.type === 'button').map(node => node.props['data-provider'])).toEqual(['preset:ocr-space', 'preset:paddle-ocr', 'local-ppocr', 'windows-media'])
+  expect(text(engine('preset:ocr-space'))).toContain('在线 API')
+  expect(text(engine('preset:paddle-ocr'))).toContain('在线 API')
+  engine('preset:ocr-space').props.onClick(); await flushComponent()
+  expect(settings.ocr.provider).toBe('local-ppocr')
+  expect(text(engine('local-ppocr'))).toContain('当前使用')
+  expect(text(engine('preset:ocr-space'))).not.toContain('当前使用')
+  expect(api.saveSettings).not.toHaveBeenCalled()
+  expect(text(root)).toContain('1 MB/文件')
+  expect(findNode(root, node => node.props['aria-label'] === '服务预设')).toBeUndefined()
+  const key = findNode(root, node => node.type === 'input' && node.props.type === 'password')!
+  key.props['onUpdate:modelValue']('test-ocr-key')
+  await findNode(root, node => node.type === 'form')!.props.onSubmit({ preventDefault() {} })
+  await flushComponent(); await flushComponent()
+  const service = settings.recognitionServices[0]!
+  expect(service.protocol).toBe('ocr-space')
+  expect(api.recognitionServiceCredential).toHaveBeenCalledWith(service.id, service.endpoint, 'test-ocr-key')
+  expect(settings.ocr).toMatchObject({ provider: 'service', serviceId: service.id })
+  expect(settings.ai.provider).toBe('local-ctranslate2')
+  expect(engine(`service:${service.id}`).props['aria-current']).toBe('page')
+  expect(JSON.stringify(settings)).not.toContain('test-ocr-key')
+})
+
+it('没有密钥或凭据保存失败时不启用在线 OCR，保留表单供重试', async () => {
+  await mount(); engine('preset:ocr-space').props.onClick(); await flushComponent()
+  const submit = async () => { await findNode(root, node => node.type === 'form')!.props.onSubmit({ preventDefault() {} }); await flushComponent() }
+  await submit()
+  expect(text(root)).toContain('请先填写 API Key / Token')
+  expect(api.saveSettings).not.toHaveBeenCalled()
+  findNode(root, node => node.type === 'input' && node.props.type === 'password')!.props['onUpdate:modelValue']('retry-key')
+  api.recognitionServiceCredential.mockRejectedValueOnce(new Error('保存凭据失败'))
+  await submit()
+  expect(settings.ocr.provider).toBe('local-ppocr')
+  expect(text(root)).toContain('保存凭据失败')
+  await submit(); await flushComponent()
+  expect(settings.recognitionServices).toHaveLength(1)
+  expect(settings.ocr.provider).toBe('service')
+})
+
+
+it('已保存 OCR.space 时替代添加入口，点击直接编辑原连接且保存不新增同名项', async () => {
+  settings.recognitionServices = [{ id: 'saved-ocr', name: 'OCR.space', protocol: 'ocr-space', endpoint: 'https://api.ocr.space/parse/image', model: '2', vision: true }]
+  settings.ocr = { ...settings.ocr, provider: 'service', serviceId: 'saved-ocr' }
+  api.recognitionServiceStatus.mockResolvedValue(true)
+  await mount()
+  expect(engine('preset:ocr-space')).toBeUndefined()
+  expect(engine('service:saved-ocr')).toBeDefined()
+  const names = select('OCR 引擎').children.filter(node => node.type === 'button').map(node => text(node))
+  expect(names.filter(name => name.includes('OCR.space'))).toHaveLength(1)
+  engine('service:saved-ocr').props.onClick(); await flushComponent()
+  const input = (label: string) => findNode(findNode(root, node => node.type === 'label' && text(node).startsWith(label))!, node => node.type === 'input')!
+  expect(input('服务名称').value).toBe('OCR.space')
+  expect(input('完整接口地址').value).toBe('https://api.ocr.space/parse/image')
+  input('服务名称').props['onUpdate:modelValue']('My OCR')
+  await findNode(root, node => node.type === 'form')!.props.onSubmit({ preventDefault() {} })
+  await flushComponent(); await flushComponent()
+  expect(settings.recognitionServices).toHaveLength(1)
+  expect(settings.recognitionServices[0]).toMatchObject({ id: 'saved-ocr', name: 'My OCR' })
+  expect(engine('preset:ocr-space')).toBeUndefined()
+  expect(api.recognitionServiceCredential).not.toHaveBeenCalled()
 })

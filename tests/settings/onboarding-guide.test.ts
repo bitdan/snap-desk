@@ -115,7 +115,7 @@ describe('界面点击引导', () => {
     button('下一步').props.onClick(); await flush()
     targets.get('nav-快捷键')!.dispatchEvent(new Event('click')); await flush()
     button('下一步').props.onClick(); await flush()
-    targets.get('nav-识别与翻译')!.dispatchEvent(new Event('click')); await flush()
+    targets.get('nav-文字识别')!.dispatchEvent(new Event('click')); await flush()
     targets.get('nav-通用')!.dispatchEvent(new Event('click')); await flush()
     expect(complete).not.toHaveBeenCalled()
     expect(text(body)).toContain('6 / 6')

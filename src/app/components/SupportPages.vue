@@ -25,7 +25,7 @@ const guides = [
     </button>
     <h2 class="section-heading">{{ t('使用与排错') }}</h2>
     <div class="setting-row"><span>{{ t('快捷键没有响应') }}<small>{{ t('检查是否启用、按键冲突与兼容性。') }}</small></span><Button variant="outline" @click="emit('navigate', '快捷键')">{{ t('检查快捷键') }}</Button></div>
-    <div class="setting-row"><span>{{ t('识别或翻译不可用') }}<small>{{ t('检查资源与服务配置。') }}</small></span><Button variant="outline" @click="emit('navigate', '识别与翻译')">{{ t('识别与翻译') }}</Button></div>
+    <div class="setting-row"><span>{{ t('识别或翻译不可用') }}<small>{{ t('检查资源与服务配置。') }}</small></span><Button variant="outline" @click="emit('navigate', '文字识别')">{{ t('文字识别') }}</Button></div>
     <div class="setting-row"><span>{{ t('遇到其他问题') }}<small>{{ t('查看日志，或导出日志以协助排查。') }}</small></span><Button variant="outline" @click="emit('navigate', '日志')">{{ t('查看日志') }}</Button></div>
     <p class="support-note">{{ t('Esc 收起主窗口，应用继续在托盘运行。退出会清空贴图，请先保存需要的内容。') }}</p>
   </section>

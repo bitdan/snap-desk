@@ -268,7 +268,7 @@ describe('进入翻译即使用已配置服务', () => {
     await mount(name)
     expect(api.translateText).not.toHaveBeenCalled()
     expect(api.translateTexts).not.toHaveBeenCalled()
-    expect(content(root)).toContain('配置在线服务')
+    expect(content(root)).toContain('在“翻译”中选择服务')
   })
   it.each(['ImageTranslation', 'TranslationPanel'] as const)('%s 关闭期间配置迟到不触发请求', async name => {
     let resolve!: (value: unknown) => void
@@ -279,4 +279,16 @@ describe('进入翻译即使用已配置服务', () => {
     expect(api.translateText).not.toHaveBeenCalled()
     expect(api.translateTexts).not.toHaveBeenCalled()
   })
+})
+
+
+it('独立 OCR 结果只保留系统标题栏，仍可编辑、复制并通过 Escape 关闭', async () => {
+  const panel = await mount('OcrResultCard', { standalone: true })
+  expect(findNode(root, node => node.type === 'header')).toBeUndefined()
+  expect(findNode(root, node => node.type === 'textarea')).toBeDefined()
+  const copy = findNode(root, node => node.type === 'button' && content(node).includes('复制文字'))!
+  await copy.props.onClick(); await flushComponent()
+  expect(api.copyOcrText).toHaveBeenCalledWith('hello')
+  panel.props.onKeydown(escape())
+  expect(close).toHaveBeenCalledOnce()
 })

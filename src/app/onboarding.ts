@@ -3,8 +3,8 @@ export const onboardingSteps = [
   { page: '截图', target: 'capture-controls', title: '截图与标注', description: '在这里设置延时并开始截图，选区后可标注、复制或保存。', click: false },
   { page: '截图', target: 'nav-快捷键', title: '常用快捷键', description: '点击“快捷键”，查看或修改功能按键。', click: true },
   { page: '快捷键', target: 'shortcut-settings', title: '修改快捷键', description: '点击按键框录入快捷键，修改后自动保存；清空可禁用。', click: false },
-  { page: '快捷键', target: 'nav-识别与翻译', title: '识别与翻译', description: '点击“识别与翻译”，安装本地资源或配置翻译服务。', click: true },
-  { page: '识别与翻译', target: 'nav-通用', title: '通用设置', description: '点击“通用”，设置外观、保存目录和启动偏好。', click: true },
+  { page: '快捷键', target: 'nav-文字识别', title: '文字识别', description: '点击“文字识别”安装本地资源；翻译和在线服务有独立设置页。', click: true },
+  { page: '文字识别', target: 'nav-通用', title: '通用设置', description: '点击“通用”，设置外观、保存目录和启动偏好。', click: true },
   { page: '通用', target: 'nav-帮助', title: '帮助', description: '点击“帮助”完成引导，以后也可以在这里重新查看。', click: true },
 ] as const
 

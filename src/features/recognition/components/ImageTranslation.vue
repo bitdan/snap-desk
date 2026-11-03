@@ -33,7 +33,7 @@ async function loadConfig() {
     const value = await api.aiTranslationConfig()
     if (!disposed) {
       config.value = value
-      if (value.provider !== 'local-ctranslate2' && !onlineTranslationReady(value)) error.value = '请先在“识别与翻译”中配置在线服务。'
+      if (value.provider !== 'local-ctranslate2' && !onlineTranslationReady(value)) error.value = '请先在“翻译”中选择服务，或在“服务管理”中添加服务。'
     }
   } catch (e) { if (!disposed) error.value = String(e) }
   finally { if (!disposed) loading.value = false }

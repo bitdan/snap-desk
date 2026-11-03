@@ -41,3 +41,6 @@
   .recognition-result .result-body { padding: 8px; }
 }
 @media (prefers-reduced-motion: reduce) { .recognition-result .result-spinner { animation: none; } }
+
+/* 独立窗口由系统标题栏提供标题与关闭操作，内容直接进入编辑区域。 */
+.recognition-result.standalone-ocr-result { border:0; border-radius:0; aspect-ratio:auto; }

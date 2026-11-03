@@ -590,7 +590,7 @@ onUnmounted(() => { releaseFrame(); disposed = true; offClosed?.(); off?.(); off
     <CaptureMagnifier v-if="showMagnifier && screenImage && pointer && frame" :image="screenImage" :point="pointer" :viewport="viewport" :image-size="frame" :format="colorFormat" :relative="relativeCoordinates" :origin="pixels" :copied="colorCopied" :bounds="pointerDisplay" />
     <DetachedWindow :open="ocrResult !== null" :title="t('文字识别结果')" :width="1000" :height="650" @close="closeOcr">
       <div v-if="ocrResult" class="qr-dialog ocr-dialog">
-        <OcrResultCard v-model:text="ocrDraft" @translate="sendTranslation()" @close="closeOcr" />
+        <OcrResultCard standalone v-model:text="ocrDraft" @translate="sendTranslation()" @close="closeOcr" />
         <p v-if="error" class="result-error" role="alert">{{ te(error) }}</p>
       </div>
     </DetachedWindow>

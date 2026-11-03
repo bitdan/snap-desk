@@ -5,6 +5,7 @@ let localStatusRevision = 0
 </script>
 
 <script setup lang="ts">
+import ProviderMenu, { type ProviderMenuItem } from './ProviderMenu.vue'
 import SelectControl from '@/shared/ui/SelectControl.vue'
 import { useAutoSave } from '@/shared/ui/use-auto-save'
 import { updateSettings } from '@/features/settings/settings-write'
@@ -12,11 +13,13 @@ import { t, te } from '@/shared/i18n/i18n'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { api } from '@/services/api'
 import { deepLEndpoints, defaultAiSettings, targetLanguages, translationPresets, validateAiSettings } from '@/features/recognition/ai'
-import type { LocalTranslationStatus } from '@/features/recognition/ai'
+import type { AiSettings, LocalTranslationStatus } from '@/features/recognition/ai'
 import { Check } from 'lucide-vue-next'
 import Button from '@/shared/ui/button/Button.vue'
-import OcrSettings from '@/features/recognition/components/OcrSettings.vue'
+import { cloudFirst, connectionMode, supportsTranslation, translationPresetId, translationService, type RecognitionService } from '@/features/recognition/services'
 
+const activeSettings = ref<AiSettings | null>(null)
+const services = ref<RecognitionService[]>([])
 const draft = ref(defaultAiSettings()), secret = ref(''), configured = ref<boolean | null>(null)
 const localStatus = ref<LocalTranslationStatus | null>(latestLocalStatus)
 const checking = ref(false)
@@ -28,11 +31,12 @@ const serviceOptions = computed(() => [
   { value: 'deepl', label: 'DeepL' },
 ].sort((left, right) => left.label.localeCompare(right.label, 'zh-CN', { sensitivity: 'base' })))
 let disposed = false, credentialStatusRevision = 0
+const localEndpoint = computed(() => { try { return ['localhost', '127.0.0.1', '[::1]'].includes(new URL(draft.value.endpoint).hostname) } catch { return false } })
 const local = computed(() => draft.value.provider === 'local-ctranslate2')
 const languages = computed(() => local.value ? targetLanguages.slice(0, 2) : targetLanguages)
 watch(local, value => { if (value && !['zh-CN', 'en'].includes(draft.value.targetLanguage)) draft.value.targetLanguage = 'zh-CN' })
 // 地址切换立即清空未保存密钥，避免把上一服务的输入写入新服务。
-watch(() => [draft.value.endpoint, draft.value.provider], () => {
+watch(() => [draft.value.endpoint, draft.value.provider, draft.value.serviceId], () => {
   credentialStatusRevision++; secret.value = ''; configured.value = null
 }, { flush: 'sync' })
 const busy = ref(false), ready = ref(false), error = ref(''), message = ref('')
@@ -40,7 +44,11 @@ async function loadSettings() {
   try {
     const settings = await api.status()
     if (disposed) return
-    draft.value = { ...settings.settings.ai }; ready.value = true
+    services.value = settings.settings.recognitionServices
+    const saved = settings.settings.ai
+    const service = services.value.find(item => item.id === saved.serviceId)
+    draft.value = service && saved.provider !== 'local-ctranslate2' ? translationService(saved, service) : { ...saved }; ready.value = true
+    activeSettings.value = { ...draft.value }
     syncPreset()
     if (!local.value) {
       const revision = credentialStatusRevision
@@ -76,7 +84,8 @@ onUnmounted(() => { disposed = true })
 const autosave = useAutoSave(async () => {
   if (!ready.value) return
   const ai = { ...draft.value }, key = secret.value, revision = credentialStatusRevision
-  await updateSettings(current => ({ ...current, ai }))
+  const saved = await updateSettings(current => ({ ...current, ai }))
+  if (!disposed) activeSettings.value = { ...saved.ai }
   if (ai.provider !== 'local-ctranslate2' && key) {
     await api.aiCredentialSet(key, ai.endpoint)
     // 旧服务写入结束时，不能清空用户已为新服务重新输入的同一段密钥。
@@ -92,13 +101,22 @@ function syncPreset() {
 }
 /** 界面只区分本地/在线；平台选择映射回原有协议，兼容已保存的 DeepL 配置。 */
 function modeChanged(mode: string) {
+  draft.value.serviceId = ''
   draft.value.provider = mode === 'local' ? 'local-ctranslate2'
     : deepLEndpoints.includes(draft.value.endpoint) ? 'deepl' : 'online-llm'
   secret.value = ''; configured.value = null; message.value = ''; error.value = ''
   syncPreset()
   autosave.commit()
 }
+function selectService(id: string) {
+  const service = services.value.find(item => item.id === id)
+  if (service) draft.value = translationService(draft.value, service)
+  else draft.value.serviceId = ''
+  secret.value = ''; configured.value = null
+  autosave.commit()
+}
 function applyPreset() {
+  draft.value.serviceId = ''
   secret.value = ''; configured.value = null
   if (preset.value === 'deepl') {
     draft.value.provider = 'deepl'
@@ -112,6 +130,40 @@ function applyPreset() {
     else if (wasDeepL) { draft.value.endpoint = ''; draft.value.model = '' }
   }
   autosave.commit()
+}
+/** 二级菜单同时列出离线引擎、平台预设和已保存账号，不再逐层打开下拉框。 */
+const selectedMenu = computed(() => local.value ? 'offline' : draft.value.serviceId ? `service:${draft.value.serviceId}` : `preset:${preset.value}`)
+const providerOptions = computed(() => [{ value: 'offline', label: 'CTranslate2', connection: 'offline' as const }, ...serviceOptions.value.map(item => ({ ...item, label: item.value === 'local' ? t('本机模型') : item.label, value: `preset:${item.value}`, sortPriority: item.value === 'custom' ? 1 : undefined, connection: item.value === 'custom' ? (preset.value === 'custom' && !draft.value.serviceId ? connectionMode(draft.value.endpoint) : undefined) : item.value === 'local' ? 'local-api' as const : 'online' as const }))])
+const savedOptions = computed(() => services.value.filter(supportsTranslation).map(item => ({ value: `service:${item.id}`, label: item.name, description: item.model || item.protocol, connection: connectionMode(item.endpoint), presetId: translationPresetId(item) })))
+const activeMenu = computed(() => {
+  const value = activeSettings.value
+  if (!value) return ''
+  if (value.provider === 'local-ctranslate2') return 'offline'
+  if (value.serviceId) return `service:${value.serviceId}`
+  return `preset:${value.provider === 'deepl' ? 'deepl' : translationPresets.find(item => item.endpoint === value.endpoint)?.value ?? 'custom'}`
+})
+const menuOptions = computed(() => {
+  const options: ProviderMenuItem[] = []
+  for (const item of providerOptions.value) {
+    const saved = savedOptions.value.filter(service => `preset:${service.presetId}` === item.value)
+    if (!saved.length) options.push(item)
+    else {
+      // 仍在使用旧版直接配置时标明来源，避免把真实生效配置静默映射到另一账号。
+      if (activeMenu.value === item.value) options.push({ ...item, label: `${item.label} · ${t('旧配置')}` })
+      options.push(...saved)
+    }
+  }
+  return cloudFirst(options).map(item => ({ ...item, active: item.value === activeMenu.value }))
+})
+const activeLabel = computed(() => {
+  const item = menuOptions.value.find(item => item.value === activeMenu.value)
+  return [item?.label, activeSettings.value?.provider !== 'local-ctranslate2' ? activeSettings.value?.model : ''].filter(Boolean).join(' · ')
+})
+function selectMenu(value: string) {
+  if (busy.value || !ready.value) return
+  if (value === 'offline') { modeChanged('local'); return }
+  if (value.startsWith('service:')) { selectService(value.slice(8)); return }
+  preset.value = value.slice(7); applyPreset()
 }
 function changed(event: Event) {
   if ((event.target as HTMLInputElement).type !== 'password') autosave.schedule()
@@ -142,15 +194,14 @@ async function modelAction(modelId: string, action: 'download' | 'import' | 'del
 </script>
 
 <template>
-  <section class="ai-settings">
-    <section class="recognition-section">
-      <h3>{{ t("文字识别") }}</h3>
-      <OcrSettings />
-    </section>
-    <section class="recognition-section translation-section">
-    <h3>{{ t("文本翻译") }}</h3>
+  <section class="ai-settings recognition-settings-layout">
+    <aside class="recognition-settings-sidebar">
+      <ProviderMenu :model-value="selectedMenu" :options="menuOptions" :label="t('翻译引擎')" :disabled="busy || !ready" @update:model-value="selectMenu" />
+    </aside>
+    <section class="recognition-settings-content recognition-section translation-section">
+    <p class="recognition-current-provider" role="status" data-current-translation>{{ activeSettings ? t('当前翻译：{0}', { 0: activeLabel }) : t('正在读取配置…') }}</p>
     <fieldset :disabled="busy || !ready" @input="changed" @change="autosave.commit" @focusout="autosave.flush">
-      <label class="provider-field">{{ t("翻译引擎") }}<SelectControl :model-value="local ? 'local' : 'online'" :disabled="busy || !ready" :aria-label="t('翻译引擎')" :options="[{ value: 'local', label: t('本地离线') }, { value: 'online', label: t('在线翻译') }]" @update:model-value="modeChanged" /></label>
+
       <div v-if="local" class="local-resources">
         <div class="model-row runtime-row">
           <span class="runtime-status" :class="{ 'status-ok': localStatus?.runtimeReady }" role="status"><Check v-if="localStatus?.runtimeReady" :size="14" />{{ !localStatus ? checking ? t("正在检查…") : t("引擎状态未读取") : localStatus.runtimeReady ? t("本地引擎已安装") : t("翻译引擎未安装或校验失败") }}</span>
@@ -172,19 +223,24 @@ async function modelAction(modelId: string, action: 'download' | 'import' | 'del
       </div>
       <div v-else class="online-fields">
         <p class="hint">{{ t("在线翻译会发送原文，可能产生费用。") }}</p>
-        <label>{{ t("服务预设") }}<SelectControl v-model="preset" :aria-label="t('服务预设')" :options="serviceOptions" @update:model-value="applyPreset" /></label>
+
+        <p v-if="draft.serviceId" class="hint">{{ draft.endpoint }} · {{ draft.model }}<br />{{ t('连接与凭据在服务管理中维护。') }} {{ configured === null ? t('凭据状态未读取') : configured ? t('已配置密钥') : localEndpoint ? t('本机服务可不填密钥') : t('未配置密钥') }}</p>
+        <template v-if="!draft.serviceId">
+
         <label v-if="draft.provider === 'deepl'">{{ t("服务地址") }}<SelectControl v-model="draft.endpoint" :aria-label="t('服务地址')" :options="deepLEndpoints.map((value, index) => ({ value, label: index === 0 ? 'DeepL API Free' : 'DeepL API Pro' }))" @update:model-value="autosave.commit" /></label>
         <label v-else>{{ t("完整接口地址") }}<input v-model.trim="draft.endpoint" type="url" :placeholder='t("https://服务域名/v1/chat/completions")' autocomplete="off" /></label>
         <label v-if="draft.provider === 'online-llm'">{{ t("模型名称") }}<input v-model.trim="draft.model" :placeholder='t("填写服务支持的模型 ID")' /></label>
         <label>API Key<input v-model="secret" type="password" autocomplete="new-password" :placeholder='t("留空保留现有密钥")' /></label>
         <p :class="{ 'status-ok': configured }" role="status"><Check v-if="configured" :size="14" />{{ t("密钥") }}{{ configured === null ? t("正在检查…") : configured ? t("已配置") : t("未配置") }}{{ t("（密钥随当前服务地址保存）") }}</p>
+        </template>
       </div>
       <div class="translation-options">
         <label>{{ t("默认目标语言") }}<SelectControl v-model="draft.targetLanguage" :disabled="busy || !ready" :aria-label="t('目标语言')" :options="languages.map(item => ({ value: item.value, label: t(item.label) }))" @update:model-value="autosave.commit" /></label>
         <label>{{ t("超时（秒）") }}<input v-model.number="draft.timeoutSeconds" type="number" min="5" max="120" /></label>
         <label v-if="local">{{ t("闲置回收（秒）") }}<input v-model.number="draft.localIdleSeconds" type="number" min="0" max="3600" step="1" /><small>{{ t("0 不回收；可设为 30～3600 秒。") }}</small></label>
       </div>
-      <div class="actions"><span class="settings-save-status" role="status">{{ autosave.saving.value ? t("正在保存…") : autosave.saved.value ? t("已自动保存") : t("更改自动保存") }}</span><Button variant="outline" :disabled="!local && !configured" @click="credentialAction('test')">{{ t("测试已保存配置") }}</Button><span v-if="!local" class="hint">{{ t("测试会发送 Hello，可能产生费用。") }}</span><Button v-if="!local" variant="ghost" :disabled="!configured" @click="credentialAction('delete')">{{ t("删除已保存密钥") }}</Button></div>
+      <div class="actions"><span class="settings-save-status" role="status">{{ autosave.saving.value ? t("正在保存…") : autosave.saved.value ? t("已自动保存") : t("更改自动保存") }}</span><Button variant="outline" :disabled="!local && !localEndpoint && !configured" @click="credentialAction('test')">{{ t("测试已保存配置") }}</Button><Button v-if="!local && !draft.serviceId" variant="ghost" :disabled="!configured" @click="credentialAction('delete')">{{ t("删除已保存密钥") }}</Button></div>
+      <p v-if="!local" class="hint">{{ t("测试会发送 Hello，可能产生费用。") }}</p>
     </fieldset>
     <p v-if="autosave.error.value" class="notice error" role="alert">{{ te(autosave.error.value) }}<Button variant="ghost" @click="autosave.retry">{{ t("重试") }}</Button></p>
     <p v-if="message" :class="{ 'status-ok': !busy }" role="status"><Check v-if="!busy" :size="14" />{{ t(message) }}</p><p v-if="error" class="notice error" role="alert">{{ te(error) }}</p>
@@ -193,14 +249,14 @@ async function modelAction(modelId: string, action: 'download' | 'import' | 'del
 </template>
 
 <style scoped>
+.ai-settings .recognition-current-provider { margin:0 0 16px; }
 .ai-settings { width:100%; max-width:920px; margin-inline:auto; font-size:13px; }
-.recognition-section { padding:16px 0; border-bottom:1px solid #e1e4e8; }
-.recognition-section:first-child { padding-top:0; }
+.recognition-section { padding:0; }
 .recognition-section:last-child { border-bottom:0; }
 h3 { font-size:14px; font-weight:600; margin:0 0 12px; }
 p { color:#57606a; margin:8px 0; }
 fieldset { border:0; padding:0; min-width:0; }
-label { display:grid; grid-template-columns:110px minmax(0,1fr); align-items:center; gap:12px; margin:8px 0; }
+label { display:grid; grid-template-columns:92px minmax(0,1fr); align-items:center; gap:12px; margin:12px 0; }
 input, select { height:32px; border:1px solid #d8dee4; border-radius:4px; padding:4px 8px; min-width:0; width:100%; color:inherit; }
 input:focus-visible, select:focus-visible { outline:2px solid #2563eb; outline-offset:2px; }
 .provider-field { grid-template-columns:110px minmax(0,240px); margin-top:0; }
@@ -210,12 +266,12 @@ input:focus-visible, select:focus-visible { outline:2px solid #2563eb; outline-o
 .runtime-status { grid-column:span 2; }
 .model-name { overflow-wrap:anywhere; }
 .model-actions { display:flex; align-items:center; justify-content:flex-end; flex-wrap:wrap; gap:6px; }
-.translation-options { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); align-items:start; gap:16px; max-width:660px; margin:12px 0 16px; }
-.translation-options label { display:flex; flex-direction:column; align-items:stretch; gap:6px; margin:0; font-size:12px; color:#57606a; }
+.translation-options { display:flex; flex-direction:column; gap:12px; margin:20px 0; }
+.translation-options label { display:grid; grid-template-columns:92px minmax(0,1fr); align-items:center; gap:12px; margin:0; font-size:13px; }
 .translation-options :is(input,select) { font-size:13px; color:#24292f; }
-.translation-options small { line-height:1.5; font-size:12px; }
-.online-fields { max-width:660px; }
-.actions { display:flex; align-items:center; flex-wrap:wrap; gap:8px; padding-top:4px; }
+.translation-options small { grid-column:2; line-height:1.5; font-size:12px; color:var(--desk-muted,#57606a); }
+.online-fields { width:100%; }
+.actions { display:flex; align-items:center; flex-wrap:wrap; gap:8px; padding-top:12px; border-top:1px solid var(--desk-border,#e1e4e8); }
 .hint { font-size:12px; line-height:1.6; }
 .error { color:#b91c1c; }
 .ai-settings :deep(.setting-row) { min-height:48px; padding-top:0; }
@@ -229,7 +285,7 @@ input:focus-visible, select:focus-visible { outline:2px solid #2563eb; outline-o
   .model-actions { grid-column:span 2; justify-content:flex-start; }
 }
 @media (max-width:540px) {
-  .translation-options { grid-template-columns:1fr; gap:12px; }
-  .provider-field, .online-fields label { grid-template-columns:1fr; gap:6px; }
+  .translation-options small { grid-column:1; }
+  .provider-field, .online-fields label, .translation-options label { grid-template-columns:1fr; gap:6px; }
 }
 </style>
