@@ -16,6 +16,7 @@ export const pinsApi = {
   setPinGroup: (labels: string[], group: string) => invoke<void>('set_pin_group', { labels, group }),
   setPinView: (view: PinView) => invoke<PinView>('set_pin_view', { view }),
   dragPin: () => invoke<void>('drag_pin'),
+  dragPinContent: () => invoke<void>('drag_pin_content'),
   transformPin: (action: PinTransform) => invoke<PinFrame>('transform_pin', { action }),
   pinAction: (action: PinAction) => invoke<boolean>('pin_action', { action }),
 }

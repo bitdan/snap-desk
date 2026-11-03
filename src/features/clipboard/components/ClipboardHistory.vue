@@ -216,7 +216,7 @@ async function pinSelected() {
   await run(async () => {
     let done = 0
     for (const id of selected.value) {
-      if (!['image', 'text'].includes(selectedItems.value[id]?.kind)) continue
+      if (!['image', 'text', 'file'].includes(selectedItems.value[id]?.kind)) continue
       try { await api.clipboardPin(id); done++ } catch (e) { throw new Error(`已创建 ${done} 张贴图；${String(e)}`) }
     }
     message.value = `已创建 ${done} 张贴图。`
@@ -301,7 +301,7 @@ onUnmounted(() => { disposed = true; revision++; clearTimeout(refreshTimer); cle
       <template v-if="selected.length">
         <span class="history-selected-count" role="status" :title="t('已选 {0} / 100 条', { 0: selected.length })">{{ t("已选") }}<br />{{ selected.length }}</span>
         <Button class="history-action" :disabled="busy || !canExport" :title="canExport ? t('组合导出') : t('组合导出仅支持文本和图片，文件引用请复制后粘贴')" :aria-label='t("组合导出所选条目")' @click="error = ''; message = ''; exportOpen = true"><Download :size="18" /></Button>
-        <Button class="history-action" variant="outline" :disabled="busy || !selected.some(id => ['image', 'text'].includes(selectedItems[id]?.kind))" :title='t("悬浮贴图")' :aria-label='t("将所选文字和图片贴图")' @click="pinSelected"><Pin :size="18" /></Button>
+        <Button class="history-action" variant="outline" :disabled="busy" :title='t("悬浮贴图")' :aria-label='t("将所选内容贴图")' @click="pinSelected"><Pin :size="18" /></Button>
         <Button class="history-action history-delete" variant="outline" :disabled="busy" :title='t("删除所选")' :aria-label='t("删除所选条目")' @click="requestDelete('delete')"><Trash2 :size="18" /></Button>
         <Button class="history-action" variant="ghost" :disabled="busy" :title='t("取消选择")' :aria-label='t("取消选择")' @click="selected = []; selectedItems = {}"><X :size="18" /></Button>
       </template>

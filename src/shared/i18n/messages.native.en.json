@@ -1,4 +1,7 @@
 {
+  "贴图已锁定或已开启鼠标穿透。": "The pin is locked or click-through is enabled.",
+  "当前平台尚未支持贴图内容拖出。": "Dragging pin content out is not supported on this platform yet.",
+  "临时图片路径编码无效。": "The temporary image path has an invalid encoding.",
   "当前安装方式不支持在线更新，请使用 NSIS 安装包重新安装。": "This installation type does not support online updates. Reinstall using the NSIS installer.",
   "此条目不是有效链接。": "This item is not a valid link.",
   "此条目不是有效文件路径。": "This item is not a valid file path.",

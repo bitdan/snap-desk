@@ -15,6 +15,18 @@ pub use service::Service;
 use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
+/// 即时文件贴图复用已有有界读取与路径校验，不读取或复制原文件内容。
+pub(crate) fn file_paths_for_pin() -> Result<Option<Vec<String>>, String> {
+    let mut settings = ClipboardSettings::default();
+    settings.save_copied_images = false;
+    settings.save_copied_text = false;
+    settings.save_copied_files = true;
+    match platform::snapshot(&settings)? {
+        Some(reader::Snapshot::Files(bytes)) => files::decode(&bytes).map(Some),
+        _ => Ok(None),
+    }
+}
+
 /// 重任务统一移出 UI 线程；此处只验证窗口，不对任意文件路径提供入口。
 async fn work<T: Send + 'static>(
     app: AppHandle,
@@ -212,7 +224,7 @@ pub async fn clipboard_pin_item(
         match content {
             Content::Image(i) => crate::pins::create_visible(app, i, vec![]),
             Content::Text(text) => crate::pins::create_text_visible(app, &text),
-            Content::Files(_) => Err("请选择文字或图片贴图。".into()),
+            Content::Files(paths) => crate::pins::create_text_visible(app, &paths.join("\n")),
         }
     })
     .await

@@ -16,6 +16,10 @@ const result: OcrResult = {
 }
 beforeEach(() => vi.resetAllMocks())
 describe('已有图片识别 IPC', () => {
+  it('内容拖出只提交命令，不接受外部路径、文本或其他窗口标签', async () => {
+    await api.dragPinContent()
+    expect(invoke).toHaveBeenLastCalledWith('drag_pin_content', undefined)
+  })
   it('使用本窗口图片，不提交任意路径或窗口标签', async () => {
     invoke.mockResolvedValueOnce(result)
     expect(await api.recognizePinText()).toEqual(result)
@@ -38,7 +42,7 @@ describe('已有图片识别 IPC', () => {
   it('新命令同步原生注册、目录和诊断白名单', () => {
     const native = readFileSync(new URL('../../src-tauri/src/app/mod.rs', import.meta.url), 'utf8')
     const catalog = readFileSync(new URL('../../src-tauri/src/diagnostics/catalog.rs', import.meta.url), 'utf8')
-    for (const command of ['recognize_pin_text', 'recognize_pin_qr', 'pin_qr_action']) {
+    for (const command of ['recognize_pin_text', 'recognize_pin_qr', 'pin_qr_action', 'drag_pin_content']) {
       expect(ipcCommands).toContain(command)
       expect(native).toContain(`::${command},`)
       expect(catalog).toContain(`"${command}",`)

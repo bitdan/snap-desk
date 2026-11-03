@@ -6059,6 +6059,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "windows",
+ "windows-core",
  "xcap",
  "zip",
 ]

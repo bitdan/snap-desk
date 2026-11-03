@@ -3,6 +3,7 @@
 #[cfg(test)]
 mod benchmarks;
 pub(crate) mod content;
+pub(crate) mod drag;
 mod text;
 pub mod html;
 
@@ -100,6 +101,8 @@ impl PinLayout {
 
 #[derive(Default)]
 pub struct PinState {
+    /// 拖出的图片保留到应用退出，让接收应用可在放下后异步读取文件。
+    drag_files: Mutex<Vec<tempfile::TempPath>>,
     pub operation: AtomicBool,
     next_id: AtomicU64,
     images: Mutex<BTreeMap<String, Pin>>,
@@ -109,6 +112,8 @@ pub struct PinState {
 
 #[derive(Clone)]
 struct Pin {
+    /// 文字、文件路径及颜色保留语义内容；None 表示拖出当前合成图像。
+    drag_text: Option<Arc<str>>,
     /// 二维码仅属于当前贴图；关闭释放，图片变换后失效。
     qr_result: Option<crate::recognition::qr::QrResult>,
     /// 只在像素变化时递增；视图和标注更新不要求重新编码底图。
@@ -395,6 +400,17 @@ pub fn create(
     annotations: Vec<crate::shared::annotations::Annotation>,
     image_origin: Option<PhysicalPosition<i32>>,
 ) -> Result<WebviewWindow, String> {
+    create_with_text(app, image, annotations, image_origin, None)
+}
+
+/// 内容类型在显示窗口前绑定，避免首次拖拽把文字误当图像导出。
+fn create_with_text(
+    app: &AppHandle,
+    image: RgbaImage,
+    annotations: Vec<crate::shared::annotations::Annotation>,
+    image_origin: Option<PhysicalPosition<i32>>,
+    drag_text: Option<Arc<str>>,
+) -> Result<WebviewWindow, String> {
     #[cfg(windows)]
     let _dpi = crate::capture::desktop::PhysicalDpi::enter()?;
     crate::shared::annotations::validate(&annotations, image.width(), image.height())?;
@@ -433,6 +449,7 @@ pub fn create(
     state.images.lock().map_err(err)?.insert(
         label.clone(),
         Pin {
+            drag_text,
             qr_result: None,
             revision: 0,
             original: image.clone(),
@@ -514,7 +531,16 @@ pub(crate) fn create_visible(
     image: RgbaImage,
     annotations: Vec<crate::shared::annotations::Annotation>,
 ) -> Result<(), String> {
-    let pin = create(app, image, annotations, None)?;
+    create_content_visible(app, image, annotations, None)
+}
+
+fn create_content_visible(
+    app: &AppHandle,
+    image: RgbaImage,
+    annotations: Vec<crate::shared::annotations::Annotation>,
+    drag_text: Option<Arc<str>>,
+) -> Result<(), String> {
+    let pin = create_with_text(app, image, annotations, None, drag_text)?;
     if let Err(error) = pin.show().and_then(|_| pin.set_focus()) {
         let _ = pin.destroy();
         return Err(err(error));
@@ -577,11 +603,20 @@ pub async fn pin_clipboard(app: AppHandle, window: WebviewWindow) -> Result<(), 
 
 /// 主界面、托盘和 F2 共用入口；优先读取图片，否则将剪贴板纯文字排版成贴图。
 pub fn clipboard_pin(app: &AppHandle) -> Result<(), String> {
+    if let Some(paths) = crate::clipboard::file_paths_for_pin()? {
+        return create_text_visible(app, &paths.join("\n"));
+    }
     let clipboard = match app.clipboard().read_image() {
         Ok(image) => image,
         Err(_) => {
             if let Some(html) = self::html::read()? {
-                return create_visible(app, self::html::render(app, html)?, vec![]);
+                let text = app.clipboard().read_text().ok();
+                return create_content_visible(
+                    app,
+                    self::html::render(app, html)?,
+                    vec![],
+                    text.map(|s| Arc::from(self::text::drag_text(&s))),
+                );
             }
             let text = app
                 .clipboard()
@@ -602,7 +637,12 @@ pub fn clipboard_pin(app: &AppHandle) -> Result<(), String> {
 
 /// 历史与即时剪贴板共用文字贴图入口，沿用窗口容量、显示及失败清理逻辑。
 pub(crate) fn create_text_visible(app: &AppHandle, text: &str) -> Result<(), String> {
-    create_visible(app, self::text::render(app, text)?, vec![])
+    create_content_visible(
+        app,
+        self::text::render(app, text)?,
+        vec![],
+        Some(Arc::from(self::text::drag_text(text))),
+    )
 }
 
 /// 识别当前处理后的原始像素，不合成标注；坐标直接对应贴图原图像素。
@@ -1426,6 +1466,7 @@ mod tests {
     fn grouped_pin(group: &str) -> Pin {
         let image = Arc::new(RgbaImage::new(1, 1));
         Pin {
+            drag_text: None,
             qr_result: None,
             revision: 0,
             original: image.clone(),
@@ -1535,6 +1576,7 @@ mod tests {
         })).unwrap();
         let image = Arc::new(RgbaImage::new(30, 30));
         let pin = Pin {
+            drag_text: None,
             qr_result: None,
             revision: 0,
             original: image.clone(),

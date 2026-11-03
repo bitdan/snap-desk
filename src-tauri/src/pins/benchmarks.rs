@@ -27,6 +27,7 @@ fn benchmark_native_pin_ladder() {
         .unwrap();
         weak.push(Arc::downgrade(&image));
         let pin = Pin {
+            drag_text: None,
             image: image.clone(),
             original: image,
             revision: 0,

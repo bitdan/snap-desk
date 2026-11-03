@@ -12,6 +12,7 @@ import { useFloatingToolbar } from '@/features/annotations/toolbar-layout'
 import { useAnnotations, type AnnotationTool } from '@/features/annotations/use-annotations'
 import { api, onPinVisibility } from '@/services/api'
 import { usePinImage } from '@/features/pins/pin-image'
+import { createPinDrag } from '@/features/pins/pin-drag'
 import type { PinView, PinAction, PinTransform } from '@/features/pins/types'
 import { canEditPin, minimumZoom, pinDisplaySize, pinImagePadding, stepZoom, defaultPinAppearance, pinAppearanceStyle } from '@/features/pins/pins'
 import { onPinAppearance, onPinView } from '@/features/pins/events'
@@ -113,7 +114,7 @@ async function load() {
 }
 async function pinVisibility(visible: boolean) {
   imageSession.visibility(visible)
-  if (!visible) { void closeRecognition(false); closeMenu(); hideControls(); return }
+  if (!visible) { contentDrag.cancel(); void closeRecognition(false); closeMenu(); hideControls(); return }
   const revision = appearanceRevision
   try {
     if (await imageSession.refresh()) editor.reset(frame.value!.annotations)
@@ -190,9 +191,13 @@ function zoom(direction: number) {
   if (next !== frame.value.view.zoom) void setView({ zoom: next })
 }
 function wheel(event: WheelEvent) { if (event.deltaY !== 0) zoom(event.deltaY < 0 ? 1 : -1) }
+const contentDrag = createPinDrag(
+  () => { void api.dragPin().catch(e => { error.value = String(e) }) },
+  () => { if (editable.value && !annotating.value) void run(() => api.dragPinContent()) },
+)
 function drag(event: PointerEvent) {
   if (event.button !== 0 || !editable.value || annotating.value) return
-  void api.dragPin().catch(e => { error.value = String(e) })
+  contentDrag.down(event)
 }
 async function chooseTransform(value: string) {
   const item = transforms.find(item => item.action === value)
@@ -250,6 +255,7 @@ onMounted(async () => {
   } catch (e) { if (!disposed) error.value = String(e) }
 })
 onUnmounted(() => {
+  contentDrag.cancel()
   disposed = true; offView?.(); offAppearance?.(); offVisibility?.(); imageSession.dispose()
   clearTimeout(controlsHideTimer)
   window.removeEventListener('pointerdown', dismissMenu)
@@ -265,7 +271,7 @@ function closeOnResize() {
 
 <template>
   <div class="pin-shell" :class="{ 'is-focused': focused, 'controls-visible': controlsHovered || !!error || !!message }" :style="shellStyle" @pointerleave="hideControls" @contextmenu.prevent>
-    <div v-show="imageReady" class="pin-stage" :inert="!!recognitionMode" tabindex="0" :aria-label='t("贴图，右键打开菜单")' :style="[stageStyle, pinAppearanceStyle(appearance, display.stageWidth, display.stageHeight, frame?.view.opacity ?? 1, focused)]" @pointerenter="keepControlsVisible" @pointerleave="scheduleControlsHide" @pointerdown="drag" @wheel.prevent="wheel" @contextmenu.capture="openMenu">
+    <div v-show="imageReady" class="pin-stage" :inert="!!recognitionMode" tabindex="0" :aria-label='t("贴图，右键打开菜单")' :title="t('Ctrl＋左键拖出内容；拖入微信前可松开 Ctrl')" :style="[stageStyle, pinAppearanceStyle(appearance, display.stageWidth, display.stageHeight, frame?.view.opacity ?? 1, focused)]" @pointerenter="keepControlsVisible" @pointerleave="scheduleControlsHide" @pointerdown="drag" @pointermove="contentDrag.move" @pointerup="contentDrag.cancel" @pointercancel="contentDrag.cancel" @lostpointercapture="contentDrag.cancel" @wheel.prevent="wheel" @contextmenu.capture="openMenu">
       <div v-if="frame" class="pin-canvas">
         <div class="pin-image-content" :style="{ width: `${display.imageWidth}px`, height: `${display.imageHeight}px`, opacity: frame.view.opacity }">
           <img v-if="frame.dataUrl" :src="frame.dataUrl" :alt='t("桌面贴图")' draggable="false" @load="imageLoaded" @error="error = '贴图预览加载失败，可关闭后重新贴图。'" />

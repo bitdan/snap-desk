@@ -434,6 +434,7 @@ pub fn run() {
             pins::manage_pins,
             pins::set_pin_view,
             pins::drag_pin,
+            pins::drag::drag_pin_content,
             pins::transform_pin,
             pins::pin_action,
             pins::html::finish_html_render,

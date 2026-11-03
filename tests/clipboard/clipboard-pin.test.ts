@@ -48,7 +48,7 @@ const Component = clientComponent(History, new URL('../../src/features/clipboard
 clientComponent(ConfirmDialog, new URL('../../src/shared/ui/ConfirmDialog.vue', import.meta.url))
 let root: MemoryNode
 let savedPreferences: Map<string, string>
-const pinButton = () => findNode(root, node => node.props['aria-label'] === '将所选文字和图片贴图')!
+const pinButton = () => findNode(root, node => node.props['aria-label'] === '将所选内容贴图')!
 const nodeText = (node: MemoryNode): string => node.text + node.children.map(nodeText).join('')
 const refreshButton = () => findNode(root, node => node.type === 'button' && nodeText(node) === '刷新')!
 const updatedNotice = () => findNode(root, node => node.props.role === 'status' && nodeText(node) === '内容已更新，点击刷新。')
@@ -201,12 +201,11 @@ it('多条文字可直接贴图，按选择顺序调用历史 ID，不读取预�
   await pinButton().props.onClick(); await flushComponent()
   expect(api.clipboardPin.mock.calls).toEqual([[2], [1]])
 })
-it('文字与图片混选均创建贴图，文件引用不参与', async () => {
-  await select(4)
-  expect(pinButton().props.disabled).toBe(true)
-  await select(1, 3)
+it('文字、图片和文件引用均可创建贴图，文件仅展示路径', async () => {
+  await select(4, 1, 3)
+  expect(pinButton().props.disabled).toBe(false)
   await pinButton().props.onClick(); await flushComponent()
-  expect(api.clipboardPin.mock.calls).toEqual([[1], [3]])
+  expect(api.clipboardPin.mock.calls).toEqual([[4], [1], [3]])
 })
 it('中途失败停止创建，显示已完成数量，允许用户继续操作', async () => {
   api.clipboardPin.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error('容量已满'))
