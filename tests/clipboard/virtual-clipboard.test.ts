@@ -79,7 +79,8 @@ it.each(['list', 'grid'] as const)('%s mounts a bounded range and focuses an unm
   const items = ref(Array.from({ length: 5000 }, (_, id) => ({ id, kind: id % 2 ? 'image' : 'text' } as ClipboardItem)))
   const list = ref<{ focusIndex(index: number): Promise<void>; resetScroll(): void; columns: number } | null>(null)
   const mode = ref(layout)
-  const app = renderer.createApp({ setup: () => () => h(VirtualClipboardList, { ref: list, items: items.value, layout: mode.value }, {
+  const hasMore = ref(true), loading = ref(false), nearEnd = vi.fn()
+  const app = renderer.createApp({ setup: () => () => h(VirtualClipboardList, { ref: list, items: items.value, layout: mode.value, hasMore: hasMore.value, loading: loading.value, onNearEnd: nearEnd }, {
     default: ({ item }: { item: ClipboardItem }) => h('article', { class: 'history-item', 'data-id': item.id }),
   }) })
   const host = new ElementNode('host')
@@ -96,12 +97,18 @@ it.each(['list', 'grid'] as const)('%s mounts a bounded range and focuses an unm
     const rows = () => viewport.children.filter(node => node.dataset.historyId !== undefined)
     expect(rows().length).toBeLessThan(20)
     expect(rows().some(row => row.dataset.historyId === '4999')).toBe(false)
+    expect(nearEnd).not.toHaveBeenCalled()
     await list.value!.focusIndex(4999)
+    expect(nearEnd).toHaveBeenCalledOnce()
+    loading.value = true; await nextTick()
     expect(rows().length).toBeLessThan(20)
     const item = (index: number) => rows().map(row => row.querySelector(`[data-history-index="${index}"] .history-item`)).find(Boolean)!
     expect(item(4999).focus).toHaveBeenCalled()
     await list.value!.focusIndex(4998)
     expect(item(4998).focus).toHaveBeenCalled()
+    expect(nearEnd).toHaveBeenCalledOnce()
+    hasMore.value = false; loading.value = false; await nextTick()
+    expect(nearEnd).toHaveBeenCalledOnce()
     mode.value = layout === 'grid' ? 'list' : 'grid'
     await nextTick()
     expect(list.value!.columns).toBe(layout === 'grid' ? 1 : 4)
@@ -110,6 +117,9 @@ it.each(['list', 'grid'] as const)('%s mounts a bounded range and focuses an unm
     await nextTick()
     expect(viewport.scrollTop).toBe(0)
     expect(rows()[0].dataset.historyId).toBe('0')
+    // 首屏不足一页时自动补齐；末页与加载中不继续发出分页事件。
+    items.value = items.value.slice(0, 1); hasMore.value = true; await nextTick()
+    expect(nearEnd).toHaveBeenCalledTimes(2)
     resized([{ target: viewport, contentRect: { width: 496, height: 300 } }])
     expect(frames.size).toBe(1)
   } finally { app.unmount() }

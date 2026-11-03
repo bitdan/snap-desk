@@ -31,6 +31,9 @@ struct AiSettingsWire {
     target_language: String,
     timeout_seconds: u64,
     local_idle_seconds: u64,
+    /// 兼容旧配置，右键翻译入口已移除，不再保存此字段。
+    #[serde(rename = "selectionContextMenu")]
+    _selection_context_menu: bool,
 }
 impl Default for AiSettingsWire {
     fn default() -> Self {
@@ -42,6 +45,7 @@ impl Default for AiSettingsWire {
             target_language: value.target_language,
             timeout_seconds: value.timeout_seconds,
             local_idle_seconds: value.local_idle_seconds,
+            _selection_context_menu: false,
         }
     }
 }
@@ -186,9 +190,9 @@ impl Jobs {
         self.cancelled.push_back(request_id);
     }
 }
-/// 截图与仍存在的贴图共享文本翻译；不开放给主页或任意窗口。
+/// 主窗口、截图与仍存在的贴图共享翻译，其他窗口不能提交或取消任务。
 fn require_translation_window(app: &AppHandle, window: &WebviewWindow) -> Result<(), String> {
-    if window.label() == "capture" {
+    if matches!(window.label(), "main" | "capture") {
         return Ok(());
     }
     crate::pins::require_pin(app, window)
@@ -319,11 +323,21 @@ async fn run_translation(
         return Err("请求 ID 无效。".into());
     }
     request.validate()?;
-    let settings = config(&app)?;
-    if settings != expected_settings || request.target_language != settings.target_language {
+    let mut settings = config(&app)?;
+    if settings != expected_settings {
         return Err("翻译配置已变更，请关闭面板重新打开后确认。".into());
     }
+    // 单次语言选择独立于持久默认值；仍完整核对服务配置，避免向已更换的地址上传。
+    settings.target_language = request.target_language.clone();
     settings.ready()?;
+    if request.source_language.as_ref() == Some(&request.target_language) {
+        return Err("原文语言和目标语言不能相同。".into());
+    }
+    if settings.provider == "local-ctranslate2"
+        && request.source_language.as_ref().is_some_and(|source| !["zh-CN", "en"].contains(&source.as_str()))
+    {
+        return Err("本地翻译仅支持英译中和中译英。".into());
+    }
     if settings.provider != "local-ctranslate2" && !consent {
         return Err("请先确认发送识别文本。".into());
     }
@@ -461,7 +475,7 @@ pub async fn ai_provider_status(app: AppHandle, window: WebviewWindow) -> Result
     Ok(crate::recognition::ai_credentials::read(&settings.endpoint)?.is_some())
 }
 
-/// 截图/贴图面板只读取非敏感配置，用于确认发送目的地，不暴露密钥。
+/// 翻译界面只读取非敏感配置，用于确认发送目的地，不暴露密钥。
 #[tauri::command]
 pub async fn ai_translation_config(
     app: AppHandle,

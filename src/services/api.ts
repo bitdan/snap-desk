@@ -23,6 +23,7 @@ export * from '@/features/pins/events'
 export * from '@/features/settings/events'
 export * from '@/features/scroll/events'
 export * from '@/features/clipboard/events'
+export * from '@/features/recognition/events'
 
 export const api = {
   ...diagnosticsApi,

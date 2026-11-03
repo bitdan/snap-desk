@@ -123,6 +123,7 @@ pub const CODES: &[&str] = &[
     "TRANSLATION_REQUEST_FAILED",
 ];
 pub const COMMANDS: &[&str] = &[
+    "read_translation_input",
     "app_update_status",
     "check_app_update",
     "download_app_update",

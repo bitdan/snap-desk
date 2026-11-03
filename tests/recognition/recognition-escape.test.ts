@@ -1,4 +1,5 @@
 vi.mock('../../src/shared/ui/DetachedWindow.vue', async () => ({ default: (await import('../helpers/detached-window')).DetachedWindowStub }))
+vi.mock('../../src/shared/ui/SelectControl.vue', async () => ({ default: (await import('../helpers/select-control')).SelectControlStub }))
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import ConfirmDialog from '../../src/shared/ui/ConfirmDialog.vue'
 import { h, type Component } from 'vue'
@@ -258,7 +259,9 @@ describe('进入翻译即使用已配置服务', () => {
     expect(other).not.toHaveBeenCalled()
     expect(content(root)).toContain('服务不可用')
     expect(content(root)).not.toContain('本地离线翻译')
-    expect(findNode(root, node => node.type === 'input' && node.props.type === 'checkbox')).toBeUndefined()
+    const checkbox = findNode(root, node => node.type === 'input' && node.props.type === 'checkbox')
+    // 自动方向控件不属于上传授权；进入翻译仍不需要额外确认。
+    expect(checkbox?.parent?.props.class ?? null).toBe(name === 'TranslationPanel' ? 'translation-auto' : null)
   })
   it.each(['ImageTranslation', 'TranslationPanel'] as const)('%s 配置未就绪时不发送请求，也不切换默认引擎', async name => {
     api.aiTranslationConfig.mockResolvedValue({ ...defaultAiSettings(), provider: 'deepl', endpoint: '' })

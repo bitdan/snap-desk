@@ -4,7 +4,7 @@ mod commands;
 mod updater;
 
 use actions::{trigger, trigger_pin, trigger_recording};
-use crate::{capture, clipboard, diagnostics, pins, resources, settings};
+use crate::{capture, clipboard, diagnostics, pins, resources, settings, recognition};
 use crate::recognition::{ocr, qr, translation, local_translation, translation_models};
 use crate::settings::{autostart, shortcut_probe, storage};
 use crate::resources::lifecycle as resource_lifecycle;
@@ -41,6 +41,7 @@ pub fn run() {
         .manage(capture::MainWindowState::default())
         .manage(settings::ShortcutPressState::default())
         .manage(shortcut_probe::ProbeState::default())
+        .manage(recognition::text_input::TextInputState::default())
         .manage(qr::QrState::default())
         .manage(ocr::OcrState::default())
         .manage(resource_lifecycle::ResourceLifecycle::default())
@@ -101,6 +102,7 @@ pub fn run() {
                         Some(settings::ShortcutAction::Pin) => trigger_pin(app),
                         Some(settings::ShortcutAction::Record) => trigger_recording(app),
                         Some(settings::ShortcutAction::History) => clipboard::open_history(app),
+                        Some(settings::ShortcutAction::Translate) => recognition::text_input::open(app),
                         None => {}
                     }
                 })
@@ -333,6 +335,7 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            recognition::text_input::read_translation_input,
             capture::main_window_ready,
             resources::resource_status,
             resources::download_resources,

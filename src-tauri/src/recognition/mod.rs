@@ -2,6 +2,8 @@
 pub(crate) mod ocr;
 pub(crate) mod qr;
 pub(crate) mod translation;
+pub(crate) mod text_input;
+mod selected_text;
 mod providers;
 pub(crate) mod local_translation;
 pub(crate) mod translation_models;

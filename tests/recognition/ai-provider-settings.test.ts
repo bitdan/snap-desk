@@ -25,6 +25,29 @@ beforeEach(() => { vi.stubGlobal('Document', class {}); vi.stubGlobal('ShadowRoo
 afterEach(() => { memoryRenderer.render(null, root); vi.resetAllMocks(); vi.unstubAllGlobals() })
 
 describe('翻译设置独立加载和快照复用', () => {
+  it('Groq 预设自动填写地址和模型，隔离原服务密钥，重新进入仍显示 Groq', async () => {
+    let settings = defaultSettings()
+    settings.ai = { ...settings.ai, provider: 'online-llm', endpoint: 'https://old.example/v1/chat/completions', model: 'old-model', targetLanguage: 'ja' }
+    api.status.mockImplementation(async () => ({ settings }))
+    api.saveSettings.mockImplementation(async next => { settings = next; return next })
+    api.translationModelStatus.mockResolvedValue(ready)
+    api.aiProviderStatus.mockResolvedValue(false)
+    mount(); await flushComponent()
+    const preset = () => findNode(root, node => node.type === 'select-control' && node.props['aria-label'] === '服务预设')!
+    expect(preset().props.options).toContainEqual({ value: 'groq', label: 'Groq' })
+    findNode(root, node => node.type === 'input' && node.props.type === 'password')!.props['onUpdate:modelValue']('old-unsaved-key')
+    preset().props['onUpdate:modelValue']('groq'); await flushComponent()
+    expect(settings.ai).toMatchObject({ provider: 'online-llm', endpoint: 'https://api.groq.com/openai/v1/chat/completions', model: 'openai/gpt-oss-120b', targetLanguage: 'ja' })
+    expect(findNode(root, node => node.type === 'input' && node.props.type === 'password')!.value).toBe('')
+    expect(api.aiCredentialSet).not.toHaveBeenCalled()
+    memoryRenderer.render(null, root); mount(); await flushComponent()
+    expect(preset().value).toBe('groq')
+    const key = findNode(root, node => node.type === 'input' && node.props.type === 'password')!
+    key.props['onUpdate:modelValue']('groq-test-key')
+    findNode(root, node => node.type === 'fieldset')!.props.onChange(); await flushComponent()
+    expect(api.aiCredentialSet).toHaveBeenCalledWith('groq-test-key', 'https://api.groq.com/openai/v1/chat/completions')
+    expect(settings.ai).not.toHaveProperty('apiKey')
+  })
   it('旧服务保存结束后不清除新服务重新输入的相同密钥', async () => {
     let settings = defaultSettings()
     settings.ai = { ...settings.ai, provider: 'deepl', endpoint: 'https://api-free.deepl.com/v2/translate', model: '' }
@@ -56,7 +79,7 @@ describe('翻译设置独立加载和快照复用', () => {
     api.aiProviderStatus.mockReturnValueOnce(new Promise(resolve => { finishOld = resolve })).mockResolvedValue(false)
     mount(); await flushComponent()
     expect(api.aiProviderStatus).toHaveBeenCalledOnce()
-    findNode(root, node => node.type === 'select-control' && node.props['aria-label'] === '翻译引擎')!.props['onUpdate:modelValue']('deepl')
+    findNode(root, node => node.type === 'select-control' && node.props['aria-label'] === '服务预设')!.props['onUpdate:modelValue']('deepl')
     await flushComponent()
     expect(api.aiProviderStatus).toHaveBeenCalledTimes(2)
     expect(text()).toContain('未配置')
@@ -71,7 +94,10 @@ describe('翻译设置独立加载和快照复用', () => {
     api.translationModelStatus.mockResolvedValue(ready)
     api.aiProviderStatus.mockResolvedValue(false)
     mount(); await flushComponent()
-    findNode(root, node => node.type === 'select-control' && node.props['aria-label'] === '翻译引擎')!.props['onUpdate:modelValue']('deepl')
+    const engine = findNode(root, node => node.type === 'select-control' && node.props['aria-label'] === '翻译引擎')!
+    expect(engine.props.options.map((option: any) => option.value)).toEqual(['local', 'online'])
+    engine.props['onUpdate:modelValue']('online'); await flushComponent()
+    findNode(root, node => node.type === 'select-control' && node.props['aria-label'] === '服务预设')!.props['onUpdate:modelValue']('deepl')
     await flushComponent()
     expect(settings.ai.provider).toBe('deepl')
     expect(settings.ai.endpoint).toBe('https://api-free.deepl.com/v2/translate')
@@ -84,6 +110,27 @@ describe('翻译设置独立加载和快照复用', () => {
     await flushComponent()
     expect(key().value).toBe('')
     expect(api.aiCredentialSet).not.toHaveBeenCalled()
+  })
+  it('旧 DeepL 配置显示为在线服务，切换平台保留协议、语言并清空未保存密钥', async () => {
+    let settings = defaultSettings()
+    settings.ai = { ...settings.ai, provider: 'deepl', endpoint: 'https://api.deepl.com/v2/translate', model: '', targetLanguage: 'ja' }
+    api.status.mockImplementation(async () => ({ settings }))
+    api.saveSettings.mockImplementation(async next => { settings = next; return next })
+    api.translationModelStatus.mockResolvedValue(ready); api.aiProviderStatus.mockResolvedValue(false)
+    mount(); await flushComponent()
+    const preset = () => findNode(root, node => node.type === 'select-control' && node.props['aria-label'] === '服务预设')!
+    expect(findNode(root, node => node.props['aria-label'] === '翻译引擎')!.value).toBe('online')
+    expect(preset().value).toBe('deepl')
+    expect(findNode(root, node => node.props['aria-label'] === '服务地址')!.value).toBe('https://api.deepl.com/v2/translate')
+    expect(api.saveSettings).not.toHaveBeenCalled()
+    findNode(root, node => node.type === 'input' && node.props.type === 'password')!.props['onUpdate:modelValue']('unsaved-deepl-key')
+    preset().props['onUpdate:modelValue']('groq'); await flushComponent()
+    expect(settings.ai).toMatchObject({ provider: 'online-llm', endpoint: 'https://api.groq.com/openai/v1/chat/completions', targetLanguage: 'ja' })
+    expect(text()).toContain('模型名称'); expect(api.aiCredentialSet).not.toHaveBeenCalled()
+    preset().props['onUpdate:modelValue']('deepl'); await flushComponent()
+    expect(settings.ai.provider).toBe('deepl'); expect(text()).not.toContain('模型名称')
+    preset().props['onUpdate:modelValue']('custom'); await flushComponent()
+    expect(settings.ai).toMatchObject({ provider: 'online-llm', endpoint: '', model: '', targetLanguage: 'ja' })
   })
   it('慢模型校验不阻塞设置和凭证查询，返回本地页时先显示已有状态', async () => {
     let models!: (status: LocalTranslationStatus) => void

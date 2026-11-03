@@ -21,6 +21,12 @@ const draft = ref(defaultAiSettings()), secret = ref(''), configured = ref<boole
 const localStatus = ref<LocalTranslationStatus | null>(latestLocalStatus)
 const checking = ref(false)
 const preset = ref('custom')
+/** 按当前界面的显示名称排序，切换语言后同步更新，保留平台内部标识。 */
+const serviceOptions = computed(() => [
+  { value: 'custom', label: t('自定义') },
+  ...translationPresets.map(item => ({ value: item.value, label: t(item.label) })),
+  { value: 'deepl', label: 'DeepL' },
+].sort((left, right) => left.label.localeCompare(right.label, 'zh-CN', { sensitivity: 'base' })))
 let disposed = false, credentialStatusRevision = 0
 const local = computed(() => draft.value.provider === 'local-ctranslate2')
 const languages = computed(() => local.value ? targetLanguages.slice(0, 2) : targetLanguages)
@@ -35,6 +41,7 @@ async function loadSettings() {
     const settings = await api.status()
     if (disposed) return
     draft.value = { ...settings.settings.ai }; ready.value = true
+    syncPreset()
     if (!local.value) {
       const revision = credentialStatusRevision
       const value = await api.aiProviderStatus()
@@ -79,20 +86,31 @@ const autosave = useAutoSave(async () => {
   if (!disposed && revision === credentialStatusRevision && ai.endpoint === draft.value.endpoint && ai.provider === draft.value.provider) configured.value = status
 }, () => validateAiSettings(draft.value))
 /** 密钥在结束编辑后保存，避免逐字符写入系统凭据库。 */
-function providerChanged() {
-  secret.value = ''; configured.value = null; message.value = ''; error.value = ''; preset.value = 'custom'
-  if (draft.value.provider === 'deepl' && !deepLEndpoints.includes(draft.value.endpoint)) {
-    draft.value.endpoint = deepLEndpoints[0]!; draft.value.model = ''
-  } else if (draft.value.provider === 'online-llm' && deepLEndpoints.includes(draft.value.endpoint)) {
-    draft.value.endpoint = ''; draft.value.model = ''
-  }
+function syncPreset() {
+  preset.value = draft.value.provider === 'deepl' ? 'deepl' : draft.value.provider === 'online-llm'
+    ? translationPresets.find(item => item.endpoint === draft.value.endpoint)?.value ?? 'custom' : 'custom'
+}
+/** 界面只区分本地/在线；平台选择映射回原有协议，兼容已保存的 DeepL 配置。 */
+function modeChanged(mode: string) {
+  draft.value.provider = mode === 'local' ? 'local-ctranslate2'
+    : deepLEndpoints.includes(draft.value.endpoint) ? 'deepl' : 'online-llm'
+  secret.value = ''; configured.value = null; message.value = ''; error.value = ''
+  syncPreset()
   autosave.commit()
 }
 function applyPreset() {
-  const selected = translationPresets.find(item => item.value === preset.value)
-  if (!selected) return
   secret.value = ''; configured.value = null
-  draft.value.endpoint = selected.endpoint; draft.value.model = selected.model
+  if (preset.value === 'deepl') {
+    draft.value.provider = 'deepl'
+    if (!deepLEndpoints.includes(draft.value.endpoint)) draft.value.endpoint = deepLEndpoints[0]!
+    draft.value.model = ''
+  } else {
+    const wasDeepL = draft.value.provider === 'deepl'
+    draft.value.provider = 'online-llm'
+    const selected = translationPresets.find(item => item.value === preset.value)
+    if (selected) { draft.value.endpoint = selected.endpoint; draft.value.model = selected.model }
+    else if (wasDeepL) { draft.value.endpoint = ''; draft.value.model = '' }
+  }
   autosave.commit()
 }
 function changed(event: Event) {
@@ -132,7 +150,7 @@ async function modelAction(modelId: string, action: 'download' | 'import' | 'del
     <section class="recognition-section translation-section">
     <h3>{{ t("文本翻译") }}</h3>
     <fieldset :disabled="busy || !ready" @input="changed" @change="autosave.commit" @focusout="autosave.flush">
-      <label class="provider-field">{{ t("翻译引擎") }}<SelectControl v-model="draft.provider" :disabled="busy || !ready" :aria-label="t('翻译引擎')" :options="[{ value: 'local-ctranslate2', label: t('本地离线') }, { value: 'online-llm', label: t('在线文本服务') }, { value: 'deepl', label: 'DeepL' }]" @update:model-value="providerChanged" /></label>
+      <label class="provider-field">{{ t("翻译引擎") }}<SelectControl :model-value="local ? 'local' : 'online'" :disabled="busy || !ready" :aria-label="t('翻译引擎')" :options="[{ value: 'local', label: t('本地离线') }, { value: 'online', label: t('在线翻译') }]" @update:model-value="modeChanged" /></label>
       <div v-if="local" class="local-resources">
         <div class="model-row runtime-row">
           <span class="runtime-status" :class="{ 'status-ok': localStatus?.runtimeReady }" role="status"><Check v-if="localStatus?.runtimeReady" :size="14" />{{ !localStatus ? checking ? t("正在检查…") : t("引擎状态未读取") : localStatus.runtimeReady ? t("本地引擎已安装") : t("翻译引擎未安装或校验失败") }}</span>
@@ -154,7 +172,7 @@ async function modelAction(modelId: string, action: 'download' | 'import' | 'del
       </div>
       <div v-else class="online-fields">
         <p class="hint">{{ t("在线翻译会发送原文，可能产生费用。") }}</p>
-        <label v-if="draft.provider === 'online-llm'">{{ t("服务预设") }}<SelectControl v-model="preset" :aria-label="t('服务预设')" :options="[{ value: 'custom', label: t('自定义') }, ...translationPresets.map(item => ({ value: item.value, label: t(item.label) }))]" @update:model-value="applyPreset" /></label>
+        <label>{{ t("服务预设") }}<SelectControl v-model="preset" :aria-label="t('服务预设')" :options="serviceOptions" @update:model-value="applyPreset" /></label>
         <label v-if="draft.provider === 'deepl'">{{ t("服务地址") }}<SelectControl v-model="draft.endpoint" :aria-label="t('服务地址')" :options="deepLEndpoints.map((value, index) => ({ value, label: index === 0 ? 'DeepL API Free' : 'DeepL API Pro' }))" @update:model-value="autosave.commit" /></label>
         <label v-else>{{ t("完整接口地址") }}<input v-model.trim="draft.endpoint" type="url" :placeholder='t("https://服务域名/v1/chat/completions")' autocomplete="off" /></label>
         <label v-if="draft.provider === 'online-llm'">{{ t("模型名称") }}<input v-model.trim="draft.model" :placeholder='t("填写服务支持的模型 ID")' /></label>
@@ -162,7 +180,7 @@ async function modelAction(modelId: string, action: 'download' | 'import' | 'del
         <p :class="{ 'status-ok': configured }" role="status"><Check v-if="configured" :size="14" />{{ t("密钥") }}{{ configured === null ? t("正在检查…") : configured ? t("已配置") : t("未配置") }}{{ t("（密钥随当前服务地址保存）") }}</p>
       </div>
       <div class="translation-options">
-        <label>{{ t("目标语言") }}<SelectControl v-model="draft.targetLanguage" :disabled="busy || !ready" :aria-label="t('目标语言')" :options="languages.map(item => ({ value: item.value, label: t(item.label) }))" @update:model-value="autosave.commit" /></label>
+        <label>{{ t("默认目标语言") }}<SelectControl v-model="draft.targetLanguage" :disabled="busy || !ready" :aria-label="t('目标语言')" :options="languages.map(item => ({ value: item.value, label: t(item.label) }))" @update:model-value="autosave.commit" /></label>
         <label>{{ t("超时（秒）") }}<input v-model.number="draft.timeoutSeconds" type="number" min="5" max="120" /></label>
         <label v-if="local">{{ t("闲置回收（秒）") }}<input v-model.number="draft.localIdleSeconds" type="number" min="0" max="3600" step="1" /><small>{{ t("0 不回收；可设为 30～3600 秒。") }}</small></label>
       </div>

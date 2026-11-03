@@ -19,6 +19,9 @@
 .app-shell .page-breadcrumb h1 { font-size:16px; font-weight:600; color:var(--desk-text); }
 .app-shell .page-content { padding:20px 24px; width:100%; max-width:1000px; margin-inline:auto; }
 .app-shell .page-content:is(.clipboard-page,.logs-page) { max-width:none; }
+/* 翻译编辑区填满剩余窗口高度，矮窗口保留外层滚动，避免压缩文字区域和底部操作。 */
+.app-shell .page-content.translation-page { max-width:none; flex:1; min-height:0; display:flex; flex-direction:column; }
+.app-shell .translation-page > :not(.translation-workspace) { flex-shrink:0; }
 .app-shell .setting-row { min-height:54px; padding:10px 0; border-color:var(--desk-border); gap:10px 20px; }
 .app-shell .setting-row > label:first-child, .app-shell .setting-row > span:first-child { min-width:0; }
 .app-shell .setting-row small { color:var(--desk-muted); font-size:12px; line-height:1.6; max-width:560px; }

@@ -30,9 +30,9 @@ vi.mock('../../src/shared/ui/button/Button.vue', async () => {
 })
 vi.mock('../../src/features/clipboard/components/VirtualClipboardList.vue', async () => {
   const { defineComponent, h } = await import('vue')
-  return { default: defineComponent({ props: ['items', 'layout'], setup: (props, { slots, expose }) => {
+  return { default: defineComponent({ props: ['items', 'layout', 'hasMore', 'loading'], emits: ['nearEnd'], setup: (props, { slots, expose, emit }) => {
     expose(listControls)
-    return () => h('div', { 'data-layout': props.layout }, [...props.items.map((item: unknown) => slots.default?.({ item })), slots.footer?.()])
+    return () => h('div', { 'data-layout': props.layout, 'data-has-more': props.hasMore, 'data-loading': props.loading, onNearEnd: () => emit('nearEnd') }, [...props.items.map((item: unknown) => slots.default?.({ item })), slots.footer?.()])
   } }) }
 })
 vi.mock('../../src/features/clipboard/components/ClipboardPreview.vue', async () => {
@@ -51,6 +51,8 @@ let savedPreferences: Map<string, string>
 const pinButton = () => findNode(root, node => node.props['aria-label'] === '将所选内容贴图')!
 const nodeText = (node: MemoryNode): string => node.text + node.children.map(nodeText).join('')
 const refreshButton = () => findNode(root, node => node.type === 'button' && nodeText(node) === '刷新')!
+const viewport = () => findNode(root, node => node.props['aria-label'] === '历史记录列表')!
+const nearEnd = () => viewport().props.onNearEnd()
 const updatedNotice = () => findNode(root, node => node.props.role === 'status' && nodeText(node) === '内容已更新，点击刷新。')
 async function select(...ids: number[]) {
   for (const id of ids) { findNode(root, node => node.props['data-id'] === id)!.props.onClick(); await flushComponent() }
@@ -180,19 +182,37 @@ it('列表和网格可切换，保留已选条目及批量操作顺序', async (
   expect(api.clipboardPin.mock.calls).toEqual([[2], [1]])
 })
 
-it('底部省略号加载下一页，保留原有记录并提交当前游标', async () => {
+it('接近底部自动加载下一页，保留原有记录并提交当前游标', async () => {
   api.clipboardList.mockResolvedValueOnce({ items: [{ id: 1, kind: 'text' }], nextCursor: 'page-2' })
   const text = (node: MemoryNode): string => node.text + node.children.map(text).join('')
   await findNode(root, node => node.type === 'button' && text(node) === '刷新')!.props.onClick()
   await flushComponent()
-  const more = findNode(root, node => node.props['aria-label'] === '加载更多')!
-  expect(more.parent?.props.class).toBe('history-load-more')
+  expect(findNode(root, node => node.props['aria-label'] === '加载更多')).toBeUndefined()
+  expect(viewport().props['data-has-more']).toBe(true)
   api.clipboardList.mockResolvedValueOnce({ items: [{ id: 5, kind: 'image' }], nextCursor: null })
-  await more.props.onClick(); await flushComponent()
+  nearEnd(); await flushComponent()
   expect(api.clipboardList).toHaveBeenLastCalledWith(expect.objectContaining({ cursor: 'page-2' }))
   expect(findNode(root, node => node.props['data-id'] === 1)).toBeDefined()
   expect(findNode(root, node => node.props['data-id'] === 5)).toBeDefined()
   expect(findNode(root, node => node.props['aria-label'] === '加载更多')).toBeUndefined()
+  expect(viewport().props['data-has-more']).toBe(false)
+})
+
+it('分页失败后停止自动请求，重试沿用原游标并追加记录', async () => {
+  api.clipboardList.mockResolvedValueOnce({ items: [{ id: 1, kind: 'text' }], nextCursor: 'page-2' })
+  await refreshButton().props.onClick(); await flushComponent()
+  api.clipboardList.mockRejectedValueOnce(new Error('分页失败'))
+  nearEnd(); await flushComponent()
+  expect(viewport().props['data-has-more']).toBe(false)
+  expect(findNode(root, node => node.props['data-id'] === 1)).toBeDefined()
+  const requests = api.clipboardList.mock.calls.length
+  nearEnd(); await flushComponent()
+  expect(api.clipboardList).toHaveBeenCalledTimes(requests)
+  api.clipboardList.mockResolvedValueOnce({ items: [{ id: 5, kind: 'image' }], nextCursor: null })
+  findNode(root, node => node.type === 'button' && nodeText(node) === '重试')!.props.onClick(); await flushComponent()
+  expect(api.clipboardList).toHaveBeenLastCalledWith(expect.objectContaining({ cursor: 'page-2' }))
+  expect(findNode(root, node => node.props['data-id'] === 5)).toBeDefined()
+  expect(viewport().props['data-has-more']).toBe(false)
 })
 
 it('多条文字可直接贴图，按选择顺序调用历史 ID，不读取预览或改写剪贴板', async () => {
@@ -216,7 +236,7 @@ it('中途失败停止创建，显示已完成数量，允许用户继续操作'
   expect(pinButton().props.disabled).toBe(false)
 })
 
-it('剪贴板变更事件静默刷新，只有点击加载更多才显示转圈和禁用按钮', async () => {
+it('后台变更静默刷新，滚动分页显示加载状态且不重复请求', async () => {
   const text = (node: MemoryNode): string => node.text + node.children.map(text).join('')
   memoryRenderer.render(null, root)
   const page: { items: { id: number; kind: string }[]; nextCursor: string | null } = { items: [{ id: 1, kind: 'text' }], nextCursor: 'next' }
@@ -227,15 +247,17 @@ it('剪贴板变更事件静默刷新，只有点击加载更多才显示转圈�
   api.clipboardList.mockImplementationOnce(() => new Promise(resolve => { complete = resolve }))
   clipboardEvents.changed()
   await vi.advanceTimersByTimeAsync(100)
-  expect(findNode(root, node => node.props['aria-label'] === '加载更多')!.props.disabled).toBe(false)
   expect(findNode(root, node => node.type === 'button' && text(node) === '刷新')!.props.disabled).toBe(false)
   expect(findNode(root, node => node.props['aria-label'] === '加载中…')).toBeUndefined()
   expect(findNode(root, node => node.props['data-id'] === 1)).toBeDefined()
   complete(page); await flushComponent()
   api.clipboardList.mockImplementationOnce(() => new Promise(resolve => { complete = resolve }))
-  findNode(root, node => node.props['aria-label'] === '加载更多')!.props.onClick()
+  const requests = api.clipboardList.mock.calls.length
+  nearEnd(); nearEnd()
   await flushComponent()
-  expect(findNode(root, node => node.props['aria-label'] === '加载中…')!.props.disabled).toBe(true)
+  expect(api.clipboardList).toHaveBeenCalledTimes(requests + 1)
+  expect(findNode(root, node => node.props.role === 'status' && text(node) === '加载中…')).toBeDefined()
+  expect(viewport().props['data-loading']).toBe(true)
   complete({ ...page, nextCursor: null }); await flushComponent()
 })
 
@@ -264,7 +286,7 @@ it('浏览后续分页时后台变更保留列表和游标，主动刷新后移�
   api.clipboardList.mockResolvedValueOnce({ items: [{ id: 1, kind: 'text' }], nextCursor: 'page-2' })
   await refreshButton().props.onClick(); await flushComponent()
   api.clipboardList.mockResolvedValueOnce({ items: [{ id: 5, kind: 'image' }], nextCursor: 'page-3' })
-  await findNode(root, node => node.props['aria-label'] === '加载更多')!.props.onClick(); await flushComponent()
+  nearEnd(); await flushComponent()
   vi.useFakeTimers()
   const requests = api.clipboardList.mock.calls.length
   clipboardEvents.changed()
@@ -274,7 +296,7 @@ it('浏览后续分页时后台变更保留列表和游标，主动刷新后移�
   expect(findNode(root, node => node.props['data-id'] === 5)).toBeDefined()
   expect(updatedNotice()).toBeDefined()
   api.clipboardList.mockResolvedValueOnce({ items: [{ id: 6, kind: 'text' }], nextCursor: null })
-  await findNode(root, node => node.props['aria-label'] === '加载更多')!.props.onClick(); await flushComponent()
+  nearEnd(); await flushComponent()
   expect(api.clipboardList).toHaveBeenLastCalledWith(expect.objectContaining({ cursor: 'page-3' }))
   expect(updatedNotice()).toBeDefined()
   await select(5)

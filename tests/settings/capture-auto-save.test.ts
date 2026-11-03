@@ -5,7 +5,7 @@ import { clientComponent, findNode, MemoryNode, memoryRenderer } from '../helper
 import { defaultSettings } from '../../src/features/settings/settings'
 import type { AppUpdateView } from '../../src/features/settings/types'
 
-const api = vi.hoisted(() => ({ status: vi.fn(), saveSettings: vi.fn(), setShortcutEditing: vi.fn(), start: vi.fn(), appUpdateStatus: vi.fn(), completeOnboarding: vi.fn() }))
+const api = vi.hoisted(() => ({ readTranslationInput: vi.fn(async () => null), status: vi.fn(), saveSettings: vi.fn(), setShortcutEditing: vi.fn(), start: vi.fn(), appUpdateStatus: vi.fn(), completeOnboarding: vi.fn() }))
 const updateEvent = vi.hoisted(() => ({ receive: (_view: AppUpdateView) => {} }))
 vi.mock('../../src/features/settings/events', () => ({ onUpdateWindowRequested: () => () => {}, onAppUpdate: vi.fn(async (fn: typeof updateEvent.receive) => {
   updateEvent.receive = fn
@@ -18,7 +18,7 @@ const subscribeImported = vi.hoisted(() => vi.fn(async (fn: (settings: any) => v
   importedEvent.receive = fn
   return () => { importedEvent.receive = () => {} }
 }))
-vi.mock('../../src/services/api', () => ({ api, desktop: true, onDelay: subscribe, onError: subscribe, onSettingsChanged: subscribe, onSettingsImported: subscribeImported, onClipboardOpen: subscribe }))
+vi.mock('../../src/services/api', () => ({ api, desktop: true, onDelay: subscribe, onError: subscribe, onSettingsChanged: subscribe, onSettingsImported: subscribeImported, onTranslationOpen: subscribe, onClipboardOpen: subscribe }))
 vi.mock('../../src/shared/ui/SelectControl.vue', async () => ({ default: (await import('../helpers/select-control')).SelectControlStub }))
 vi.mock('../../src/shared/ui/appearance', () => ({ applyAppearance: vi.fn(), appearance: { value: { language: 'zh-CN' } } }))
 vi.mock('../../src/shared/ui/button/Button.vue', async () => {

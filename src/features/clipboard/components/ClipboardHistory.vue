@@ -7,7 +7,7 @@ import DetachedWindow from '@/shared/ui/DetachedWindow.vue'
 import ConfirmDialog from '@/shared/ui/ConfirmDialog.vue'
 import { api, desktop, onClipboardChanged, onClipboardError, onClipboardState, onClipboardOpen } from '@/services/api'
 import { defaultClipboardSettings, selectClipboardItems, type ClipboardSelectionGesture, type ClipboardItem as Item, type ClipboardStatus, type ClipboardKind, type ClipboardTextCategory, type ClipboardExportOptions } from '@/features/clipboard/clipboard'
-import { Link, Palette, Folder, Search, ClipboardList, Type, Image, Star, X, Download, Pin, Trash2, Files, List, LayoutGrid, Ellipsis, LoaderCircle } from 'lucide-vue-next'
+import { Link, Palette, Folder, Search, ClipboardList, Type, Image, Star, X, Download, Pin, Trash2, Files, List, LayoutGrid, LoaderCircle } from 'lucide-vue-next'
 import ClipboardItem from '@/features/clipboard/components/ClipboardItem.vue'
 import VirtualClipboardList from '@/features/clipboard/components/VirtualClipboardList.vue'
 import ClipboardPreview from '@/features/clipboard/components/ClipboardPreview.vue'
@@ -45,6 +45,7 @@ const categoryOrder = useCategoryOrder(() => busy.value || !desktop, value => { 
 const { sorting, target: sortingTarget, orderError } = categoryOrder
 const categories = computed(() => categoryOrder.order.value.map(value => categoryOptions.find(tab => tab.value === value)!))
 const foregroundLoading = ref(false), loadingMore = ref(false)
+const loadMoreFailed = ref(false)
 const updatesPending = ref(false)
 const confirm = ref<'delete' | 'clear' | null>(null), includeFavorites = ref(false), exportOpen = ref(false)
 const helpOpen = ref(false)
@@ -113,9 +114,17 @@ function canRefreshInBackground() {
     && !busy.value && !confirm.value && !exportOpen.value && !helpOpen.value
 }
 function listScroll(event: Event) { listScrolled = (event.target as HTMLElement).scrollTop > 0 }
+/** 滚动和视口补齐共用入口；失败后等用户重试，避免持续自动重发失败请求。 */
+function loadMore(retry = false) {
+  if (!cursor.value || loading.value || busy.value || searchTimer || loadMoreFailed.value && !retry) return
+  loadMoreFailed.value = false; error.value = ''
+  void refresh(true)
+}
 async function refresh(append = false, background = false) {
   if (!desktop || disposed) return
+  if (append && (loading.value || busy.value || !cursor.value)) return
   if (!append && !background) {
+    cursor.value = null; loadMoreFailed.value = false
     clearTimeout(searchTimer); searchTimer = undefined
     clearTimeout(refreshTimer); refreshTimer = undefined
   }
@@ -141,7 +150,7 @@ async function refresh(append = false, background = false) {
       if (!background) { list.value?.resetScroll(); listScrolled = false }
     }
     applied = true
-  } catch (e) { if (!disposed && request === revision) error.value = String(e) }
+  } catch (e) { if (!disposed && request === revision) { error.value = String(e); if (append) loadMoreFailed.value = true } }
   finally {
     if (request === revision) {
       loading.value = false; foregroundLoading.value = false; loadingMore.value = false
@@ -285,14 +294,15 @@ onUnmounted(() => { disposed = true; revision++; clearTimeout(refreshTimer); cle
     </section>
     </DetachedWindow>
     <div class="history-browser">
-    <VirtualClipboardList ref="list" :items="items" :layout="layout" role="region" :aria-label='t("历史记录列表")' :aria-busy="foregroundLoading" @scroll="listScroll">
+    <VirtualClipboardList ref="list" :items="items" :layout="layout" :has-more="!!cursor && !loadMoreFailed" :loading="loading || busy" role="region" :aria-label='t("历史记录列表")' :aria-busy="foregroundLoading" @scroll="listScroll" @near-end="loadMore">
       <template #default="{ item }">
       <ClipboardItem :item="item" :selected="selected.includes(item.id)" :busy="busy" @select="selectItem(item, $event)" @preview="previewItem = item" @restore="run(() => api.clipboardRestore(item.id), '已复制。')" @delete="selected = [item.id]; selectedItems = { [item.id]: item }; requestDelete('delete')" @pin="run(() => api.clipboardPin(item.id))" @favorite="run(async () => { await api.clipboardFavorite(item.id, !item.favorite); await refresh() })" />
       </template>
       <template #footer>
       <p v-if="!items.length" class="history-empty">{{ foregroundLoading ? t("正在加载…") : keyword || category ? t("没有匹配的记录，试试其他关键词或分类。") : status?.enabled ? t("暂无记录，复制文字或图片后会显示在这里。") : t("暂无记录，开启右上方开关后开始记录。") }}</p>
-      <div v-if="cursor" class="history-load-more">
-        <Button variant="ghost" :disabled="foregroundLoading || busy" :aria-label="loadingMore ? t('加载中…') : t('加载更多')" :title="t('加载更多')" @click="refresh(true)"><LoaderCircle v-if="loadingMore" :size="18" class="history-spinner" /><Ellipsis v-else :size="22" /></Button>
+      <div v-if="loadingMore || loadMoreFailed && cursor" class="history-load-more">
+        <span v-if="loadingMore" role="status"><LoaderCircle :size="18" class="history-spinner" />{{ t('加载中…') }}</span>
+        <Button v-else variant="ghost" :disabled="loading || busy" @click="loadMore(true)">{{ t('重试') }}</Button>
       </div>
       </template>
     </VirtualClipboardList>
@@ -384,6 +394,10 @@ onUnmounted(() => { disposed = true; revision++; clearTimeout(refreshTimer); cle
 .history-layout-switch button:hover { background:var(--desk-soft, #f6f7f8); }
 .history-layout-switch button[aria-pressed=true] { color:var(--desk-accent, #2563eb); background:var(--desk-selected, #eff6ff); }
 .history-load-more { display:flex; justify-content:center; padding:12px 0; }
+.history-load-more > span { display:inline-flex; align-items:center; gap:6px; }
+.history-spinner { animation:history-spin 1s linear infinite; }
+@keyframes history-spin { to { transform:rotate(360deg); } }
+@media (prefers-reduced-motion:reduce) { .history-spinner { animation:none; } }
 .history-load-more button { min-width:64px; min-height:32px; }
 .history-list.is-grid .history-item { position:relative; align-items:flex-start; height:216px; padding:12px; border:1px solid var(--desk-border, #e1e4e8); border-radius:6px; background:var(--desk-bg, #fff); }
 .history-list.is-grid .history-item.is-selected { border-color:#93b4ff; background:var(--desk-selected, #eff6ff); }

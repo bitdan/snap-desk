@@ -103,24 +103,30 @@ pub enum ShortcutAction {
     Pin,
     Record,
     History,
+    Translate,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(from = "ShortcutsWire")]
+#[serde(rename_all = "camelCase", from = "ShortcutsWire")]
 pub struct Shortcuts {
     pub capture: String,
     pub pin: String,
     pub record: String,
     pub history: String,
+    pub translate: String,
 }
-/// 用 Option 区分旧配置缺少 history 与用户明确指定的映射；只迁移缺失字段。
+/// 区分缺失字段与显式禁用；兼容旧翻译映射，保留已自定义的快捷键。
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields, default)]
+#[serde(rename_all = "camelCase", deny_unknown_fields, default)]
 struct ShortcutsWire {
     capture: String,
     pin: String,
     record: String,
     history: Option<String>,
+    translate: Option<String>,
+    // 只读取旧版本的两个翻译映射，保存时统一输出 translate。
+    translate_selection: Option<String>,
+    translate_clipboard: Option<String>,
 }
 impl Default for ShortcutsWire {
     fn default() -> Self {
@@ -130,21 +136,33 @@ impl Default for ShortcutsWire {
             pin: keys.pin,
             record: keys.record,
             history: None,
+            translate: None,
+            translate_selection: None,
+            translate_clipboard: None,
         }
     }
 }
 impl From<ShortcutsWire> for Shortcuts {
     fn from(wire: ShortcutsWire) -> Self {
         let missing = wire.history.is_none();
+        let translation_missing = wire.translate.is_none();
+        // 旧默认组合升级为 Alt+T；已自定义或禁用的翻译键继续保留。
+        let translate = wire.translate
+            .or_else(|| wire.translate_selection.filter(|value| value != "Ctrl+Alt+T"))
+            .or_else(|| wire.translate_clipboard.filter(|value| value != "Ctrl+Alt+Y"))
+            .unwrap_or_else(|| Self::default().translate);
         let mut keys = Self {
             capture: wire.capture,
             pin: wire.pin,
             record: wire.record,
             history: wire.history.unwrap_or_else(|| Self::default().history),
+            translate,
         };
         if missing {
             keys.preserve_legacy_mapping();
         }
+        // 旧配置已有相同组合时保留原动作，只禁用新加入的默认快捷键。
+        if translation_missing { keys.preserve_translation_mapping(); }
         keys
     }
 }
@@ -155,6 +173,7 @@ impl Default for Shortcuts {
             pin: "F2".into(),
             record: "F3".into(),
             history: "F4".into(),
+            translate: "Alt+T".into(),
         }
     }
 }
@@ -169,12 +188,19 @@ impl Shortcuts {
             self.history.clear();
         }
     }
-    pub fn entries(&self) -> [(ShortcutAction, &str, &str); 4] {
+    fn preserve_translation_mapping(&mut self) {
+        let translate = parse_shortcut(&self.translate).ok().flatten();
+        if translate.is_some() && [&self.capture, &self.pin, &self.record, &self.history]
+            .iter().any(|key| parse_shortcut(key).ok().flatten() == translate)
+        { self.translate.clear(); }
+    }
+    pub fn entries(&self) -> [(ShortcutAction, &str, &str); 5] {
         [
             (ShortcutAction::Capture, "区域截图", &self.capture),
             (ShortcutAction::Pin, "剪贴板贴图", &self.pin),
             (ShortcutAction::Record, "开始 / 停止录屏", &self.record),
             (ShortcutAction::History, "剪贴板历史", &self.history),
+            (ShortcutAction::Translate, "翻译", &self.translate),
         ]
     }
 }
@@ -265,6 +291,7 @@ impl TryFrom<SettingsWire> for Settings {
         if let Some(capture) = wire.shortcut {
             shortcuts.capture = capture;
             shortcuts.preserve_legacy_mapping();
+            shortcuts.preserve_translation_mapping();
         }
         Ok(Self {
             receive_prerelease_updates: wire.receive_prerelease_updates,
@@ -822,7 +849,7 @@ mod tests {
         value.shortcuts.pin = "F1".into();
         value.shortcuts.record = "Ctrl+Shift+S".into();
         assert!(value.validate().is_ok());
-        assert_eq!(shortcut_keys(&value).unwrap().len(), 3);
+        assert_eq!(shortcut_keys(&value).unwrap().len(), 4);
         assert_eq!(
             value.action_for(&"F1".parse().unwrap()),
             Some(ShortcutAction::Pin)
@@ -860,6 +887,41 @@ mod tests {
     }
 
     #[test]
+    fn translation_shortcuts_migrate_without_replacing_existing_actions() {
+        for json in [
+            r#"{"shortcut":"Alt+T"}"#,
+            r#"{"shortcuts":{"capture":"Alt+T"}}"#,
+        ] {
+            let settings: Settings = serde_json::from_str(json).unwrap();
+            assert!(settings.shortcuts.translate.is_empty());
+            assert!(settings.validate().is_ok());
+        }
+        let explicit: Settings = serde_json::from_str(
+            r#"{"shortcuts":{"capture":"Alt+T","translate":"Alt+T"}}"#,
+        ).unwrap();
+        assert!(explicit.validate().is_err());
+        let old: Settings = serde_json::from_str(
+            r#"{"shortcuts":{"translateSelection":"Ctrl+Alt+T","translateClipboard":"Ctrl+Alt+Y"},"ai":{"selectionContextMenu":true}}"#,
+        ).unwrap();
+        assert_eq!(old.shortcuts.translate, "Alt+T");
+        let old_saved = serde_json::to_value(old).unwrap();
+        assert!(old_saved["shortcuts"].get("translateSelection").is_none());
+        assert!(old_saved["shortcuts"].get("translateClipboard").is_none());
+        assert!(old_saved["ai"].get("selectionContextMenu").is_none());
+        for (legacy, expected) in [
+            (r#"{"translateSelection":"Alt+R"}"#, "Alt+R"),
+            (r#"{"translateClipboard":"Alt+Y"}"#, "Alt+Y"),
+            (r#"{"translateSelection":""}"#, ""),
+            (r#"{"translate":"Alt+G","translateSelection":"Alt+R"}"#, "Alt+G"),
+        ] {
+            let keys: Shortcuts = serde_json::from_str(legacy).unwrap();
+            assert_eq!(keys.translate, expected);
+        }
+        let defaults = serde_json::to_value(Shortcuts::default()).unwrap();
+        assert_eq!(defaults["translate"], "Alt+T");
+    }
+
+    #[test]
     fn pin_and_record_conflicts_roll_back_all_additions() {
         let old = Settings::default();
         for conflict in ["F5", "F6", "F7"] {
@@ -869,6 +931,7 @@ mod tests {
                     pin: "F5".into(),
                     record: "F6".into(),
                     history: "F7".into(),
+                    ..Shortcuts::default()
                 },
                 ..old.clone()
             };

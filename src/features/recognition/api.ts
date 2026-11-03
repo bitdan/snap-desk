@@ -6,6 +6,7 @@ import type { QrResult } from '@/features/recognition/types'
 import { invoke } from '@/services/ipc'
 
 export const recognitionApi = {
+  readTranslationInput: (kind: 'clipboard' | 'pending') => invoke<string | null>('read_translation_input', { kind }),
   recognizeText: (id: number, rect: Rect, annotations: Annotation[]) => invoke<string>('recognize_capture_text', { id, rect, annotations }),
   recognizeCapture: (id: number, rect: Rect) => invoke<OcrResult>('recognize_capture_v2', { id, rect }),
   translateText: (requestId: string, text: string, consent: boolean, expectedSettings: AiSettings) => invoke<TranslationResult>('translate_text', { requestId, text, consent, expectedSettings }),

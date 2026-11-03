@@ -4,12 +4,13 @@ import { useAutoSave } from '@/shared/ui/use-auto-save'
 import SelectControl from '@/shared/ui/SelectControl.vue'
 import { updateSettings } from '@/features/settings/settings-write'
 import { t, te } from '@/shared/i18n/i18n'
-import { computed, defineAsyncComponent, onMounted, onUnmounted, ref } from 'vue'
-import { Camera, Timer, Keyboard, Info, Scan, PanelLeftClose, Pin, Video, Folder, ArrowLeftRight, CircleHelp, Settings as SettingsIcon, FileText, Check } from 'lucide-vue-next'
+import { computed, defineAsyncComponent, onMounted, onUnmounted, ref, watch } from 'vue'
+import { Camera, Timer, Keyboard, Info, Scan, PanelLeftClose, Pin, Video, Folder, ArrowLeftRight, CircleHelp, Settings as SettingsIcon, FileText, Check, Languages } from 'lucide-vue-next'
 const DiagnosticsSettings = defineAsyncComponent(() => import('@/features/diagnostics/components/DiagnosticsSettings.vue'))
 const ConfigTransferSettings = defineAsyncComponent(() => import('@/features/settings/components/ConfigTransferSettings.vue'))
 const GeneralSettings = defineAsyncComponent(() => import('@/features/settings/components/GeneralSettings.vue'))
 const AiProviderSettings = defineAsyncComponent(() => import('@/features/recognition/components/AiProviderSettings.vue'))
+const TranslationPanel = defineAsyncComponent(() => import('@/features/recognition/components/TranslationPanel.vue'))
 import SupportPages from '@/app/components/SupportPages.vue'
 import './styles/workspace.css'
 import OnboardingGuide from '@/app/components/OnboardingGuide.vue'
@@ -20,7 +21,7 @@ const RecordingPanel = defineAsyncComponent(loadRecordingPanel)
 const ClipboardHistory = defineAsyncComponent(() => import('@/features/clipboard/components/ClipboardHistory.vue'))
 const PinManager = defineAsyncComponent(() => import('@/features/pins/components/PinManager.vue'))
 import Button from '@/shared/ui/button/Button.vue'
-import { api, desktop, onDelay, onError, onSettingsChanged, onSettingsImported, onClipboardOpen, type Settings } from '@/services/api'
+import { api, desktop, onDelay, onError, onSettingsChanged, onSettingsImported, onClipboardOpen, onTranslationOpen, type Settings } from '@/services/api'
 import type { AppStatus } from '@/features/settings/types'
 import { defaultSettings, exportFilenamePreview, validateExportSettings, validateShortcuts, shortcutActions, needsOnboarding } from '@/features/settings/settings'
 import { errorMessage } from '@/services/errors'
@@ -31,13 +32,23 @@ import UpdateNotice from '@/features/settings/components/UpdateNotice.vue'
 const availableUpdate = ref<string | null>(null)
 
 const page = ref('截图')
+const translationText = ref(''), translationRevision = ref(0), translateOnOpen = ref(false)
+watch(page, name => { if (name !== '翻译') translateOnOpen.value = false })
+/** 先领取原文再挂载面板；重复触发时销毁旧任务，由面板取消自己持有的请求。 */
+async function openTranslation() {
+  try {
+    const text = await api.readTranslationInput('pending')
+    if (disposed || text === null) return
+    translationText.value = text; translateOnOpen.value = true; translationRevision.value++; page.value = '翻译'
+  } catch (e) { if (!disposed) error.value = String(e) }
+}
 /** 导航悬停或键盘聚焦时只预取模块，不挂载页面，也不提前查询设备或启动轮询。 */
 function prefetchPage(name: string) {
   if (name === '录屏') void loadRecordingPanel().catch(() => {})
 }
 // 导航按操作、配置与支持分组，日志拥有独立页面。
 const groups = [
-  { name: '工具', items: [{ name: '截图', icon: Camera }, { name: '录屏', icon: Video }, { name: '贴图', icon: Pin }, { name: '剪贴板', icon: Folder }] },
+  { name: '工具', items: [{ name: '截图', icon: Camera }, { name: '录屏', icon: Video }, { name: '贴图', icon: Pin }, { name: '剪贴板', icon: Folder }, { name: '翻译', icon: Languages }] },
   { name: '设置', items: [{ name: '通用', icon: SettingsIcon }, { name: '快捷键', icon: Keyboard }, { name: '导入/导出', icon: ArrowLeftRight }, { name: '识别与翻译', icon: Scan }] },
   { name: '支持', items: [{ name: '日志', icon: FileText }, { name: '帮助', icon: CircleHelp }, { name: '关于', icon: Info }] },
 ]
@@ -169,11 +180,12 @@ async function initialize() {
   if (!desktop || initializing.value || disposed) return
   initializing.value = true; initializationFailed.value = false; error.value = ''
   try {
-    for (const subscribe of [() => onClipboardOpen(() => { page.value = '剪贴板' }), () => onSettingsChanged(() => { void syncSettings() }), () => onSettingsImported(configImported), () => onError(e => { error.value = e }), () => onDelay(value => { delayRevision++; remaining.value = value })]) {
+    for (const subscribe of [() => onTranslationOpen(() => { void openTranslation() }), () => onClipboardOpen(() => { page.value = '剪贴板' }), () => onSettingsChanged(() => { void syncSettings() }), () => onSettingsImported(configImported), () => onError(e => { error.value = e }), () => onDelay(value => { delayRevision++; remaining.value = value })]) {
       const off = await subscribe()
       if (disposed) { off(); return }
       disposers.push(off)
     }
+    await openTranslation()
     await api.setShortcutEditing(false)
     await refreshStatus()
     onboarding.value = !status.value!.configWarning && needsOnboarding(status.value!.settings.onboardingVersion)
@@ -213,7 +225,7 @@ onUnmounted(() => { disposed = true; window.removeEventListener('keydown', key);
     </aside>
     <main class="workspace">
       <header class="topbar"><div class="page-breadcrumb"><span>{{ t(pageGroup) }}</span><span aria-hidden="true">/</span><h1>{{ t(page) }}</h1></div><div class="flex items-center gap-2"><Button variant="ghost" :disabled="locked" :aria-pressed="status?.settings.shortcutsEnabled" :title="t(status?.settings.shortcutsEnabled ? '禁用全部全局快捷键' : '启用全部全局快捷键')" @click="toggleShortcuts"><Check v-if="status?.settings.shortcutsEnabled && !status.shortcutError" :size="15" class="status-check" /><Keyboard v-else :size="15" />{{ t('快捷键') }} {{ !status ? t('未读取') : status.shortcutError ? t('注册异常') : status.settings.shortcutsEnabled ? t('已启用') : t('已禁用') }}</Button><Button variant="ghost" :title="t('隐藏主窗口，保留托盘运行')" :disabled="!desktop" @click="hide"><PanelLeftClose :size="15" />{{ t('收起') }}</Button></div></header>
-      <div class="page-content" :data-page="page" :class="{ 'clipboard-page': page === '剪贴板', 'logs-page': page === '日志' }">
+      <div class="page-content" :data-page="page" :class="{ 'clipboard-page': page === '剪贴板', 'logs-page': page === '日志', 'translation-page': page === '翻译' }">
         <UpdateNotice :show-trigger="page !== '关于'" @version="availableUpdate = $event" />
         <div v-if="initializing" class="notice" role="status">{{ t("正在读取应用设置…") }}</div>
         <div v-if="!desktop" class="notice">{{ t('请在桌面应用中使用截图和快捷键。') }}</div>
@@ -250,6 +262,7 @@ onUnmounted(() => { disposed = true; window.removeEventListener('keydown', key);
         </template>
 
         <ClipboardHistory v-else-if="page === '剪贴板'" />
+        <TranslationPanel v-else-if="page === '翻译'" :key="translationRevision" v-model:text="translationText" workspace :auto-translate="translateOnOpen" />
         <DiagnosticsSettings v-else-if="page === '日志'" />
         <GeneralSettings v-else-if="page === '通用'">
           <AppearanceSettings :busy="locked" :saved="savedSection === '通用'" @save="saveAppearance" />

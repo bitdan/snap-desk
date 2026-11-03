@@ -3,7 +3,8 @@ import { computed, nextTick, onMounted, onUnmounted, ref, shallowRef, watch, typ
 import type { ClipboardItem } from '@/features/clipboard/clipboard'
 import { rowAt, rowOffsets, visibleRows } from '@/shared/collections/virtual-list'
 
-const props = defineProps<{ items: ClipboardItem[]; layout?: 'list' | 'grid' }>()
+const props = defineProps<{ items: ClipboardItem[]; layout?: 'list' | 'grid'; hasMore?: boolean; loading?: boolean }>()
+const emit = defineEmits<{ nearEnd: [] }>()
 const viewport = ref<HTMLElement | null>(null)
 const top = ref(0), height = ref(500)
 const width = ref(0)
@@ -19,6 +20,10 @@ const offsets = computed(() => rowOffsets(groups.value.map(group => measured.val
   ?? (props.layout === 'grid' ? 224 : group[0].kind === 'image' ? 140 : group[0].kind === 'file' ? 136 : 78))))
 const range = computed(() => visibleRows(offsets.value, top.value, height.value))
 const rows = computed(() => groups.value.slice(range.value.start, range.value.end))
+/** 按虚拟列表的完整高度判断剩余距离；追加或窗口变大后也补足视口。 */
+watch([top, height, () => offsets.value.at(-1) ?? 0, () => props.hasMore, () => props.loading], () => {
+  if (props.hasMore && !props.loading && (offsets.value.at(-1) ?? 0) - top.value - height.value <= 200) emit('nearEnd')
+}, { flush: 'post', immediate: true })
 const elements = new Map<number, HTMLElement>()
 let observer: ResizeObserver | undefined, disposed = false
 let measurementFrame: number | undefined
