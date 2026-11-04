@@ -84,7 +84,8 @@ kbd { display: inline-block; border: 1px solid #d8dee4; border-bottom-width: 2px
 .app-shell .nav-caption { margin: 16px 10px 6px; }
 .app-shell .nav-item { min-height: 32px; padding: 7px 10px; margin-bottom: 2px; }
 .app-shell .topbar { height: 44px; padding-inline: 20px; }
-.app-shell .page-content { padding: 16px 20px; }
+.app-shell .page-content { padding: 16px 20px; scrollbar-width: none; }
+.app-shell .page-content::-webkit-scrollbar { display: none; }
 .app-shell .sidebar-bottom { padding-top: 16px; }
 .app-shell .version-dot { display: inline-block; margin-top: 0; }
 .app-shell .settings-card { padding: 0; border: 0; border-radius: 0; }
