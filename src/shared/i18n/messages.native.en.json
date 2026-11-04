@@ -868,5 +868,17 @@
   "提交 PaddleOCR 任务失败或超时。": "Submitting the PaddleOCR task failed or timed out.",
   "PaddleOCR 任务响应格式无效。": "Invalid PaddleOCR task response.",
   "PaddleOCR 任务缺少 JSONL 结果地址。": "PaddleOCR task is missing the JSONL result URL.",
-  "PaddleOCR 响应缺少识别结果。": "PaddleOCR response is missing recognition results."
+  "PaddleOCR 响应缺少识别结果。": "PaddleOCR response is missing recognition results.",
+  "WeChat OCR 仅支持 Windows x64。": "WeChat OCR requires Windows x64.",
+  "未找到 WeChat OCR 插件。打开微信，对任意图片右键 →「提取文字」，微信会自动下载插件。完成后点击“重新检测”。": "WeChat OCR plugin not found. Open WeChat, right-click any image and choose Extract Text to download the plugin automatically. Then click Detect again.",
+  "无法读取 WeChat OCR 插件目录。": "Cannot locate the WeChat OCR plugin directory.",
+  "已有 WeChat OCR 识别正在进行。": "WeChat OCR is already running.",
+  "WeChat OCR 未初始化。": "WeChat OCR is not initialized.",
+  "读取 WeChat OCR 插件目录失败：{0}": "Failed to read the WeChat OCR plugin directory: {0}",
+  "未找到微信 4.x 运行库：{0}": "WeChat 4.x runtime not found: {0}",
+  "WeChat OCR 初始化失败，请切换引擎或重启应用后重试：{0}": "WeChat OCR initialization failed. Switch engines or restart the app: {0}",
+  "创建 OCR 临时文件失败：{0}": "Failed to create an OCR temporary file: {0}",
+  "写入 OCR 临时图片失败：{0}": "Failed to write the OCR temporary image: {0}",
+  "WeChat OCR 识别失败，请重试或手动切换引擎：{0}": "WeChat OCR failed. Retry or switch engines manually: {0}",
+  "未找到微信 4.x 运行库，请确认已安装微信 4.x。": "WeChat 4.x runtime not found. Check that WeChat 4.x is installed."
 }

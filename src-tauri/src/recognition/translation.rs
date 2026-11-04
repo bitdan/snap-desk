@@ -365,7 +365,8 @@ async fn run_translation(
     } else {
         "cloud"
     };
-    log::info!("event=translation.started module=translation op=tr-{op} provider={provider}");
+    let engine = settings.provider.as_str();
+    log::info!("event=translation.started module=translation op=tr-{op} provider={provider} engine={engine}");
     let cache_key =
         blake3::hash(&serde_json::to_vec(&(&settings, &request)).map_err(|_| "请求无效。")?)
             .to_hex()
@@ -386,7 +387,7 @@ async fn run_translation(
     let translated_texts = tokio::select! {
         biased;
         _ = notify.notified() => {
-            log::debug!("event=translation.cancelled module=translation op=tr-{op}");
+            log::debug!("event=translation.cancelled module=translation op=tr-{op} provider={provider} engine={engine}");
             return Err("翻译已取消。".into());
         },
         value = tokio::time::timeout(Duration::from_secs(settings.timeout_seconds), async {
@@ -399,7 +400,7 @@ async fn run_translation(
                 Ok(texts)
             } else { providers::translate(&settings, &request).await.map_err(|error| ("TRANSLATION_REQUEST_FAILED", error)) }
         }) => value.unwrap_or_else(|_| Err(("TRANSLATION_TIMEOUT", "翻译超时，请重试或调整超时时间。".into()))).map_err(|(code, error)| {
-            log::error!("event=translation.failed module=translation op=tr-{op} provider={provider} code={code} duration_ms={}", started.elapsed().as_millis());
+            log::error!("event=translation.failed module=translation op=tr-{op} provider={provider} engine={engine} code={code} duration_ms={}", started.elapsed().as_millis());
             error
         })?,
     };
@@ -421,7 +422,7 @@ async fn run_translation(
             });
         }
     }
-    log::info!("event=translation.finished module=translation op=tr-{op} provider={provider} duration_ms={}", started.elapsed().as_millis());
+    log::info!("event=translation.finished module=translation op=tr-{op} provider={provider} engine={engine} duration_ms={}", started.elapsed().as_millis());
     Ok(TranslationBatchResult {
         request_id,
         translations: request
@@ -513,7 +514,7 @@ pub async fn ai_provider_test(app: AppHandle, window: WebviewWindow) -> Result<(
         .await
         .map(|_| ())
         .map_err(|error| {
-            log::error!("event=translation.failed module=translation command=ai_provider_test provider=local code={}", error.code);
+            log::error!("event=translation.failed module=translation command=ai_provider_test provider=local engine=local-ctranslate2 code={}", error.code);
             error.message
         })
     } else {

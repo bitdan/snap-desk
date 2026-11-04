@@ -346,6 +346,9 @@ pub fn sanitize(line: &str) -> Option<Entry> {
                     })
                 }),
             "provider" => ["local", "cloud"].contains(&value),
+            // 引擎只允许固定协议标识，不记录服务名称、地址、凭据或任意模型文字。
+            "engine" if module == Module::Ocr => ["local-ppocr", "windows-media", "wechat-ocr", "ocr-space", "paddle-ocr", "openai-compatible"].contains(&value),
+            "engine" if module == Module::Translation => ["local-ctranslate2", "online-llm", "deepl"].contains(&value),
             "queued" | "queue_dropped" | "throttled" | "rejected_capture" | "stale"
                 if event == "recording.finished" => value.parse::<u64>().is_ok(),
             "result" => ["success", "cancelled", "failed"].contains(&value),
@@ -423,6 +426,25 @@ pub fn sanitize(line: &str) -> Option<Entry> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn recognition_engines_survive_display_and_export_without_free_text() {
+        let prefix = "2026-11-04T12:00:00+08:00 [INFO] [recognition]";
+        for engine in ["local-ppocr", "windows-media", "wechat-ocr", "ocr-space", "paddle-ocr", "openai-compatible"] {
+            let line = format!("{prefix} event=ocr.finished module=ocr op=ocr-1 engine={engine} text=private");
+            assert_eq!(sanitize(&line).unwrap().message, format!("event=ocr.finished op=ocr-1 engine={engine}"));
+        }
+        for engine in ["local-ctranslate2", "online-llm", "deepl"] {
+            for event in ["translation.started", "translation.finished", "translation.failed", "translation.cancelled"] {
+                let line = format!("{prefix} event={event} module=translation op=tr-1 engine={engine} endpoint=private");
+                assert_eq!(sanitize(&line).unwrap().message, format!("event={event} op=tr-1 engine={engine}"));
+            }
+        }
+        for (module, event, engine) in [("ocr", "ocr.finished", "private"), ("ocr", "ocr.failed", "deepl"), ("translation", "translation.finished", "wechat-ocr")] {
+            let line = format!("{prefix} event={event} module={module} engine={engine}");
+            assert_eq!(sanitize(&line).unwrap().message, format!("event={event}"));
+        }
+    }
+
     #[test]
     fn failure_details_survive_export_without_free_text() {
         let prefix = "2026-10-29T12:00:00+08:00 [ERROR] [test]";

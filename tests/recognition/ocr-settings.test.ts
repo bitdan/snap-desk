@@ -5,7 +5,7 @@ import { defaultSettings } from '../../src/features/settings/settings'
 import type { SystemOcrStatus } from '../../src/features/recognition/ocr'
 import { clientComponent, findNode, flushComponent, MemoryNode, memoryRenderer } from '../helpers/component-host'
 
-const api = vi.hoisted(() => ({ status: vi.fn(), saveSettings: vi.fn(), systemOcrStatus: vi.fn(), recognitionServiceStatus: vi.fn(), recognitionServiceCredential: vi.fn(), openRecognitionPortal: vi.fn() }))
+const api = vi.hoisted(() => ({ status: vi.fn(), saveSettings: vi.fn(), systemOcrStatus: vi.fn(), wechatOcrStatus: vi.fn(), recognitionServiceStatus: vi.fn(), recognitionServiceCredential: vi.fn(), openRecognitionPortal: vi.fn() }))
 vi.mock('../../src/services/api', () => ({ api }))
 vi.mock('../../src/shared/ui/SelectControl.vue', async () => ({ default: (await import('../helpers/select-control')).SelectControlStub }))
 vi.mock('../../src/shared/ui/button/Button.vue', async () => {
@@ -35,6 +35,7 @@ beforeEach(() => {
   api.status.mockImplementation(async () => ({ settings }))
   api.saveSettings.mockImplementation(async value => { settings = value; return value })
   api.systemOcrStatus.mockResolvedValue(available)
+  api.wechatOcrStatus.mockResolvedValue({ supported: true, detected: true, error: null })
   api.recognitionServiceStatus.mockResolvedValue(false)
   api.recognitionServiceCredential.mockResolvedValue(undefined)
 })
@@ -129,7 +130,7 @@ it('在线引擎只绑定支持图片的连接，不改变翻译配置，也不�
 
 it('未配置时也显示在线 OCR，当前页保存密钥后启用服务，不修改翻译设置', async () => {
   await mount()
-  expect(select('OCR 引擎').children.filter(node => node.type === 'button').map(node => node.props['data-provider'])).toEqual(['preset:ocr-space', 'preset:paddle-ocr', 'local-ppocr', 'windows-media'])
+  expect(select('OCR 引擎').children.filter(node => node.type === 'button').map(node => node.props['data-provider'])).toEqual(['preset:ocr-space', 'preset:paddle-ocr', 'local-ppocr', 'windows-media', 'wechat-ocr'])
   expect(text(engine('preset:ocr-space'))).toContain('在线 API')
   expect(text(engine('preset:paddle-ocr'))).toContain('在线 API')
   engine('preset:ocr-space').props.onClick(); await flushComponent()
@@ -189,4 +190,66 @@ it('已保存 OCR.space 时替代添加入口，点击直接编辑原连接且�
   expect(settings.recognitionServices[0]).toMatchObject({ id: 'saved-ocr', name: 'My OCR' })
   expect(engine('preset:ocr-space')).toBeUndefined()
   expect(api.recognitionServiceCredential).not.toHaveBeenCalled()
+})
+
+it('WeChat OCR 作为可选离线引擎保存，组件检测不改变其他配置', async () => {
+  await mount()
+  expect(text(engine('wechat-ocr'))).toContain('WeChat OCR（实验性）')
+  expect(text(engine('wechat-ocr'))).toContain('离线')
+  engine('wechat-ocr').props.onClick(); await flushComponent()
+  expect(settings.ocr).toEqual({ provider: 'wechat-ocr', language: 'auto', serviceId: '' })
+  expect(settings.ai.provider).toBe('local-ctranslate2')
+  expect(text(root)).toContain('已找到 WeChat OCR 组件')
+  expect(findNode(root, node => node.type === 'paddle-resources')).toBeUndefined()
+  expect(findNode(root, node => node.props['aria-label'] === '识别语言')).toBeUndefined()
+})
+
+it('微信组件缺失或查询失败时显示原因，刷新恢复且不自动切换引擎', async () => {
+  settings.ocr.provider = 'wechat-ocr'
+  api.wechatOcrStatus.mockResolvedValueOnce({ supported: true, detected: false, error: '未找到 WeChat OCR 插件。打开微信，对任意图片右键 →「提取文字」，微信会自动下载插件。完成后点击“重新检测”。' })
+  await mount()
+  expect(text(root)).toContain('未找到 WeChat OCR 插件。打开微信，对任意图片右键 →「提取文字」，微信会自动下载插件。完成后点击“重新检测”。')
+  expect(api.saveSettings).not.toHaveBeenCalled()
+  api.wechatOcrStatus.mockRejectedValueOnce(new Error('检测失败'))
+  await button('重新检测').props.onClick(); await flushComponent()
+  expect(text(root)).toContain('检测失败')
+  await button('重新检测').props.onClick(); await flushComponent()
+  expect(text(root)).toContain('已找到 WeChat OCR 组件')
+  expect(settings.ocr.provider).toBe('wechat-ocr')
+  expect(api.saveSettings).not.toHaveBeenCalled()
+})
+
+it('不支持的平台禁用 WeChat OCR，保留原选择并允许手动切回默认引擎', async () => {
+  settings.ocr.provider = 'wechat-ocr'
+  api.wechatOcrStatus.mockResolvedValueOnce({ supported: false, detected: false, error: 'WeChat OCR 仅支持 Windows x64。' })
+  await mount()
+  expect(engine('wechat-ocr').props.disabled).toBe(true)
+  expect(text(root)).toContain('WeChat OCR 仅支持 Windows x64。')
+  expect(api.saveSettings).not.toHaveBeenCalled()
+  engine('local-ppocr').props.onClick(); await flushComponent()
+  expect(settings.ocr.provider).toBe('local-ppocr')
+})
+
+it('初次微信检测失败仍可点击，进入面板查看错误并重新检测', async () => {
+  api.wechatOcrStatus.mockRejectedValueOnce(new Error('wechat_ocr_status 调用失败'))
+  await mount()
+  expect(engine('wechat-ocr').props.disabled).toBe(false)
+  engine('wechat-ocr').props.onClick(); await flushComponent()
+  expect(text(root)).toContain('wechat_ocr_status 调用失败')
+  expect(button('重新检测')).toBeDefined()
+  await button('重新检测').props.onClick(); await flushComponent()
+  expect(text(root)).toContain('已找到 WeChat OCR 组件')
+  expect(settings.ocr.provider).toBe('wechat-ocr')
+})
+
+it('微信检测尚未完成时可打开面板，显示检测中而非误判为不支持', async () => {
+  let resolve!: (status: { supported: boolean; detected: boolean; error: null }) => void
+  api.wechatOcrStatus.mockImplementationOnce(() => new Promise(done => { resolve = done }))
+  await mount()
+  expect(engine('wechat-ocr').props.disabled).toBe(false)
+  engine('wechat-ocr').props.onClick(); await flushComponent()
+  expect(text(root)).toContain('正在检测 WeChat OCR…')
+  expect(button('重新检测').props.disabled).toBe(true)
+  resolve({ supported: true, detected: true, error: null }); await flushComponent()
+  expect(text(root)).toContain('已找到 WeChat OCR 组件')
 })

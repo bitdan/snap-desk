@@ -44,6 +44,7 @@ pub fn run() {
         .manage(recognition::text_input::TextInputState::default())
         .manage(qr::QrState::default())
         .manage(ocr::OcrState::default())
+        .manage(recognition::wechat_ocr::WechatOcrState::default())
         .manage(resource_lifecycle::ResourceLifecycle::default())
         .manage(translation::TranslationState::default())
         .manage(local_translation::LocalTranslationState::default())
@@ -376,6 +377,7 @@ pub fn run() {
             recognition::services::recognition_service_status,
             recognition::services::recognition_service_credential,
             recognition::ocr_config::system_ocr_status,
+            recognition::wechat_ocr::wechat_ocr_status,
             commands::app_status,
             updater::app_update_status,
             updater::check_app_update,

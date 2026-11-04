@@ -56,6 +56,7 @@ export const ipcCommands = [
   "recognition_service_credential",
   "open_recognition_portal",
   "system_ocr_status",
+  "wechat_ocr_status",
   "copy_shortcut_example",
   "current_capture",
   "capture_native_window",

@@ -54,7 +54,7 @@ pub fn recognize(image: &image::RgbaImage, language: &str) -> Result<OcrResult, 
         Ok(mut result) => {
             result.elapsed_ms = started.elapsed().as_millis() as u64;
             log::info!(
-                "event=ocr.finished module=ocr op=ocr-{op} duration_ms={} lines={}",
+                "event=ocr.finished module=ocr engine=windows-media op=ocr-{op} duration_ms={} lines={}",
                 result.elapsed_ms,
                 result.lines.len()
             );
@@ -62,7 +62,7 @@ pub fn recognize(image: &image::RgbaImage, language: &str) -> Result<OcrResult, 
         }
         Err(error) => {
             log::error!(
-                "event=ocr.failed module=ocr op=ocr-{op} code=OCR_SYSTEM_FAILED duration_ms={}",
+                "event=ocr.failed module=ocr engine=windows-media op=ocr-{op} code=OCR_SYSTEM_FAILED duration_ms={}",
                 started.elapsed().as_millis()
             );
             Err(error)

@@ -133,6 +133,7 @@ Snap Desk is free and open source under GPL-3.0-only. Third-party OCR and transl
 
 - [Tauri](https://github.com/tauri-apps/tauri): an easy-to-use GUI framework.
 - [Pot](https://github.com/pot-app/pot-desktop): a reference for the translation and OCR modules. Thanks for sharing the project as open source.
+- [wechat_ocr_sdk](https://github.com/MapleREHub/wechat_ocr_sdk): provides the Rust adapter for WeChat PC's built-in OCR engine.
 
 ## License
 

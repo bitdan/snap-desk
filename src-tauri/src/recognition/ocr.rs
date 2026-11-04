@@ -10,7 +10,7 @@ use tauri_plugin_clipboard_manager::ClipboardExt;
 
 static REQUEST_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
-/// 两个 OCR 引擎共用递增编号，切换引擎后日志与结果仍能唯一关联。
+/// OCR 引擎共用递增编号，切换引擎后日志与结果仍能唯一关联。
 pub(super) fn next_request() -> u64 { REQUEST_SEQUENCE.fetch_add(1, Ordering::Relaxed) }
 
 /// 模型首次使用时加载；识别和回收共用锁，避免卸载正在推理的会话。
@@ -33,12 +33,12 @@ pub fn release_idle(app: &AppHandle) {
         {
             // 在持锁期间完成析构，避免旧模型尚未释放时又初始化另一份模型。
             drop(slot.take());
-            log::info!("event=ocr.engine_unloaded module=ocr reason=idle");
+            log::info!("event=ocr.engine_unloaded module=ocr engine=local-ppocr reason=idle");
         }
     };
 }
 
-/// 两个离线引擎共用输入边界，先检查原图大小再进行缩放或分配像素缓冲区。
+/// 离线引擎共用输入边界，先检查原图大小再进行缩放或分配像素缓冲区。
 pub(super) fn validate_image(image: &image::RgbaImage) -> Result<(), String> {
     if image.width() == 0 || image.height() == 0 { return Err("OCR 选区不能为空。".into()); }
     if u64::from(image.width()) * u64::from(image.height()) > 16_000_000 {
@@ -70,7 +70,7 @@ pub fn recognize_structured(
                 last_used: Instant::now(),
             });
             log::info!(
-                "event=ocr.engine_ready module=ocr op=ocr-{op} duration_ms={}",
+                "event=ocr.engine_ready module=ocr engine=local-ppocr op=ocr-{op} duration_ms={}",
                 loading.elapsed().as_millis()
             );
         }
@@ -83,7 +83,7 @@ pub fn recognize_structured(
         result.request_id = format!("ocr-{op}");
         result.elapsed_ms = started.elapsed().as_millis() as u64;
         log::info!(
-            "event=ocr.finished module=ocr op=ocr-{op} duration_ms={} inference_ms={} lines={}",
+            "event=ocr.finished module=ocr engine=local-ppocr op=ocr-{op} duration_ms={} inference_ms={} lines={}",
             result.elapsed_ms,
             inference.elapsed().as_millis(),
             result.lines.len()
@@ -92,7 +92,7 @@ pub fn recognize_structured(
     })();
     if result.is_err() {
         log::error!(
-            "event=ocr.failed module=ocr op=ocr-{op} code={code} duration_ms={}",
+            "event=ocr.failed module=ocr engine=local-ppocr op=ocr-{op} code={code} duration_ms={}",
             started.elapsed().as_millis()
         );
     }

@@ -2,7 +2,7 @@
 import type { Rect } from '@/shared/geometry/selection'
 import type { Annotation } from '@/features/annotations/annotations'
 import type { AiSettings, OcrResult, TranslationResult, TranslationRequest, TranslationBatchResult, LocalTranslationStatus } from '@/features/recognition/ai'
-import type { SystemOcrStatus } from '@/features/recognition/ocr'
+import type { SystemOcrStatus, WechatOcrStatus } from '@/features/recognition/ocr'
 import type { QrResult } from '@/features/recognition/types'
 import { invoke } from '@/services/ipc'
 
@@ -11,6 +11,7 @@ export const recognitionApi = {
   recognitionServiceStatus: (serviceId: string) => invoke<boolean>('recognition_service_status', { serviceId }),
   recognitionServiceCredential: (serviceId: string, expectedEndpoint: string, secret: string | null) => invoke<void>('recognition_service_credential', { serviceId, expectedEndpoint, secret }),
   systemOcrStatus: () => invoke<SystemOcrStatus>('system_ocr_status'),
+  wechatOcrStatus: () => invoke<WechatOcrStatus>('wechat_ocr_status'),
   openTranslation: (text: string | null = null) => invoke<void>('open_translation', { text }),
   closeTranslation: () => invoke<void>('close_translation'),
   controlTranslationWindow: (action: 'drag' | 'pin' | 'unpin') => invoke<void>('control_translation_window', { action }),

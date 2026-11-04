@@ -271,7 +271,7 @@ pub async fn release_idle(app: &AppHandle) {
     {
         if let Some(worker) = slot.take() {
             worker.stop().await;
-            log::info!("event=translation.worker_stopped module=translation reason=idle");
+            log::info!("event=translation.worker_stopped module=translation engine=local-ctranslate2 reason=idle");
         }
     }
 }

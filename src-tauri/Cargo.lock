@@ -6058,8 +6058,10 @@ dependencies = [
  "tauri-plugin-updater",
  "tempfile",
  "tokio",
+ "wechat-ocr-core",
  "windows",
  "windows-core",
+ "windows-sys 0.59.0",
  "xcap",
  "zip",
 ]
@@ -7747,6 +7749,15 @@ dependencies = [
  "thiserror 2.0.21",
  "windows",
  "windows-core",
+]
+
+[[package]]
+name = "wechat-ocr-core"
+version = "0.1.1"
+source = "git+https://github.com/MapleREHub/wechat_ocr_sdk?rev=146d838ba045aba82451a187a0fb459cc784d086#146d838ba045aba82451a187a0fb459cc784d086"
+dependencies = [
+ "libloading 0.8.9",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

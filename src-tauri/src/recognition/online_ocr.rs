@@ -16,6 +16,20 @@ pub fn recognize(
     image: &image::RgbaImage,
     service: &RecognitionService,
 ) -> Result<OcrResult, String> {
+    let op = super::ocr::next_request();
+    let started = Instant::now();
+    let engine = service.protocol.as_str();
+    log::info!("event=ocr.started module=ocr op=ocr-{op} engine={engine}");
+    let result = recognize_inner(image, service, op);
+    match &result {
+        Ok(value) => log::info!("event=ocr.finished module=ocr op=ocr-{op} engine={engine} duration_ms={} lines={}", started.elapsed().as_millis(), value.lines.len()),
+        Err(_) => log::error!("event=ocr.failed module=ocr op=ocr-{op} engine={engine} duration_ms={}", started.elapsed().as_millis()),
+    }
+    result
+}
+
+/// 请求编号在校验前分配，失败、成功及返回结果始终使用同一编号。
+fn recognize_inner(image: &image::RgbaImage, service: &RecognitionService, op: u64) -> Result<OcrResult, String> {
     let _guard = ACTIVE.try_lock().map_err(|_| "已有在线识别正在进行。")?;
     super::ocr::validate_image(image)?;
     service.validate()?;
@@ -91,7 +105,7 @@ pub fn recognize(
         })
         .collect();
     Ok(OcrResult {
-        request_id: format!("ocr-{}", super::ocr::next_request()),
+        request_id: format!("ocr-{op}"),
         provider: service.protocol.clone(),
         image_width: image.width(),
         image_height: image.height(),

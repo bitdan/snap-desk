@@ -60,6 +60,12 @@ semver = "1"
 [dev-dependencies]
 qrcode = { version = "0.14", default-features = false }
 
+# 锁定已核对的 SDK；微信运行库和模型仅使用用户本机安装。
+[target.'cfg(all(windows, target_arch = "x86_64"))'.dependencies]
+# 仅用于读取微信注册表安装路径，避免 SDK 的全盘符发现。
+windows-sys = { version = "=0.59.0", features = ["Win32_System_Registry", "Win32_Foundation"] }
+wechat-ocr-core = { git = "https://github.com/MapleREHub/wechat_ocr_sdk", rev = "146d838ba045aba82451a187a0fb459cc784d086" }
+
 [target.'cfg(windows)'.dependencies]
 # 禁用 OAR 默认的构建时下载/静态链接，只在用户启用 OCR 后加载固定版本 DLL。
 # rc.13 显式选择 API 24，继续兼容已发布的 ONNX Runtime 1.24.2 DLL。

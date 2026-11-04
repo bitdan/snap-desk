@@ -1149,5 +1149,10 @@
   "官方异步接口（推荐）": "Official asynchronous API (recommended)",
   "同步接口（自定义地址）": "Synchronous API (custom endpoint)",
   "同步接口地址": "Synchronous endpoint",
-  "填写控制台提供的完整 /ocr 地址": "Enter the full /ocr endpoint from your console"
+  "填写控制台提供的完整 /ocr 地址": "Enter the full /ocr endpoint from your console",
+  "WeChat OCR（实验性）": "WeChat OCR (experimental)",
+  "正在检测 WeChat OCR…": "Detecting WeChat OCR…",
+  "已找到 WeChat OCR 组件": "WeChat OCR components detected",
+  "未找到 WeChat OCR 组件": "WeChat OCR components not found",
+  "重新检测": "Detect again"
 }

@@ -2,7 +2,7 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { api } from '@/services/api'
 import { cloudFirst, connectionMode, serviceKind, supportsOcr, type RecognitionService } from '@/features/recognition/services'
-import { defaultOcrSettings, type OcrSettings, type SystemOcrStatus } from '@/features/recognition/ocr'
+import { defaultOcrSettings, type OcrSettings, type SystemOcrStatus, type WechatOcrStatus } from '@/features/recognition/ocr'
 import { updateSettings } from '@/features/settings/settings-write'
 import { useAutoSave } from '@/shared/ui/use-auto-save'
 import { t, te } from '@/shared/i18n/i18n'
@@ -18,6 +18,7 @@ const services = ref<RecognitionService[]>([])
 const draft = ref(defaultOcrSettings()), ready = ref(false), error = ref('')
 const activeSettings = ref<OcrSettings | null>(null)
 const activeMenu = computed(() => !activeSettings.value ? '' : activeSettings.value.provider === 'service' ? `service:${activeSettings.value.serviceId}` : activeSettings.value.provider)
+const wechat = ref<WechatOcrStatus | null>(null), checkingWechat = ref(false), wechatError = ref('')
 const system = ref<SystemOcrStatus | null>(null), checking = ref(false)
 // 有已保存连接时，用连接替代同供应商的添加入口，避免出现两个同名选项。
 const engineOptions = computed(() => {
@@ -32,6 +33,8 @@ const engineOptions = computed(() => {
     ...available.filter(item => !['ocr-space', 'paddle-ocr'].includes(item.protocol)).map(option),
     { value: 'local-ppocr', label: 'PaddleOCR', description: 'PP-OCRv6', connection: 'offline' as const },
     { value: 'windows-media', label: 'Windows OCR', connection: 'offline' as const, disabled: !system.value?.supported },
+    // 检测未完成或失败时仍允许打开面板查看原因和重试，仅明确不支持的平台禁用。
+    { value: 'wechat-ocr', label: t('WeChat OCR（实验性）'), connection: 'offline' as const, disabled: wechat.value?.supported === false },
   ]).map(item => ({ ...item, active: item.value === activeMenu.value }))
 })
 const activeLabel = computed(() => {
@@ -44,7 +47,7 @@ function selectEngine(value: string) {
   if (value.startsWith('preset:')) { configuringPreset.value = value.slice(7); return }
   configuringPreset.value = ''
   if (value.startsWith('service:')) editingServiceId.value = value.slice(8)
-  draft.value.provider = value.startsWith('service:') ? 'service' : value as 'local-ppocr' | 'windows-media'
+  draft.value.provider = value.startsWith('service:') ? 'service' : value as OcrSettings['provider']
   draft.value.serviceId = value.startsWith('service:') ? value.slice(8) : ''
   autosave.commit()
 }
@@ -78,9 +81,19 @@ async function refreshSystem() {
   } catch (e) { if (!disposed) { system.value = null; error.value = String(e) } }
   finally { if (!disposed) checking.value = false }
 }
+async function refreshWechat() {
+  if (checkingWechat.value) return
+  checkingWechat.value = true; wechatError.value = ''
+  try {
+    const value = await api.wechatOcrStatus()
+    if (!disposed) wechat.value = value
+  } catch (e) { if (!disposed) { wechat.value = null; wechatError.value = String(e) } }
+  finally { if (!disposed) checkingWechat.value = false }
+}
 onMounted(() => {
   void api.status().then(value => { if (!disposed) { draft.value = { ...value.settings.ocr }; activeSettings.value = { ...value.settings.ocr }; services.value = value.settings.recognitionServices; ready.value = true } }).catch(e => { if (!disposed) error.value = String(e) })
   void refreshSystem()
+  void refreshWechat()
 })
 onUnmounted(() => { disposed = true })
 </script>
@@ -96,6 +109,10 @@ onUnmounted(() => { disposed = true })
       <div class="system-status"><span role="status">{{ checking ? t('正在检查系统语言包…') : !system ? t('状态未读取') : !system.supported ? t('Windows 系统 OCR 仅支持 Windows。') : system.error ? te(system.error) : system.languages.length ? t('已安装 {0} 个 OCR 语言包', { 0: system.languages.length }) : t('未安装 Windows OCR 语言包，请在 Windows 语言设置中安装。') }}</span><Button variant="outline" :disabled="checking" @click="refreshSystem">{{ t('刷新语言包') }}</Button></div>
       <p class="hint">{{ t('使用系统离线识别，图片不上传；失败时不切换其他引擎。') }}</p>
     </template>
+    <div v-else-if="draft.provider === 'wechat-ocr'" class="system-status">
+      <span role="status">{{ checkingWechat ? t('正在检测 WeChat OCR…') : wechatError ? te(wechatError) : !wechat ? t('状态未读取') : wechat.error ? te(wechat.error) : wechat.detected ? t('已找到 WeChat OCR 组件') : t('未找到 WeChat OCR 组件') }}</span>
+      <Button variant="outline" :disabled="checkingWechat" @click="refreshWechat">{{ t('重新检测') }}</Button>
+    </div>
     <ResourceSettings v-else-if="ready && draft.provider === 'local-ppocr'" kind="ocr" />
     <p v-else-if="draft.provider === 'service'" class="hint">{{ t('OCR 会将选区图片发送到此服务，可能产生费用。') }}</p>
     <p v-if="ready && !configuringPreset && !editingServiceId" class="hint">{{ t('更多在线 OCR 或本机模型可在服务管理中添加。') }}</p>

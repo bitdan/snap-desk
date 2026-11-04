@@ -6,6 +6,7 @@ pub(crate) mod ocr;
 pub(crate) mod ocr_config;
 #[cfg(windows)]
 mod windows_ocr;
+pub(crate) mod wechat_ocr;
 pub(crate) mod qr;
 pub(crate) mod translation;
 pub(crate) mod text_input;
@@ -50,6 +51,13 @@ impl OcrProvider for WindowsOcrProvider {
     }
 }
 
+pub struct WechatOcrProvider;
+impl OcrProvider for WechatOcrProvider {
+    fn recognize(&self, app: &tauri::AppHandle, image: &image::RgbaImage, _settings: &ocr_config::OcrSettings) -> Result<OcrResult, String> {
+        wechat_ocr::recognize(app, image)
+    }
+}
+
 /// 截图文字、截图翻译及贴图使用同一入口，设置快照只读取一次。
 pub fn recognize_selected(app: &tauri::AppHandle, image: &image::RgbaImage) -> Result<OcrResult, String> {
     let (settings, service) = ocr_config::snapshot(app)?;
@@ -60,6 +68,7 @@ pub fn provider(id: &str) -> Result<&'static dyn OcrProvider, String> {
     match id {
         "local-ppocr" => Ok(&LocalOcrProvider),
         "windows-media" => Ok(&WindowsOcrProvider),
+        "wechat-ocr" => Ok(&WechatOcrProvider),
         _ => Err("此 OCR 引擎尚未接入。".into()),
     }
 }
@@ -102,6 +111,7 @@ mod tests {
     fn only_explicit_ocr_engines_are_registered() {
         assert!(super::provider("local-ppocr").is_ok());
         assert!(super::provider("windows-media").is_ok());
+        assert!(super::provider("wechat-ocr").is_ok());
         for id in ["ppocrv5", "online", "", "unknown"] {
             assert!(super::provider(id).is_err());
         }

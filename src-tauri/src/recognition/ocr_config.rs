@@ -22,7 +22,7 @@ impl Default for OcrSettings {
 }
 impl OcrSettings {
     pub fn validate(&self) -> Result<(), String> {
-        if !["local-ppocr", "windows-media", "service"].contains(&self.provider.as_str()) {
+        if !["local-ppocr", "windows-media", "wechat-ocr", "service"].contains(&self.provider.as_str()) {
             return Err("此 OCR 引擎尚未接入。".into());
         }
         if self.language.is_empty()
@@ -96,6 +96,10 @@ mod tests {
     fn validates_engine_and_language_without_changing_user_selection() {
         let value = OcrSettings::default();
         assert_eq!(value.provider, "local-ppocr");
+        assert!(OcrSettings {
+            provider: "wechat-ocr".into(),
+            ..value.clone()
+        }.validate().is_ok());
         for language in ["auto", "en-US", "zh-Hans-CN"] {
             assert!(OcrSettings {
                 provider: "windows-media".into(),
