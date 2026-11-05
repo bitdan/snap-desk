@@ -9,6 +9,7 @@ import { t, te } from '@/shared/i18n/i18n'
 import { onMounted, onUnmounted, ref } from 'vue'
 import { Check } from 'lucide-vue-next'
 import Button from '@/shared/ui/button/Button.vue'
+import InfoTip from '@/shared/ui/InfoTip.vue'
 import { api, desktop, onResourceProgress } from '@/services/api'
 import type { ResourceProgress, ResourceStatus } from '@/features/resources/types'
 
@@ -64,7 +65,7 @@ onUnmounted(() => { disposed = true; unlisten?.() })
 <template>
   <section :class="kind === 'font' ? 'settings-card mb-4' : ''" :aria-label="kind === 'ocr' ? t('文字识别资源') : t('导出字体')" :aria-busy="busy || checking">
     <div v-if="kind === 'ocr'" class="setting-row flex-wrap gap-3">
-      <div class="min-w-0 flex-1"><strong>{{ t("OCR 文字识别") }}</strong><small class="block text-zinc-500">{{ t("离线识别，图片不上传。") }}</small></div>
+      <div class="min-w-0 flex-1"><strong>{{ t("识别资源") }}</strong><InfoTip :text="t('离线识别，图片不上传。')" /></div>
       <span :class="{ 'status-ok': status?.ocrReady }" role="status"><Check v-if="status?.ocrReady" :size="14" />{{ status ? status.ocrReady ? t("已就绪") : t("引擎{0} · 模型{1}", { 0: status.runtimeReady ? t("就绪") : t("未就绪"), 1: status.modelsReady ? t("就绪") : t("未就绪") }) : checking ? t("正在检查…") : t("状态未读取") }}</span>
       <Button variant="outline" :disabled="!desktop || busy || checking" @click="run(() => api.downloadResources('ocr'))">{{ status?.ocrReady ? t("检查识别资源") : t("下载识别资源") }}</Button>
     </div>

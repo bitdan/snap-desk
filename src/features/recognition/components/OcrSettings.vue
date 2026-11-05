@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Check } from 'lucide-vue-next'
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { api } from '@/services/api'
 import { cloudFirst, connectionMode, serviceKind, supportsOcr, type RecognitionService } from '@/features/recognition/services'
@@ -102,21 +103,19 @@ onUnmounted(() => { disposed = true })
   <div class="ocr-settings recognition-settings-layout">
     <aside class="recognition-settings-sidebar"><ProviderMenu :model-value="configuringPreset ? `preset:${configuringPreset}` : draft.provider === 'service' ? `service:${draft.serviceId}` : draft.provider" :label="t('OCR 引擎')" :disabled="!ready || autosave.saving.value || configuringBusy" :options="engineOptions" @update:model-value="selectEngine" /></aside>
     <div class="recognition-settings-content">
-    <p class="recognition-current-provider" role="status" data-current-ocr>{{ activeSettings ? t('当前 OCR：{0}', { 0: activeLabel }) : t('正在读取配置…') }}</p>
+    <!-- 保留生效状态播报，避免与左侧菜单的当前使用标记重复显示。 -->
+    <p class="sr-only" role="status" data-current-ocr>{{ activeSettings ? t('当前 OCR：{0}', { 0: activeLabel }) : t('正在读取配置…') }}</p>
     <ServiceSettings v-if="configuringPreset || editingServiceId" :key="editingServiceId || configuringPreset" embedded :preset-id="configuringPreset || undefined" :service-id="editingServiceId || undefined" @saved="serviceSaved" @busy-change="configuringBusy = $event" />
     <template v-else-if="windows">
       <label class="ocr-field">{{ t('识别语言') }}<SelectControl v-model="draft.language" :aria-label="t('识别语言')" :options="languageOptions" :disabled="!ready || checking || autosave.saving.value || !system?.supported || !!system?.error" @update:model-value="autosave.commit" /></label>
       <div class="system-status"><span role="status">{{ checking ? t('正在检查系统语言包…') : !system ? t('状态未读取') : !system.supported ? t('Windows 系统 OCR 仅支持 Windows。') : system.error ? te(system.error) : system.languages.length ? t('已安装 {0} 个 OCR 语言包', { 0: system.languages.length }) : t('未安装 Windows OCR 语言包，请在 Windows 语言设置中安装。') }}</span><Button variant="outline" :disabled="checking" @click="refreshSystem">{{ t('刷新语言包') }}</Button></div>
-      <p class="hint">{{ t('使用系统离线识别，图片不上传；失败时不切换其他引擎。') }}</p>
     </template>
     <div v-else-if="draft.provider === 'wechat-ocr'" class="system-status">
       <span role="status">{{ checkingWechat ? t('正在检测 WeChat OCR…') : wechatError ? te(wechatError) : !wechat ? t('状态未读取') : wechat.error ? te(wechat.error) : wechat.detected ? t('已找到 WeChat OCR 组件') : t('未找到 WeChat OCR 组件') }}</span>
       <Button variant="outline" :disabled="checkingWechat" @click="refreshWechat">{{ t('重新检测') }}</Button>
     </div>
     <ResourceSettings v-else-if="ready && draft.provider === 'local-ppocr'" kind="ocr" />
-    <p v-else-if="draft.provider === 'service'" class="hint">{{ t('OCR 会将选区图片发送到此服务，可能产生费用。') }}</p>
-    <p v-if="ready && !configuringPreset && !editingServiceId" class="hint">{{ t('更多在线 OCR 或本机模型可在服务管理中添加。') }}</p>
-    <div v-if="!configuringPreset && !editingServiceId" class="save-status" role="status">{{ autosave.saving.value ? t('正在保存…') : autosave.saved.value ? t('已自动保存') : t('更改自动保存') }}</div>
+    <div v-if="!configuringPreset && !editingServiceId && (autosave.saving.value || autosave.saved.value)" class="save-status" :class="{ 'status-ok': !autosave.saving.value }" role="status"><Check v-if="!autosave.saving.value" :size="14" />{{ autosave.saving.value ? t('正在保存…') : t('已自动保存') }}</div>
     <p v-if="autosave.error.value" class="error" role="alert">{{ te(autosave.error.value) }}<Button variant="ghost" @click="autosave.retry">{{ t('重试') }}</Button></p>
     <p v-if="error" class="error" role="alert">{{ te(error) }}</p>
     </div>
@@ -125,9 +124,10 @@ onUnmounted(() => { disposed = true })
 
 <style scoped>
 .ocr-settings { font-size:13px; }
-.ocr-field { display:grid; grid-template-columns:92px minmax(0,1fr); align-items:center; gap:12px; margin:8px 0; }
+.ocr-field { display:grid; grid-template-columns:124px minmax(0,1fr); align-items:center; gap:12px; margin:8px 0; }
 .system-status { display:flex; align-items:center; flex-wrap:wrap; gap:8px; margin:8px 0; }
 .system-status span { overflow-wrap:anywhere; }
 .hint, .save-status { color:var(--desk-muted, #57606a); font-size:12px; line-height:1.6; margin:8px 0; }
+.save-status.status-ok { color:var(--ui-success-fg,#24834b); }
 .error { color:#b91c1c; overflow-wrap:anywhere; }
 </style>

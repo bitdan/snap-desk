@@ -18,6 +18,8 @@ vi.mock('../../src/features/recognition/components/OcrSettings.vue', async () =>
 import Settings from '../../src/features/recognition/components/AiProviderSettings.vue'
 import ProviderMenu from '../../src/features/recognition/components/ProviderMenu.vue'
 clientComponent(ProviderMenu, new URL('../../src/features/recognition/components/ProviderMenu.vue', import.meta.url))
+import InfoTip from '../../src/shared/ui/InfoTip.vue'
+clientComponent(InfoTip, new URL('../../src/shared/ui/InfoTip.vue', import.meta.url))
 const Component = clientComponent(Settings, new URL('../../src/features/recognition/components/AiProviderSettings.vue', import.meta.url))
 const root = new MemoryNode('root')
 const text = (node: MemoryNode = root): string => node.text + node.children.map(text).join('')
@@ -107,7 +109,7 @@ describe('翻译设置独立加载和快照复用', () => {
     expect(settings.ai.provider).toBe('deepl')
     expect(settings.ai.endpoint).toBe('https://api-free.deepl.com/v2/translate')
     expect(findNode(root, node => node.type === 'input' && node.props.placeholder === '填写服务支持的模型 ID')).toBeUndefined()
-    expect(text()).toContain('测试会发送 Hello，可能产生费用。')
+    expect(findNode(root, node => node.type === 'button' && node.props.title === '测试会发送 Hello，可能产生费用。')?.props['aria-label']).toBe('测试会发送 Hello，可能产生费用。')
     const key = () => findNode(root, node => node.type === 'input' && node.props.type === 'password')!
     key().props['onUpdate:modelValue']('unsaved-key')
     await flushComponent()

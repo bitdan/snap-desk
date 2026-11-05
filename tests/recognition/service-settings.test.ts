@@ -15,6 +15,8 @@ vi.mock('../../src/shared/ui/button/Button.vue', async () => {
 import ServiceSettings from '../../src/features/recognition/components/ServiceSettings.vue'
 import ProviderMenu from '../../src/features/recognition/components/ProviderMenu.vue'
 clientComponent(ProviderMenu, new URL('../../src/features/recognition/components/ProviderMenu.vue', import.meta.url))
+import InfoTip from '../../src/shared/ui/InfoTip.vue'
+clientComponent(InfoTip, new URL('../../src/shared/ui/InfoTip.vue', import.meta.url))
 const Component = clientComponent(ServiceSettings, new URL('../../src/features/recognition/components/ServiceSettings.vue', import.meta.url))
 let root: MemoryNode, settings: ReturnType<typeof defaultSettings>
 const text = (node: MemoryNode = root): string => node.text + node.children.map(text).join('')
@@ -156,7 +158,7 @@ it('Paddle 默认选择官方异步地址和模型，保存实际 jobs URL', asy
   expect(endpoint.props.options).toContainEqual({ value: 'custom', label: '同步接口（自定义地址）' })
   expect(model.props.options.map((item: { value: string }) => item.value)).toContain('PaddleOCR-VL-1.6')
   expect(model.props.options.map((item: { value: string }) => item.value)).toContain('PP-StructureV3')
-  expect(text()).toContain(paddleJobsEndpoint)
+  expect(endpoint.props.title).toBe(paddleJobsEndpoint)
   model.props['onUpdate:modelValue']('PaddleOCR-VL-1.6')
   input('API Key / Token').props['onUpdate:modelValue']('test-paddle-token')
   await save()

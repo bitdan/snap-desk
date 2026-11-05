@@ -11,6 +11,8 @@ vi.mock('../../src/shared/ui/button/Button.vue', async () => {
   return { default: defineComponent({ setup: (_, { attrs, slots }) => () => h('button', attrs, slots.default?.()) }) }
 })
 import Settings from '../../src/features/resources/components/ResourceSettings.vue'
+import InfoTip from '../../src/shared/ui/InfoTip.vue'
+clientComponent(InfoTip, new URL('../../src/shared/ui/InfoTip.vue', import.meta.url))
 const Component = clientComponent(Settings, new URL('../../src/features/resources/components/ResourceSettings.vue', import.meta.url))
 const root = new MemoryNode('root')
 const ready: ResourceStatus = { directory: 'resources', ocrReady: true, modelsReady: true, runtimeReady: true, runtimeDownloadMib: 10, fontReady: false }

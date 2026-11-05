@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import InfoTip from '@/shared/ui/InfoTip.vue'
 import { t, te } from '@/shared/i18n/i18n'
 import { handleEscape } from '@/shared/ui/escape'
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
@@ -182,14 +183,13 @@ function key(event: KeyboardEvent) {
         <SelectControl v-model="target" :options="targetOptions" :disabled="busy || loading || savingDefault || !config" :aria-label="t('目标语言')" @update:model-value="targetChanged" />
       </div>
       <div class="language-options">
-        <label class="translation-auto"><input v-model="autoDirection" type="checkbox" :disabled="busy || loading || !config" @change="automaticChanged" />{{ t('中英自动互译') }}</label>
+        <label class="translation-auto" :title="autoDirection && detectedLanguage === 'mixed' ? t('中英比例接近，使用默认目标语言。') : undefined"><input v-model="autoDirection" type="checkbox" :disabled="busy || loading || !config" @change="automaticChanged" />{{ t('中英自动互译') }}</label>
         <Button v-if="workspace && !standalone" variant="ghost" :disabled="busy || loading || !config || savingDefault || target === config.targetLanguage" @click="saveDefault">{{ t('设为默认语言') }}</Button>
       </div>
-      <p v-if="autoDirection && detectedLanguage === 'mixed'" class="translation-hint">{{ t('中英比例接近，使用默认目标语言。') }}</p>
     </div>
     <section class="provider-card" :aria-label="t('译文')" :aria-busy="busy">
       <header class="provider-heading">
-        <span class="provider-name"><Languages :size="16" />{{ t(providerLabel) }}</span>
+        <span class="provider-name"><Languages :size="16" />{{ t(providerLabel) }}</span><InfoTip v-if="config && !local" :text="t('在线翻译会发送原文，可能产生费用。')" />
         <span v-if="busy" class="translation-status" role="status"><LoaderCircle :size="14" class="translation-spinner" />{{ t('翻译中') }}</span>
         <span v-else-if="loading" class="translation-status" role="status">{{ t('正在读取配置…') }}</span>
         <span v-else-if="translated" class="translation-success" role="status"><Check :size="13" />{{ t('已完成') }}</span>
@@ -209,7 +209,6 @@ function key(event: KeyboardEvent) {
         <span v-else class="target-language">{{ t(targetLabel) }}</span>
       </footer>
     </section>
-    <p v-if="config && !local" class="translation-hint online-hint">{{ t('在线翻译会发送原文，可能产生费用。') }}</p>
     <Button v-if="!workspace" class="back-action" variant="ghost" @click="emit('back')"><ArrowLeft :size="15" />{{ t('返回识别') }}</Button>
   </section>
 </template>

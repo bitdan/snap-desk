@@ -1177,5 +1177,7 @@
   "暂存架翻页": "Shelf pages",
   "上一组": "Previous group",
   "下一组": "Next group",
+  "识别资源": "Recognition resources",
+  "密钥随当前服务地址保存。": "The key is stored for the current service address.",
   "固定不阻止历史清理。": "Keeping a card does not prevent history cleanup."
 }

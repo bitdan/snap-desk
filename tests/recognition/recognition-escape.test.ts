@@ -30,6 +30,8 @@ import QrResultCard from '../../src/features/recognition/components/QrResultCard
 const components = { PinRecognition, ImageTranslation, TranslationPanel, OcrResultCard, QrResultCard }
 const recognition = { provider: 'local-ppocr', fullText: 'hello', lines: [], imageWidth: 640, imageHeight: 480 }
 const frame = { label: 'pin-1', width: 640, height: 480, dataUrl: '', view: { zoom: 1, opacity: 1, locked: false, topmost: true, toolbarExpanded: true }, annotations: [], transparencySupported: true }
+import InfoTip from '../../src/shared/ui/InfoTip.vue'
+clientComponent(InfoTip, new URL('../../src/shared/ui/InfoTip.vue', import.meta.url))
 const clients: Record<string, Component> = Object.fromEntries(Object.entries(components).map(([name, component]) => [name, clientComponent(component, new URL(`../../src/features/recognition/components/${name}.vue`, import.meta.url))]))
 clientComponent(ConfirmDialog, new URL('../../src/shared/ui/ConfirmDialog.vue', import.meta.url))
 let root = new MemoryNode('root'), close = vi.fn()

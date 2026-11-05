@@ -16,6 +16,7 @@ import { deepLEndpoints, defaultAiSettings, targetLanguages, translationPresets,
 import type { AiSettings, LocalTranslationStatus } from '@/features/recognition/ai'
 import { Check } from 'lucide-vue-next'
 import Button from '@/shared/ui/button/Button.vue'
+import InfoTip from '@/shared/ui/InfoTip.vue'
 import { cloudFirst, connectionMode, supportsTranslation, translationPresetId, translationService, type RecognitionService } from '@/features/recognition/services'
 
 const activeSettings = ref<AiSettings | null>(null)
@@ -199,7 +200,8 @@ async function modelAction(modelId: string, action: 'download' | 'import' | 'del
       <ProviderMenu :model-value="selectedMenu" :options="menuOptions" :label="t('翻译引擎')" :disabled="busy || !ready" @update:model-value="selectMenu" />
     </aside>
     <section class="recognition-settings-content recognition-section translation-section">
-    <p class="recognition-current-provider" role="status" data-current-translation>{{ activeSettings ? t('当前翻译：{0}', { 0: activeLabel }) : t('正在读取配置…') }}</p>
+    <!-- 生效变化由读屏播报；视觉状态由菜单勾选统一表达。 -->
+    <p class="sr-only" role="status" data-current-translation>{{ activeSettings ? t('当前翻译：{0}', { 0: activeLabel }) : t('正在读取配置…') }}</p>
     <fieldset :disabled="busy || !ready" @input="changed" @change="autosave.commit" @focusout="autosave.flush">
 
       <div v-if="local" class="local-resources">
@@ -222,25 +224,26 @@ async function modelAction(modelId: string, action: 'download' | 'import' | 'del
         </div>
       </div>
       <div v-else class="online-fields">
-        <p class="hint">{{ t("在线翻译会发送原文，可能产生费用。") }}</p>
 
-        <p v-if="draft.serviceId" class="hint">{{ draft.endpoint }} · {{ draft.model }}<br />{{ t('连接与凭据在服务管理中维护。') }} {{ configured === null ? t('凭据状态未读取') : configured ? t('已配置密钥') : localEndpoint ? t('本机服务可不填密钥') : t('未配置密钥') }}</p>
+        <div v-if="draft.serviceId" class="saved-connection">
+          <dl class="connection-summary"><div><dt>{{ t('服务地址') }}</dt><dd>{{ draft.endpoint }}</dd></div><div v-if="draft.model"><dt>{{ t('模型名称') }}</dt><dd>{{ draft.model }}</dd></div></dl>
+          <div class="credential-status" role="status"><span :class="{ 'status-ok': configured }"><Check v-if="configured" :size="14" />{{ configured === null ? t('凭据状态未读取') : configured ? t('已配置密钥') : localEndpoint ? t('本机服务可不填密钥') : t('未配置密钥') }}</span><InfoTip :text="t('连接与凭据在服务管理中维护。')" /></div>
+        </div>
         <template v-if="!draft.serviceId">
 
         <label v-if="draft.provider === 'deepl'">{{ t("服务地址") }}<SelectControl v-model="draft.endpoint" :aria-label="t('服务地址')" :options="deepLEndpoints.map((value, index) => ({ value, label: index === 0 ? 'DeepL API Free' : 'DeepL API Pro' }))" @update:model-value="autosave.commit" /></label>
         <label v-else>{{ t("完整接口地址") }}<input v-model.trim="draft.endpoint" type="url" :placeholder='t("https://服务域名/v1/chat/completions")' autocomplete="off" /></label>
         <label v-if="draft.provider === 'online-llm'">{{ t("模型名称") }}<input v-model.trim="draft.model" :placeholder='t("填写服务支持的模型 ID")' /></label>
         <label>API Key<input v-model="secret" type="password" autocomplete="new-password" :placeholder='t("留空保留现有密钥")' /></label>
-        <p :class="{ 'status-ok': configured }" role="status"><Check v-if="configured" :size="14" />{{ t("密钥") }}{{ configured === null ? t("正在检查…") : configured ? t("已配置") : t("未配置") }}{{ t("（密钥随当前服务地址保存）") }}</p>
+        <p :class="{ 'status-ok': configured }" role="status"><Check v-if="configured" :size="14" />{{ configured === null ? t("正在检查…") : configured ? t("已配置") : t("未配置") }}<InfoTip :text="t('密钥随当前服务地址保存。')" /></p>
         </template>
       </div>
       <div class="translation-options">
         <label>{{ t("默认目标语言") }}<SelectControl v-model="draft.targetLanguage" :disabled="busy || !ready" :aria-label="t('目标语言')" :options="languages.map(item => ({ value: item.value, label: t(item.label) }))" @update:model-value="autosave.commit" /></label>
         <label>{{ t("超时（秒）") }}<input v-model.number="draft.timeoutSeconds" type="number" min="5" max="120" /></label>
-        <label v-if="local">{{ t("闲置回收（秒）") }}<input v-model.number="draft.localIdleSeconds" type="number" min="0" max="3600" step="1" /><small>{{ t("0 不回收；可设为 30～3600 秒。") }}</small></label>
+        <div v-if="local" class="idle-field"><div class="field-label"><label for="translation-idle-seconds">{{ t("闲置回收（秒）") }}</label><InfoTip :text="t('0 不回收；可设为 30～3600 秒。')" /></div><input id="translation-idle-seconds" v-model.number="draft.localIdleSeconds" type="number" min="0" max="3600" step="1" /></div>
       </div>
-      <div class="actions"><span class="settings-save-status" role="status">{{ autosave.saving.value ? t("正在保存…") : autosave.saved.value ? t("已自动保存") : t("更改自动保存") }}</span><Button variant="outline" :disabled="!local && !localEndpoint && !configured" @click="credentialAction('test')">{{ t("测试已保存配置") }}</Button><Button v-if="!local && !draft.serviceId" variant="ghost" :disabled="!configured" @click="credentialAction('delete')">{{ t("删除已保存密钥") }}</Button></div>
-      <p v-if="!local" class="hint">{{ t("测试会发送 Hello，可能产生费用。") }}</p>
+      <div class="actions"><span v-if="autosave.saving.value || autosave.saved.value" class="settings-save-status" :class="{ 'status-ok': !autosave.saving.value }" role="status"><Check v-if="!autosave.saving.value" :size="14" />{{ autosave.saving.value ? t("正在保存…") : t("已自动保存") }}</span><Button variant="outline" :disabled="!local && !localEndpoint && !configured" @click="credentialAction('test')">{{ t("测试已保存配置") }}</Button><InfoTip v-if="!local && !localEndpoint" :text="t('测试会发送 Hello，可能产生费用。')" /><Button v-if="!local && !draft.serviceId" variant="ghost" :disabled="!configured" @click="credentialAction('delete')">{{ t("删除已保存密钥") }}</Button></div>
     </fieldset>
     <p v-if="autosave.error.value" class="notice error" role="alert">{{ te(autosave.error.value) }}<Button variant="ghost" @click="autosave.retry">{{ t("重试") }}</Button></p>
     <p v-if="message" :class="{ 'status-ok': !busy }" role="status"><Check v-if="!busy" :size="14" />{{ t(message) }}</p><p v-if="error" class="notice error" role="alert">{{ te(error) }}</p>
@@ -249,28 +252,34 @@ async function modelAction(modelId: string, action: 'download' | 'import' | 'del
 </template>
 
 <style scoped>
-.ai-settings .recognition-current-provider { margin:0 0 16px; }
 .ai-settings { width:100%; max-width:920px; margin-inline:auto; font-size:13px; }
 .recognition-section { padding:0; }
 .recognition-section:last-child { border-bottom:0; }
 h3 { font-size:14px; font-weight:600; margin:0 0 12px; }
 p { color:#57606a; margin:8px 0; }
 fieldset { border:0; padding:0; min-width:0; }
-label { display:grid; grid-template-columns:92px minmax(0,1fr); align-items:center; gap:12px; margin:12px 0; }
+label { display:grid; grid-template-columns:124px minmax(0,1fr); align-items:center; gap:12px; margin:8px 0; }
 input, select { height:32px; border:1px solid #d8dee4; border-radius:4px; padding:4px 8px; min-width:0; width:100%; color:inherit; }
 input:focus-visible, select:focus-visible { outline:2px solid #2563eb; outline-offset:2px; }
 .provider-field { grid-template-columns:110px minmax(0,240px); margin-top:0; }
-.local-resources { margin:12px 0 16px; }
+.local-resources { margin:0 0 16px; }
 .model-row { display:grid; grid-template-columns:minmax(120px,1fr) minmax(100px,1fr) minmax(0,auto); align-items:center; gap:8px 16px; padding:8px 0; min-height:48px; border-bottom:1px solid #edf0f2; }
 .model-row:last-child { border-bottom:0; }
 .runtime-status { grid-column:span 2; }
 .model-name { overflow-wrap:anywhere; }
 .model-actions { display:flex; align-items:center; justify-content:flex-end; flex-wrap:wrap; gap:6px; }
-.translation-options { display:flex; flex-direction:column; gap:12px; margin:20px 0; }
-.translation-options label { display:grid; grid-template-columns:92px minmax(0,1fr); align-items:center; gap:12px; margin:0; font-size:13px; }
+.translation-options { display:flex; flex-direction:column; gap:8px; margin:16px 0; }
+.translation-options label { display:grid; grid-template-columns:124px minmax(0,1fr); align-items:center; gap:12px; margin:0; font-size:13px; }
 .translation-options :is(input,select) { font-size:13px; color:#24292f; }
-.translation-options small { grid-column:2; line-height:1.5; font-size:12px; color:var(--desk-muted,#57606a); }
+.idle-field { display:grid; grid-template-columns:124px minmax(0,1fr); gap:12px; align-items:center; }
+.field-label { display:flex; align-items:center; gap:2px; }
+.translation-options .field-label label { display:block; }
 .online-fields { width:100%; }
+.credential-status { display:flex; align-items:center; gap:4px; font-size:12px; margin:8px 0; }
+.connection-summary { margin:0; }
+.connection-summary > div { display:grid; grid-template-columns:124px minmax(0,1fr); gap:12px; align-items:start; padding:8px 0; }
+.connection-summary dt { color:var(--desk-muted,#57606a); }
+.connection-summary dd { margin:0; overflow-wrap:anywhere; }
 .actions { display:flex; align-items:center; flex-wrap:wrap; gap:8px; padding-top:12px; border-top:1px solid var(--desk-border,#e1e4e8); }
 .hint { font-size:12px; line-height:1.6; }
 .error { color:#b91c1c; }
@@ -285,7 +294,6 @@ input:focus-visible, select:focus-visible { outline:2px solid #2563eb; outline-o
   .model-actions { grid-column:span 2; justify-content:flex-start; }
 }
 @media (max-width:540px) {
-  .translation-options small { grid-column:1; }
-  .provider-field, .online-fields label, .translation-options label { grid-template-columns:1fr; gap:6px; }
+  .provider-field, .online-fields label, .translation-options label, .idle-field, .connection-summary > div { grid-template-columns:1fr; gap:6px; }
 }
 </style>

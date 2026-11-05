@@ -21,6 +21,8 @@ import ServiceSettings from '../../src/features/recognition/components/ServiceSe
 clientComponent(ServiceSettings, new URL('../../src/features/recognition/components/ServiceSettings.vue', import.meta.url))
 import ProviderMenu from '../../src/features/recognition/components/ProviderMenu.vue'
 clientComponent(ProviderMenu, new URL('../../src/features/recognition/components/ProviderMenu.vue', import.meta.url))
+import InfoTip from '../../src/shared/ui/InfoTip.vue'
+clientComponent(InfoTip, new URL('../../src/shared/ui/InfoTip.vue', import.meta.url))
 const Component = clientComponent(OcrSettings, new URL('../../src/features/recognition/components/OcrSettings.vue', import.meta.url))
 let root: MemoryNode, settings: ReturnType<typeof defaultSettings>
 const available: SystemOcrStatus = { supported: true, error: null, languages: [{ tag: 'zh-Hans-CN', name: '简体中文' }, { tag: 'en-US', name: 'English' }] }
@@ -124,7 +126,7 @@ it('在线引擎只绑定支持图片的连接，不改变翻译配置，也不�
   expect(settings.ocr).toMatchObject({ provider: 'service', serviceId: 'vision' })
   expect(settings.ai.provider).toBe('local-ctranslate2')
   expect(findNode(root, node => node.type === 'paddle-resources')).toBeUndefined()
-  expect(text(root)).toContain('OCR 会将选区图片发送到此服务')
+  expect(findNode(root, node => node.type === 'button' && node.props.title === 'OCR 会将选区图片发送到此服务，可能产生费用。')?.props['aria-label']).toBe('OCR 会将选区图片发送到此服务，可能产生费用。')
 })
 
 
@@ -138,7 +140,10 @@ it('未配置时也显示在线 OCR，当前页保存密钥后启用服务，不
   expect(text(engine('local-ppocr'))).toContain('当前使用')
   expect(text(engine('preset:ocr-space'))).not.toContain('当前使用')
   expect(api.saveSettings).not.toHaveBeenCalled()
-  expect(text(root)).toContain('1 MB/文件')
+  expect(text(root)).not.toContain('1 MB/文件')
+  const info = findNode(root, node => node.type === 'button' && node.props.title === 'OCR 会将选区图片发送到此服务，可能产生费用。')!
+  expect(info.props.type).toBe('button')
+  expect(info.props['aria-label']).toBe(info.props.title)
   expect(findNode(root, node => node.props['aria-label'] === '服务预设')).toBeUndefined()
   const key = findNode(root, node => node.type === 'input' && node.props.type === 'password')!
   key.props['onUpdate:modelValue']('test-ocr-key')

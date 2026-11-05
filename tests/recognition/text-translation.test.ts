@@ -12,6 +12,8 @@ vi.mock('../../src/shared/ui/button/Button.vue', async () => {
   return { default: defineComponent({ setup: (_, { attrs, slots }) => () => h('button', attrs, slots.default?.()) }) }
 })
 import TranslationPanel from '../../src/features/recognition/components/TranslationPanel.vue'
+import InfoTip from '../../src/shared/ui/InfoTip.vue'
+clientComponent(InfoTip, new URL('../../src/shared/ui/InfoTip.vue', import.meta.url))
 const Component = clientComponent(TranslationPanel, new URL('../../src/features/recognition/components/TranslationPanel.vue', import.meta.url))
 let root: MemoryNode, settings: ReturnType<typeof defaultSettings>
 const source = ref('hello')
@@ -48,9 +50,9 @@ describe('独立文字翻译工作区', () => {
   it('混合比例接近时显示默认方向提示，可手动切换目标', async () => {
     source.value = '你好 hello'; settings.ai.targetLanguage = 'en'; await mount()
     expect(select('目标语言').value).toBe('en')
-    expect(text(root)).toContain('中英比例接近，使用默认目标语言。')
+    expect(findNode(root, node => node.type === 'label' && node.props.class === 'translation-auto')!.props.title).toBe('中英比例接近，使用默认目标语言。')
     select('目标语言').props['onUpdate:modelValue']('zh-CN'); await flushComponent()
-    expect(text(root)).not.toContain('中英比例接近，使用默认目标语言。')
+    expect(findNode(root, node => node.type === 'label' && node.props.class === 'translation-auto')!.props.title).toBeUndefined()
   })
   it('默认目标为其他语言时保留该目标，不自动覆盖为中英互译', async () => {
     settings.ai = { ...settings.ai, provider: 'deepl', endpoint: 'https://api-free.deepl.com/v2/translate', targetLanguage: 'ja' }

@@ -14,6 +14,8 @@ vi.mock('../../src/shared/ui/button/Button.vue', async () => {
 })
 import TranslationWindow from '../../src/features/recognition/components/TranslationWindow.vue'
 import TranslationPanel from '../../src/features/recognition/components/TranslationPanel.vue'
+import InfoTip from '../../src/shared/ui/InfoTip.vue'
+clientComponent(InfoTip, new URL('../../src/shared/ui/InfoTip.vue', import.meta.url))
 clientComponent(TranslationPanel, new URL('../../src/features/recognition/components/TranslationPanel.vue', import.meta.url))
 const Component = clientComponent(TranslationWindow, new URL('../../src/features/recognition/components/TranslationWindow.vue', import.meta.url))
 let root: MemoryNode

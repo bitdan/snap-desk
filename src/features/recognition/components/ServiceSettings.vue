@@ -8,6 +8,7 @@ import { cloudFirst, connectionMode, serviceKind, servicePresetId, servicePreset
 import { t, te } from '@/shared/i18n/i18n'
 import SelectControl from '@/shared/ui/SelectControl.vue'
 import Button from '@/shared/ui/button/Button.vue'
+import InfoTip from '@/shared/ui/InfoTip.vue'
 import ProviderMenu, { type ProviderMenuItem } from './ProviderMenu.vue'
 
 /** OCR 页复用同一配置表单，避免再要求用户跳转到服务管理。 */
@@ -38,7 +39,7 @@ const menuOptions = computed(() => {
   }
   return cloudFirst(options)
 })
-const visibleServices = computed(() => props.embedded ? [] : settings.value.recognitionServices.filter(item => selectedMenu.value === `service:${item.id}`))
+const visibleServices = computed(() => props.embedded || draft.value ? [] : settings.value.recognitionServices.filter(item => selectedMenu.value === `service:${item.id}`))
 const statuses = ref<Record<string, boolean | null>>({})
 let disposed = false, revision = 0
 watch(busy, value => emit('busyChange', value), { flush: 'sync' })
@@ -146,34 +147,27 @@ async function portal() {
       <ProviderMenu :model-value="selectedMenu" :options="menuOptions" :label="t('服务')" :disabled="busy || !ready" @update:model-value="selectMenu" />
     </aside>
     <div class="recognition-settings-content">
-    <div class="toolbar"><Button v-if="!embedded" :disabled="busy || !ready || !!draft || settings.recognitionServices.length >= 64" variant="outline" @click="add"><Plus :size="14" />{{ t('添加服务') }}</Button><Button v-if="(embedded || selectedMenu.startsWith('preset:')) && preset !== 'custom'" variant="ghost" @click="portal">{{ t('获取 API Key / Token') }}</Button></div>
-    <p v-if="!embedded" class="hint">{{ t('每个模型或账号可单独保存服务，OCR 与翻译分别选择。密钥仅保存在系统凭据库，不随配置导出。') }}</p>
+    <div class="toolbar"><Button v-if="!embedded && !draft" :disabled="busy || !ready || !!draft || settings.recognitionServices.length >= 64" variant="outline" @click="add"><Plus :size="14" />{{ t('添加服务') }}</Button><Button v-if="(embedded || selectedMenu.startsWith('preset:')) && preset !== 'custom'" variant="ghost" :title="t('当前通过 API Key / Token 接入；浏览器登录用于获取凭据，不会自动授权 Snap Desk。')" @click="portal">{{ t('获取 API Key / Token') }}</Button></div>
     <p v-if="!ready" role="status">{{ t('正在读取配置…') }}</p>
-    <p v-else-if="!embedded && !settings.recognitionServices.length" class="hint">{{ t('尚未添加服务。') }}</p>
+    <p v-else-if="!embedded && !draft && !settings.recognitionServices.length" class="hint">{{ t('尚未添加服务。') }}</p>
     <div v-for="service in visibleServices" :key="service.id" class="service-row">
-      <div><strong>{{ service.name }}</strong><small>{{ t(serviceKind(service)) }} · {{ service.model || service.protocol }} · {{ [supportsOcr(service) && t('文字识别'), supportsTranslation(service) && t('翻译')].filter(Boolean).join(' / ') }}</small><small class="endpoint">{{ service.endpoint }}</small></div>
+      <div><strong>{{ service.name }}</strong><small :title="service.endpoint">{{ service.model || t(serviceKind(service)) }} · {{ [supportsOcr(service) && t('文字识别'), supportsTranslation(service) && t('翻译')].filter(Boolean).join(' / ') }}</small></div>
       <span role="status" :class="{ 'status-ok': statuses[service.id] === true }"><Check v-if="statuses[service.id] === true" :size="14" />{{ statuses[service.id] === true ? t('已配置密钥') : statuses[service.id] === false ? t('未配置密钥') : t('凭据状态未读取') }}</span>
-      <div class="actions"><span v-if="active(service.id)" class="hint">{{ t('使用中') }}</span><Button variant="outline" :disabled="busy" @click="edit(service)">{{ t('编辑') }}</Button><Button variant="ghost" :disabled="busy || active(service.id)" @click="remove(service)">{{ t('删除') }}</Button></div>
+      <div class="actions"><Button variant="outline" :disabled="busy" @click="edit(service)">{{ t('编辑') }}</Button><Button variant="ghost" :disabled="busy || active(service.id)" @click="remove(service)">{{ t('删除') }}</Button></div>
     </div>
     <form v-if="draft" class="editor" @submit.prevent="save">
       <fieldset :disabled="busy">
         <label>{{ t('服务名称') }}<input v-model.trim="draft.name" maxlength="80" /></label>
-        <label>{{ t('协议') }}<span>{{ draft.protocol }}</span></label>
         <template v-if="draft.protocol === 'paddle-ocr'">
-          <label>{{ t('完整接口地址') }}<SelectControl :model-value="paddleEndpointChoice" :aria-label="t('Paddle 接口地址')" :options="[{ value: 'official', label: t('官方异步接口（推荐）') }, { value: 'custom', label: t('同步接口（自定义地址）') }]" @update:model-value="selectPaddleEndpoint" /></label>
-          <p v-if="paddleEndpointChoice === 'official'" class="hint endpoint-preview">{{ draft.endpoint }}</p>
-          <label v-else>{{ t('同步接口地址') }}<input v-model.trim="draft.endpoint" type="url" autocomplete="off" :placeholder="t('填写控制台提供的完整 /ocr 地址')" @input="endpointChanged" /></label>
+          <label>{{ t('完整接口地址') }}<SelectControl :model-value="paddleEndpointChoice" :aria-label="t('Paddle 接口地址')" :title="draft.endpoint" :options="[{ value: 'official', label: t('官方异步接口（推荐）') }, { value: 'custom', label: t('同步接口（自定义地址）') }]" @update:model-value="selectPaddleEndpoint" /></label>
+          <label v-if="paddleEndpointChoice === 'custom'">{{ t('同步接口地址') }}<input v-model.trim="draft.endpoint" type="url" autocomplete="off" :placeholder="t('填写控制台提供的完整 /ocr 地址')" @input="endpointChanged" /></label>
           <label>{{ t('模型名称') }}<SelectControl v-model="draft.model" :aria-label="t('Paddle 模型')" :options="paddleModelOptions" /></label>
         </template>
         <label v-else>{{ t('完整接口地址') }}<input v-model.trim="draft.endpoint" type="url" autocomplete="off" @input="endpointChanged" /></label>
         <label v-if="draft.protocol !== 'deepl' && draft.protocol !== 'paddle-ocr'">{{ draft.protocol === 'ocr-space' ? t('OCR.space 引擎（1 / 2 / 3）') : t('模型名称') }}<input v-model.trim="draft.model" maxlength="200" /></label>
         <label v-if="draft.protocol === 'openai-compatible'" class="checkbox"><input v-model="draft.vision" type="checkbox" />{{ t('此模型支持图片输入，可用于 OCR') }}</label>
         <label>API Key / Token<input v-model="secret" type="password" autocomplete="new-password" :placeholder="t('留空保留现有密钥')" /></label>
-        <p v-if="draft.protocol === 'ocr-space'" class="hint">{{ t('免费版：1 MB/文件、25,000 次/月、500 次/日/IP；大图会自动压缩，可商用，无可用性保证。') }}</p>
-        <p v-if="draft.protocol === 'paddle-ocr'" class="hint">{{ t('官方异步接口支持选择模型；自定义同步 /ocr 地址需从控制台获取。云端额度与商用权限以账号条款为准。') }}</p>
-        <p v-if="supportsOcr(draft)" class="hint">{{ t('OCR 会将选区图片发送到此服务，可能产生费用。') }}</p>
-        <p class="hint">{{ t('当前通过 API Key / Token 接入；浏览器登录用于获取凭据，不会自动授权 Snap Desk。') }}</p>
-        <div class="actions"><Button type="submit">{{ busy ? t('正在保存…') : embedded ? t('保存并用于 OCR') : t('保存服务') }}</Button><Button v-if="!embedded" type="button" variant="outline" @click="cancel">{{ t('取消') }}</Button><Button v-if="settings.recognitionServices.some(item => item.id === draft?.id)" type="button" variant="ghost" @click="deleteKey">{{ t('删除已保存密钥') }}</Button></div>
+        <div class="actions"><Button type="submit">{{ busy ? t('正在保存…') : embedded ? t('保存并用于 OCR') : t('保存服务') }}</Button><Button v-if="!embedded" type="button" variant="outline" @click="cancel">{{ t('取消') }}</Button><InfoTip v-if="connectionMode(draft.endpoint) === 'online'" :text="supportsOcr(draft) ? t('OCR 会将选区图片发送到此服务，可能产生费用。') : t('在线翻译会发送原文，可能产生费用。')" /><Button v-if="settings.recognitionServices.some(item => item.id === draft?.id)" type="button" variant="ghost" @click="deleteKey">{{ t('删除已保存密钥') }}</Button></div>
       </fieldset>
     </form>
     <p v-if="message" class="status-ok" role="status"><Check :size="14" />{{ t(message) }}</p>
@@ -186,16 +180,15 @@ async function portal() {
 .service-settings { font-size:13px; }
 .toolbar,.actions { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
 .toolbar { margin-bottom:8px; }
-.service-row { display:flex; flex-wrap:wrap; gap:16px; padding:12px 0; border-bottom:1px solid var(--desk-border,#e1e4e8); align-items:center; }
+.service-row { display:flex; flex-wrap:wrap; gap:12px; padding:8px 0; border-bottom:1px solid var(--desk-border,#e1e4e8); align-items:center; }
 small { display:block; margin-top:4px; color:var(--desk-muted,#57606a); overflow-wrap:anywhere; }
 .hint { color:var(--desk-muted,#57606a); font-size:12px; line-height:1.6; }
-.endpoint-preview { margin-left:104px; overflow-wrap:anywhere; }
-.editor { padding-top:12px; max-width:720px; }
+.editor { padding-top:0; max-width:720px; }
 fieldset { padding:0; border:0; min-width:0; }
-label { display:grid; grid-template-columns:92px minmax(0,1fr); gap:12px; align-items:center; margin:10px 0; }
+label { display:grid; grid-template-columns:124px minmax(0,1fr); gap:12px; align-items:center; margin:8px 0; }
 input:not([type=checkbox]) { width:100%; height:32px; padding:4px 8px; min-width:0; }
 .checkbox { display:flex; }
 input:focus-visible { outline:2px solid #2563eb; outline-offset:2px; }
 .error { color:#b91c1c; overflow-wrap:anywhere; }
-@media (max-width:650px) { .service-row { grid-template-columns:minmax(0,1fr); gap:8px; } label { grid-template-columns:1fr; gap:6px; } .endpoint-preview { margin-left:0; } }
+@media (max-width:650px) { .service-row { grid-template-columns:minmax(0,1fr); gap:8px; } label { grid-template-columns:1fr; gap:6px; } }
 </style>
