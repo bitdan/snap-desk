@@ -112,6 +112,15 @@ fn converted_buffer(image: &BgraImage) -> Result<IMFMediaBuffer, String> {
     }
 }
 
+/// 视频时间戳必须递增：重复上报的帧丢弃即可，时间回退说明时间线异常。
+fn accept_video_pts(last: Option<i64>, pts: i64) -> Result<bool, String> {
+    match last {
+        Some(time) if pts == time => Ok(false),
+        Some(time) if pts < time => Err("编码时间戳必须严格递增。".into()),
+        _ => Ok(true),
+    }
+}
+
 impl MediaFoundation {
     pub fn new(
         path: &Path,
@@ -330,12 +339,13 @@ impl super::Encoder for MediaFoundation {
         EncoderKind::System
     }
 
-    fn push(&mut self, image: &BgraImage, pts: i64) -> Result<(), String> {
+    fn push(&mut self, image: &BgraImage, pts: i64) -> Result<bool, String> {
         if image.dimensions() != self.original {
             return Err("编码帧尺寸发生变化。".into());
         }
-        if self.source_time.is_some_and(|time| pts <= time) {
-            return Err("编码时间戳必须严格递增。".into());
+        // 同一采样点可能重复上报；丢弃该帧但保留整段录制，时间回退才视为时间线故障。
+        if !accept_video_pts(self.source_time, pts)? {
+            return Ok(false);
         }
         let converted = converted_buffer(image)?;
         if let Some((time, buffer)) = self.pending.take() {
@@ -353,7 +363,7 @@ impl super::Encoder for MediaFoundation {
         }
         self.source_time = Some(pts);
         self.converted_bytes += u64::from(self.input_size);
-        Ok(())
+        Ok(true)
     }
 
     fn finish(&mut self, end: i64) -> Result<(), String> {
@@ -461,6 +471,14 @@ mod tests {
         assert_ne!(bytes(&retained), bytes(&second));
         assert_eq!(&bytes(&second)[..16], &[16; 16]);
         assert_eq!(&bytes(&second)[16..], &[128; 8]);
+    }
+
+    #[test]
+    fn duplicate_video_timestamps_drop_the_frame_instead_of_failing() {
+        assert!(accept_video_pts(None, 0).unwrap());
+        assert!(accept_video_pts(Some(10), 11).unwrap());
+        assert!(!accept_video_pts(Some(10), 10).unwrap());
+        assert!(accept_video_pts(Some(10), 9).is_err());
     }
 
     /// 合成音频验证真实 AAC/H.264 封装，不访问用户设备；需要 Windows 媒体组件。

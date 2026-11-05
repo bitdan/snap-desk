@@ -59,9 +59,13 @@ mod tests {
         image.data.pop();
         assert!(encoder.push(&image, 0).is_err());
         encoder.push(&BgraImage::new(2, 2), 0).unwrap();
-        assert!(encoder.push(&BgraImage::new(2, 2), 0).is_err());
-        encoder.finish(1_000_000).unwrap();
-        assert!(encoder.push(&BgraImage::new(2, 2), 2_000_000).is_err());
+        // 同一时间戳重复上报只丢帧，不终止整段录制。
+        assert!(!encoder.push(&BgraImage::new(2, 2), 0).unwrap());
+        encoder.push(&BgraImage::new(2, 2), 1_000_000).unwrap();
+        // 时间回退仍视为时间线故障。
+        assert!(encoder.push(&BgraImage::new(2, 2), 500_000).is_err());
+        encoder.finish(2_000_000).unwrap();
+        assert!(encoder.push(&BgraImage::new(2, 2), 3_000_000).is_err());
     }
 }
 
@@ -116,13 +120,16 @@ impl Encoder for GifEncoder {
     fn converted_bytes(&self) -> u64 {
         0
     }
-    fn push(&mut self, image: &BgraImage, pts: i64) -> Result<(), String> {
-        if self.writer.is_none()
-            || image.dimensions() != (self.width, self.height)
-            || self.last_pts.is_some_and(|last| pts <= last)
-            || pts < 0
-        {
-            return Err("GIF 帧尺寸、时间戳或编码状态无效。".into());
+    fn push(&mut self, image: &BgraImage, pts: i64) -> Result<bool, String> {
+        if self.writer.is_none() || image.dimensions() != (self.width, self.height) || pts < 0 {
+            return Err("GIF 帧尺寸或编码状态无效。".into());
+        }
+        // 重复时间戳只丢弃该帧；真正回退说明时间线异常，仍终止录制。
+        if self.last_pts.is_some_and(|last| pts == last) {
+            return Ok(false);
+        }
+        if self.last_pts.is_some_and(|last| pts < last) {
+            return Err("GIF 时间戳必须严格递增。".into());
         }
         let mut rgba = image.opaque_rgba()?;
         self.flush_until(pts)?;
@@ -131,7 +138,7 @@ impl Encoder for GifEncoder {
         frame.dispose = gif::DisposalMethod::Keep;
         self.pending = Some(frame);
         self.last_pts = Some(pts);
-        Ok(())
+        Ok(true)
     }
     fn finish(&mut self, end: i64) -> Result<(), String> {
         if self.pending.is_none() {

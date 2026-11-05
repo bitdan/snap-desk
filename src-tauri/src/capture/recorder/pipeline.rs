@@ -555,18 +555,23 @@ fn write_video(
                 layer.apply(&mut image, frame.pts)?;
             }
             failure_stage.set("video_write");
-            encoder.push(&image, frame.pts)?;
+            let written = encoder.push(&image, frame.pts)?;
             progress(app, "encoding", Some(&pending));
             let encoding_millis = encoding_started.elapsed().as_secs_f64() * 1000.0;
             failure_stage.set("encoder_state");
             let mut guard = state.0.lock().map_err(err)?;
             if let Some(s) = guard.as_mut().filter(|s| s.view.id == id) {
-                s.view.frames += 1;
-                s.view.encoding_millis += encoding_millis;
-                s.view.stats.nv12_output_bytes = encoder.converted_bytes();
-                // push 期间仍可暂停；旧代次已提交帧计入累计值，但不污染恢复后的窗口。
-                if frame.generation == s.timeline.generation {
-                    s.fps_window.submitted(frame.pts);
+                // 重复时间戳的帧无法写入，按丢帧处理但不终止整段录制。
+                if written {
+                    s.view.frames += 1;
+                    s.view.encoding_millis += encoding_millis;
+                    s.view.stats.nv12_output_bytes = encoder.converted_bytes();
+                    // push 期间仍可暂停；旧代次已提交帧计入累计值，但不污染恢复后的窗口。
+                    if frame.generation == s.timeline.generation {
+                        s.fps_window.submitted(frame.pts);
+                    }
+                } else {
+                    s.view.dropped_frames += 1;
                 }
                 s.view.revision += 1;
             }

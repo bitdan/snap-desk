@@ -23,7 +23,8 @@ pub trait Encoder {
     fn kind(&self) -> EncoderKind;
     /// 成功转换并交给编码器拥有的 NV12 字节数，不计系统编码器内部拷贝。
     fn converted_bytes(&self) -> u64;
-    fn push(&mut self, image: &BgraImage, pts: i64) -> Result<(), String>;
+    /// 提交一帧；返回 false 表示时间戳重复、该帧被丢弃（录制继续）。
+    fn push(&mut self, image: &BgraImage, pts: i64) -> Result<bool, String>;
     /// 音视频交给同一个 Sink Writer，时间单位均为 100 ns；GIF 不允许声音。
     fn push_audio(&mut self, _: &AudioPacket) -> Result<(), String> {
         Err("当前编码格式不支持音频。".into())
@@ -105,7 +106,7 @@ pub fn probe(
             format,
             audio,
         )?;
-        encoder.push(&BgraImage::new(width, height), 0)?;
+        let _ = encoder.push(&BgraImage::new(width, height), 0)?;
         if audio {
             // 试写 AAC 使用合成静音，不打开麦克风或录制系统播放。
             let mut mixer = super::audio::Mixer::default();
