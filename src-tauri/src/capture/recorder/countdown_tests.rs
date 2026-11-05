@@ -71,6 +71,7 @@ fn session() -> Session {
         },
         timeline: Timeline::default(),
         fps_window: stats::FpsWindow::default(),
+        queue: std::sync::Arc::default(),
         countdown_seconds: 3,
         countdown_until: None,
         stop: false,

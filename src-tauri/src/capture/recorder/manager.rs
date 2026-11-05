@@ -29,7 +29,7 @@ pub use lifecycle::{ExitState, request_exit};
 use lifecycle::{progress, WorkerGuard};
 #[cfg(test)]
 use lifecycle::exit_timed_out;
-use pipeline::collect;
+use pipeline::{collect, QUEUE_CAPACITY};
 use super::scroll::chrome;
 use config::{CaptureSource, RecorderCapabilities, RecorderConfig};
 use frame::QueuedFrame;
@@ -78,6 +78,8 @@ struct Session {
     view: RecordingView,
     timeline: Timeline,
     fps_window: stats::FpsWindow,
+    /// 与采集/编码线程共享，查询时刷新诊断中的队列水位，不参与命令裁决。
+    queue: std::sync::Arc<stats::QueueGauge>,
     countdown_seconds: u8,
     countdown_until: Option<i64>,
     stop: bool,
@@ -330,6 +332,9 @@ pub fn current_recording(
             } else {
                 s.fps_window.fps(s.timeline.elapsed(capture::now()))
             };
+        // 水位直接读取无锁计数；阶段切换期间队列可能仍在排空，保留真实值。
+        view.stats.queue_depth = s.queue.depth();
+        view.stats.queue_peak = s.queue.peak();
         view
     }))
 }
@@ -490,6 +495,10 @@ pub async fn start_recording(
         chrome::hide_recording(&app);
         chrome::place_recording(&app, &screen, placement)?;
         super::hide_overlay(&app, &window)?;
+        // 采集线程与查询共用同一水位；编码线程只改原子计数，不持录屏状态锁。
+        let queue = std::sync::Arc::new(stats::QueueGauge::default());
+        // 峰值同时持有底图、两帧队列和正在合成的帧；多留一帧减少分配抖动。
+        let pool = frame::FramePool::new(QUEUE_CAPACITY + 2);
         let recording = app.state::<RecordingState>();
         *recording.0.lock().map_err(err)? = Some(Session {
             hide_main_window: config.hide_main_window,
@@ -514,6 +523,7 @@ pub async fn start_recording(
             },
             timeline: Timeline::default(),
             fps_window: stats::FpsWindow::default(),
+            queue: queue.clone(),
             countdown_seconds: config.countdown_seconds,
             countdown_until: None,
             stop: false,
@@ -528,7 +538,7 @@ pub async fn start_recording(
             .name("screen-recording".into())
             .spawn(move || {
                 let _worker = worker_guard;
-                let prepared = capture::prepare(&config, source_size, source).and_then(|backend| {
+                let prepared = capture::prepare(&config, source_size, source, pool.clone()).and_then(|backend| {
                     live_annotations::initialize(
                         &worker_app,
                         id,
@@ -569,7 +579,7 @@ pub async fn start_recording(
                 match prepared {
                     Ok((backend, audio)) => {
                         if ready_tx.send(Ok(())).is_ok() && go_rx.recv().unwrap_or(false) {
-                            collect(worker_app, id, config, screen, root, backend, audio);
+                            collect(worker_app, id, config, screen, root, backend, audio, queue, pool);
                         }
                     }
                     Err(e) => {

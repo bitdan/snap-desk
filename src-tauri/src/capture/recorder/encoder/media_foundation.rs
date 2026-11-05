@@ -112,13 +112,10 @@ fn converted_buffer(image: &BgraImage) -> Result<IMFMediaBuffer, String> {
     }
 }
 
-/// 视频时间戳必须递增：重复上报的帧丢弃即可，时间回退说明时间线异常。
-fn accept_video_pts(last: Option<i64>, pts: i64) -> Result<bool, String> {
-    match last {
-        Some(time) if pts == time => Ok(false),
-        Some(time) if pts < time => Err("编码时间戳必须严格递增。".into()),
-        _ => Ok(true),
-    }
+/// 视频时间戳必须递增；重复或回退的帧只丢弃该帧，不终止整段录制。
+/// 采集侧已按代次与采样槽过滤，这里保留最后一道防线，驱动偶发乱序时不留下半段成品。
+fn accept_video_pts(last: Option<i64>, pts: i64) -> bool {
+    last.is_none_or(|time| pts > time)
 }
 
 impl MediaFoundation {
@@ -343,8 +340,8 @@ impl super::Encoder for MediaFoundation {
         if image.dimensions() != self.original {
             return Err("编码帧尺寸发生变化。".into());
         }
-        // 同一采样点可能重复上报；丢弃该帧但保留整段录制，时间回退才视为时间线故障。
-        if !accept_video_pts(self.source_time, pts)? {
+        // 同一采样点重复上报或驱动偶发回退时只丢弃该帧；保留整段录制而不是让封装失败。
+        if !accept_video_pts(self.source_time, pts) {
             return Ok(false);
         }
         let converted = converted_buffer(image)?;
@@ -400,7 +397,8 @@ mod tests {
         encoder.advance_video(2_000_000).unwrap();
         // 模拟静止补帧刚推进后，采集队列中稍早的有效帧到达；不应报乱序错误。
         encoder.push(&image, 1_900_000).unwrap();
-        assert!(encoder.push(&image, 1_800_000).is_err());
+        // 更早的时间戳降级为丢弃，后续正常帧仍可继续封装整段录制。
+        assert!(!encoder.push(&image, 1_800_000).unwrap());
         encoder.push(&image, 50_000_000).unwrap();
         Encoder::finish(&mut encoder, 51_000_000).unwrap();
         drop(encoder);
@@ -474,11 +472,11 @@ mod tests {
     }
 
     #[test]
-    fn duplicate_video_timestamps_drop_the_frame_instead_of_failing() {
-        assert!(accept_video_pts(None, 0).unwrap());
-        assert!(accept_video_pts(Some(10), 11).unwrap());
-        assert!(!accept_video_pts(Some(10), 10).unwrap());
-        assert!(accept_video_pts(Some(10), 9).is_err());
+    fn duplicate_and_regressed_video_timestamps_drop_only_that_frame() {
+        assert!(accept_video_pts(None, 0));
+        assert!(accept_video_pts(Some(10), 11));
+        assert!(!accept_video_pts(Some(10), 10));
+        assert!(!accept_video_pts(Some(10), 9));
     }
 
     /// 合成音频验证真实 AAC/H.264 封装，不访问用户设备；需要 Windows 媒体组件。

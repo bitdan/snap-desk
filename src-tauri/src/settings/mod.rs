@@ -4,12 +4,16 @@ pub(crate) mod autostart;
 pub(crate) mod shortcut_probe;
 pub(crate) mod storage;
 pub(crate) mod backup;
+mod writer;
+
+pub(crate) use writer::SettingsWriter;
+#[cfg(test)]
+pub(crate) use writer::persist;
 
 use crate::capture::{require_window, CaptureState};
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
-    io::Write,
     path::Path,
     sync::{atomic::Ordering, Mutex},
 };
@@ -421,7 +425,8 @@ pub struct RuntimeSettings {
     pub shortcut_error: Option<String>,
     pub config_warning: Option<String>,
 }
-pub struct SettingsState(pub Mutex<RuntimeSettings>);
+/// 第一项只保护内存快照；第二项串行化快捷键事务并把磁盘写入交给独立线程。
+pub struct SettingsState(pub Mutex<RuntimeSettings>, pub(crate) SettingsWriter);
 /// 松键事件独立于配置锁处理，避免保存时丢掉松键后一直被视为长按。
 #[derive(Default)]
 pub struct ShortcutPressState(pub Mutex<Vec<Shortcut>>);
@@ -479,18 +484,6 @@ pub fn load(path: &Path) -> (Settings, Option<String>) {
     }
 }
 
-/// 先完整写入同目录临时文件，再替换正式文件，避免中途失败留下半份 JSON。
-pub(crate) fn persist(path: &Path, value: &Settings) -> Result<(), String> {
-    let parent = path.parent().ok_or("配置路径无效。")?;
-    fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    let mut file = tempfile::NamedTempFile::new_in(parent).map_err(|e| e.to_string())?;
-    let bytes = serde_json::to_vec_pretty(value).map_err(|e| e.to_string())?;
-    file.write_all(&bytes).map_err(|e| e.to_string())?;
-    file.as_file().sync_all().map_err(|e| e.to_string())?;
-    file.persist(path).map_err(|e| e.to_string())?;
-    Ok(())
-}
-
 pub fn initialize(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     let path = app.path().app_config_dir()?.join("settings.json");
     let (value, config_warning) = load(&path);
@@ -516,13 +509,17 @@ pub fn initialize(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     } else {
         None
     };
-    app.manage(SettingsState(Mutex::new(RuntimeSettings {
-        value,
-        registered,
-        editing: false,
-        shortcut_error,
-        config_warning,
-    })));
+    let writer = SettingsWriter::new().map_err(std::io::Error::other)?;
+    app.manage(SettingsState(
+        Mutex::new(RuntimeSettings {
+            value,
+            registered,
+            editing: false,
+            shortcut_error,
+            config_warning,
+        }),
+        writer,
+    ));
     Ok(())
 }
 
@@ -622,6 +619,34 @@ fn apply_settings(
     Ok(None)
 }
 
+/// 在设置锁外完成快捷键注册与磁盘提交；返回系统实际注册列表和事务结果。
+/// 调用方必须持有 `SettingsWriter` 闸门，并在返回后只短暂持锁提交内存快照。
+pub(super) fn apply_outside_lock(
+    app: &AppHandle,
+    old: &Settings,
+    next: &Settings,
+    mut registered: Vec<Shortcut>,
+    write: impl Fn(&Settings) -> Result<(), String>,
+) -> (Vec<Shortcut>, Result<Option<String>, String>) {
+    let result = apply_settings(
+        old,
+        next,
+        &mut registered,
+        |key| {
+            app.global_shortcut()
+                .register(key)
+                .map_err(|e| e.to_string())
+        },
+        |key| {
+            app.global_shortcut()
+                .unregister(key)
+                .map_err(|e| e.to_string())
+        },
+        write,
+    );
+    (registered, result)
+}
+
 /// 命令在后台线程执行：系统快捷键注册可能调度主线程，不能在主线程持锁等待。
 #[tauri::command]
 pub async fn save_settings(
@@ -633,53 +658,50 @@ pub async fn save_settings(
     settings.validate()?;
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<SettingsState>();
-        let mut current = state.0.lock().map_err(|e| e.to_string())?;
-        if app.state::<CaptureState>().active.load(Ordering::SeqCst) {
-            return Err("请先完成或取消截图，再修改设置。".into());
-        }
+        // 闸门在设置数据锁之外串行化整笔事务，磁盘 I/O 由 settings-writer 线程完成。
+        let _gate = state.1.gate()?;
+        let (old, registered) = {
+            let current = state.0.lock().map_err(|e| e.to_string())?;
+            if app.state::<CaptureState>().active.load(Ordering::SeqCst) {
+                return Err("请先完成或取消截图，再修改设置。".into());
+            }
+            if current.editing {
+                return Err("请先结束快捷键录入。".into());
+            }
+            (current.value.clone(), current.registered.clone())
+        };
         let path = app
             .path()
             .app_config_dir()
             .map_err(|e| e.to_string())?
             .join("settings.json");
-        if current.editing {
-            return Err("请先结束快捷键录入。".into());
-        }
-        // 并发完成引导后，旧表单不能把版本号退回去。
         let mut settings = settings;
         // 历史开关仅通过 clipboard_configure 合并，旧页面草稿不得覆盖。
-        settings.clipboard = current.value.clipboard.clone();
+        settings.clipboard = old.clipboard.clone();
+        // 并发完成引导后，旧表单不能把版本号退回去。
         settings.onboarding_version = settings
             .onboarding_version
-            .max(current.value.onboarding_version);
-        // 所有动作注册成功后才提交新配置。
-        let old = current.value.clone();
-        let warning = apply_settings(
-            &old,
-            &settings,
-            &mut current.registered,
-            |key| {
-                app.global_shortcut()
-                    .register(key)
-                    .map_err(|e| e.to_string())
-            },
-            |key| {
-                app.global_shortcut()
-                    .unregister(key)
-                    .map_err(|e| e.to_string())
-            },
-            |value| persist(&path, value),
-        )?;
-        current.value = settings.clone();
-        current.shortcut_error = warning;
-        current.config_warning = None;
+            .max(old.onboarding_version);
+        let (registered, outcome) = apply_outside_lock(&app, &old, &settings, registered, |value| {
+            state.1.persist(&path, value)
+        });
+        // 无论成功失败，都把系统实际注册状态提交回内存；失败时保留旧配置。
+        {
+            let mut current = state.0.lock().map_err(|e| e.to_string())?;
+            current.registered = registered;
+            if let Ok(warning) = &outcome {
+                current.value = settings.clone();
+                current.shortcut_error = warning.clone();
+                current.config_warning = None;
+            }
+        }
+        outcome?;
         app.state::<ShortcutPressState>()
             .0
             .lock()
             .map_err(|e| e.to_string())?
             .clear();
         // 通知与托盘菜单更新不持有配置锁，避免拖慢截图、贴图等读取设置的入口。
-        drop(current);
         notify_settings(&app, &settings);
         Ok(settings)
     })
@@ -687,48 +709,46 @@ pub async fn save_settings(
     .map_err(|e| e.to_string())?
 }
 
-/// 托盘与设置页共用总开关；None 表示在锁内切换，避免快速连点使用过期快照。
+/// 托盘与设置页共用总开关；None 表示在闸门内基于最新快照切换，避免快速连点使用过期值。
 pub fn set_shortcuts(app: &AppHandle, enabled: Option<bool>) -> Result<Settings, String> {
     let state = app.state::<SettingsState>();
-    let mut current = state.0.lock().map_err(|e| e.to_string())?;
-    if current.editing {
-        return Err("请先结束快捷键录入或当前截图。".into());
-    }
-    let mut next = current.value.clone();
+    let _gate = state.1.gate()?;
+    let (old, registered) = {
+        let current = state.0.lock().map_err(|e| e.to_string())?;
+        if current.editing {
+            return Err("请先结束快捷键录入或当前截图。".into());
+        }
+        (current.value.clone(), current.registered.clone())
+    };
+    let mut next = old.clone();
     next.shortcuts_enabled = enabled.unwrap_or(!next.shortcuts_enabled);
     let path = app
         .path()
         .app_config_dir()
         .map_err(|e| e.to_string())?
         .join("settings.json");
-    let old = current.value.clone();
-    let result = apply_settings(
-        &old,
-        &next,
-        &mut current.registered,
-        |key| {
-            app.global_shortcut()
-                .register(key)
-                .map_err(|e| e.to_string())
-        },
-        |key| {
-            app.global_shortcut()
-                .unregister(key)
-                .map_err(|e| e.to_string())
-        },
-        |value| persist(&path, value),
-    );
+    let (registered, result) = apply_outside_lock(app, &old, &next, registered, |value| {
+        state.1.persist(&path, value)
+    });
     let warning = match result {
         Ok(warning) => warning,
         Err(error) => {
+            // 快捷键事务可能已部分生效；先提交真实注册状态，再恢复原生勾选外观。
+            if let Ok(mut current) = state.0.lock() {
+                current.registered = registered;
+            }
             // 原生勾选菜单会先切换外观，失败时恢复为真正生效的设置。
-            notify_settings(app, &current.value);
+            notify_settings(app, &old);
             return Err(error);
         }
     };
-    current.value = next.clone();
-    current.shortcut_error = warning;
-    current.config_warning = None;
+    {
+        let mut current = state.0.lock().map_err(|e| e.to_string())?;
+        current.registered = registered;
+        current.value = next.clone();
+        current.shortcut_error = warning;
+        current.config_warning = None;
+    }
     app.state::<ShortcutPressState>()
         .0
         .lock()
@@ -753,14 +773,17 @@ pub async fn set_shortcuts_enabled(
 /// 录入时临时释放系统注册；结束或失焦后恢复，整个过程不改写磁盘。
 pub fn set_editing(app: &AppHandle, editing: bool) -> Result<(), String> {
     let state = app.state::<SettingsState>();
-    let mut current = state.0.lock().map_err(|e| e.to_string())?;
-    if current.editing == editing {
-        return Ok(());
-    }
-    if editing && app.state::<CaptureState>().active.load(Ordering::SeqCst) {
-        return Err("请先结束快捷键录入或当前截图。".into());
-    }
-    let old = current.value.clone();
+    let _gate = state.1.gate()?;
+    let (old, registered) = {
+        let current = state.0.lock().map_err(|e| e.to_string())?;
+        if current.editing == editing {
+            return Ok(());
+        }
+        if editing && app.state::<CaptureState>().active.load(Ordering::SeqCst) {
+            return Err("请先结束快捷键录入或当前截图。".into());
+        }
+        (current.value.clone(), current.registered.clone())
+    };
     let mut target = old.clone();
     if editing {
         target.shortcuts_enabled = false;
@@ -770,22 +793,10 @@ pub fn set_editing(app: &AppHandle, editing: bool) -> Result<(), String> {
         .lock()
         .map_err(|e| e.to_string())?
         .clear();
-    let result = apply_settings(
-        &old,
-        &target,
-        &mut current.registered,
-        |key| {
-            app.global_shortcut()
-                .register(key)
-                .map_err(|e| e.to_string())
-        },
-        |key| {
-            app.global_shortcut()
-                .unregister(key)
-                .map_err(|e| e.to_string())
-        },
-        |_| Ok(()),
-    );
+    let (registered, result) =
+        apply_outside_lock(app, &old, &target, registered, |_| Ok(()));
+    let mut current = state.0.lock().map_err(|e| e.to_string())?;
+    current.registered = registered;
     if !editing || result.is_ok() {
         current.editing = editing;
     }
@@ -822,17 +833,23 @@ pub async fn complete_onboarding(
     require_window(&window, "main")?;
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<SettingsState>();
-        let mut current = state.0.lock().map_err(|e| e.to_string())?;
-        let mut next = current.value.clone();
+        let _gate = state.1.gate()?;
+        let mut next = {
+            let current = state.0.lock().map_err(|e| e.to_string())?;
+            current.value.clone()
+        };
         next.onboarding_version = next.onboarding_version.max(1);
         let path = app
             .path()
             .app_config_dir()
             .map_err(|e| e.to_string())?
             .join("settings.json");
-        persist(&path, &next)?;
-        current.value = next.clone();
-        current.config_warning = None;
+        state.1.persist(&path, &next)?;
+        {
+            let mut current = state.0.lock().map_err(|e| e.to_string())?;
+            current.value = next.clone();
+            current.config_warning = None;
+        }
         notify_settings(&app, &next);
         Ok(next)
     })

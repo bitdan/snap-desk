@@ -115,7 +115,8 @@ pub async fn choose_capture_directory(
             .map_err(|_| "请先完成当前目录选择。".to_string())?;
         if reset {
             let state = app.state::<SettingsState>();
-            let _settings = state.0.lock().map_err(|e| e.to_string())?;
+            // 目录记录写入与配置导入共用写闸门；设置数据锁不跨磁盘 I/O。
+            let _gate = state.1.gate()?;
             crate::shared::image_io::configure_directory(&app, None)?;
         } else {
             let mut dialog = app
@@ -131,7 +132,7 @@ pub async fn choose_capture_directory(
             };
             let path = selected.into_path().map_err(|e| e.to_string())?;
             let state = app.state::<SettingsState>();
-            let _settings = state.0.lock().map_err(|e| e.to_string())?;
+            let _gate = state.1.gate()?;
             crate::shared::image_io::configure_directory(&app, Some(&path))?;
         }
         Ok(Some(DirectoryView {

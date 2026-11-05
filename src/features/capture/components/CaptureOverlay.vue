@@ -7,14 +7,12 @@ import { convertFileSrc } from '@tauri-apps/api/core'
 import ScrollCaptureIcon from '@/features/scroll/components/ScrollCaptureIcon.vue'
 import QrResultCard from '@/features/recognition/components/QrResultCard.vue'
 import OcrResultCard from '@/features/recognition/components/OcrResultCard.vue'
-import type { OcrResult } from '@/features/recognition/ai'
 import { computed, nextTick, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue'
 import { Copy, Save, X, Monitor, RotateCcw, Scan, Pin, Video, QrCode, ScanText, Languages, AppWindow, GripVertical, Check, MousePointer2, Volume2, VolumeX, Mic, MicOff, ArrowLeft } from 'lucide-vue-next'
 import { api, onFrame, onCaptureClosed, onCapturePin, onScroll } from '@/services/api'
 import type { CaptureFrame, ColorFormat } from '@/features/capture/types'
 import type { ScrollView } from '@/features/scroll/types'
-import type { QrResult } from '@/features/recognition/types'
-import { clamp, move, normalize, resize, toPixels, nudgeSelection, type Handle, type Point, type Rect } from '@/shared/geometry/selection'
+import { type Handle, type Point, type Rect } from '@/shared/geometry/selection'
 import { useAnnotations, type AnnotationTool } from '@/features/annotations/use-annotations'
 import type { Annotation } from '@/features/annotations/annotations'
 import AnnotationWorkspace from '@/features/annotations/components/AnnotationWorkspace.vue'
@@ -24,12 +22,13 @@ import CaptureMagnifier from '@/features/capture/components/CaptureMagnifier.vue
 import { presentCaptureImage } from '@/features/capture/capture-paint'
 import { magnifierSample } from '@/features/capture/magnifier'
 import { newerScroll } from '@/features/scroll/scroll-capture'
-import { recordingBitrate, recordingConfig, recordingRegion, type RecordingSelection } from '@/features/recording/recording'
-import { useRecordingSetup, prepareRecordingSession } from '@/features/recording/use-recording-setup'
 import RecordingSetupMenu from '@/features/recording/components/RecordingSetupMenu.vue'
 import RecordingSourceSelect from '@/features/recording/components/RecordingSourceSelect.vue'
-import { targetAt, targetsAt, fromPixels, snapPoint, displayBounds } from '@/features/capture/capture-targets'
-import { readRecentSelection, restoreRecentSelection, writeRecentSelection } from '@/features/capture/recent-selection'
+import { fromPixels } from '@/features/capture/capture-targets'
+import { useCaptureSelection } from '@/features/capture/use-capture-selection'
+import { useCaptureActions } from '@/features/capture/use-capture-actions'
+import { useCaptureRecognition } from '@/features/capture/use-capture-recognition'
+import { useCaptureRecording } from '@/features/capture/use-capture-recording'
 
 // 截图帧是不可变快照，大量窗口目标不需要逐项响应式代理。
 const frame = shallowRef<CaptureFrame | null>(null)
@@ -40,23 +39,48 @@ watch(liveRecordingId, id => document.documentElement.classList.toggle('recordin
 // 只传会话编号与版本；大图通过受限协议读取，URL 不包含本地文件路径。
 const imageUrl = computed(() => frame.value ? `${convertFileSrc(String(frame.value.id), 'capture-image')}/${frame.value.previewRevision}.png` : '')
 const captureRoot = ref<HTMLElement | null>(null)
-const selection = ref<Rect | null>(null)
-const selectedTarget = ref<number | null>(null)
-const windowsOnly = ref(false)
-const hoverLevel = ref(0)
-const hoverCandidates = computed(() => {
-  if (!frame.value || !pointer.value || selection.value || busy.value || (!recordingMode.value && frame.value.snapEnabled === false)) return []
-  return targetsAt(frame.value.targets, { x: pointer.value.x * frame.value.width / viewport.value.width,
-    y: pointer.value.y * frame.value.height / viewport.value.height }, windowsOnly.value)
+const busy = ref(false)
+const error = ref('')
+const scroll = ref<ScrollView | null>(null)
+const viewport = ref({ width: innerWidth, height: innerHeight })
+const annotating = ref(false)
+const colorCopied = ref(false)
+// 录屏模式由宿主提前建立：选区会话在 watch 首次求值时就需要读取它。
+const recordingMode = ref(false)
+// 选区会话先建立；标注编辑器依赖 pixels，通过延迟回调访问，避免初始化循环。
+const {
+  selection, selectedTarget, windowsOnly, hoverLevel, pointer, recentSelection, recentRect, gesture,
+  hoverCandidates, hoverTarget, hoverStyle, pixels, valid, boxStyle, activeDisplay, pointerDisplay,
+  down, drag, up, abortGesture, reselect, restoreSelection, selectAll, nudge, remember,
+} = useCaptureSelection({
+  root: captureRoot, frame, viewport, busy, error, colorCopied, annotating,
+  getEditor: () => editor,
+  marked: () => marked.value,
+  recordingMode,
+  onRecordingRegion: () => { void selectedRecordingRegion() },
+  onAutoTranslate: () => { if (frame.value?.translation && valid.value) void recognizeText(true) },
 })
-// 只在命中层级改变时回到最小区域；同一面板内轻微移动不会丢失 Tab 选择。
-watch(() => hoverCandidates.value.join(','), () => { hoverLevel.value = 0 }, { flush: 'sync' })
-const hoverTarget = computed(() => hoverCandidates.value[Math.min(hoverLevel.value, hoverCandidates.value.length - 1)] ?? null)
-const hoverStyle = computed(() => {
-  if (!frame.value || hoverTarget.value === null) return {}
-  const rect = fromPixels(frame.value.targets[hoverTarget.value].rect, frame.value, viewport.value)
-  return { left: `${rect.x}px`, top: `${rect.y}px`, width: `${rect.width}px`, height: `${rect.height}px` }
+const screenImage = shallowRef<HTMLImageElement | null>(null)
+const imageReady = ref(false)
+let imageReceivedAt = performance.now()
+watch(imageUrl, () => { imageReceivedAt = performance.now(); imageReady.value = false }, { flush: 'sync' })
+const relativeCoordinates = ref(false)
+const colorFormat = ref<ColorFormat>('rgb')
+const editor = useAnnotations(() => pixels.value ?? { x: 0, y: 0, width: 0, height: 0 }, () => imageUrl.value, () => busy.value)
+const marked = computed(() => editor.history.present.length > 0)
+/** 导出、回放与识别共用互斥条件；标注交互或选区拖动期间不接受新的整图操作。 */
+const blocked = computed(() => busy.value || editor.pending || editor.interacting || !!gesture.value)
+const { finish, cancel, startScroll } = useCaptureActions({
+  frame, pixels, valid, busy, error, scroll,
+  blocked: () => blocked.value,
+  marked: () => marked.value,
+  editorPending: () => editor.pending,
+  recognitionOpen: () => !!qrResult.value || ocrResult.value !== null,
+  annotations: () => editor.history.present,
+  releaseFrame,
+  remember,
 })
+const showMagnifier = computed(() => frame.value && imageReady.value && screenImage.value && pointer.value && !busy.value && !recordingMode.value && (!annotating.value && !marked.value))
 /** 原生抓取失败保留原图与选区；成功后等待图片加载再显示蒙层。 */
 async function captureNative() {
   if (!frame.value || selectedTarget.value === null || busy.value || marked.value) return
@@ -66,119 +90,7 @@ async function captureNative() {
   catch (e) { error.value = String(e) }
   finally { busy.value = false }
 }
-
-const recentSelection = ref(readRecentSelection())
-const recentRect = computed(() => frame.value ? restoreRecentSelection(recentSelection.value, frame.value, viewport.value) : null)
-const busy = ref(false)
-const qrResult = ref<QrResult | null>(null)
-const ocrResult = ref<OcrResult | null>(null)
-// 识别与翻译共享可编辑草稿，切换面板不重复 OCR，也不丢失修正后的文字。
-const ocrDraft = ref('')
-const openingTranslation = ref(false)
-const ocrEntryWasTranslation = ref(false)
-const translationTrigger = ref<HTMLButtonElement | null>(null)
-const ocrTrigger = ref<HTMLButtonElement | null>(null)
-function closeOcr() {
-  ocrResult.value = null
-  ocrDraft.value = ''
-  void nextTick(() => (ocrEntryWasTranslation.value ? translationTrigger.value : ocrTrigger.value)?.focus())
-}
-async function recognizeText(translate = false) {
-  if (!frame.value || !pixels.value || busy.value || editor.pending || editor.interacting || gesture.value) return
-  const id = frame.value.id
-  ocrEntryWasTranslation.value = translate
-  busy.value = true; error.value = ''
-  try {
-    const text = await api.recognizeCapture(id, pixels.value)
-    if (frame.value?.id === id) {
-      ocrDraft.value = text.fullText; ocrResult.value = text
-      if (translate) await sendTranslation(id)
-    }
-  } catch (e) { error.value = String(e) }
-  finally { busy.value = false }
-}
-/** 原文交接成功后再释放截图；打开失败时保留 OCR 草稿供重试。 */
-async function sendTranslation(id = frame.value?.id) {
-  if (openingTranslation.value) return
-  if (id === undefined || !ocrDraft.value.trim()) { error.value = '未识别到文字。'; return }
-  openingTranslation.value = true
-  try {
-    await api.openTranslation(ocrDraft.value)
-    await api.cancel(id)
-    releaseFrame(id)
-  } catch (e) { error.value = String(e) }
-  finally { openingTranslation.value = false }
-}
-watch(() => frame.value?.id, () => { qrResult.value = null; ocrResult.value = null; ocrDraft.value = '' })
-/** 主动识别保留截图现场；结果面板隔离选区拖动与截图快捷键。 */
-async function recognizeQr() {
-  if (!frame.value || !pixels.value || busy.value || editor.pending || editor.interacting || gesture.value) return
-  busy.value = true; error.value = ''
-  try { qrResult.value = await api.recognizeQr(frame.value.id, pixels.value, editor.history.present) }
-  catch (e) { error.value = String(e) }
-  finally { busy.value = false }
-}
-const error = ref('')
-const scroll = ref<ScrollView | null>(null)
-// 录屏使用独立准备条，截图标注与导出操作在此模式下全部隐藏。
-const recordingMode = ref(false)
-const recordingTrigger = ref<HTMLButtonElement | null>(null)
-const recordingConfirmTrigger = ref<HTMLButtonElement | null>(null)
-/** F3 与截图中的录屏按钮使用同一模式；调整范围后保留录屏偏好。 */
-function enterRecordingMode() {
-  if (busy.value || editor.pending || editor.interacting || frame.value?.replay) return
-  annotating.value = false; error.value = ''; recordingMode.value = true
-  void loadRecordingCapabilities()
-  void nextTick(() => recordingConfirmTrigger.value?.focus())
-}
-function leaveRecordingMode() {
-  if (busy.value) return
-  recordingMode.value = false; error.value = ''
-  void nextTick(() => recordingTrigger.value?.focus())
-}
-async function selectedRecordingRegion() {
-  if (!recordingMode.value || !valid.value) return
-  await nextTick()
-  recordingConfirmTrigger.value?.focus()
-}
-const { recordingFormat, recordingFps, recordingEncoding, recordingQuality, recordingMbps, recordingCountdown, captureCursor,
-  recordingEffects, recordingSystemAudio, recordingMicrophone, recordingCapabilities, recordingCapabilityError, hideMainWindow, reloadPreferences } = useRecordingSetup()
-const checkingRecordingCapabilities = ref(false)
-/** 普通截图与长截图不需要录屏能力；首次进入录屏才读取，失败和不支持均可主动重试。 */
-async function loadRecordingCapabilities(retry = false) {
-  if (disposed || checkingRecordingCapabilities.value || (!retry && recordingCapabilities.value)) return
-  checkingRecordingCapabilities.value = true; recordingCapabilityError.value = ''; recordingCapabilities.value = null
-  try {
-    const value = await api.recordingCapabilities()
-    if (!disposed) recordingCapabilities.value = value
-  } catch (e) { if (!disposed) recordingCapabilityError.value = String(e) }
-  finally { if (!disposed) checkingRecordingCapabilities.value = false }
-}
-const recordingSource = ref<RecordingSelection>('region')
-/** 录屏仅选择屏幕区域或整台显示器，不再置前或绑定应用窗口。 */
-function chooseRecordingSource(value: string) {
-  if (!frame.value || busy.value || marked.value || editor.interacting) return
-  if (value !== 'display' && value !== 'region') return
-  selectedTarget.value = null
-  if (value === 'display') selection.value = { ...activeDisplay.value }
-  recordingSource.value = value
-}
-const viewport = ref({ width: innerWidth, height: innerHeight })
-const annotating = ref(false)
-const screenImage = shallowRef<HTMLImageElement | null>(null)
-const imageReady = ref(false)
-let imageReceivedAt = performance.now()
-watch(imageUrl, () => { imageReceivedAt = performance.now(); imageReady.value = false }, { flush: 'sync' })
-const pointer = ref<Point | null>(null)
-const relativeCoordinates = ref(false)
-const colorCopied = ref(false)
-const colorFormat = ref<ColorFormat>('rgb')
-const showMagnifier = computed(() => frame.value && imageReady.value && screenImage.value && pointer.value && !busy.value && !recordingMode.value && (!annotating.value && !marked.value))
-const editor = useAnnotations(() => pixels.value ?? { x: 0, y: 0, width: 0, height: 0 }, () => imageUrl.value, () => busy.value)
-const marked = computed(() => editor.history.present.length > 0)
 const handles: Handle[] = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w']
-// 首次框选完成后工具栏持续挂载；后续拖动只冻结定位，不反复卸载。
-const gesture = shallowRef<{ start: Point; initial: Rect; mode: 'draw' | 'move' | Handle; target: number | null } | null>(null)
 let off: (() => void) | undefined
 let offClosed: (() => void) | undefined
 // current() 的旧响应或迟到 ready 事件不能让已关闭的大图重新驻留。
@@ -186,18 +98,32 @@ let closedThroughId = 0
 let offScroll: (() => void) | undefined
 let offPin: (() => void) | undefined
 let disposed = false
-const pixels = computed(() => selection.value && frame.value ? toPixels(selection.value, viewport.value, frame.value) : null)
-const valid = computed(() => pixels.value && pixels.value.width > 0 && pixels.value.height > 0)
-const boxStyle = computed(() => selection.value ? { left: `${selection.value.x}px`, top: `${selection.value.y}px`, width: `${selection.value.width}px`, height: `${selection.value.height}px` } : {})
-const activeDisplay = computed(() => {
-  if (!frame.value) return { x: 0, y: 0, ...viewport.value }
-  const p = selection.value ? { x: selection.value.x + selection.value.width / 2, y: selection.value.y + selection.value.height / 2 } : pointer.value
-  return displayBounds(frame.value.displays, { x: frame.value.originX, y: frame.value.originY },
-    p ? { x: p.x * frame.value.width / viewport.value.width, y: p.y * frame.value.height / viewport.value.height } : { x: -frame.value.originX, y: -frame.value.originY }, frame.value, viewport.value)
+// 识别面板只属于当前截图会话；选区、标注和录屏入口分别维护自己的状态与守卫。
+const { qrResult, ocrResult, ocrDraft, translationTrigger, ocrTrigger, closeOcr, recognizeText, sendTranslation, recognizeQr } = useCaptureRecognition({
+  frame, pixels, busy, error,
+  blocked: () => editor.pending || editor.interacting,
+  gestureActive: () => !!gesture.value,
+  annotations: () => editor.history.present,
+  releaseFrame,
 })
-const pointerDisplay = computed(() => frame.value && pointer.value ? displayBounds(frame.value.displays,
-  { x: frame.value.originX, y: frame.value.originY },
-  { x: pointer.value.x * frame.value.width / viewport.value.width, y: pointer.value.y * frame.value.height / viewport.value.height }, frame.value, viewport.value) : activeDisplay.value)
+// 录屏准备条与截图选区共用当前帧，但能力查询、格式偏好和接管清理独立维护。
+const {
+  recordingTrigger, recordingConfirmTrigger, recordingSource,
+  recordingFormat, recordingFps, recordingEncoding, recordingQuality, recordingMbps,
+  recordingCountdown, captureCursor, recordingEffects, recordingSystemAudio, recordingMicrophone,
+  recordingCapabilities, recordingCapabilityError, hideMainWindow, checkingRecordingCapabilities,
+  reloadPreferences, loadRecordingCapabilities, enterRecordingMode, leaveRecordingMode,
+  chooseRecordingSource, selectedRecordingRegion, startRecording,
+} = useCaptureRecording({
+  frame, pixels, valid, busy, error, annotating, marked, activeDisplay, selection, mode: recordingMode,
+  gestureActive: () => !!gesture.value,
+  editorBlocked: () => editor.pending || editor.interacting,
+  annotations: () => editor.history.present,
+  releaseFrame,
+  clearTarget: () => { selectedTarget.value = null },
+  disposed: () => disposed,
+  liveRecordingId, liveAnnotations,
+})
 const toolbar = ref<HTMLElement | null>(null)
 const { style: floatingToolbarStyle, start: floatToolbar, reset: resetToolbarPosition } = useFloatingToolbar(toolbar)
 const toolbarSize = ref({ width: 800, height: 46 })
@@ -221,17 +147,6 @@ watch([selection, activeDisplay, toolbarSize, () => editor.interacting, () => ed
 // 所有图形保存在原图坐标系内；选区只负责裁剪和限制绘制区域。
 function chooseTool(tool: AnnotationTool) { if (busy.value || editor.pending || editor.interacting) return; editor.setTool(tool); annotating.value = true }
 function selectionDown(e: PointerEvent) { if (!annotating.value || editor.tool === 'edit') down(e, 'move') }
-function reselect() {
-  if (busy.value) return
-  editor.reset(); selectedTarget.value = null; selection.value = null; gesture.value = null; annotating.value = false; error.value = ''; pointer.value = null; colorCopied.value = false
-}
-/** 恢复只替换空白选区，已有标注、文字草稿和进行中的拖动都必须先完成。 */
-function restoreSelection() {
-  if (!recentRect.value || busy.value || gesture.value || marked.value || editor.pending || editor.interacting) return
-  const rect = { ...recentRect.value }
-  reselect(); selection.value = rect
-  void selectedRecordingRegion()
-}
 function receiveScroll(value: ScrollView) {
   const next = newerScroll(scroll.value, value, frame.value?.id)
   if (next && !next.collecting) scrollClosed()
@@ -250,46 +165,6 @@ function releaseFrame(id = frame.value?.id) {
   ocrDraft.value = ''
 }
 function scrollClosed() { scroll.value = null; releaseFrame() }
-async function startScroll() {
-  if (!frame.value || frame.value.replay || !pixels.value || !valid.value || busy.value || marked.value || editor.pending || editor.interacting || gesture.value) return
-  busy.value = true; error.value = ''
-  // 滚动截图仅输出拼接结果；排错使用应用日志，不再额外保存原始帧。
-  const id = frame.value.id
-  try {
-    await api.startScroll(id, pixels.value, false, 'white')
-    // 独立预览窗口接管进度；隐藏浮层不保留整桌面图片或标注历史。
-    releaseFrame(id)
-    if (!frame.value) scroll.value = null
-  }
-  catch (e) { error.value = String(e) }
-  finally { busy.value = false }
-}
-/** 确认原图像素选区并进入 Ready；后端接管后等待开始按钮或空格，不自动采集。 */
-async function startRecording() {
-  if (!recordingMode.value || !recordingCapabilities.value?.available) return
-  if (!frame.value || !pixels.value || !valid.value || busy.value || editor.pending || editor.interacting || gesture.value) return
-  const id = frame.value.id
-  busy.value = true; error.value = ''
-  try {
-    const rect = recordingRegion(pixels.value, recordingSource.value, frame.value.displays, { x: frame.value.originX, y: frame.value.originY })
-    const config = recordingConfig(rect, recordingFps.value, captureCursor.value, recordingCountdown.value, recordingEncoding.value, recordingQuality.value, recordingEffects.value, recordingFormat.value === 'gif' ? null : recordingBitrate(recordingMbps.value), recordingFormat.value, recordingSystemAudio.value && !!recordingCapabilities.value?.systemAudio, recordingMicrophone.value && !!recordingCapabilities.value?.microphone, hideMainWindow.value)
-    config.source = 'selectedMonitor'
-    await prepareRecordingSession(
-      () => api.startRecording(id, rect, config, undefined, editor.history.present),
-      async () => {
-        if (!liveAnnotations.value) throw new Error('录屏工具栏尚未就绪。')
-        await liveAnnotations.value.prepareDesktop()
-      },
-      () => api.controlRecording(id, 'cancel'),
-      () => { liveRecordingId.value = id; releaseFrame(id) },
-    )
-  }
-  catch (e) {
-    // 这里只进入 Ready，开始由录屏工具栏按钮或空格触发；接管失败则释放会话。
-    error.value = String(e)
-  }
-  finally { busy.value = false }
-}
 async function copyColor(format = colorFormat.value) {
   if (!frame.value || !pointer.value || !imageReady.value || busy.value || editor.pending || editor.interacting) return
   const pixel = magnifierSample(pointer.value, viewport.value, frame.value).pixel
@@ -298,55 +173,6 @@ async function copyColor(format = colorFormat.value) {
   catch (e) { error.value = String(e) }
   finally { busy.value = false }
 }
-function point(e: PointerEvent): Point { return { x: clamp(e.clientX, 0, viewport.value.width), y: clamp(e.clientY, 0, viewport.value.height) } }
-function down(e: PointerEvent, mode: 'draw' | 'move' | Handle = 'draw') {
-  if (busy.value || e.button !== 0 || !frame.value) return
-  if (editor.pending || editor.interacting) return
-  // 已有图层始终使用原图坐标；移动/缩放选区只改变裁剪，重新框选才清空标注。
-  if (mode === 'draw') {
-    if (marked.value || annotating.value) return
-    editor.reset()
-  }
-  const p = point(e)
-  pointer.value = p
-  const target = mode === 'draw' && !e.shiftKey ? hoverTarget.value : null
-  selectedTarget.value = null
-  if (mode === 'draw') selection.value = { ...p, width: 0, height: 0 }
-  if (!selection.value) return
-  gesture.value = { start: p, initial: { ...selection.value }, mode, target }
-  ;(captureRoot.value ?? e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
-}
-function drag(e: PointerEvent) {
-  colorCopied.value = false
-  // 工具栏不需要像素辅助；捕获阶段监听可覆盖选区控制点的事件。
-  pointer.value = (e.target as Element).closest('.capture-toolbar, .capture-modebar, .overlay-error') ? null : point(e)
-  if (!gesture.value) return
-  let p = point(e)
-  if (!e.shiftKey && frame.value && (recordingMode.value || frame.value.snapEnabled !== false) && gesture.value.mode !== 'move') {
-    const pixel = { x: p.x * frame.value.width / viewport.value.width, y: p.y * frame.value.height / viewport.value.height }
-    const index = targetAt(frame.value.targets, pixel, windowsOnly.value)
-    if (index !== null) {
-      const snapped = snapPoint(pixel, frame.value.targets[index].rect, { x: 6 * frame.value.width / viewport.value.width, y: 6 * frame.value.height / viewport.value.height })
-      p = { x: snapped.x * viewport.value.width / frame.value.width, y: snapped.y * viewport.value.height / frame.value.height }
-    }
-  }
-  const { start, initial, mode } = gesture.value
-  selection.value = mode === 'draw' ? normalize(start, p) : mode === 'move' ? move(initial, { x: p.x - start.x, y: p.y - start.y }, viewport.value) : resize(initial, mode, p)
-}
-function up(e: PointerEvent) {
-  const current = gesture.value
-  if (current?.mode === 'draw' && current.target !== null && frame.value && !e.shiftKey
-    && Math.hypot(e.clientX - current.start.x, e.clientY - current.start.y) < 4) {
-    selectedTarget.value = current.target
-    selection.value = fromPixels(frame.value.targets[current.target].rect, frame.value, viewport.value)
-  }
-  const drawn = gesture.value?.mode === 'draw'
-  gesture.value = null
-  if (drawn) void selectedRecordingRegion()
-  if (drawn && frame.value?.translation && valid.value) void recognizeText(true)
-}
-function abortGesture() { if (gesture.value) selection.value = gesture.value.initial; gesture.value = null }
-function selectAll() { selectedTarget.value = null; if (!busy.value && !marked.value && !editor.interacting) { editor.reset(); selection.value = { x: 0, y: 0, ...viewport.value }; void selectedRecordingRegion() } }
 let liveSelection: { rect: Rect | null; annotations: Annotation[] } | null = null
 function receive(value: CaptureFrame, fromReplay = false) {
   if (disposed || value.id <= closedThroughId || (frame.value && value.id < frame.value.id)) return
@@ -362,7 +188,7 @@ function receive(value: CaptureFrame, fromReplay = false) {
 }
 /** 回放替换整个会话；失败保留现场，不会清空选区或当前标注。 */
 async function replay(direction: 'previous' | 'next') {
-  if (!frame.value || busy.value || gesture.value || editor.pending || editor.interacting || recordingMode.value || scroll.value || liveRecordingId.value !== null) return
+  if (!frame.value || blocked.value || recordingMode.value || scroll.value || liveRecordingId.value !== null) return
   const id = frame.value.id
   busy.value = true; error.value = ''
   try {
@@ -395,29 +221,6 @@ async function loaded(event: Event) {
     })
   }
   catch (e) { if (isCurrent()) error.value = String(e) }
-}
-async function cancel() {
-  if (!frame.value || busy.value || editor.pending) return
-  const id = frame.value.id
-  busy.value = true
-  try { await api.cancel(id); releaseFrame(id) } catch (e) { error.value = String(e) }
-  finally { busy.value = false }
-}
-async function finish(action: 'copy' | 'save' | 'pin') {
-  if (!frame.value || !valid.value || !pixels.value || busy.value || qrResult.value || ocrResult.value !== null || editor.pending || editor.interacting || gesture.value) return
-  const id = frame.value.id
-  busy.value = true; error.value = ''
-  try {
-    // 保存调用前的快照；取消对话框或导出失败均不覆盖上次成功的范围。
-    const image = { width: frame.value.width, height: frame.value.height, layoutKey: frame.value.layoutKey }
-    const rect = { ...pixels.value }
-    const result = await api[action](id, rect, editor.history.present)
-    if (result !== false) {
-      recentSelection.value = writeRecentSelection(rect, image)
-      releaseFrame(id)
-    }
-  } catch (e) { error.value = String(e) }
-  finally { busy.value = false }
 }
 function key(e: KeyboardEvent) {
   if (e.defaultPrevented || e.isComposing || e.keyCode === 229) return
@@ -471,11 +274,7 @@ function key(e: KeyboardEvent) {
   const direction = directions[e.key]
   if (direction && !command) {
     e.preventDefault()
-    if (busy.value || gesture.value || editor.interacting || marked.value || annotating.value || !valid.value || !selection.value || !frame.value) return
-    const step = e.shiftKey ? 10 : 1
-    selectedTarget.value = null
-    selection.value = nudgeSelection(selection.value, { x: direction.x * step, y: direction.y * step }, viewport.value, frame.value, e.altKey)
-    editor.reset()
+    nudge(direction, e.shiftKey ? 10 : 1, e.altKey)
     return
   }
   if (e.repeat) return

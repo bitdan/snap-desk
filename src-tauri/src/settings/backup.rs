@@ -1,6 +1,6 @@
 //! 完整配置备份：固定版本格式、受限文件选择、快捷键事务和目录/监听状态回滚。
 use super::{
-    apply_settings, notify_settings, persist, Settings, SettingsState, ShortcutPressState,
+    apply_outside_lock, notify_settings, Settings, SettingsState, ShortcutPressState,
 };
 use crate::{
     capture::recording::output,
@@ -16,7 +16,6 @@ use std::{
 };
 use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
 use tauri_plugin_dialog::DialogExt;
-use tauri_plugin_global_shortcut::GlobalShortcutExt;
 
 const VERSION: u32 = 1;
 const MAX_BYTES: u64 = 512 * 1024;
@@ -163,15 +162,19 @@ fn commit(app: &AppHandle, backup: Backup) -> Result<Settings, String> {
         output::validate_directory(path)?;
     }
     let state = app.state::<SettingsState>();
-    let mut current = state.0.lock().map_err(|e| e.to_string())?;
-    if app.state::<CaptureState>().active.load(Ordering::SeqCst) {
-        return Err("请先完成或取消截图，再修改设置。".into());
-    }
-    if current.editing {
-        return Err("请先结束快捷键录入。".into());
-    }
+    // 与普通保存共用写闸门；设置快照在短锁内读取，目录快照、剪贴板与快捷键 I/O 都在锁外。
+    let _gate = state.1.gate()?;
+    let (old, registered) = {
+        let current = state.0.lock().map_err(|e| e.to_string())?;
+        if app.state::<CaptureState>().active.load(Ordering::SeqCst) {
+            return Err("请先完成或取消截图，再修改设置。".into());
+        }
+        if current.editing {
+            return Err("请先结束快捷键录入。".into());
+        }
+        (current.value.clone(), current.registered.clone())
+    };
     let root = app.path().app_config_dir().map_err(|e| e.to_string())?;
-    let old = current.value.clone();
     let old_recording = output::configured_directory(app, old.recording_export.remember_directory)?;
     let files = Files::snapshot(&root)?;
     let mut next = backup.settings;
@@ -184,47 +187,35 @@ fn commit(app: &AppHandle, backup: Backup) -> Result<Settings, String> {
             return Err(with_rollback(error, rollback.err().into_iter().collect()));
         }
     }
-    let result = apply_settings(
-        &old,
-        &next,
-        &mut current.registered,
-        |key| {
-            app.global_shortcut()
-                .register(key)
-                .map_err(|e| e.to_string())
-        },
-        |key| {
-            app.global_shortcut()
-                .unregister(key)
-                .map_err(|e| e.to_string())
-        },
-        |value| {
-            if value == &next {
-                image_io::configure_directory(app, backup.directories.captures.as_deref())?;
-                output::configure_directory(
-                    app,
-                    backup.directories.recordings.as_deref(),
-                    next.recording_export.remember_directory,
-                )?;
-                persist(&root.join("settings.json"), value)
-            } else {
-                files.restore()?;
-                output::restore_session_directory(old_recording.clone())
-            }
-        },
-    );
+    let (registered, result) = apply_outside_lock(app, &old, &next, registered, |value| {
+        if value == &next {
+            image_io::configure_directory(app, backup.directories.captures.as_deref())?;
+            output::configure_directory(
+                app,
+                backup.directories.recordings.as_deref(),
+                next.recording_export.remember_directory,
+            )?;
+            state.1.persist(&root.join("settings.json"), value)
+        } else {
+            files.restore()?;
+            output::restore_session_directory(old_recording.clone())
+        }
+    });
     match result {
         Ok(warning) => {
-            current.value = next.clone();
-            current.shortcut_error = warning;
-            current.config_warning = None;
+            {
+                let mut current = state.0.lock().map_err(|e| e.to_string())?;
+                current.registered = registered;
+                current.value = next.clone();
+                current.shortcut_error = warning;
+                current.config_warning = None;
+            }
             if let Ok(mut pressed) = app.state::<ShortcutPressState>().0.lock() {
                 pressed.clear();
             }
             notify_settings(app, &next);
             // 主界面独立订阅导入完成，切换页面也不能保留导入前的表单草稿。
             let _ = app.emit_to("main", "settings-imported", &next);
-            drop(current);
             if clipboard_changed {
                 crate::clipboard::settings_imported(app);
             }
@@ -232,6 +223,10 @@ fn commit(app: &AppHandle, backup: Backup) -> Result<Settings, String> {
             Ok(next)
         }
         Err(error) => {
+            // 快捷键事务失败也可能已改变系统注册；先把实际状态提交回内存，再恢复文件。
+            if let Ok(mut current) = state.0.lock() {
+                current.registered = registered;
+            }
             let mut errors = Vec::new();
             if let Err(error) = files.restore() {
                 errors.push(error);
@@ -264,20 +259,19 @@ pub async fn export_settings(app: AppHandle, window: WebviewWindow) -> Result<bo
         let _operation = TRANSFER
             .try_lock()
             .map_err(|_| "请先完成当前配置导入或导出。".to_string())?;
-        let value = {
+        // 设置快照在短锁内完成；目录读取可能触盘，放到锁外避免阻塞其他设置入口。
+        let (settings, remember_recording) = {
             let state = app.state::<SettingsState>();
             let current = state.0.lock().map_err(|e| e.to_string())?;
-            Backup {
-                schema_version: VERSION,
-                directories: Directories {
-                    captures: image_io::current_directory(&app)?,
-                    recordings: output::configured_directory(
-                        &app,
-                        current.value.recording_export.remember_directory,
-                    )?,
-                },
-                settings: current.value.clone(),
-            }
+            (current.value.clone(), current.value.recording_export.remember_directory)
+        };
+        let value = Backup {
+            schema_version: VERSION,
+            directories: Directories {
+                captures: image_io::current_directory(&app)?,
+                recordings: output::configured_directory(&app, remember_recording)?,
+            },
+            settings,
         };
         let Some(file) = app
             .dialog()

@@ -2,13 +2,22 @@
 import { useRecordingPolling } from '@/features/recording/use-recording-polling'
 import { handleWindowEscape as handleEscape } from '@/shared/ui/escape'
 import { t, te } from '@/shared/i18n/i18n'
-import { onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { Pause, Play, Square, X, Pencil, Trash2 } from 'lucide-vue-next'
 import { api } from '@/services/api'
 import type { RecordingAnnotationView, RecordingAnnotationEditorAction } from '../recording-annotations'
 import { newerRecording, recordingActive, recordingStatus, recordingTime, recordingSpaceAction, type RecordingAction, type RecordingView } from '@/features/recording/recording'
 
 const view = ref<RecordingView | null>(null)
+/** 队列水位只在出现积压/丢帧时通过提示说明，常态不额外占用控制条宽度。 */
+const queueHint = computed(() => {
+  const stats = view.value?.stats
+  if (!stats) return null
+  if (stats.queueDroppedFrames > 0) return { key: '编码队列已满，丢弃 {0} 帧', values: { 0: stats.queueDroppedFrames } }
+  if (stats.queueBackpressureSkips > 0) return { key: '因编码积压暂停取样 {0} 次', values: { 0: stats.queueBackpressureSkips } }
+  if (stats.queuePeak > 0) return { key: '编码队列峰值 {0} 帧', values: { 0: stats.queuePeak } }
+  return null
+})
 const annotation = ref<RecordingAnnotationView | null>(null)
 const busy = ref(false)
 const error = ref('')
@@ -94,7 +103,7 @@ onUnmounted(() => { disposed = true; window.removeEventListener('keydown', key) 
     <span class="dot" :class="{ paused: view?.phase !== 'recording' }" />
     <span class="time" role="timer">{{ recordingTime(view?.seconds ?? 0) }}</span>
     <span class="status" role="status">{{ view ? t(recordingStatus(view)) : t("连接中…") }}</span>
-    <span v-if="view?.phase !== 'countdown'" class="fps" :class="{ dropped: !!view?.droppedFrames }">{{ view?.targetFps ?? 30 }} FPS<template v-if="view?.droppedFrames"> · {{ t("丢帧 {0}", { 0: view.droppedFrames }) }}</template></span>
+    <span v-if="view?.phase !== 'countdown'" class="fps" :class="{ dropped: !!view?.droppedFrames }" :title="queueHint ? t(queueHint.key, queueHint.values) : undefined">{{ view?.targetFps ?? 30 }} FPS<template v-if="view?.droppedFrames"> · {{ t("丢帧 {0}", { 0: view.droppedFrames }) }}</template></span>
     <button v-if="view?.phase === 'ready'" class="start" :disabled="busy" :title='t("开始录制")' :aria-label='t("开始录制")' @click="control('start')"><Play :size="15" />{{ t("开始") }}</button>
     <button v-else-if="view?.phase === 'countdown'" disabled><Play :size="15" />{{ t("等待开始") }}</button>
     <button v-else-if="view?.phase === 'paused'" :disabled="busy" :title='t("继续录制")' :aria-label='t("继续录制")' @click="control('resume')"><Play :size="17" /></button>

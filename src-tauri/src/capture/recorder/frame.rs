@@ -1,4 +1,49 @@
 //! 视频帧始终留在 Rust。CPU 数据独立拥有内存，不借用 WGC 帧池表面。
+use std::sync::{Arc, Mutex};
+
+/// 有界 CPU 帧缓冲池：采集、合成和编码线程之间复用已分配的 BGRA 内存。
+/// 只缓存完整覆盖写出的帧；池中缓冲离开后仍由唯一所有者持有，不共享可变切片。
+pub struct FramePool {
+    free: Mutex<Vec<BgraImage>>,
+    capacity: usize,
+}
+
+impl FramePool {
+    pub fn new(capacity: usize) -> Arc<Self> {
+        Arc::new(Self {
+            free: Mutex::new(Vec::with_capacity(capacity)),
+            capacity,
+        })
+    }
+
+    /// 尺寸不符的缓存直接释放；录制期间尺寸固定，正常路径不会反复命中该分支。
+    pub fn acquire(&self, width: u32, height: u32) -> BgraImage {
+        let mut free = self.free.lock().unwrap_or_else(|e| e.into_inner());
+        while let Some(image) = free.pop() {
+            if image.width == width
+                && image.height == height
+                && image.data.len() == width as usize * height as usize * 4
+            {
+                return image;
+            }
+        }
+        BgraImage::new(width, height)
+    }
+
+    /// 编码器已把像素复制到自己的 NV12 缓冲后才归还；池满时直接释放，不无限占用内存。
+    pub fn release(&self, image: BgraImage) {
+        let mut free = self.free.lock().unwrap_or_else(|e| e.into_inner());
+        if free.len() < self.capacity {
+            free.push(image);
+        }
+    }
+
+    #[cfg(test)]
+    fn free_len(&self) -> usize {
+        self.free.lock().unwrap_or_else(|e| e.into_inner()).len()
+    }
+}
+
 /// 紧密排列的 BGRA 像素；独立类型防止误传给按 RGBA 解释通道的截图 API。
 /// 采集端只去掉 D3D 行尾对齐；视频编码转 NV12，GIF 编码转不透明 RGBA。
 #[derive(Clone)]
@@ -166,6 +211,31 @@ mod annotation_layer_tests {
         }
         .apply(&mut BgraImage::new(3, 2))
         .is_err());
+    }
+}
+
+#[cfg(test)]
+mod frame_pool_tests {
+    use super::*;
+
+    #[test]
+    fn reuses_matching_buffers_and_bounds_the_free_list() {
+        let pool = FramePool::new(1);
+        let image = pool.acquire(2, 2);
+        let pointer = image.data.as_ptr();
+        pool.release(image);
+        let reused = pool.acquire(2, 2);
+        assert_eq!(reused.data.as_ptr(), pointer);
+        pool.release(reused);
+        // 池容量为 1，第二个归还的缓冲直接释放，避免长时间录制无限占用内存。
+        let extra = pool.acquire(2, 2);
+        let other = pool.acquire(2, 2);
+        pool.release(extra);
+        pool.release(other);
+        assert_eq!(pool.free_len(), 1);
+        // 尺寸变化不能复用旧长度，重新分配。
+        let resized = pool.acquire(3, 2);
+        assert_eq!(resized.data.len(), 3 * 2 * 4);
     }
 }
 

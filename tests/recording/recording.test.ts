@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { recordingRegion, defaultInputEffects, newerRecording, recordingAudioStatus, recordingBitrate, recordingStats, recordingActive, recordingConfig, recordingStatus, recordingTime, type RecordingView } from '../../src/features/recording/recording'
 
-const emptyStats = { capturePolls: 0, capturedFrames: 0, captureMillis: 0, captureCopyBytes: 0, compositionCopyBytes: 0, nv12OutputBytes: 0, throttledSamples: 0, composedFrames: 0, compositionMillis: 0, queuedFrames: 0, queueDroppedFrames: 0, staleQueuedFrames: 0, rejectedCaptureFrames: 0, rejectedComposedFrames: 0, recentFps: 0 }
+const emptyStats = { capturePolls: 0, capturedFrames: 0, captureMillis: 0, captureCopyBytes: 0, compositionCopyBytes: 0, nv12OutputBytes: 0, throttledSamples: 0, composedFrames: 0, compositionMillis: 0, queuedFrames: 0, queueDroppedFrames: 0, queueDepth: 0, queuePeak: 0, queueBackpressureSkips: 0, staleQueuedFrames: 0, rejectedCaptureFrames: 0, rejectedComposedFrames: 0, recentFps: 0 }
 const view: RecordingView = { id: 7, revision: 3, phase: 'paused', seconds: 23, frames: 180, droppedFrames: 2, targetFps: 30, systemAudio: false, microphone: false, encodingMillis: 360, targetBitrate: 8_087_040, encoderKind: 'system', encoderFallback: null, countdownRemaining: 0, message: '', path: null, stats: emptyStats }
 describe('录屏会话状态', () => {
   it('按本次录制快照展示四种音频来源组合', () => {

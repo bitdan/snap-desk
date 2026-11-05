@@ -39,12 +39,13 @@ pub fn prepare(
     config: &RecorderConfig,
     size: (u32, u32),
     source: NativeSource,
+    pool: std::sync::Arc<super::frame::FramePool>,
 ) -> Result<Box<dyn CaptureBackend>, String> {
     #[cfg(target_os = "windows")]
-    return Ok(Box::new(windows::Capture::new(config, size, source)?));
+    return Ok(Box::new(windows::Capture::new(config, size, source, pool)?));
     #[cfg(not(target_os = "windows"))]
     {
-        let _ = (config, size, source);
+        let _ = (config, size, source, pool);
         Err("UnsupportedPlatform：macOS / Linux 原生录屏尚未实现。".into())
     }
 }

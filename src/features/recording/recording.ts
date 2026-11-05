@@ -82,7 +82,8 @@ export interface RecordingDiagnostics {
   capturePolls: number; capturedFrames: number; captureMillis: number;
   captureCopyBytes: number; compositionCopyBytes: number; nv12OutputBytes: number;
   throttledSamples: number; composedFrames: number; compositionMillis: number;
-  queuedFrames: number; queueDroppedFrames: number; staleQueuedFrames: number;
+  queuedFrames: number; queueDroppedFrames: number; queueDepth: number; queuePeak: number;
+  queueBackpressureSkips: number; staleQueuedFrames: number;
   rejectedCaptureFrames: number; rejectedComposedFrames: number; recentFps: number
 }
 export interface RecordingView {

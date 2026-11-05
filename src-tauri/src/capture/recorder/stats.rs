@@ -1,6 +1,54 @@
 //! 录屏诊断计数与滚动 FPS；仅保存有界时间戳，不保留图像或输入事件。
 use serde::Serialize;
-use std::collections::VecDeque;
+use std::{
+    collections::VecDeque,
+    sync::atomic::{AtomicUsize, Ordering},
+};
+
+/// 采集线程与编码线程共享的队列水位。采集侧据此暂停取样/合成，编码侧取帧后立即降低水位。
+/// 计数器无锁，避免每次查水位都争用录屏状态锁；只用于节流，不承担帧数据同步。
+#[derive(Default)]
+pub struct QueueGauge {
+    depth: AtomicUsize,
+    peak: AtomicUsize,
+}
+
+impl QueueGauge {
+    pub fn is_full(&self, capacity: usize) -> bool {
+        self.depth.load(Ordering::Acquire) >= capacity
+    }
+
+    /// 成功进入编码队列后调用；峰值只增不减，供结束日志判断是否出现过积压。
+    pub fn submitted(&self) {
+        let depth = self.depth.fetch_add(1, Ordering::AcqRel) + 1;
+        self.peak.fetch_max(depth, Ordering::AcqRel);
+    }
+
+    /// 编码线程取走一帧后立即调用，表示队列槽位已释放，而不是编码完成。
+    /// 使用饱和递减：异常路径多调一次也不能把水位回绕成极大值而永久判定为满。
+    pub fn consumed(&self) {
+        // 用 CAS 循环而不是直接 fetch_sub：异常路径多调一次也不会回绕成极大值。
+        let mut depth = self.depth.load(Ordering::Acquire);
+        loop {
+            let next = depth.saturating_sub(1);
+            match self
+                .depth
+                .compare_exchange_weak(depth, next, Ordering::AcqRel, Ordering::Acquire)
+            {
+                Ok(_) => break,
+                Err(current) => depth = current,
+            }
+        }
+    }
+
+    pub fn depth(&self) -> usize {
+        self.depth.load(Ordering::Acquire)
+    }
+
+    pub fn peak(&self) -> usize {
+        self.peak.load(Ordering::Acquire)
+    }
+}
 
 /// 累计统计不含准备阶段；采集次数包含空取样，节流次数不是编码丢帧。
 #[derive(Clone, Default, Serialize)]
@@ -22,6 +70,11 @@ pub struct RecordingStats {
     pub composition_millis: f64,
     pub queued_frames: usize,
     pub queue_dropped_frames: usize,
+    /// 当前排队帧数与本次录制出现过的峰值；查询时由 QueueGauge 刷新。
+    pub queue_depth: usize,
+    pub queue_peak: usize,
+    /// 队列已满时主动跳过取样/合成的次数；此时尚未生成帧，不计入丢帧。
+    pub queue_backpressure_skips: usize,
     /// 编码线程拒绝的旧代次排队帧；与队列满丢弃共同组成旧 droppedFrames。
     pub stale_queued_frames: usize,
     /// 采集后因暂停/停止/过期时间戳未进入处理的源帧。
@@ -83,6 +136,24 @@ mod tests {
         window.submitted(40_000_000);
         assert_eq!(window.fps(40_000_000), 10.0);
         assert_eq!(window.fps(50_000_000), 1.0);
+    }
+
+    #[test]
+    fn queue_gauge_tracks_capacity_and_peak_without_going_negative() {
+        let queue = QueueGauge::default();
+        assert!(!queue.is_full(2));
+        queue.submitted();
+        assert!(!queue.is_full(2));
+        queue.submitted();
+        assert!(queue.is_full(2));
+        assert_eq!(queue.peak(), 2);
+        queue.consumed();
+        assert!(!queue.is_full(2));
+        queue.consumed();
+        assert_eq!(queue.depth(), 0);
+        queue.consumed();
+        assert_eq!(queue.depth(), 0);
+        assert_eq!(queue.peak(), 2);
     }
 
     #[test]

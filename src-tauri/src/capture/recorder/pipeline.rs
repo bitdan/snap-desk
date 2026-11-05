@@ -1,6 +1,16 @@
 //! 录屏流水线：帧采集、有界编码队列、音频提交和最终发布。
 use super::*;
 
+/// 编码队列容量。满时采集侧暂停取样/合成，编码侧取帧后立即释放槽位。
+pub(super) const QUEUE_CAPACITY: usize = 2;
+
+/// 丢弃复用底图时归还缓冲；直接 `None` 会释放大图，下一次仍需重新分配。
+fn clear_base(base: &mut Option<frame::BgraImage>, pool: &frame::FramePool) {
+    if let Some(image) = base.take() {
+        pool.release(image);
+    }
+}
+
 /// 采集线程绝不等待编码队列；开启特效时额外保留一帧干净底图，动画与事件数量有界。
 pub(super) fn collect(
     app: AppHandle,
@@ -10,12 +20,16 @@ pub(super) fn collect(
     root: PathBuf,
     mut backend: Box<dyn capture::CaptureBackend>,
     audio: Option<audio::Worker>,
+    queue: std::sync::Arc<stats::QueueGauge>,
+    pool: std::sync::Arc<frame::FramePool>,
 ) {
     let state = app.state::<RecordingState>();
-    let (sender, receiver) = mpsc::sync_channel::<QueuedFrame>(2);
+    let (sender, receiver) = mpsc::sync_channel::<QueuedFrame>(QUEUE_CAPACITY);
     let abort = std::sync::Arc::new(AtomicBool::new(false));
     let writer_abort = abort.clone();
     let writer_app = app.clone();
+    let writer_queue = queue.clone();
+    let writer_pool = pool.clone();
     let writer = std::thread::Builder::new()
         .name("recording-encoder".into())
         .spawn(move || {
@@ -27,6 +41,8 @@ pub(super) fn collect(
                 receiver,
                 &writer_abort,
                 audio,
+                writer_queue,
+                writer_pool,
             )
         });
     let result = match writer {
@@ -66,9 +82,20 @@ pub(super) fn collect(
                         // 不按录制时长自动停止；停止、取消和采集/编码异常仍走统一收尾。
                         (s.view.phase == Phase::Recording, s.timeline.generation)
                     };
+                    // 编码线程尚未取走排队帧时不再取样/合成；否则刚生成的画面仍会因队列满被丢弃。
+                    // 水位只减不增的竞争会让这里偶尔多等一轮，但不会漏采或跳过停止检查。
+                    if running && queue.is_full(QUEUE_CAPACITY) {
+                        if let Ok(mut guard) = state.0.lock() {
+                            if let Some(s) = guard.as_mut().filter(|s| s.view.id == id) {
+                                s.view.stats.queue_backpressure_skips += 1;
+                            }
+                        }
+                        std::thread::sleep(Duration::from_millis(2));
+                        continue;
+                    }
                     let animated = live_annotations::has_timed_annotations(&app, id);
                     if animated != annotation_animation && !config.input_effects.enabled() {
-                        base = None;
+                        clear_base(&mut base, &pool);
                         base_dirty = false;
                         if running && animated {
                             capture_stage.set("capture_refresh");
@@ -80,7 +107,7 @@ pub(super) fn collect(
                         // 先停止并 join 消息线程，再清缓存；恢复使用新监听器，不继承按住状态。
                         listener = None;
                         compositor.clear();
-                        base = None;
+                        clear_base(&mut base, &pool);
                         base_dirty = false;
                         if running && (config.input_effects.enabled() || annotation_animation) {
                             capture_stage.set("capture_refresh");
@@ -179,7 +206,9 @@ pub(super) fn collect(
                             };
                             if let Some((pts, frame, events)) = projected {
                                 if let Some(frame) = frame {
-                                    base = Some(frame.image);
+                                    if let Some(old) = base.replace(frame.image) {
+                                        pool.release(old);
+                                    }
                                     base_dirty = true;
                                     waiting_since = None;
                                 }
@@ -238,11 +267,13 @@ pub(super) fn collect(
                                                 image,
                                             }) {
                                                 Ok(()) => {
+                                                    queue.submitted();
                                                     base_dirty = false;
                                                     s.view.stats.queued_frames += 1;
                                                 }
-                                                Err(TrySendError::Full(_)) => {
+                                                Err(TrySendError::Full(rejected)) => {
                                                     // 包括效果结束后的干净帧，拥堵后也必须重试，防止光圈冻结。
+                                                    pool.release(rejected.image);
                                                     base_dirty = true;
                                                     s.view.stats.queue_dropped_frames += 1;
                                                     s.view.dropped_frames += 1;
@@ -286,8 +317,12 @@ pub(super) fn collect(
                                         annotations: live_annotations::snapshot(&app, id).1,
                                         image: frame.image,
                                     }) {
-                                        Ok(()) => s.view.stats.queued_frames += 1,
-                                        Err(TrySendError::Full(_)) => {
+                                        Ok(()) => {
+                                            queue.submitted();
+                                            s.view.stats.queued_frames += 1;
+                                        }
+                                        Err(TrySendError::Full(rejected)) => {
+                                            pool.release(rejected.image);
                                             s.view.stats.queue_dropped_frames += 1;
                                             s.view.dropped_frames += 1;
                                             s.view.revision += 1;
@@ -374,7 +409,7 @@ pub(super) fn collect(
             // 无论停止、取消或异常，封装前都释放设备；队列保留冻结前的有效代次。
             drop(listener);
             compositor.clear();
-            drop(base);
+            clear_base(&mut base, &pool);
             drop(backend);
             drop(sender);
             let encoded = writer
@@ -392,6 +427,9 @@ pub(super) fn collect(
     if let Ok(mut guard) = state.0.lock() {
         if let Some(s) = guard.as_mut().filter(|s| s.view.id == id) {
             s.freeze();
+            // 查询可能很久没发生；收尾日志前补一次最终水位，避免峰值统计停留在旧值。
+            s.view.stats.queue_depth = queue.depth();
+            s.view.stats.queue_peak = queue.peak();
             let (phase, text, path) = match result {
                 Ok(path) => (Phase::Completed, format!("录屏已保存：{path}"), Some(path)),
                 Err(_) if s.cancel => (
@@ -419,9 +457,9 @@ pub(super) fn collect(
                 Phase::Cancelled => "cancelled",
                 _ => "failed",
             };
-            log::log!(level, "event=recording.finished module=recording op=rec-{id} result={outcome} duration_ms={} captured={} encoded={} dropped={} encoding_ms={} queued={} queue_dropped={} throttled={} rejected_capture={} stale={}",
+            log::log!(level, "event=recording.finished module=recording op=rec-{id} result={outcome} duration_ms={} captured={} encoded={} dropped={} encoding_ms={} queued={} queue_dropped={} queue_peak={} queue_skips={} throttled={} rejected_capture={} stale={}",
                 (s.view.seconds * 1000.0) as u64, s.view.stats.captured_frames, s.view.frames, s.view.dropped_frames, s.view.encoding_millis,
-                s.view.stats.queued_frames, s.view.stats.queue_dropped_frames, s.view.stats.throttled_samples,
+                s.view.stats.queued_frames, s.view.stats.queue_dropped_frames, s.view.stats.queue_peak, s.view.stats.queue_backpressure_skips, s.view.stats.throttled_samples,
                 s.view.stats.rejected_capture_frames, s.view.stats.stale_queued_frames);
             message = text.clone();
             s.view.phase = phase;
@@ -462,6 +500,8 @@ fn write_video(
     receiver: mpsc::Receiver<QueuedFrame>,
     abort: &AtomicBool,
     audio: Option<audio::Worker>,
+    queue: std::sync::Arc<stats::QueueGauge>,
+    pool: std::sync::Arc<frame::FramePool>,
 ) -> Result<String, String> {
     // 阶段只来自源码常量；保留 UI 的原生错误，日志不接触路径或自由文本。
     let failure_stage = std::cell::Cell::new("output_config");
@@ -507,7 +547,11 @@ fn write_video(
                 pump_audio(worker, &mut mixer, encoder.as_mut(), &state, id, false)?;
             }
             let frame = match receiver.recv_timeout(Duration::from_millis(10)) {
-                Ok(frame) => frame,
+                Ok(frame) => {
+                    // 出队即表示槽位可复用；编码本身仍可能继续占用当前帧。
+                    queue.consumed();
+                    frame
+                }
                 Err(mpsc::RecvTimeoutError::Timeout) => {
                     // 没有音轨时也推进静止画面，避免长录屏把全部补帧积压到停止导出。
                     // 只推进已经过的媒体时间，暂停期间 elapsed 保持不变。
@@ -537,9 +581,12 @@ fn write_video(
                     .filter(|s| s.view.id == id)
                     .ok_or("录屏会话已过期。")?;
                 if s.cancel {
+                    // 取消后队列中尚未编码的帧仍可归还缓冲，尽早释放大图内存。
+                    pool.release(frame.image);
                     return Err("已取消录屏。".into());
                 }
                 if frame.generation != s.timeline.generation {
+                    pool.release(frame.image);
                     s.view.stats.stale_queued_frames += 1;
                     s.view.dropped_frames += 1;
                     s.view.revision += 1;
@@ -552,10 +599,16 @@ fn write_video(
             let mut image = frame.image;
             failure_stage.set("annotation_apply");
             if let Some(layer) = &frame.annotations {
-                layer.apply(&mut image, frame.pts)?;
+                if let Err(error) = layer.apply(&mut image, frame.pts) {
+                    pool.release(image);
+                    return Err(error);
+                }
             }
             failure_stage.set("video_write");
-            let written = encoder.push(&image, frame.pts)?;
+            let written = encoder.push(&image, frame.pts);
+            // MF/GIF 编码器已复制到自有缓冲或完成量化；帧内存可立即归还池。
+            pool.release(image);
+            let written = written?;
             progress(app, "encoding", Some(&pending));
             let encoding_millis = encoding_started.elapsed().as_secs_f64() * 1000.0;
             failure_stage.set("encoder_state");

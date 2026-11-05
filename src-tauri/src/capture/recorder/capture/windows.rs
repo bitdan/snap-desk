@@ -154,6 +154,8 @@ pub struct Capture {
     device: ID3D11Device,
     region: Rect,
     size: (u32, u32),
+    /// 采集、合成和编码线程共用的 CPU 帧缓冲；每帧复制完成即归还。
+    frames: Arc<super::super::frame::FramePool>,
     // DWM 边界与 WGC 表面各自保存基准，避免把固有边框差异误判为窗口缩放。
     window_size: Option<(i32, i32)>,
     started: bool,
@@ -166,6 +168,7 @@ impl Capture {
         config: &RecorderConfig,
         size: (u32, u32),
         source: NativeSource,
+        frames: Arc<super::super::frame::FramePool>,
     ) -> Result<Self, String> {
         // 编码准备线程与实际采集线程都显式使用物理像素，避免跨 DPI 上下文比较尺寸。
         let _dpi = crate::capture::desktop::PhysicalDpi::enter()?;
@@ -294,6 +297,7 @@ impl Capture {
                 device,
                 region,
                 size,
+                frames,
                 window_size,
                 started: false,
                 source,
@@ -335,7 +339,7 @@ impl Capture {
             self.context
                 .Map(&self.staging, 0, D3D11_MAP_READ, 0, Some(&mut mapped))
                 .map_err(error)?;
-            let mut image = super::super::frame::BgraImage::new(r.width, r.height);
+            let mut image = self.frames.acquire(r.width, r.height);
             // RowPitch 可能包含行尾对齐；整行复制 BGRA，不逐像素交换通道。
             for y in 0..r.height as usize {
                 let row = std::slice::from_raw_parts(
@@ -391,7 +395,7 @@ impl CaptureBackend for Capture {
         if self.started {
             // 新会话首次 StartCapture 会提供当前桌面，旧池随赋值释放并注销回调。
             // 创建失败交给 manager 统一结束，不能回退到过期底图。
-            *self = Self::new(&self.config, self.size, self.source)?;
+            *self = Self::new(&self.config, self.size, self.source, self.frames.clone())?;
         }
         Ok(())
     }

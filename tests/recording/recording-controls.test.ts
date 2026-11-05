@@ -21,8 +21,8 @@ function view(phase: RecordingView['phase'], id = 7): RecordingView {
     droppedFrames: 0, encodingMillis: 0, targetBitrate: 8000000, encoderKind: 'software', encoderFallback: null,
     countdownRemaining: 0, message: '', path: phase === 'completed' ? 'D:/video.mp4' : null,
     stats: { throttledSamples: 0, queuedFrames: 0, capturePolls: 0, capturedFrames: 90, captureMillis: 0, captureCopyBytes: 0, compositionCopyBytes: 0,
-      composedFrames: 90, compositionMillis: 0, queueDroppedFrames: 0, staleQueuedFrames: 0, nv12OutputBytes: 0,
-      recentFps: 30, rejectedCaptureFrames: 0, rejectedComposedFrames: 0 } }
+      composedFrames: 90, compositionMillis: 0, queueDroppedFrames: 0, queueDepth: 0, queuePeak: 0, queueBackpressureSkips: 0,
+      staleQueuedFrames: 0, nv12OutputBytes: 0, recentFps: 30, rejectedCaptureFrames: 0, rejectedComposedFrames: 0 } }
 }
 async function flush() { await vi.advanceTimersByTimeAsync(0); await nextTick() }
 async function mount() { renderer.render(h(Wrapper), root); await flush() }
@@ -49,6 +49,12 @@ describe('录屏控制条丢帧提示', () => {
     api.currentRecording.mockResolvedValue(view('recording'))
     await mount()
     expect(find(node => (node.text ?? '').includes('丢帧'))).toBeUndefined()
+  })
+  it('队列积压时通过提示说明水位与暂停取样次数', async () => {
+    api.currentRecording.mockResolvedValue({ ...view('recording'), stats: { ...view('recording').stats, queuePeak: 2, queueBackpressureSkips: 3 } })
+    await mount()
+    const fps = find(node => String(node.props.class).includes('fps'))!
+    expect(fps.props.title).toContain('因编码积压暂停取样 3 次')
   })
 })
 

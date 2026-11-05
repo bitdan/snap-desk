@@ -135,6 +135,10 @@ function closeMenu(restoreFocus = false) {
   contextMenu.value = null
   if (restoreFocus) menuTrigger?.focus({ preventScroll: true })
 }
+/** Tab 从画面进入工具栏后，焦点离开工具区即撤销临时可见状态。 */
+function controlsFocusOut(event: FocusEvent) {
+  if (event.relatedTarget && !toolbar.value?.contains(event.relatedTarget as Node)) keyboardVisible.value = false
+}
 /** 选中标注工具时先为底栏留出空间；右键菜单仅保留图片和窗口操作。 */
 async function startEditing(tool: AnnotationTool = 'edit') {
   closeMenu(true)
@@ -237,17 +241,25 @@ function key(event: KeyboardEvent) {
   }
   if (key === 'escape') { event.preventDefault(); void action('hide'); return }
   if ((event.target as HTMLElement).closest('button, input, select')) return
-  if (key === 'tab') {
+  // 只有从贴图画面按 Tab 才接管：展开时直接进入第一个控件，收起时先展开再聚焦。
+  // 不改写 Shift+Tab，也不拦截窗口首次 Tab（浏览器先把焦点移到画面）。
+  const onStage = !!(event.target as HTMLElement).closest?.('.pin-stage')
+  if (key === 'tab' && onStage && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey) {
     event.preventDefault()
-    if (controls.value) { void toggleControls(); return }
-    // Tab 展开工具栏后把焦点送进第一个控件，避免只切换显隐却无法继续键盘操作。
     keyboardVisible.value = true
-    void toggleControls().then(() => nextTick()).then(() => {
+    const focusFirst = () => {
       if (!controls.value) { keyboardVisible.value = false; return }
       const first = toolbar.value?.querySelector<HTMLElement>('button:not(:disabled), select:not(:disabled), input:not(:disabled)')
       if (first) first.focus()
       else keyboardVisible.value = false
-    })
+    }
+    if (controls.value) {
+      // 收起状态由 CSS visibility 隐藏；先让 keyboardVisible 生效再聚焦，否则浏览器会拒绝隐藏元素。
+      void nextTick().then(focusFirst)
+      return
+    }
+    // 展开会写回原生视图；等待 Vue 更新后再聚焦，避免焦点落在旧 DOM 上。
+    void toggleControls().then(() => nextTick()).then(focusFirst)
     return
   }
   else if (key === '+' || key === '=') { event.preventDefault(); zoom(1) }
@@ -286,7 +298,7 @@ function closeOnResize() {
 
 <template>
   <div class="pin-shell" :class="{ 'is-focused': focused, 'controls-visible': controlsHovered || keyboardVisible || !!error || !!message }" :style="shellStyle" @pointerleave="hideControls" @contextmenu.prevent>
-    <div v-show="imageReady" class="pin-stage" :inert="!!recognitionMode" tabindex="0" :aria-label='t("贴图，右键打开菜单")' :title="t('Ctrl＋左键拖出内容；拖入微信前可松开 Ctrl')" :style="[stageStyle, pinAppearanceStyle(appearance, display.stageWidth, display.stageHeight, frame?.view.opacity ?? 1, focused)]" @pointerenter="keepControlsVisible" @pointerleave="scheduleControlsHide" @pointerdown="drag" @pointermove="contentDrag.move" @pointerup="contentDrag.cancel" @pointercancel="contentDrag.cancel" @lostpointercapture="contentDrag.cancel" @wheel.prevent="wheel" @contextmenu.capture="openMenu">
+    <div v-show="imageReady" class="pin-stage" :inert="!!recognitionMode" tabindex="0" :aria-label='t("贴图，按 Tab 进入工具栏，右键打开菜单")' :title="t('Ctrl＋左键拖出内容；拖入微信前可松开 Ctrl')" :style="[stageStyle, pinAppearanceStyle(appearance, display.stageWidth, display.stageHeight, frame?.view.opacity ?? 1, focused)]" @pointerenter="keepControlsVisible" @pointerleave="scheduleControlsHide" @pointerdown="drag" @pointermove="contentDrag.move" @pointerup="contentDrag.cancel" @pointercancel="contentDrag.cancel" @lostpointercapture="contentDrag.cancel" @wheel.prevent="wheel" @contextmenu.capture="openMenu">
       <div v-if="frame" class="pin-canvas">
         <div class="pin-image-content" :style="{ width: `${display.imageWidth}px`, height: `${display.imageHeight}px`, opacity: frame.view.opacity }">
           <img v-if="frame.dataUrl" :src="frame.dataUrl" :alt='t("桌面贴图")' draggable="false" @load="imageLoaded" @error="error = '贴图预览加载失败，可关闭后重新贴图。'" />
@@ -294,7 +306,7 @@ function closeOnResize() {
         </div>
       </div>
     </div>
-    <section ref="toolbar" :inert="!!recognitionMode" :style="floatingToolbarStyle" class="pin-controls" :class="{ collapsed: !controls, floating: floatingToolbarStyle.position }" :aria-label='t("贴图工具")' @pointerenter="keepControlsVisible" @pointerleave="scheduleControlsHide" @contextmenu.stop.prevent>
+    <section ref="toolbar" :inert="!!recognitionMode" :style="floatingToolbarStyle" class="pin-controls" :class="{ collapsed: !controls, floating: floatingToolbarStyle.position }" :aria-label='t("贴图工具")' @pointerenter="keepControlsVisible" @pointerleave="scheduleControlsHide" @focusout="controlsFocusOut" @contextmenu.stop.prevent>
       <AnnotationToolbar v-if="frame && controls" :editor="editor" :disabled="busy || frame.view.locked" :active="annotating" @tool="startEditing" @float="floatToolbar" @reset-position="resetToolbarPosition">
         <template #leading><button :disabled="!editable" :aria-pressed="!annotating" :title='t("移动贴图")' :aria-label='t("移动贴图")' @click="annotating = false; editor.selected = -1"><Move :size="16" /></button></template>
         <template #actions>
@@ -321,7 +333,7 @@ function closeOnResize() {
         </div></template>
       </AnnotationToolbar>
       <div v-else-if="!frame" class="pin-row"><span>{{ busy ? t("正在加载…") : t("图片未加载") }}</span><button :disabled="busy" @click="load">{{ t("重试") }}</button><button :disabled="busy" @click="action('close')">{{ t("关闭") }}</button></div>
-      <button v-else class="pin-toggle" :disabled="busy" :title='t("展开贴图工具（右键）")' @click="toggleControls"><ChevronUp :size="16" />{{ t("工具") }}</button>
+      <button v-else class="pin-toggle" :disabled="busy" :title='t("展开贴图工具（Tab）")' @click="toggleControls"><ChevronUp :size="16" />{{ t("工具") }}</button>
       <p v-if="error" role="alert" class="pin-status pin-error" :title="te(error)">{{ te(error) }}</p>
       <p v-else-if="message" role="status" class="pin-status" :title="t(message)">{{ t(message) }}</p>
     </section>

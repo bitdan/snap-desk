@@ -314,29 +314,34 @@ pub async fn clipboard_configure(
     settings.validate()?;
     work(app, window, move |app, s| {
         let state = app.state::<crate::settings::SettingsState>();
-        let mut current = state.0.lock().map_err(|_| "设置不可用。")?;
-        let old = current.value.clipboard.clone();
-        if let Err(error) = s.configure(app, settings.clone()) {
+        // 与普通设置保存共用写闸门；剪贴板启停和配置落盘都在设置数据锁之外。
+        let _gate = state.1.gate().map_err(|_| "设置不可用。")?;
+        let (old, mut next) = {
+            let current = state.0.lock().map_err(|_| "设置不可用。")?;
+            (current.value.clipboard.clone(), current.value.clone())
+        };
+        next.clipboard = settings.clone();
+        if let Err(error) = s.configure(app, settings) {
             let _ = s.configure(app, old.clone());
             s.report(app, error.clone());
             let _ = app.emit_to("main", "clipboard-state", s.status());
             return Err(error);
         }
-        let mut next = current.value.clone();
-        next.clipboard = settings;
         let path = app
             .path()
             .app_config_dir()
             .map_err(|_| "配置目录不可用。")?
             .join("settings.json");
-        if let Err(e) = crate::settings::persist(&path, &next) {
+        if let Err(e) = state.1.persist(&path, &next) {
             if let Err(rollback) = s.configure(app, old) {
                 s.report(app, rollback);
             }
             return Err(e);
         }
-        current.value = next.clone();
-        drop(current);
+        {
+            let mut current = state.0.lock().map_err(|_| "设置不可用。")?;
+            current.value = next.clone();
+        }
         // 先保存配置成功再清理；配置写盘失败不能按未提交的配额删除历史。
         if let Err(error) = s.maintain(app) {
             s.report(app, error);

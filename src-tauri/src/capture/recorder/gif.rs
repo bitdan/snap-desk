@@ -62,8 +62,8 @@ mod tests {
         // 同一时间戳重复上报只丢帧，不终止整段录制。
         assert!(!encoder.push(&BgraImage::new(2, 2), 0).unwrap());
         encoder.push(&BgraImage::new(2, 2), 1_000_000).unwrap();
-        // 时间回退仍视为时间线故障。
-        assert!(encoder.push(&BgraImage::new(2, 2), 500_000).is_err());
+        // 时间回退也只丢该帧，后续正常帧仍可继续封装。
+        assert!(!encoder.push(&BgraImage::new(2, 2), 500_000).unwrap());
         encoder.finish(2_000_000).unwrap();
         assert!(encoder.push(&BgraImage::new(2, 2), 3_000_000).is_err());
     }
@@ -124,12 +124,9 @@ impl Encoder for GifEncoder {
         if self.writer.is_none() || image.dimensions() != (self.width, self.height) || pts < 0 {
             return Err("GIF 帧尺寸或编码状态无效。".into());
         }
-        // 重复时间戳只丢弃该帧；真正回退说明时间线异常，仍终止录制。
-        if self.last_pts.is_some_and(|last| pts == last) {
+        // 重复或偶发回退只丢弃该帧；GIF 与 MP4 都在驱动乱序时保留整段录制。
+        if self.last_pts.is_some_and(|last| pts <= last) {
             return Ok(false);
-        }
-        if self.last_pts.is_some_and(|last| pts < last) {
-            return Err("GIF 时间戳必须严格递增。".into());
         }
         let mut rgba = image.opaque_rgba()?;
         self.flush_until(pts)?;

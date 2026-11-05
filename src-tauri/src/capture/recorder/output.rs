@@ -161,7 +161,7 @@ pub(crate) fn configured_directory(
     selected_directory(&record(app)?, remember, &mut session)
 }
 
-/// 选择器和配置导入共用目录提交；调用方持有设置锁，保证与导入互斥。
+/// 选择器和配置导入共用目录提交；调用方持有设置写闸门，保证与导入互斥。
 pub(crate) fn configure_directory(
     app: &AppHandle,
     directory: Option<&Path>,
@@ -259,13 +259,15 @@ pub async fn choose_recording_directory(
             .map_err(|_| "请先完成当前目录选择。".to_string())?;
         if reset {
             let state = app.state::<SettingsState>();
-            let current = state.0.lock().map_err(|e| e.to_string())?;
-            configure_directory(
-                &app,
-                None,
-                current.value.recording_export.remember_directory,
-            )?;
-            drop(current);
+            // 只在短锁内读取偏好；目录写入与配置导入共用写闸门，对话框不阻塞设置保存。
+            let remember = {
+                let current = state.0.lock().map_err(|e| e.to_string())?;
+                current.value.recording_export.remember_directory
+            };
+            {
+                let _gate = state.1.gate()?;
+                configure_directory(&app, None, remember)?;
+            }
             let (path, is_default) = resolve(&app)?;
             return Ok(Some(view(&path, is_default)));
         }
@@ -285,12 +287,14 @@ pub async fn choose_recording_directory(
         let path = selected.into_path().map_err(|e| e.to_string())?;
         validate_directory(&path)?;
         let state = app.state::<SettingsState>();
-        let current = state.0.lock().map_err(|e| e.to_string())?;
-        configure_directory(
-            &app,
-            Some(&path),
-            current.value.recording_export.remember_directory,
-        )?;
+        let remember = {
+            let current = state.0.lock().map_err(|e| e.to_string())?;
+            current.value.recording_export.remember_directory
+        };
+        {
+            let _gate = state.1.gate()?;
+            configure_directory(&app, Some(&path), remember)?;
+        }
         Ok(Some(view(&path, false)))
     })
     .await
