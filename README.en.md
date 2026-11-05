@@ -1,10 +1,10 @@
-# Snap Desk
+# Snap Desk — Free Open-Source Windows Screenshot & Screen Recorder
 
 [简体中文](README.md) · English
 
-A free, open-source screenshot and screen recording tool for Windows, with scrolling capture, image annotation, image pinning, OCR, translation, and clipboard management.
+**Snap Desk** is a free, open-source screen capture and screen recording app for Windows. Take region screenshots and scrolling screenshots, annotate or pin images, record MP4/GIF videos, recognize text with OCR, translate text, and manage clipboard history. Capture and recording work locally; OCR and translation offer optional offline engines and user-configured online APIs.
 
-[Download](https://github.com/bitdan/snap-desk/releases) · [Quick Start](#quick-start) · [Technical Guide (Chinese)](TECHNICAL.md) · [Roadmap (Chinese)](Snap_Desk_TODO.md)
+[Website](https://bitdan.github.io/snap-desk/en/) · [Download for Windows](https://github.com/bitdan/snap-desk/releases) · [Quick Start](#quick-start) · [Technical Guide (Chinese)](TECHNICAL.md) · [Roadmap (Chinese)](Snap_Desk_TODO.md)
 
 ## Download
 

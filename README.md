@@ -1,10 +1,10 @@
-# Snap Desk
+# Snap Desk — 免费开源的 Windows 截图、滚动截图与录屏工具
 
 简体中文 · [English](README.en.md)
 
-免费开源的 Windows 截图与录屏工具，集成滚动截图、图像标注、桌面贴图、OCR 文字识别、文本翻译和剪贴板管理。
+**Snap Desk** 是一款免费开源的 Windows 截图与屏幕录制软件，支持区域截图、长截图（滚动截图）、图片标注、桌面贴图、MP4/GIF 录屏、OCR 文字识别、文本翻译和剪贴板历史管理。截图及录屏可在本机完成，OCR 和翻译可根据需要选择离线引擎或自配置的在线 API。
 
-[下载](https://github.com/bitdan/snap-desk/releases) · [开始使用](#开始使用) · [技术说明](TECHNICAL.md) · [开发进度](Snap_Desk_TODO.md)
+[项目官网](https://bitdan.github.io/snap-desk/) · [下载 Windows 版本](https://github.com/bitdan/snap-desk/releases) · [开始使用](#开始使用) · [技术说明](TECHNICAL.md) · [开发进度](Snap_Desk_TODO.md)
 
 ## 下载
 
