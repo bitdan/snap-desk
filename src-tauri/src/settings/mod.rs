@@ -678,6 +678,8 @@ pub async fn save_settings(
             .lock()
             .map_err(|e| e.to_string())?
             .clear();
+        // 通知与托盘菜单更新不持有配置锁，避免拖慢截图、贴图等读取设置的入口。
+        drop(current);
         notify_settings(&app, &settings);
         Ok(settings)
     })
