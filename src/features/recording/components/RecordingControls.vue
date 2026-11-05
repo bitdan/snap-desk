@@ -94,7 +94,7 @@ onUnmounted(() => { disposed = true; window.removeEventListener('keydown', key) 
     <span class="dot" :class="{ paused: view?.phase !== 'recording' }" />
     <span class="time" role="timer">{{ recordingTime(view?.seconds ?? 0) }}</span>
     <span class="status" role="status">{{ view ? t(recordingStatus(view)) : t("连接中…") }}</span>
-    <span v-if="view?.phase !== 'countdown'" class="fps">{{ view?.targetFps ?? 30 }} FPS</span>
+    <span v-if="view?.phase !== 'countdown'" class="fps" :class="{ dropped: !!view?.droppedFrames }">{{ view?.targetFps ?? 30 }} FPS<template v-if="view?.droppedFrames"> · {{ t("丢帧 {0}", { 0: view.droppedFrames }) }}</template></span>
     <button v-if="view?.phase === 'ready'" class="start" :disabled="busy" :title='t("开始录制")' :aria-label='t("开始录制")' @click="control('start')"><Play :size="15" />{{ t("开始") }}</button>
     <button v-else-if="view?.phase === 'countdown'" disabled><Play :size="15" />{{ t("等待开始") }}</button>
     <button v-else-if="view?.phase === 'paused'" :disabled="busy" :title='t("继续录制")' :aria-label='t("继续录制")' @click="control('resume')"><Play :size="17" /></button>
@@ -118,6 +118,7 @@ onUnmounted(() => { disposed = true; window.removeEventListener('keydown', key) 
 button { min-width: 30px; display: flex; align-items: center; justify-content: center; gap: 3px; flex: none; padding: 0 7px; height: 30px; border: 1px solid #ddd; border-radius: 5px; white-space: nowrap; }
 .start { background: #7c3aed; color: white; border-color: #7c3aed; }
 .fps { color: #71717a; font-size: 11px; white-space: nowrap; }
+.fps.dropped { color: #b45309; }
 button:hover { background: #ede9fe; color: #7c3aed; }
 button:disabled { opacity: .4; }
 .error { position: absolute; bottom: 0; left: 4px; right: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #b91b1b; font-size: 10px; }

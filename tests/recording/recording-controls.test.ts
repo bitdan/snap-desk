@@ -39,6 +39,19 @@ beforeEach(() => {
 })
 afterEach(() => { renderer.render(null, root); vi.clearAllTimers(); vi.useRealTimers(); vi.unstubAllGlobals() })
 
+describe('录屏控制条丢帧提示', () => {
+  it('编码落后产生丢帧时显示丢帧数量', async () => {
+    api.currentRecording.mockResolvedValue({ ...view('recording'), droppedFrames: 12 })
+    await mount()
+    expect(find(node => (node.text ?? '').includes('丢帧 12'))).toBeDefined()
+  })
+  it('没有丢帧时不附加提示', async () => {
+    api.currentRecording.mockResolvedValue(view('recording'))
+    await mount()
+    expect(find(node => (node.text ?? '').includes('丢帧'))).toBeUndefined()
+  })
+})
+
 describe('录屏控制条直接结束并保存', () => {
   it.each(['ready', 'countdown', 'recording', 'paused'] as const)('%s 阶段通过独立控制条进入标注', async phase => {
     api.currentRecording.mockResolvedValue(view(phase))
