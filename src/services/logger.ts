@@ -1,6 +1,7 @@
 import { isTauri } from '@tauri-apps/api/core'
 import { debug, error, info, warn } from '@tauri-apps/plugin-log'
 import { ipcCommands, type IpcCommand } from '@/services/ipc-commands'
+import { windowKinds, type WindowKind } from '@/shared/window/window-kind'
 
 type Level = 'debug' | 'info' | 'warn' | 'error'
 type ErrorMeta = { kind?: string; line?: number; column?: number }
@@ -9,17 +10,19 @@ type EventMeta = {
   'frontend.uncaught_error': ErrorMeta | undefined
   'frontend.unhandled_rejection': ErrorMeta | undefined
   'frontend.appearance_listener_failed': ErrorMeta | undefined
+  'frontend.html_renderer_failed': ErrorMeta | undefined
   'frontend.mount_failed': ErrorMeta | undefined
+  'frontend.subscription_failed': ErrorMeta | undefined
   'vue.component_error': ErrorMeta | undefined
 }
-const events = new Set(['ipc.failed', 'frontend.uncaught_error', 'frontend.unhandled_rejection', 'frontend.mount_failed', 'frontend.appearance_listener_failed', 'vue.component_error'])
+const events = new Set(['ipc.failed', 'frontend.uncaught_error', 'frontend.unhandled_rejection', 'frontend.mount_failed', 'frontend.appearance_listener_failed', 'frontend.html_renderer_failed', 'frontend.subscription_failed', 'vue.component_error'])
 const commands = new Set<string>(ipcCommands)
 const writers = { debug, error, info, warn }
 const errorKinds = new Set(['Error', 'TypeError', 'ReferenceError', 'SyntaxError', 'RangeError', 'URIError', 'EvalError', 'AggregateError', 'DOMException', 'ResourceError', 'ResizeObserverLoop', 'non_error', 'unknown'])
-let windowKind = 'unknown'
-/** 只接受应用固定窗口类别，不记录带用户数据的窗口标签或 URL。 */
+let windowKind: WindowKind | 'unknown' = 'unknown'
+/** 只接受应用固定窗口类别，不记录带用户数据的窗口标签或 URL；清单与窗口表共用一份。 */
 export function setLogWindowKind(kind: string): void {
-  windowKind = ['main', 'capture', 'pin', 'selection-edge', 'recording-controls', 'scroll-preview', 'scroll-controls'].includes(kind) ? kind : 'unknown'
+  windowKind = windowKinds.includes(kind as WindowKind) ? kind as WindowKind : 'unknown'
 }
 /** 只取固定异常类别；异常正文、堆栈和任意自定义 name 均不写盘。 */
 function errorKind(value: unknown): string {

@@ -1,0 +1,66 @@
+name: CI
+
+# 每次推送与 PR 都先跑静态检查和测试；发布流水线仍只负责打标签后的构建与上传。
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHONUTF8: '1'
+  PYTHONIOENCODING: utf-8
+
+jobs:
+  frontend:
+    name: Frontend checks and tests
+    runs-on: windows-2022
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      # check 覆盖目录边界、IPC 契约和 vue-tsc；test 覆盖 vitest 与脚本测试。
+      - name: Static checks
+        run: npm run check
+      - name: Frontend tests
+        run: npm test
+
+  native:
+    name: Native library tests
+    runs-on: windows-2022
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Setup Rust
+        run: |
+          rustup toolchain install stable-x86_64-pc-windows-msvc --profile minimal
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          rustup default stable-x86_64-pc-windows-msvc
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+      # 与发布流水线使用同一条命令；默认跳过需要实机桌面或模型资源的 ignored 测试。
+      - name: Test native library
+        working-directory: src-tauri
+        run: cargo test --locked --lib

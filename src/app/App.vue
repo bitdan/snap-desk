@@ -27,6 +27,7 @@ import { api, desktop, onDelay, onError, onSettingsChanged, onSettingsImported, 
 import type { AppStatus } from '@/features/settings/types'
 import { defaultSettings, exportFilenamePreview, validateExportSettings, validateShortcuts, shortcutActions, needsOnboarding } from '@/features/settings/settings'
 import { errorMessage } from '@/services/errors'
+import { logFrontendFailure } from '@/services/logger'
 import AppearanceSettings from '@/features/settings/components/AppearanceSettings.vue'
 import { applyAppearance, type Appearance } from '@/shared/ui/appearance'
 import UpdateNotice from '@/features/settings/components/UpdateNotice.vue'
@@ -61,15 +62,15 @@ const shortcutExampleCopied = ref(false)
 const error = ref('')
 const disposers: (() => void)[] = []
 let disposed = false
-let delayRevision = 0
-let configRevision = 0
+let delayRevision = 0, configRevision = 0, statusRevision = 0
 const initializing = ref(false)
 const initializationFailed = ref(false)
 const locked = computed(() => !desktop || !status.value || initializing.value || initializationFailed.value || pending.value || saving.value || editingShortcut.value || testingShortcuts.value || remaining.value > 0)
 async function refreshStatus() {
-  const revision = delayRevision, config = configRevision
+  const revision = delayRevision, config = configRevision, request = ++statusRevision
   const next = await api.status()
-  if (disposed || config !== configRevision) return
+  // 并发查询可能乱序返回；只接受最后一次请求的结果，避免旧快照覆盖新状态。
+  if (disposed || config !== configRevision || request !== statusRevision) return
   status.value = next
   applyAppearance(status.value.settings.appearance)
   // 查询返回前若已收到更新事件，不能用旧快照覆盖倒计时结束通知。
@@ -143,9 +144,10 @@ async function toggleShortcuts() {
   } catch (e) { error.value = String(e) }
   finally { saving.value = false }
 }
-async function syncSettings() {
-  try { await refreshStatus(); if (status.value) draft.value.shortcutsEnabled = status.value.settings.shortcutsEnabled }
-  catch (e) { error.value = String(e) }
+/** 事件已携带完整配置，直接更新状态；不再为每次保存额外查询一次 app_status。 */
+function applySettingsSnapshot(next: Settings) {
+  if (status.value) status.value.settings = next
+  draft.value.shortcutsEnabled = next.shortcutsEnabled
 }
 async function cancelPending() {
   try { await api.cancelPending() } catch (e) { error.value = String(e) }
@@ -172,10 +174,13 @@ async function initialize() {
   if (!desktop || initializing.value || disposed) return
   initializing.value = true; initializationFailed.value = false; error.value = ''
   try {
-    for (const subscribe of [() => onClipboardOpen(() => { page.value = '剪贴板' }), () => onSettingsChanged(() => { void syncSettings() }), () => onSettingsImported(configImported), () => onError(e => { error.value = e }), () => onDelay(value => { delayRevision++; remaining.value = value })]) {
-      const off = await subscribe()
-      if (disposed) { off(); return }
-      disposers.push(off)
+    for (const subscribe of [() => onClipboardOpen(() => { page.value = '剪贴板' }), () => onSettingsChanged(applySettingsSnapshot), () => onSettingsImported(configImported), () => onError(e => { error.value = e }), () => onDelay(value => { delayRevision++; remaining.value = value })]) {
+      // 单个事件订阅失败只影响该通知，不能把整个主界面判为初始化失败。
+      try {
+        const off = await subscribe()
+        if (disposed) { off(); return }
+        disposers.push(off)
+      } catch (e) { logFrontendFailure('frontend.subscription_failed', e) }
     }
     await api.setShortcutEditing(false)
     await refreshStatus()

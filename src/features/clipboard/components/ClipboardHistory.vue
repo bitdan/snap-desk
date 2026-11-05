@@ -18,6 +18,10 @@ import { handleEscape, handleWindowEscape } from '@/shared/ui/escape'
 import { useEscapeLayer } from '@/shared/ui/use-escape-layer'
 const items = ref<Item[]>([]), selected = ref<number[]>([]), cursor = ref<string | null>(null)
 const selectedItems = ref<Record<number, Item>>({})
+/** 模板逐项判断成员用 Set，避免每行都对已选数组做线性 includes。 */
+const selectedIds = computed(() => new Set(selected.value))
+/** 条目索引按列表派生，选择与刷新不再各自重建一次 Map。 */
+const itemsById = computed(() => new Map(items.value.map(item => [item.id, item])))
 const previewItem = ref<Item | null>(null)
 let selectionAnchor: number | null = null
 const viewKey = 'snap-desk.clipboard-view.v1'
@@ -98,7 +102,7 @@ function navigate(event: KeyboardEvent) {
 function selectItem(item: Item, gesture: ClipboardSelectionGesture = { toggle: true }) {
   selected.value = selectClipboardItems(selected.value, item.id, items.value.map(value => value.id), selectionAnchor, gesture)
   if (!gesture.range) selectionAnchor = item.id
-  const available = new Map(items.value.map(value => [value.id, value]))
+  const available = itemsById.value
   selectedItems.value = Object.fromEntries(selected.value.map(id => [id, available.get(id) ?? selectedItems.value[id]]))
 }
 let revision = 0, changeRevision = 0, disposed = false, loadedMore = false, listScrolled = false
@@ -142,7 +146,7 @@ async function refresh(append = false, background = false) {
     items.value = [...(append ? items.value : []), ...page.items.filter(item => !seen.has(item.id))]
     cursor.value = page.nextCursor; applyStatus(state, errors)
     loadedMore = append
-    const available = new Map(items.value.map(item => [item.id, item]))
+    const available = itemsById.value
     selected.value = selected.value.filter(id => available.has(id))
     selectedItems.value = Object.fromEntries(selected.value.map(id => [id, available.get(id)!]))
     if (selectionAnchor !== null && !available.has(selectionAnchor)) selectionAnchor = null
@@ -189,6 +193,17 @@ async function run(action: () => Promise<unknown>, success = '') {
   try { await action(); if (success) message.value = success }
   catch (e) { error.value = String(e) }
   finally { busy.value = false }
+}
+/** 收藏只更新本地一条记录，避免整页刷新丢掉滚动位置；收藏分类下仍需重查以移除条目。 */
+async function toggleFavorite(item: Item) {
+  await run(async () => {
+    const favorite = !item.favorite
+    await api.clipboardFavorite(item.id, favorite)
+    items.value = items.value.map(value => value.id === item.id ? { ...value, favorite } : value)
+    const picked = selectedItems.value[item.id]
+    if (picked) selectedItems.value = { ...selectedItems.value, [item.id]: { ...picked, favorite } }
+    if (favorites.value) await refresh()
+  })
 }
 async function configure(enabled = settings.value.enabled) {
   await run(async () => {
@@ -296,7 +311,7 @@ onUnmounted(() => { disposed = true; revision++; clearTimeout(refreshTimer); cle
     <div class="history-browser">
     <VirtualClipboardList ref="list" :items="items" :layout="layout" :has-more="!!cursor && !loadMoreFailed" :loading="loading || busy" role="region" :aria-label='t("历史记录列表")' :aria-busy="foregroundLoading" @scroll="listScroll" @near-end="loadMore">
       <template #default="{ item }">
-      <ClipboardItem :item="item" :selected="selected.includes(item.id)" :busy="busy" @select="selectItem(item, $event)" @preview="previewItem = item" @restore="run(() => api.clipboardRestore(item.id), '已复制。')" @delete="selected = [item.id]; selectedItems = { [item.id]: item }; requestDelete('delete')" @pin="run(() => api.clipboardPin(item.id))" @favorite="run(async () => { await api.clipboardFavorite(item.id, !item.favorite); await refresh() })" />
+      <ClipboardItem :item="item" :selected="selectedIds.has(item.id)" :busy="busy" @select="selectItem(item, $event)" @preview="previewItem = item" @restore="run(() => api.clipboardRestore(item.id), '已复制。')" @delete="selected = [item.id]; selectedItems = { [item.id]: item }; requestDelete('delete')" @pin="run(() => api.clipboardPin(item.id))" @favorite="toggleFavorite(item)" />
       </template>
       <template #footer>
       <p v-if="!items.length" class="history-empty">{{ foregroundLoading ? t("正在加载…") : keyword || category ? t("没有匹配的记录，试试其他关键词或分类。") : status?.enabled ? t("暂无记录，复制文字或图片后会显示在这里。") : t("暂无记录，开启右上方开关后开始记录。") }}</p>

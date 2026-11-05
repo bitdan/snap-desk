@@ -93,7 +93,7 @@ pub(in crate::capture) struct ScrollSession {
     archive: Option<Archive>,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ScrollView {
     id: u64,
@@ -141,6 +141,14 @@ fn view(session: &ScrollSession, collecting: bool) -> Result<ScrollView, String>
         },
         message: session.message.clone(),
     })
+}
+
+/// 控制条只显示状态与操作，不渲染预览；复制前清空 base64，避免同一张缩略图发两遍。
+fn emit_update(app: &AppHandle, update: &ScrollView) {
+    let _ = app.emit_to("scroll-preview", "scroll-updated", update);
+    let mut controls = update.clone();
+    controls.preview.clear();
+    let _ = app.emit_to("scroll-controls", "scroll-updated", &controls);
 }
 
 #[tauri::command]
@@ -428,8 +436,7 @@ fn sample_pair(
         *current = snapshot;
     }
     if let Some(update) = update {
-        let _ = app.emit_to("scroll-preview", "scroll-updated", &update);
-        let _ = app.emit_to("scroll-controls", "scroll-updated", &update);
+        emit_update(&app, &update);
     }
     Ok(result)
 }
@@ -478,9 +485,7 @@ fn notify_waiting(app: &AppHandle, state: &CaptureState, id: u64, finishing: boo
     session.message = message.into();
     session.revision += 1;
     if let Ok(update) = view(session, true) {
-        for label in ["scroll-preview", "scroll-controls"] {
-            let _ = app.emit_to(label, "scroll-updated", &update);
-        }
+        emit_update(app, &update);
     }
     log::warn!("event=scroll.operation_wait module=scroll op=scroll-{id} finishing={finishing}");
 }
@@ -638,9 +643,7 @@ fn collect(app: AppHandle, id: u64, first_delay: u64, allow_copy_retry: impl Fn(
             };
             if let Some(update) = update {
                 allow_copy_retry();
-                for label in ["scroll-preview", "scroll-controls"] {
-                    let _ = app.emit_to(label, "scroll-updated", &update);
-                }
+                emit_update(&app, &update);
                 if let Err(window_error) = chrome::show_output(&app) {
                     report_error(&app, window_error);
                 }

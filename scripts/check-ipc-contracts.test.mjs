@@ -5,7 +5,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { checkIpcContracts } from './check-ipc-contracts.mjs'
 
-const pairs = { RecognitionService: 'RecognitionService', OcrSettings: 'OcrSettings', OcrLanguage: 'OcrLanguage', SystemOcrStatus: 'SystemOcrStatus', WechatOcrStatus: 'WechatOcrStatus', AppUpdateView: 'AppUpdateView', AiSettings: 'AiSettings', TranslationRequest: 'TranslationRequest', TranslationItem: 'TranslationItem', TranslationBatchResult: 'TranslationBatchResult', TranslationResult: 'TranslationResult', PinSummary: 'PinSummary', PinAppearance: 'PinAppearance', RecordingExportSettings: 'RecordingExportSettings', PinFrame: 'PinFrame', CapturePaint: 'CapturePaint', InputEffects: 'InputEffects', RecorderConfig: 'RecorderConfig', RecordingView: 'RecordingView', RecordingResult: 'RecordingResult', RecordingDirectory: 'RecordingDirectory', ExportSettings: 'ExportSettings', Settings: 'Settings', RecordingAnnotationView: 'AnnotationView' }
+const pairs = { ShelfSettings: 'ShelfSettings', ShelfSnapshot: 'ShelfSnapshot', RecognitionService: 'RecognitionService', OcrSettings: 'OcrSettings', OcrLanguage: 'OcrLanguage', SystemOcrStatus: 'SystemOcrStatus', WechatOcrStatus: 'WechatOcrStatus', AppUpdateView: 'AppUpdateView', AiSettings: 'AiSettings', TranslationRequest: 'TranslationRequest', TranslationItem: 'TranslationItem', TranslationBatchResult: 'TranslationBatchResult', TranslationResult: 'TranslationResult', PinSummary: 'PinSummary', PinAppearance: 'PinAppearance', RecordingExportSettings: 'RecordingExportSettings', PinFrame: 'PinFrame', CapturePaint: 'CapturePaint', InputEffects: 'InputEffects', RecorderConfig: 'RecorderConfig', RecordingView: 'RecordingView', RecordingResult: 'RecordingResult', RecordingDirectory: 'RecordingDirectory', ExportSettings: 'ExportSettings', Settings: 'Settings', RecordingAnnotationView: 'AnnotationView' }
 function fixture(t, changes = {}) {
   const root = mkdtempSync(join(tmpdir(), 'snap-ipc-'))
   t.after(() => rmSync(root, { recursive: true, force: true }))
@@ -45,4 +45,10 @@ test('请求字段漂移和跨模块重复 API 名不能静默通过', t => {
 test('关键结构新增字段时要求前端同步', t => {
   const direct = fixture(t, { 'src-tauri/src/capture/types.rs': Object.values(pairs).map(name => `pub struct ${name} { pub sample_value: u32, pub new_field: bool }`).join('\n') })
   assert.ok(direct.some(issue => issue.includes('缺少 newField')))
+})
+test('前端订阅的事件必须在原生侧发送', t => {
+  const issues = fixture(t, {
+    'src/features/capture/events.ts': "import { listen } from '@/services/ipc'\nexport const onMissing = () => listen('missing-event')",
+  })
+  assert.ok(issues.some(issue => issue.includes('前端订阅的事件没有原生发送: missing-event')))
 })

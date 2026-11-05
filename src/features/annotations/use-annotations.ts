@@ -4,6 +4,16 @@ import { prepareRaster } from '@/features/annotations/annotation-raster'
 import { clamp, type Point, type Rect, type Handle } from '@/shared/geometry/selection'
 
 export type AnnotationTool = 'edit' | 'eraser' | 'arrow-text' | Annotation['kind']
+
+/** 比较标注的可见内容；显式跳过 raster，避免把 base64 PNG 序列化后逐字符比较。 */
+function sameShape(a: Annotation, b: Annotation | undefined): boolean {
+  if (!b || a.kind !== b.kind || a.color !== b.color || a.width !== b.width) return false
+  if ((a.opacity ?? 1) !== (b.opacity ?? 1) || (a.magnification ?? 2) !== (b.magnification ?? 2)) return false
+  if (a.start.x !== b.start.x || a.start.y !== b.start.y || a.end.x !== b.end.x || a.end.y !== b.end.y) return false
+  if (a.text !== b.text || a.fontSize !== b.fontSize || a.fontFamily !== b.fontFamily) return false
+  if ((a.points?.length ?? 0) !== (b.points?.length ?? 0)) return false
+  return !a.points || a.points.every((point, index) => point.x === b.points![index].x && point.y === b.points![index].y)
+}
 /** 截图/贴图共用编辑状态。一次拖动只提交一次历史，保存失败不改历史也不丢失原图形。 */
 export function useAnnotations(bounds: () => Rect, imageUrl: () => string, disabled: () => boolean, persist?: (shapes: Annotation[]) => Promise<void>, rasterizer: typeof prepareRaster = prepareRaster) {
   const state = reactive({ history: emptyHistory(), tool: 'edit' as AnnotationTool, selected: -1,
@@ -156,7 +166,8 @@ export function useAnnotations(bounds: () => Rect, imageUrl: () => string, disab
     if (!state.draft || locked() || (state.tool === 'polyline' && !polyline)) return
     let shape = state.draft
     const editing = state.selected >= 0 && gesture?.mode !== 'draw'
-    if (editing && JSON.stringify(shape) === JSON.stringify(state.history.present[state.selected])) {
+    // 只比几何与样式字段：文字/序号/滤镜的 raster 是 base64 PNG，序列化整张图会让每次收笔都卡顿。
+    if (editing && sameShape(shape, state.history.present[state.selected])) {
       abort(); return
     }
     const dx = Math.abs(shape.end.x - shape.start.x), dy = Math.abs(shape.end.y - shape.start.y)

@@ -293,7 +293,6 @@ pub fn run() {
             {
                 translation::cancel_window(window.app_handle(), window.label());
             }
-            // 按已提交映射响应事件；try_lock 避免阻塞系统事件线程。??
             if window.label() == "main"
                 && matches!(
                     event,

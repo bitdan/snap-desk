@@ -57,6 +57,17 @@ describe('日志隐私与异常隔离', () => {
     expect(mocks.write).toHaveBeenCalledTimes(2)
   })
 
+  it('暂存架与翻译窗口使用固定窗口类别，不再记为 unknown', () => {
+    setLogWindowKind('shelf')
+    appLog('error', 'frontend.mount_failed', { kind: 'Error' })
+    setLogWindowKind('translation')
+    appLog('error', 'frontend.mount_failed', { kind: 'Error' })
+    expect(mocks.write.mock.calls).toEqual([
+      ['event=frontend.mount_failed module=frontend window=shelf error_kind=Error'],
+      ['event=frontend.mount_failed module=frontend window=translation error_kind=Error'],
+    ])
+  })
+
   it('全局监听只安装一次，仅记录异常类别，不输出异常正文', () => {
     const target = new EventTarget()
     installGlobalErrorLogging(target)

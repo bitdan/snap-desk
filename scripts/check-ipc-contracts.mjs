@@ -93,6 +93,19 @@ export function checkIpcContracts(project = root) {
   const strings = value => [...value.matchAll(/["']([a-z_][a-z_0-9]*)["']/g)].map(match => match[1])
   parity(registered, strings(whitelist), '前端命令白名单', issues)
   parity(registered, strings(catalog), '原生命令审计名单', issues)
+  // 事件名没有类型约束，单独比对订阅与原生发送，避免改名后界面静默收不到通知。
+  const emitted = new Set()
+  for (const file of nativeFiles) {
+    const source = read(file).replace(/\/\/[^\n]*/g, '')
+    for (const match of source.matchAll(/emit_to\(\s*[^,]+,\s*"([^"]+)"/g)) emitted.add(match[1])
+    for (const match of source.matchAll(/\.emit\(\s*"([^"]+)"/g)) emitted.add(match[1])
+  }
+  const listened = new Set()
+  for (const file of files(join(project, 'src')).filter(file => file.endsWith('.ts'))) {
+    const source = read(file).replace(/\/\/[^\n]*/g, '').replace(/\/\*[^]*?\*\//g, '')
+    for (const match of source.matchAll(/listen(?:<[^>]*>)?\(\s*['"]([^'"]+)['"]/g)) listened.add(match[1])
+  }
+  for (const name of listened) if (!emitted.has(name)) issues.push(`前端订阅的事件没有原生发送: ${name}`)
   for (const [frontend, native] of Object.entries({ ShelfSettings: 'ShelfSettings', ShelfSnapshot: 'ShelfSnapshot', RecognitionService: 'RecognitionService', OcrSettings: 'OcrSettings', OcrLanguage: 'OcrLanguage', SystemOcrStatus: 'SystemOcrStatus', WechatOcrStatus: 'WechatOcrStatus', AppUpdateView: 'AppUpdateView', AiSettings: 'AiSettings', TranslationRequest: 'TranslationRequest', TranslationItem: 'TranslationItem', TranslationBatchResult: 'TranslationBatchResult', TranslationResult: 'TranslationResult', PinFrame: 'PinFrame', PinSummary: 'PinSummary', PinAppearance: 'PinAppearance', CapturePaint: 'CapturePaint', InputEffects: 'InputEffects', RecorderConfig: 'RecorderConfig', RecordingView: 'RecordingView', RecordingResult: 'RecordingResult', RecordingDirectory: 'RecordingDirectory', ExportSettings: 'ExportSettings', RecordingExportSettings: 'RecordingExportSettings', Settings: 'Settings', RecordingAnnotationView: 'AnnotationView' })) {
     if (!tsTypes.has(frontend) || !rustTypes.has(native)) { issues.push(`通信结构不存在: ${frontend}/${native}`); continue }
     parity(rustTypes.get(native), tsTypes.get(frontend), `通信字段 ${frontend}`, issues)

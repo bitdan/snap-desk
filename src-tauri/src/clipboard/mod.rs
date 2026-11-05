@@ -335,13 +335,13 @@ pub async fn clipboard_configure(
             }
             return Err(e);
         }
-        current.value = next;
+        current.value = next.clone();
         drop(current);
         // 先保存配置成功再清理；配置写盘失败不能按未提交的配额删除历史。
         if let Err(error) = s.maintain(app) {
             s.report(app, error);
         }
-        let _ = app.emit_to("main", "settings-changed", ());
+        let _ = app.emit_to("main", "settings-changed", &next);
         let status = s.status();
         let _ = app.emit_to("main", "clipboard-state", &status);
         Ok(status)

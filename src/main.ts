@@ -17,8 +17,11 @@ async function mount() {
   const kind = resolveWindowKind(isTauri() ? getCurrentWindow().label : null, location.search)
   setLogWindowKind(kind)
   if (isTauri() && kind === 'main') {
-    const { installHtmlPinRenderer } = await import('@/features/pins/html-renderer')
-    await installHtmlPinRenderer()
+    // HTML 贴图渲染器属于可选能力：安装失败只影响 HTML 贴图，主界面仍须正常挂载。
+    try {
+      const { installHtmlPinRenderer } = await import('@/features/pins/html-renderer')
+      await installHtmlPinRenderer()
+    } catch (error) { logFrontendFailure('frontend.html_renderer_failed', error) }
   }
   // 原生设置提交后广播外观，已打开的辅助 WebView 也立即切换；缓存仅负责首帧。
   if (isTauri() && kind !== 'selection-edge') void listen('appearance-changed', event => {

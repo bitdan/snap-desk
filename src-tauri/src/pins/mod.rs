@@ -770,49 +770,69 @@ fn composed(pin: &Pin) -> Result<RgbaImage, String> {
 }
 
 #[tauri::command]
-pub fn list_pins(app: AppHandle, window: WebviewWindow) -> Result<Vec<PinSummary>, String> {
+pub async fn list_pins(app: AppHandle, window: WebviewWindow) -> Result<Vec<PinSummary>, String> {
     crate::capture::require_window(&window, "main")?;
-    let state = app.state::<PinState>();
-    let images = state.images.lock().map_err(err)?.clone();
-    let mut thumbnails = state.thumbnails.lock().map_err(err)?;
-    thumbnails.retain(|label, _| images.contains_key(label));
-    images
-        .into_iter()
-        .map(|(label, pin)| {
-            let visible = app
-                .get_webview_window(&label)
-                .map(|w| w.is_visible())
-                .transpose()
-                .map_err(err)?
-                .unwrap_or(false);
-            // 管理页只传最多 96×72 的底图缩略图，缓存最多随 12 张贴图保留。
-            let thumbnail = match thumbnails.get(&label) {
-                Some((revision, value)) if *revision == pin.revision => value.clone(),
-                _ => {
-                    let preview = image::imageops::thumbnail(pin.image.as_ref(), 96, 72);
-                    let mut png = Cursor::new(Vec::new());
-                    preview
-                        .write_to(&mut png, image::ImageFormat::Png)
-                        .map_err(err)?;
-                    let value = format!(
-                        "data:image/png;base64,{}",
-                        STANDARD.encode(png.into_inner())
-                    );
-                    thumbnails.insert(label.clone(), (pin.revision, value.clone()));
-                    value
-                }
-            };
-            Ok(PinSummary {
-                click_through: pin.view.click_through,
-                label,
-                width: pin.image.width(),
-                height: pin.image.height(),
-                visible,
-                group: pin.group,
-                thumbnail,
+    // 缩略图解码与 PNG/Base64 编码都不该占用主线程；锁只保护取图，编码在锁外完成。
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<PinState>();
+        let images = state.images.lock().map_err(err)?.clone();
+        // 缓存命中只读一次锁；PNG/Base64 编码放在锁外，管理页刷新时不阻塞其他贴图操作。
+        let mut entries = Vec::with_capacity(images.len());
+        {
+            let mut thumbnails = state.thumbnails.lock().map_err(err)?;
+            thumbnails.retain(|label, _| images.contains_key(label));
+            for (label, pin) in images {
+                let cached = thumbnails
+                    .get(&label)
+                    .filter(|(revision, _)| *revision == pin.revision)
+                    .map(|(_, value)| value.clone());
+                entries.push((label, pin, cached));
+            }
+        }
+        entries
+            .into_iter()
+            .map(|(label, pin, cached)| {
+                let visible = app
+                    .get_webview_window(&label)
+                    .map(|w| w.is_visible())
+                    .transpose()
+                    .map_err(err)?
+                    .unwrap_or(false);
+                // 管理页只传最多 96×72 的底图缩略图，缓存最多随 12 张贴图保留。
+                let thumbnail = match cached {
+                    Some(value) => value,
+                    None => {
+                        let preview = image::imageops::thumbnail(pin.image.as_ref(), 96, 72);
+                        let mut png = Cursor::new(Vec::new());
+                        preview
+                            .write_to(&mut png, image::ImageFormat::Png)
+                            .map_err(err)?;
+                        let value = format!(
+                            "data:image/png;base64,{}",
+                            STANDARD.encode(png.into_inner())
+                        );
+                        state
+                            .thumbnails
+                            .lock()
+                            .map_err(err)?
+                            .insert(label.clone(), (pin.revision, value.clone()));
+                        value
+                    }
+                };
+                Ok(PinSummary {
+                    click_through: pin.view.click_through,
+                    label,
+                    width: pin.image.width(),
+                    height: pin.image.height(),
+                    visible,
+                    group: pin.group,
+                    thumbnail,
+                })
             })
-        })
-        .collect()
+            .collect()
+    })
+    .await
+    .map_err(err)?
 }
 
 #[derive(Deserialize)]

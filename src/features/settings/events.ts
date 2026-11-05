@@ -7,7 +7,7 @@ import { updatePreview, onPreviewUpdate } from './update-preview'
 
 export const onAppUpdate = async (fn: (view: AppUpdateView) => void) => updatePreview ? onPreviewUpdate(fn) : listen<AppUpdateView>('app-update-changed', event => fn(event.payload))
 
-export const onSettingsChanged = (fn: () => void) => listen('settings-changed', fn)
+export const onSettingsChanged = (fn: (settings: Settings) => void) => listen<Settings>('settings-changed', event => fn(event.payload))
 
 export const onSettingsImported = (fn: (settings: Settings) => void) => listen<Settings>('settings-imported', event => fn(event.payload))
 
