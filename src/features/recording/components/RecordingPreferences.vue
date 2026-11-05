@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import InfoTip from '@/shared/ui/InfoTip.vue'
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { t } from '@/shared/i18n/i18n'
 import SelectControl from '@/shared/ui/SelectControl.vue'
@@ -37,18 +38,17 @@ defineExpose({ save })
   <section class="recording-preferences" @input="message = ''" @change="message = ''">
     <fieldset :disabled="disabled">
       <legend class="section-heading">{{ t('视频与导出') }}</legend>
-      <div class="setting-row"><label for="record-format">{{ t('保存格式') }}<small>{{ t('MP4 支持声音，GIF 适合短动画') }}</small></label><SelectControl id="record-format" v-model="recordingFormat" :options="[{ value: 'mp4', label: 'MP4', disabled: !!capabilities?.formats && !capabilities.formats.includes('mp4') }, { value: 'gif', label: 'GIF', disabled: !!capabilities?.formats && !capabilities.formats.includes('gif') }]" /></div>
+      <div class="setting-row"><div class="flex items-center gap-1"><label for="record-format">{{ t('保存格式') }}</label><InfoTip :text="t('MP4 支持声音，GIF 适合短动画')" /></div><SelectControl id="record-format" v-model="recordingFormat" :options="[{ value: 'mp4', label: 'MP4', disabled: !!capabilities?.formats && !capabilities.formats.includes('mp4') }, { value: 'gif', label: 'GIF', disabled: !!capabilities?.formats && !capabilities.formats.includes('gif') }]" /></div>
       <div class="setting-row"><label for="record-fps">{{ t('帧率') }}</label><SelectControl id="record-fps" v-model="recordingFps" :options="(recordingFormat === 'gif' ? [10, 20] : [30, 60]).map(fps => ({ value: fps, label: `${fps} FPS`, disabled: !!capabilities?.frameRates && !capabilities.frameRates.includes(fps) }))" /></div>
       <template v-if="recordingFormat === 'mp4'">
         <div class="setting-row"><label for="record-quality">{{ t('画质') }}</label><SelectControl id="record-quality" v-model="recordingQuality" :disabled="recordingMbps !== ''" :options="[{ value: 'economy', label: t('节省空间') }, { value: 'balanced', label: t('均衡') }, { value: 'high', label: t('高清') }]" /></div>
-        <div class="setting-row"><label for="record-bitrate">{{ t('码率（Mbps）') }}<small>{{ t('1–80 Mbps；清空后恢复自动码率') }}</small></label><input id="record-bitrate" v-model="recordingMbps" type="number" min="1" max="80" step="any" :placeholder="t('自动')" :aria-invalid="!!invalid" aria-describedby="record-preference-error" /></div>
+        <div class="setting-row"><div class="flex items-center gap-1"><label for="record-bitrate">{{ t('码率（Mbps）') }}</label><InfoTip :text="t('1–80 Mbps；清空后恢复自动码率')" /></div><input id="record-bitrate" v-model="recordingMbps" type="number" min="1" max="80" step="any" :placeholder="t('自动')" :aria-invalid="!!invalid" aria-describedby="record-preference-error" /></div>
         <div class="setting-row"><label for="record-encoding">{{ t('编码方式') }}</label><SelectControl id="record-encoding" v-model="recordingEncoding" :options="[{ value: 'auto', label: t('自动编码') }, { value: 'software', label: t('软件兼容') }]" /></div>
       </template>
-      <h2 class="section-heading">{{ t('录制行为') }}</h2>
+      <div class="flex items-center gap-1"><h2 class="section-heading">{{ t('录制行为') }}</h2><InfoTip :text="t('声音在选择范围后开启，每次录制单独确认。')" /></div>
       <div class="setting-row"><label for="record-countdown">{{ t('倒计时') }}</label><SelectControl id="record-countdown" v-model="recordingCountdown" :options="[0, 3, 5].map(value => ({ value, label: value ? t('{0} 秒', { 0: value }) : t('无延时') }))" /></div>
       <div class="setting-row"><label for="record-cursor">{{ t('录制光标') }}</label><input id="record-cursor" v-model="captureCursor" type="checkbox" :disabled="capabilities?.captureCursor === false" /></div>
       <div class="setting-row"><label for="record-hide">{{ t('录制时收起主界面') }}</label><input id="record-hide" v-model="hideMainWindow" type="checkbox" /></div>
-      <p class="settings-note">{{ t('声音在选择范围后开启，每次录制单独确认。') }}</p>
       <div class="recording-effects-settings"><RecordingInputSettings v-model="recordingEffects" :disabled="disabled" /></div>
       <RecordingFileSettings ref="fileSettings" :disabled="disabled" :format="recordingFormat" @changed="emit('directoryChanged')" />
     </fieldset>

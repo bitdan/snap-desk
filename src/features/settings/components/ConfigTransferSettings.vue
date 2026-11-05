@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import InfoTip from '@/shared/ui/InfoTip.vue'
 import { ref } from 'vue'
 import { Check } from 'lucide-vue-next'
 import { t, te } from '@/shared/i18n/i18n'
@@ -31,10 +32,9 @@ async function transfer(kind: 'import' | 'export') {
 <template>
   <section class="general-settings-page">
     <section class="general-section">
-      <p class="text-xs text-zinc-500">{{ t('备份包含主配置、快捷键和保存目录，不包含密钥、历史记录及图片视频。') }}</p>
-      <div class="mt-4 flex flex-wrap gap-2">
+      <div class="flex flex-wrap items-center gap-2">
         <Button variant="outline" :disabled="!desktop || busy" @click="transfer('import')">{{ t('导入配置') }}</Button>
-        <Button variant="outline" :disabled="!desktop || busy" @click="transfer('export')">{{ t('导出配置') }}</Button>
+        <Button variant="outline" :disabled="!desktop || busy" @click="transfer('export')">{{ t('导出配置') }}</Button><InfoTip :text="t('备份包含主配置、快捷键和保存目录，不包含密钥、历史记录及图片视频。')" />
       </div>
       <p v-if="error" class="notice error" role="alert">{{ te(error) }}</p>
       <p v-if="message" class="notice status-ok" role="status"><Check :size="14" />{{ t(message) }}</p>

@@ -13,6 +13,8 @@ vi.mock('../../src/shared/ui/button/Button.vue', async () => {
   return { default: defineComponent({ setup: (_, { attrs, slots }) => () => h('button', attrs, slots.default?.()) }) }
 })
 import GeneralSettings from '../../src/features/settings/components/GeneralSettings.vue'
+import InfoTip from '../../src/shared/ui/InfoTip.vue'
+clientComponent(InfoTip, new URL('../../src/shared/ui/InfoTip.vue', import.meta.url))
 const Component = clientComponent(GeneralSettings, new URL('../../src/features/settings/components/GeneralSettings.vue', import.meta.url))
 let root: MemoryNode
 const text = (node: MemoryNode): string => node.text + node.children.map(text).join('')

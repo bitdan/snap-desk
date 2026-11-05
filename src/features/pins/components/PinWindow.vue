@@ -309,7 +309,6 @@ function closeOnResize() {
       <button v-else class="pin-toggle" :disabled="busy" :title='t("展开贴图工具（右键）")' @click="toggleControls"><ChevronUp :size="16" />{{ t("工具") }}</button>
       <p v-if="error" role="alert" class="pin-status pin-error" :title="te(error)">{{ te(error) }}</p>
       <p v-else-if="message" role="status" class="pin-status" :title="t(message)">{{ t(message) }}</p>
-      <p v-else-if="controls && !annotating" class="pin-status">{{ t("拖动移动 · 滚轮缩放 · 右键菜单 · Esc 隐藏") }}</p>
     </section>
     <p v-if="frame?.view.clickThrough" class="pin-pass-through" role="status">{{ t('鼠标穿透中 · 用全局贴图快捷键或托盘恢复') }}</p>
     <PinRecognition v-if="frame && recognitionMode" :frame="frame" :mode="recognitionMode" @close="closeRecognition" />

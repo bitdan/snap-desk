@@ -14,6 +14,8 @@ vi.mock('../../src/shared/ui/button/Button.vue', async () => {
 })
 import Preferences from '../../src/features/recording/components/RecordingPreferences.vue'
 import FileSettings from '../../src/features/recording/components/RecordingFileSettings.vue'
+import InfoTip from '../../src/shared/ui/InfoTip.vue'
+clientComponent(InfoTip, new URL('../../src/shared/ui/InfoTip.vue', import.meta.url))
 clientComponent(FileSettings, new URL('../../src/features/recording/components/RecordingFileSettings.vue', import.meta.url))
 import Effects from '../../src/features/recording/components/RecordingInputSettings.vue'
 import { defaultRecordingPreferences, readRecordingPreferences, saveRecordingPreferences, RECORDING_PREFERENCES_KEY } from '../../src/features/recording/preferences'

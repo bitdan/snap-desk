@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import InfoTip from '@/shared/ui/InfoTip.vue'
 import { handleWindowEscape as handleEscape } from '@/shared/ui/escape'
 import { useAutoSave } from '@/shared/ui/use-auto-save'
 import SelectControl from '@/shared/ui/SelectControl.vue'
@@ -244,9 +245,9 @@ onUnmounted(() => { disposed = true; window.removeEventListener('keydown', key);
             <div class="setting-row"><label for="export-format">{{ t('保存格式') }}</label><SelectControl id="export-format" v-model="draft.export.format" :disabled="locked" :options="[{ value: 'png', label: t('PNG · 无损透明') }, { value: 'jpeg', label: t('JPEG · 白底') }, { value: 'webp', label: t('WebP · 无损透明') }]" @update:model-value="captureAutoSave.commit" /></div>
             <div v-if="draft.export.format === 'jpeg'" class="setting-row"><label for="jpeg-quality">{{ t('JPEG 质量') }}</label><input id="jpeg-quality" v-model.number="draft.export.jpegQuality" type="number" min="1" max="100" step="1" required :disabled="locked" class="w-24 rounded-lg border border-zinc-200 px-3 py-2" /></div>
             <div class="setting-row"><label for="filename-prefix">{{ t('文件名前缀') }}</label><input id="filename-prefix" v-model="draft.export.filenamePrefix" required :disabled="locked" class="w-48 rounded-lg border border-zinc-200 px-3 py-2 text-sm" /></div>
-            <div class="setting-row"><label for="filename-dimensions">{{ t('文件名包含图片尺寸') }}<small class="break-all">{{ t("示例：") }}{{ t(exportFilenamePreview(draft.export)) }}</small></label><input id="filename-dimensions" v-model="draft.export.includeDimensions" type="checkbox" :disabled="locked" /></div>
+            <div class="setting-row"><div class="flex items-center gap-1"><label for="filename-dimensions">{{ t('文件名包含图片尺寸') }}</label><InfoTip :text="t('示例：') + exportFilenamePreview(draft.export)" /></div><input id="filename-dimensions" v-model="draft.export.includeDimensions" type="checkbox" :disabled="locked" /></div>
             <div class="setting-row"><label for="remember-directory">{{ t('记住上次保存目录') }}</label><input id="remember-directory" v-model="draft.export.rememberDirectory" type="checkbox" :disabled="locked" /></div>
-            <div class="flex flex-wrap items-center gap-2 py-3"><Button type="button" variant="outline" :disabled="locked" @click="resetCapture">{{ t('恢复默认') }}</Button><span class="settings-save-status" role="status">{{ captureAutoSave.saving.value ? t('正在保存…') : captureAutoSave.saved.value ? t('已自动保存') : t('更改自动保存') }}</span></div>
+            <div class="flex flex-wrap items-center gap-2 py-3"><Button type="button" variant="outline" :disabled="locked" @click="resetCapture">{{ t('恢复默认') }}</Button><span class="settings-save-status" role="status" v-if="captureAutoSave.saving.value || captureAutoSave.saved.value" :class="{ 'status-ok': !captureAutoSave.saving.value }"><Check v-if="!captureAutoSave.saving.value" :size="14" class="status-check" />{{ captureAutoSave.saving.value ? t('正在保存…') : t('已自动保存') }}</span></div>
             <p v-if="captureAutoSave.error.value" class="notice error" role="alert">{{ te(captureAutoSave.error.value) }} <Button type="button" variant="ghost" @click="captureAutoSave.retry">{{ t('重试') }}</Button></p>
           </form>
         </template>
@@ -266,15 +267,15 @@ onUnmounted(() => { disposed = true; window.removeEventListener('keydown', key);
         <template v-else-if="page === '快捷键'">
           <form class="settings-card" @submit.prevent>
             <div v-for="action in shortcutActions" :key="action.key" class="setting-row flex-wrap gap-3" :data-onboarding="action.key === 'capture' ? 'shortcut-settings' : undefined">
-              <label>{{ t(action.label) }}<small>{{ t(action.description) }}</small></label>
+              <span>{{ t(action.label) }}</span>
               <div class="flex flex-wrap items-center gap-2">
-                <ShortcutInput v-model="draft.shortcuts[action.key]" :label="action.label" :disabled="locked" :validate="value => validateShortcuts({ ...draft.shortcuts, [action.key]: value })" @editing="editingShortcut = $event; if (!$event) shortcutAutoSave.flush()" @error="error = $event" @update:model-value="shortcutAutoSave.schedule" />
+                <ShortcutInput v-model="draft.shortcuts[action.key]" :label="action.label" :title="t(action.description)" :disabled="locked" :validate="value => validateShortcuts({ ...draft.shortcuts, [action.key]: value })" @editing="editingShortcut = $event; if (!$event) shortcutAutoSave.flush()" @error="error = $event" @update:model-value="shortcutAutoSave.schedule" />
                 <Button type="button" variant="ghost" :disabled="locked || !draft.shortcuts[action.key]" @click="draft.shortcuts[action.key] = ''; shortcutAutoSave.commit()">{{ t('禁用') }}</Button>
                 <Button type="button" variant="ghost" :disabled="locked" @click="draft.shortcuts[action.key] = defaultSettings().shortcuts[action.key]; shortcutAutoSave.commit()">{{ t('默认') }}</Button>
               </div>
             </div>
-            <p class="py-3 text-xs text-zinc-500">{{ t('按键录入快捷键，清空可禁用；修改后自动生效。') }}</p>
-            <div class="flex flex-wrap items-center gap-2 py-3"><Button type="button" variant="outline" :disabled="locked" @click="resetShortcuts">{{ t('恢复默认') }}</Button><Button type="button" variant="ghost" :disabled="locked" @click="copyShortcutExample">{{ shortcutExampleCopied ? t('示例已复制') : t('复制示例配置') }}</Button><span class="settings-save-status" role="status">{{ shortcutAutoSave.saving.value ? t('正在保存…') : shortcutAutoSave.saved.value ? t('已自动保存') : t('更改自动保存') }}</span></div>
+            <div class="flex justify-end"><InfoTip :text="t('按键录入快捷键，清空可禁用；修改后自动生效。')" /></div>
+            <div class="flex flex-wrap items-center gap-2 py-3"><Button type="button" variant="outline" :disabled="locked" @click="resetShortcuts">{{ t('恢复默认') }}</Button><Button type="button" variant="ghost" :disabled="locked" @click="copyShortcutExample">{{ shortcutExampleCopied ? t('示例已复制') : t('复制示例配置') }}</Button><span class="settings-save-status" role="status" v-if="shortcutAutoSave.saving.value || shortcutAutoSave.saved.value" :class="{ 'status-ok': !shortcutAutoSave.saving.value }"><Check v-if="!shortcutAutoSave.saving.value" :size="14" class="status-check" />{{ shortcutAutoSave.saving.value ? t('正在保存…') : t('已自动保存') }}</span></div>
             <p v-if="shortcutAutoSave.error.value" class="notice error" role="alert">{{ te(shortcutAutoSave.error.value) }} <Button type="button" variant="ghost" @click="shortcutAutoSave.retry">{{ t('重试') }}</Button></p>
           </form>
         </template>

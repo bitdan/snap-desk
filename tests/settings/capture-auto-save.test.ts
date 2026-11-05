@@ -56,6 +56,8 @@ vi.mock('../../src/app/components/OnboardingGuide.vue', async () => {
     ])
   } }) }
 })
+import InfoTip from '../../src/shared/ui/InfoTip.vue'
+clientComponent(InfoTip, new URL('../../src/shared/ui/InfoTip.vue', import.meta.url))
 clientComponent(Compatibility, new URL('../../src/features/settings/components/ShortcutCompatibility.vue', import.meta.url))
 import SupportPages from '../../src/app/components/SupportPages.vue'
 clientComponent(SupportPages, new URL('../../src/app/components/SupportPages.vue', import.meta.url))

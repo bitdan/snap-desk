@@ -24,14 +24,13 @@ const guides = [
       <kbd v-if="shortcuts?.[guide.key]">{{ shortcuts[guide.key] }}</kbd><ArrowUpRight :size="16" />
     </button>
     <h2 class="section-heading">{{ t('使用与排错') }}</h2>
-    <div class="setting-row"><span>{{ t('快捷键没有响应') }}<small>{{ t('检查是否启用、按键冲突与兼容性。') }}</small></span><Button variant="outline" @click="emit('navigate', '快捷键')">{{ t('检查快捷键') }}</Button></div>
-    <div class="setting-row"><span>{{ t('识别或翻译不可用') }}<small>{{ t('检查资源与服务配置。') }}</small></span><Button variant="outline" @click="emit('navigate', '文字识别')">{{ t('文字识别') }}</Button></div>
-    <div class="setting-row"><span>{{ t('遇到其他问题') }}<small>{{ t('查看日志，或导出日志以协助排查。') }}</small></span><Button variant="outline" @click="emit('navigate', '日志')">{{ t('查看日志') }}</Button></div>
+    <div class="setting-row"><span>{{ t('快捷键没有响应') }}</span><Button variant="outline" @click="emit('navigate', '快捷键')">{{ t('检查快捷键') }}</Button></div>
+    <div class="setting-row"><span>{{ t('识别或翻译不可用') }}</span><Button variant="outline" @click="emit('navigate', '文字识别')">{{ t('文字识别') }}</Button></div>
+    <div class="setting-row"><span>{{ t('遇到其他问题') }}</span><Button variant="outline" @click="emit('navigate', '日志')">{{ t('查看日志') }}</Button></div>
     <p class="support-note">{{ t('Esc 收起主窗口，应用继续在托盘运行。退出会清空贴图，请先保存需要的内容。') }}</p>
   </section>
   <section v-else class="about-page">
     <div class="about-identity"><span class="brand-icon"><Scan :size="28" /></span><div><h2>Snap Desk</h2><span class="pill">{{ version ? `v${version}` : t('桌面版本待读取') }}</span></div></div>
-    <p class="support-note">{{ t('截图、标注、贴图、滚动截图与录屏。') }}</p>
     <UpdateSettings />
     <h2 class="section-heading">{{ t('应用信息') }}</h2>
     <div class="setting-row"><span>{{ t('开源许可') }}</span><span>GPL-3.0-only</span></div>

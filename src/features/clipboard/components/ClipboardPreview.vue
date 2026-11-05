@@ -81,8 +81,7 @@ onUnmounted(() => { revision++; image.value = ''; text.value = '' })
   <DetachedWindow ref="previewWindow" :open="!!item" :title="t('预览')" :width="900" :height="640" @close="close">
       <section class="history-preview-dialog" @keydown.stop="key">
         <header class="history-preview-header">
-          <h2>{{ t('预览') }}</h2>
-          <p>{{ item?.kind === 'text' ? `${item.byteSize} B` : `${item?.width} × ${item?.height} px` }} · {{ t('Esc 关闭') }}</p>
+          <p>{{ item?.kind === 'text' ? `${item.byteSize} B` : `${item?.width} × ${item?.height} px` }}</p>
           <Button variant="ghost" :aria-label="t('关闭预览')" :title="t('Esc 关闭')" @click="close"><X :size="18" /></Button>
         </header>
         <div class="history-preview-body" :aria-busy="loading">

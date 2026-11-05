@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import InfoTip from '@/shared/ui/InfoTip.vue'
 import SelectControl from '@/shared/ui/SelectControl.vue'
 import { useCategoryOrder, type ClipboardCategory } from '@/features/clipboard/use-category-order'
 import { t, te } from '@/shared/i18n/i18n'
@@ -283,8 +284,7 @@ onUnmounted(() => { disposed = true; revision++; clearTimeout(refreshTimer); cle
     </div>
     <DetachedWindow :open="exportOpen" :title="t('组合导出')" :width="640" :height="360" :busy="busy" @close="updateExportOpen(false)">
     <section class="history-export-dialog" @keydown.stop="exportKey">
-      <h2 class="history-export-title">{{ t("导出") }} {{ selected.length }} {{ t("个素材") }}</h2>
-      <p class="history-export-description">{{ t("按选择顺序导出，图片使用原图。") }}</p>
+      <div class="flex items-center gap-1"><span>{{ selected.length }} {{ t("个素材") }}</span><InfoTip :text="t('按选择顺序导出，图片使用原图。')" /></div>
       <fieldset :disabled="busy">
       <div class="history-tools"><SelectControl v-model="options.mode" :aria-label="t('导出方式')" :options="[{ value: 'pdf', label: t('多页 PDF') }, { value: 'longPng', label: t('纵向长图 PNG') }, { value: 'separate', label: t('分别导出 PNG / TXT') }]" /><SelectControl v-if="options.mode === 'pdf'" v-model="options.pageSize" :aria-label="t('页面大小')" :options="[{ value: 'A4', label: 'A4' }, { value: 'original', label: t('图片原始比例') }]" /><label v-if="options.mode === 'pdf'">{{ t("边距 mm") }}<input v-model.number="options.marginMm" type="number" min="0" max="30" /></label><label v-if="options.mode === 'longPng'">{{ t("间距 px") }}<input v-model.number="options.gapPx" type="number" min="0" max="200" /></label><SelectControl v-if="options.mode === 'longPng'" v-model="options.background" :aria-label="t('背景')" :options="[{ value: 'white', label: t('白底') }, { value: 'transparent', label: t('透明背景') }]" /></div>
       </fieldset>

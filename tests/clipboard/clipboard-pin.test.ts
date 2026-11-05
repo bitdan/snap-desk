@@ -44,6 +44,8 @@ vi.mock('../../src/features/clipboard/components/ClipboardItem.vue', async () =>
   return { default: defineComponent({ props: ['item'], emits: ['select'], setup: (props, { emit }) => () => h('button', { 'data-id': props.item.id, onClick: () => emit('select') }) }) }
 })
 import History from '../../src/features/clipboard/components/ClipboardHistory.vue'
+import InfoTip from '../../src/shared/ui/InfoTip.vue'
+clientComponent(InfoTip, new URL('../../src/shared/ui/InfoTip.vue', import.meta.url))
 const Component = clientComponent(History, new URL('../../src/features/clipboard/components/ClipboardHistory.vue', import.meta.url))
 clientComponent(ConfirmDialog, new URL('../../src/shared/ui/ConfirmDialog.vue', import.meta.url))
 let root: MemoryNode

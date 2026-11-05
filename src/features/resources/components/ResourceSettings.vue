@@ -70,7 +70,7 @@ onUnmounted(() => { disposed = true; unlisten?.() })
       <Button variant="outline" :disabled="!desktop || busy || checking" @click="run(() => api.downloadResources('ocr'))">{{ status?.ocrReady ? t("检查识别资源") : t("下载识别资源") }}</Button>
     </div>
     <div v-else class="setting-row flex-wrap gap-3">
-      <div class="min-w-0 flex-1"><strong>{{ t("PDF / 长图导出字体") }}</strong><small class="block text-zinc-500">{{ t("选择有嵌入授权的 TTF，或下载霞鹜文楷（24 MiB）。") }}</small></div>
+      <div class="min-w-0 flex-1"><strong>{{ t("PDF / 长图导出字体") }}</strong><InfoTip :text="t('选择有嵌入授权的 TTF，或下载霞鹜文楷（24 MiB）。')" /></div>
       <span :class="{ 'status-ok': status?.fontReady }" role="status"><Check v-if="status?.fontReady" :size="14" />{{ status ? status.fontReady ? t("已就绪") : t("未设置") : checking ? t("正在检查…") : t("状态未读取") }}</span>
       <Button variant="outline" :disabled="!desktop || busy || checking" @click="run(api.chooseExportFont)">{{ t("选择字体") }}</Button>
       <Button variant="ghost" :disabled="!desktop || busy || checking" @click="run(() => api.downloadResources('font'))">{{ t("使用下载字体") }}</Button>

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import InfoTip from '@/shared/ui/InfoTip.vue'
 import { computed } from 'vue'
 import { Keyboard, MousePointer2, Mouse, Route, MoveVertical, RotateCcw } from 'lucide-vue-next'
 import { t } from '@/shared/i18n/i18n'
@@ -47,8 +48,8 @@ function reset() {
       </label>
     </div>
     <div class="effects-group">
-      <label class="effect-toggle keyboard-toggle"><Keyboard :size="15" aria-hidden="true" /><span>{{ t('按键提示') }}</span><input v-model="model.keyboard" type="checkbox" role="switch" :disabled="disabled" /></label>
-      <p class="effects-note">{{ t('仅显示快捷键、功能键与鼠标操作，不记录普通文字') }}</p>
+      <div class="keyboard-setting"><label class="effect-toggle keyboard-toggle"><Keyboard :size="15" aria-hidden="true" /><span>{{ t('按键提示') }}</span><input v-model="model.keyboard" type="checkbox" role="switch" :disabled="disabled" /></label>
+      <InfoTip :text="t('仅显示快捷键、功能键与鼠标操作，不记录普通文字')" /></div>
       <div class="effect-setting position-setting">
         <span>{{ t('按键位置') }}</span>
         <div class="effect-positions" role="group" :aria-label="t('按键位置')">
@@ -87,7 +88,8 @@ function reset() {
 .effect-toggle input[type=checkbox]::after { content:''; position:absolute; top:2px; left:2px; width:10px; height:10px; border-radius:50%; background:white; transition:transform .12s; }
 .effect-toggle input[type=checkbox]:checked { background:#2563eb; }
 .effect-toggle input[type=checkbox]:checked::after { transform:translateX(12px); }
-.effects-note { margin:0 4px 10px; color:var(--effect-muted); font-size:12px; line-height:1.5; }
+.keyboard-setting { display:flex; align-items:center; gap:4px; }
+.keyboard-setting .keyboard-toggle { flex:1; min-width:0; }
 .input-effects .effect-setting { display:grid; grid-template-columns:80px minmax(0,1fr) 58px; align-items:center; gap:8px; min-height:34px; margin:0; padding:2px 4px; }
 .effect-setting > span { font-size:12px; }
 .effect-setting input[type=range] { width:100%; min-width:0; height:24px; margin:0; padding:0; border:0; accent-color:#2563eb; cursor:pointer; }

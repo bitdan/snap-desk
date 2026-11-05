@@ -81,7 +81,7 @@ onMounted(() => { void run(refresh); void refreshAutostart() })
     <p v-if="message" class="notice" role="status">{{ t(message) }}</p>
     <div class="settings-card">
       <div v-for="directory in directories.filter(item => item.kind !== 'logs')" :key="directory.kind" class="setting-row directory-row">
-        <div class="directory-content"><strong>{{ t(labels[directory.kind].name) }}</strong><p class="directory-path" :class="{ 'directory-error': directory.error }">{{ te(directory.error) || directory.path || t('系统默认位置') }}</p><small v-if="directory.kind === 'captures'">{{ t('作为保存对话框的默认位置，保存时仍可另选目录。') }}</small><small v-if="directory.kind === 'clipboard'">{{ t('请通过剪贴板页面清理历史，勿手动删除数据库。') }}</small></div>
+        <div class="directory-content"><strong>{{ t(labels[directory.kind].name) }}</strong><p class="directory-path" :class="{ 'directory-error': directory.error }">{{ te(directory.error) || directory.path || t('系统默认位置') }}</p><small v-if="directory.kind === 'clipboard'">{{ t('请通过剪贴板页面清理历史，勿手动删除数据库。') }}</small></div>
         <div class="directory-actions">
           <Button variant="outline" :disabled="busy || !directory.path" @click="run(() => api.openAppDirectory(directory.kind))">{{ t('打开') }}</Button>
           <Button variant="ghost" :disabled="busy || !directory.path" @click="run(() => api.copyAppDirectory(directory.kind), '目录路径已复制。')">{{ t('复制路径') }}</Button>

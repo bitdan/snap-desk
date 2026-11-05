@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Check } from 'lucide-vue-next'
 import { t, te } from '@/shared/i18n/i18n'
 import { onMounted, ref } from 'vue'
 import { useAutoSave } from '@/shared/ui/use-auto-save'
@@ -48,7 +49,7 @@ onMounted(load)
           <div class="setting-field"><label for="history-size">{{ t("容量上限（MiB）") }}</label><input id="history-size" v-model.number="settings.maxStorageMb" type="number" min="50" max="2048" required /></div>
           <div class="setting-field"><label for="history-days">{{ t("保留天数（0 为不限）") }}</label><input id="history-days" v-model.number="settings.retainDays" type="number" min="0" max="3650" required /></div>
         </div>
-        <div class="clipboard-settings-footer"><p class="settings-note">{{ t("仅记录路径，不备份文件。") }} {{ t("自动清理不删除收藏。") }}</p><span class="settings-save-status" role="status">{{ autosave.saving.value ? t("正在保存…") : autosave.saved.value ? t("已自动保存") : t("更改自动保存") }}</span></div>
+        <div class="clipboard-settings-footer"><p class="settings-note">{{ t("自动清理不删除收藏。") }}</p><span class="settings-save-status" role="status" v-if="autosave.saving.value || autosave.saved.value" :class="{ 'status-ok': !autosave.saving.value }"><Check v-if="!autosave.saving.value" :size="14" class="status-check" />{{ autosave.saving.value ? t("正在保存…") : t("已自动保存") }}</span></div>
       </fieldset>
     </form>
     <p v-if="error || autosave.error.value" class="notice error" role="alert">{{ te(error || autosave.error.value) }}<Button v-if="ready" variant="ghost" @click="autosave.retry">{{ t("重试") }}</Button></p>

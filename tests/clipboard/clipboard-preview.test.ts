@@ -73,7 +73,8 @@ it.each([
   expect(text(button)).toBe(path)
   expect(findNode(root, node => node.type === 'textarea')).toBeUndefined()
   const header = findNode(root, node => node.props.class === 'history-preview-header')!
-  expect(text(header)).toContain('预览')
+  expect(findNode(root, node => node.props['data-window'] === '预览')).toBeDefined()
+  expect(text(header)).not.toContain('预览')
   expect(text(header)).not.toContain('文字预览')
   let finish!: () => void
   api.clipboardOpenPath.mockImplementationOnce(() => new Promise<void>(resolve => { finish = resolve }))

@@ -1,6 +1,7 @@
 <script setup lang="ts">
+import InfoTip from '@/shared/ui/InfoTip.vue'
 import { computed, onMounted, ref } from 'vue'
-import { Pin, RotateCcw } from 'lucide-vue-next'
+import { Check, Pin, RotateCcw } from 'lucide-vue-next'
 import { api, desktop } from '@/services/api'
 import { updateSettings } from '@/features/settings/settings-write'
 import { defaultPinAppearance, pinAppearanceStyle, validatePinAppearance } from '../pins'
@@ -31,15 +32,15 @@ onMounted(load)
 
 <template>
   <section class="pin-appearance-settings" aria-labelledby="pin-appearance-title">
-    <div class="appearance-heading"><h2 id="pin-appearance-title">{{ t('贴图外观') }}</h2><Button variant="ghost" :disabled="!desktop || !ready" @click="reset"><RotateCcw :size="14" />{{ t('恢复默认') }}</Button></div>
+    <div class="appearance-heading"><div class="flex items-center gap-1"><h2 id="pin-appearance-title">{{ t('贴图外观') }}</h2><InfoTip :text="t('应用于全部贴图，修改自动生效。')" /></div><Button variant="ghost" :disabled="!desktop || !ready" @click="reset"><RotateCcw :size="14" />{{ t('恢复默认') }}</Button></div>
     <div class="appearance-layout">
       <form class="appearance-fields" @submit.prevent @input="changed" @change="changed(); autosave.flush()" @focusout="autosave.flush">
         <fieldset :disabled="!desktop || !ready">
-          <div class="setting-row"><label for="pin-shadow">{{ t('阴影') }}<small>{{ t('自动按贴图尺寸、缩放与焦点调整。') }}</small></label><SelectControl id="pin-shadow" v-model="draft.shadow" :disabled="!desktop || !ready" :options="[{ value: 'auto', label: t('自动调整') }, { value: 'soft', label: t('柔和') }, { value: 'none', label: t('关闭') }]" @update:model-value="changed(); autosave.flush()" /></div>
+          <div class="setting-row"><div class="flex items-center gap-1"><label for="pin-shadow">{{ t('阴影') }}</label><InfoTip :text="t('自动按贴图尺寸、缩放与焦点调整。')" /></div><SelectControl id="pin-shadow" v-model="draft.shadow" :disabled="!desktop || !ready" :options="[{ value: 'auto', label: t('自动调整') }, { value: 'soft', label: t('柔和') }, { value: 'none', label: t('关闭') }]" @update:model-value="changed(); autosave.flush()" /></div>
           <div class="setting-row"><label for="pin-border-color">{{ t('边框颜色') }}</label><div class="border-color-control"><input id="pin-border-color" v-model="draft.borderColor" type="color" /><output for="pin-border-color">{{ draft.borderColor.toUpperCase() }}</output></div></div>
-          <div class="setting-row"><label for="pin-corner">{{ t('圆角') }}<small>{{ t('0 为直角') }}</small></label><div class="corner-control"><input id="pin-corner" v-model.number="draft.cornerRadius" type="range" min="0" max="24" step="1" /><output for="pin-corner">{{ draft.cornerRadius }} px</output></div></div>
+          <div class="setting-row"><label for="pin-corner">{{ t('圆角') }}</label><div class="corner-control"><input id="pin-corner" v-model.number="draft.cornerRadius" type="range" min="0" max="24" step="1" /><output for="pin-corner">{{ draft.cornerRadius }} px</output></div></div>
         </fieldset>
-        <p class="settings-save-status" role="status">{{ autosave.saving.value ? t('正在保存…') : autosave.saved.value ? t('已自动保存') : t('应用于全部贴图，修改自动生效。') }}</p>
+        <p class="settings-save-status" role="status" v-if="autosave.saving.value || autosave.saved.value" :class="{ 'status-ok': !autosave.saving.value }"><Check v-if="!autosave.saving.value" :size="14" class="status-check" />{{ autosave.saving.value ? t('正在保存…') : t('已自动保存') }}</p>
       </form>
       <div class="appearance-preview" :aria-label="t('贴图外观预览')"><div class="preview-sheet" :style="previewStyle"><Pin :size="20" /><span>{{ t('贴图预览') }}</span><div class="preview-lines"><i /><i /></div></div></div>
     </div>
