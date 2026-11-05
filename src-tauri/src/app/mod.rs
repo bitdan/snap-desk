@@ -39,6 +39,7 @@ pub fn run() {
         .manage(CaptureState::default())
         .manage(auxiliary_windows::AuxiliaryWindows::default())
         .manage(capture::MainWindowState::default())
+        .manage(crate::shared::native_drag::DragState::default())
         .manage(settings::ShortcutPressState::default())
         .manage(shortcut_probe::ProbeState::default())
         .manage(recognition::text_input::TextInputState::default())

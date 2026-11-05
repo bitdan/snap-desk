@@ -101,8 +101,6 @@ impl PinLayout {
 
 #[derive(Default)]
 pub struct PinState {
-    /// 拖出的图片保留到应用退出，让接收应用可在放下后异步读取文件。
-    drag_files: Mutex<Vec<tempfile::TempPath>>,
     pub operation: AtomicBool,
     next_id: AtomicU64,
     images: Mutex<BTreeMap<String, Pin>>,

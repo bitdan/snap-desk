@@ -10,3 +10,5 @@ pub(crate) mod platform;
 pub(crate) mod benchmark;
 
 pub(crate) mod text_image;
+
+pub(crate) mod native_drag;
