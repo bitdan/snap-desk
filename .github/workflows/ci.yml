@@ -1,8 +1,9 @@
 name: CI
 
-# 每次推送与 PR 都先跑静态检查和测试；发布流水线仍只负责打标签后的构建与上传。
+# 分支推送与 PR 跑检查；标签推送交给发布流水线，避免同一标签重复执行。
 on:
   push:
+    branches: [master]
   pull_request:
 
 permissions:
@@ -28,6 +29,8 @@ jobs:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
+          # release-notes 测试会读取已有附注标签；默认浅克隆没有标签，必须取完整历史。
+          fetch-depth: 0
       - uses: actions/setup-node@v6
         with:
           node-version: '22'
