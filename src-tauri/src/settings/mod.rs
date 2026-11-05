@@ -1344,11 +1344,13 @@ mod tests {
         assert_eq!(load(&path), (Settings::default(), None));
         for contents in [
             "broken",
-            r#"{"shortcut":"S","delaySeconds":0}"#,
-            r#"{"shortcut":"Alt+S","delaySeconds":2}"#,
+            // 新旧格式混用由 SettingsWire 明确拒绝；单独旧的 shortcut 与 delaySeconds 仍属合法配置。
+            r#"{"shortcut":"S","shortcuts":{}}"#,
+            r#"{"shortcut":"S","delaySeconds":2}"#,
+            r#"{"unknownField":1}"#,
         ] {
             fs::write(&path, contents).unwrap();
-            assert!(load(&path).1.is_some());
+            assert!(load(&path).1.is_some(), "无效配置应回退并给出提示：{contents}");
             assert_eq!(fs::read_to_string(&path).unwrap(), contents);
         }
     }
