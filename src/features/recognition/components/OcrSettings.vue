@@ -2,7 +2,7 @@
 import { Check } from 'lucide-vue-next'
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { api } from '@/services/api'
-import { cloudFirst, connectionMode, serviceKind, supportsOcr, type RecognitionService } from '@/features/recognition/services'
+import { cloudFirst, connectionMode, serviceKind, servicePresetId, supportsOcr, type RecognitionService } from '@/features/recognition/services'
 import { defaultOcrSettings, type OcrSettings, type SystemOcrStatus, type WechatOcrStatus } from '@/features/recognition/ocr'
 import { updateSettings } from '@/features/settings/settings-write'
 import { useAutoSave } from '@/shared/ui/use-auto-save'
@@ -25,13 +25,14 @@ const system = ref<SystemOcrStatus | null>(null), checking = ref(false)
 const engineOptions = computed(() => {
   const available = services.value.filter(supportsOcr)
   const option = (item: RecognitionService) => ({ value: `service:${item.id}`, label: item.name, description: item.model || t(serviceKind(item)), connection: connectionMode(item.endpoint) })
-  const cloud = [{ protocol: 'ocr-space', label: 'OCR.space' }, { protocol: 'paddle-ocr', label: 'Paddle API' }].flatMap(preset => {
-    const saved = available.filter(item => item.protocol === preset.protocol)
-    return saved.length ? saved.map(option) : [{ value: `preset:${preset.protocol}`, label: preset.label, description: '', connection: 'online' as const }]
+  const presets = [{ id: 'ocr-space', label: 'OCR.space' }, { id: 'paddle-ocr', label: 'Paddle API' }, { id: 'deepseek', label: 'DeepSeek' }]
+  const cloud = presets.flatMap(preset => {
+    const saved = available.filter(item => servicePresetId(item) === preset.id)
+    return saved.length ? saved.map(option) : [{ value: `preset:${preset.id}`, label: preset.label, description: '', connection: 'online' as const }]
   })
   return cloudFirst([
     ...cloud,
-    ...available.filter(item => !['ocr-space', 'paddle-ocr'].includes(item.protocol)).map(option),
+    ...available.filter(item => !presets.some(preset => preset.id === servicePresetId(item))).map(option),
     { value: 'local-ppocr', label: 'PaddleOCR', description: 'PP-OCRv6', connection: 'offline' as const },
     { value: 'windows-media', label: 'Windows OCR', connection: 'offline' as const, disabled: !system.value?.supported },
     // 检测未完成或失败时仍允许打开面板查看原因和重试，仅明确不支持的平台禁用。

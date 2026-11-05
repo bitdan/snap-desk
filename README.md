@@ -58,6 +58,7 @@
 | ✅ | OCR.space | 在线 API | 配置 API Key；大截图自动压缩以满足免费版 1 MB 限制 |
 | ✅ | Paddle API | 在线 API | 配置 AI Studio Token；可选 PP-OCRv6、PaddleOCR-VL-1.6、PP-StructureV3 等模型 |
 | ✅ | Groq Vision | 在线 API | 选择支持图片识别的模型 |
+| ✅ | [DeepSeek](https://api-docs.deepseek.com/zh-cn/guides/vision/) | 在线 API | `deepseek-flash` 图片文字识别 |
 | ✅ | 自定义视觉服务 | 在线 API / 本机 API | 使用支持图片输入的兼容服务 |
 
 - [x] 识别结果可编辑、复制，或继续翻译。
@@ -73,6 +74,7 @@
 | ✅ | CTranslate2 | 离线 | 安装引擎与语言包后支持本地中英互译 |
 | ✅ | DeepL API Free / Pro | 在线 API | 使用自己的 API Key |
 | ✅ | Groq | 在线 API | 选择账号可用的文本模型 |
+| ✅ | [DeepSeek](https://api-docs.deepseek.com/zh-cn/) | 在线 API | 内置 `deepseek-flash` 预设，使用自己的 API Key |
 | ✅ | OpenAI | 在线 API | 配置模型与 API Key |
 | ✅ | Ollama 等本机服务 | 本机 API | 使用兼容的本机文本模型服务 |
 | ✅ | 自定义文本服务 | 在线 API / 本机 API | 配置服务地址、模型和所需凭据 |

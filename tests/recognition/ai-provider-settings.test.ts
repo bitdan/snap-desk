@@ -30,6 +30,21 @@ beforeEach(() => { vi.stubGlobal('Document', class {}); vi.stubGlobal('ShadowRoo
 afterEach(() => { memoryRenderer.render(null, root); vi.resetAllMocks(); vi.unstubAllGlobals() })
 
 describe('翻译设置独立加载和快照复用', () => {
+  it('DeepSeek 预设保存模型和地址，重新进入仍选中且隔离旧服务密钥', async () => {
+    let settings = defaultSettings()
+    settings.ai = { ...settings.ai, provider: 'online-llm', endpoint: 'https://old.example/chat/completions', model: 'old' }
+    api.status.mockImplementation(async () => ({ settings }))
+    api.saveSettings.mockImplementation(async next => { settings = next; return next })
+    api.translationModelStatus.mockResolvedValue(ready); api.aiProviderStatus.mockResolvedValue(false)
+    mount(); await flushComponent()
+    findNode(root, node => node.type === 'input' && node.props.type === 'password')!.props['onUpdate:modelValue']('old-unsaved-key')
+    menu('preset:deepseek').props.onClick(); await flushComponent()
+    expect(settings.ai).toMatchObject({ provider: 'online-llm', endpoint: 'https://api.deepseek.com/chat/completions', model: 'deepseek-flash' })
+    expect(findNode(root, node => node.type === 'input' && node.props.type === 'password')!.value).toBe('')
+    expect(api.aiCredentialSet).not.toHaveBeenCalled()
+    memoryRenderer.render(null, root); mount(); await flushComponent()
+    expect(menu('preset:deepseek').props['aria-current']).toBe('page')
+  })
   it('Groq 预设自动填写地址和模型，隔离原服务密钥，重新进入仍显示 Groq', async () => {
     let settings = defaultSettings()
     settings.ai = { ...settings.ai, provider: 'online-llm', endpoint: 'https://old.example/v1/chat/completions', model: 'old-model', targetLanguage: 'ja' }

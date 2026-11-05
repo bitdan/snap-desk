@@ -20,6 +20,7 @@
 | ✅ | [PaddleOCR 官方异步接口](https://ai.baidu.com/ai-doc/AISTUDIO/fml7mozw5) | 在线 API | AI Studio Token；PP-OCRv6、PaddleOCR-VL-1.6、PP-StructureV3，兼容 PP-OCRv5 |
 | ✅ | [PaddleOCR 同步接口](https://ai.baidu.com/ai-doc/AISTUDIO/Kmfl2ycs0) | 在线 API / 本机 API | 自定义完整 `/ocr` 地址；通用 OCR 产线，模型由服务端决定 |
 | ✅ | [Groq Vision](https://console.groq.com/docs/vision) | 在线 API | 图片输入模型；与 Groq 文本翻译模型分别配置 |
+| ✅ | [DeepSeek 图像理解](https://api-docs.deepseek.com/zh-cn/guides/vision/) | 在线 API | `deepseek-flash`；Chat Completions 的 `image_url` 内联截图，返回文字，不提供定位框 |
 | ✅ | 自定义兼容视觉模型 | 在线 API / 本机 API | 兼容 Chat Completions 图片输入，并明确启用图片能力 |
 
 OCR 路由只调用已保存的引擎，不因本地失败自动回退到在线服务。启用在线 OCR 后，识别操作直接上传选区图片，不再逐次弹出上传确认。
@@ -35,6 +36,7 @@ Paddle API 地址下拉框提供 **官方异步接口（推荐）** 与 **同步
 | ✅ | CTranslate2 | 离线 | 本地中英互译；引擎与语言包按需安装 |
 | ✅ | DeepL API Free / Pro | 在线 API | 官方 `/v2/translate`；使用 API Key |
 | ✅ | Groq | 在线 API | 兼容 Chat Completions 的文本模型，内置地址预设 |
+| ✅ | [DeepSeek](https://api-docs.deepseek.com/zh-cn/) | 在线 API | 内置 `https://api.deepseek.com/chat/completions` 与 `deepseek-flash`，复用兼容协议的批量文本翻译 |
 | ✅ | OpenAI | 在线 API | 兼容 Chat Completions 的文本翻译，模型 ID 自行配置 |
 | ✅ | Ollama 等本机兼容服务 | 本机 API | 通过 `/v1/chat/completions` 接入；不代表已适配各平台的原生专用协议 |
 | ✅ | 自定义兼容文本模型 | 在线 API / 本机 API | 配置完整接口地址、模型 ID 与所需凭据 |
@@ -42,6 +44,8 @@ Paddle API 地址下拉框提供 **官方异步接口（推荐）** 与 **同步
 本地翻译目前仅支持中英双向；在线文本翻译只发送待翻译文字，不直接接收截图文件。截图与贴图先由所选 OCR 提取文字，再交给同一翻译入口。
 
 ## 服务配置与凭据
+
+DeepSeek 可在 OCR、翻译或服务管理中选择预设；服务管理保存的同一连接可分别用于 OCR 和翻译。密钥从 [DeepSeek 开放平台](https://platform.deepseek.com/api_keys) 获取。模型能力以[官方更新日志](https://api-docs.deepseek.com/zh-cn/updates/)为准；预设使用支持图片输入的 `deepseek-flash`，修改为其他模型时须同步核对图片能力。
 
 服务目录维护连接、协议、地址、模型和图片能力，OCR 与翻译分别绑定已保存连接。菜单中“当前使用”根据已生效配置显示，保存失败不会把正在编辑的草稿标成当前配置。已有连接替代同供应商的添加预设，多账号 / 多模型连接仍各自保留。
 

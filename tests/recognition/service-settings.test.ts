@@ -35,6 +35,26 @@ beforeEach(() => {
 })
 afterEach(() => { memoryRenderer.render(null, root); vi.unstubAllGlobals() })
 
+it('DeepSeek 预设保存同一连接用于 OCR 和翻译，并打开官方密钥入口', async () => {
+  await mount()
+  findNode(root, node => node.type === 'button' && node.props['data-provider'] === 'preset:deepseek')!.props.onClick()
+  await flushComponent()
+  expect(input('完整接口地址').value).toBe('https://api.deepseek.com/chat/completions')
+  expect(input('模型名称').value).toBe('deepseek-flash')
+  button('获取 API Key / Token').props.onClick(); await flushComponent()
+  expect(api.openRecognitionPortal).toHaveBeenCalledWith('deepseek')
+  input('API Key / Token').props['onUpdate:modelValue']('deepseek-test-key')
+  await save()
+  const saved = settings.recognitionServices[0]!
+  expect(saved).toMatchObject({ name: 'DeepSeek', protocol: 'openai-compatible', model: 'deepseek-flash', vision: true })
+  expect(supportsOcr(saved)).toBe(true)
+  expect(supportsTranslation(saved)).toBe(true)
+  expect(api.recognitionServiceCredential).toHaveBeenCalledWith(saved.id, saved.endpoint, 'deepseek-test-key')
+  expect(JSON.stringify(settings)).not.toContain('deepseek-test-key')
+  expect(findNode(root, node => node.props['data-provider'] === 'preset:deepseek')).toBeUndefined()
+  expect(findNode(root, node => node.props['data-provider'] === `service:${saved.id}`)).toBeDefined()
+})
+
 it('保存多个模型连接，密钥只经凭据命令写入，不进入配置', async () => {
   await mount(); button('添加服务').props.onClick(); await flushComponent()
   input('API Key / Token').props['onUpdate:modelValue']('test-only-key')

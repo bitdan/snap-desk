@@ -132,7 +132,7 @@ it('在线引擎只绑定支持图片的连接，不改变翻译配置，也不�
 
 it('未配置时也显示在线 OCR，当前页保存密钥后启用服务，不修改翻译设置', async () => {
   await mount()
-  expect(select('OCR 引擎').children.filter(node => node.type === 'button').map(node => node.props['data-provider'])).toEqual(['preset:ocr-space', 'preset:paddle-ocr', 'local-ppocr', 'windows-media', 'wechat-ocr'])
+  expect(select('OCR 引擎').children.filter(node => node.type === 'button').map(node => node.props['data-provider'])).toEqual(['preset:ocr-space', 'preset:paddle-ocr', 'preset:deepseek', 'local-ppocr', 'windows-media', 'wechat-ocr'])
   expect(text(engine('preset:ocr-space'))).toContain('在线 API')
   expect(text(engine('preset:paddle-ocr'))).toContain('在线 API')
   engine('preset:ocr-space').props.onClick(); await flushComponent()
@@ -174,6 +174,24 @@ it('没有密钥或凭据保存失败时不启用在线 OCR，保留表单供重
   expect(settings.ocr.provider).toBe('service')
 })
 
+
+it('DeepSeek 在 OCR 页保存密钥后启用，重进页面用已存连接替代预设', async () => {
+  await mount()
+  engine('preset:deepseek').props.onClick(); await flushComponent()
+  expect(settings.ocr.provider).toBe('local-ppocr')
+  expect(api.saveSettings).not.toHaveBeenCalled()
+  findNode(root, node => node.type === 'input' && node.props.type === 'password')!.props['onUpdate:modelValue']('deepseek-test-key')
+  await findNode(root, node => node.type === 'form')!.props.onSubmit({ preventDefault() {} })
+  await flushComponent(); await flushComponent()
+  const saved = settings.recognitionServices[0]!
+  expect(saved).toMatchObject({ name: 'DeepSeek', model: 'deepseek-flash', vision: true })
+  expect(settings.ocr).toMatchObject({ provider: 'service', serviceId: saved.id })
+  expect(settings.ai.provider).toBe('local-ctranslate2')
+  expect(api.recognitionServiceCredential).toHaveBeenCalledWith(saved.id, saved.endpoint, 'deepseek-test-key')
+  memoryRenderer.render(null, root); await mount()
+  expect(engine('preset:deepseek')).toBeUndefined()
+  expect(engine(`service:${saved.id}`).props['aria-current']).toBe('page')
+})
 
 it('已保存 OCR.space 时替代添加入口，点击直接编辑原连接且保存不新增同名项', async () => {
   settings.recognitionServices = [{ id: 'saved-ocr', name: 'OCR.space', protocol: 'ocr-space', endpoint: 'https://api.ocr.space/parse/image', model: '2', vision: true }]

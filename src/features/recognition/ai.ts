@@ -55,6 +55,7 @@ export interface LocalTranslationStatus { runtimeReady: boolean; runtimeSupporte
 /** DeepL 地址只能从官方 Free/Pro 选择；自定义服务仅用于兼容协议。 */
 export const deepLEndpoints = ['https://api-free.deepl.com/v2/translate', 'https://api.deepl.com/v2/translate']
 export const translationPresets = [
+  { value: 'deepseek', label: 'DeepSeek', endpoint: 'https://api.deepseek.com/chat/completions', model: 'deepseek-flash' },
   { value: 'groq', label: 'Groq', endpoint: 'https://api.groq.com/openai/v1/chat/completions', model: 'openai/gpt-oss-120b' },
   { value: 'openai', label: 'OpenAI', endpoint: 'https://api.openai.com/v1/chat/completions', model: '' },
   { value: 'local', label: '本机兼容服务', endpoint: 'http://127.0.0.1:11434/v1/chat/completions', model: '' },

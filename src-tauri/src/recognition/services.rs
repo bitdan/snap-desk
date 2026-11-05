@@ -117,6 +117,7 @@ pub async fn open_recognition_portal(window: WebviewWindow, preset: String) -> R
     crate::capture::require_window(&window, "main")?;
     let url = match preset.as_str() {
         "groq" | "groq-vision" => "https://console.groq.com/keys",
+        "deepseek" => "https://platform.deepseek.com/api_keys",
         "ocr-space" => "https://ocr.space/ocrapi",
         "paddle-ocr" => "https://aistudio.baidu.com/paddleocr/task",
         "deepl" => "https://www.deepl.com/your-account/keys",

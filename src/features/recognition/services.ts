@@ -22,6 +22,7 @@ export function isPaddleJobsEndpoint(endpoint: string): boolean {
   try { return new URL(endpoint).pathname.replace(/\/+$/, '') === '/api/v2/ocr/jobs' } catch { return false }
 }
 export const servicePresets = [
+  { id: 'deepseek', name: 'DeepSeek', protocol: 'openai-compatible', endpoint: 'https://api.deepseek.com/chat/completions', model: 'deepseek-flash', vision: true, portal: 'https://platform.deepseek.com/api_keys' },
   { id: 'groq', name: 'Groq', protocol: 'openai-compatible', endpoint: 'https://api.groq.com/openai/v1/chat/completions', model: 'openai/gpt-oss-120b', vision: false, portal: 'https://console.groq.com/keys' },
   { id: 'groq-vision', name: 'Groq Vision', protocol: 'openai-compatible', endpoint: 'https://api.groq.com/openai/v1/chat/completions', model: 'qwen/qwen3.8-27b', vision: true, portal: 'https://console.groq.com/keys' },
   { id: 'ocr-space', name: 'OCR.space', protocol: 'ocr-space', endpoint: 'https://api.ocr.space/parse/image', model: '2', vision: true, portal: 'https://ocr.space/ocrapi' },
