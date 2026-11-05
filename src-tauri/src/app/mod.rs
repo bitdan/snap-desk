@@ -4,7 +4,7 @@ mod commands;
 mod updater;
 
 use actions::{trigger, trigger_pin, trigger_recording};
-use crate::{capture, clipboard, diagnostics, pins, resources, settings, recognition};
+use crate::{shelf, capture, clipboard, diagnostics, pins, resources, settings, recognition};
 use crate::recognition::{ocr, qr, translation, local_translation, translation_models};
 use crate::settings::{autostart, shortcut_probe, storage};
 use crate::resources::lifecycle as resource_lifecycle;
@@ -104,6 +104,7 @@ pub fn run() {
                         Some(settings::ShortcutAction::Pin) => trigger_pin(app),
                         Some(settings::ShortcutAction::Record) => trigger_recording(app),
                         Some(settings::ShortcutAction::History) => clipboard::open_history(app),
+                        Some(settings::ShortcutAction::Shelf) => shelf::toggle(app),
                         Some(settings::ShortcutAction::Translate) => recognition::text_input::open(app),
                         None => {}
                     }
@@ -119,6 +120,7 @@ pub fn run() {
                 error
             })?;
             clipboard::initialize(app.handle());
+            shelf::initialize(app.handle());
             resource_lifecycle::initialize(app.handle());
             updater::initialize(app.handle());
             let capture = MenuItem::with_id(
@@ -384,6 +386,11 @@ pub fn run() {
             updater::check_app_update,
             updater::download_app_update,
             updater::install_app_update,
+            shelf::commands::shelf_snapshot,
+            shelf::commands::shelf_configure,
+            shelf::commands::shelf_visibility,
+            shelf::commands::shelf_item_action,
+            clipboard::clipboard_drag_item,
             clipboard::clipboard_status,
             clipboard::clipboard_list,
             clipboard::clipboard_get_text,
@@ -483,6 +490,7 @@ pub fn run() {
 
 /// 原生安装器直接退出进程前也需执行正常退出的资源收尾。
 fn shutdown(app: &tauri::AppHandle) {
+    app.state::<shelf::ShelfState>().shutdown();
     resource_lifecycle::shutdown(app);
     prepare_installer_exit(app);
 }

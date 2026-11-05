@@ -28,7 +28,7 @@ it.each([
   const update = vi.fn()
   memoryRenderer.render(h(Component, {
     modelValue: 'F1', label: '区域截图',
-    validate: (capture: string) => validateShortcuts({ capture, pin: '', record: '', history: '', translate: '' }),
+    validate: (capture: string) => validateShortcuts({ capture, pin: '', record: '', history: '', translate: '', shelf: '' }),
     'onUpdate:modelValue': update,
   }), root)
   await flushComponent()

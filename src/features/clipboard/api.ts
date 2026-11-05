@@ -3,6 +3,7 @@ import type { ClipboardSettings, ClipboardQuery, ClipboardPage, ClipboardStatus,
 import { invoke } from '@/services/ipc'
 
 export const clipboardApi = {
+  clipboardDrag: (id: number) => invoke<void>('clipboard_drag_item', { id }),
   clipboardStatus: () => invoke<ClipboardStatus>('clipboard_status'),
   clipboardList: (query: ClipboardQuery) => invoke<ClipboardPage>('clipboard_list', { query }),
   clipboardText: (id: number) => invoke<string>('clipboard_get_text', { id }),

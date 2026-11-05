@@ -309,6 +309,7 @@ async fn begin_with_mode(
         let _ = app.emit_to("main", "capture-delay", 0u8);
         if cleanup(&app).is_err() {
             state.active.store(false, Ordering::SeqCst);
+            crate::shelf::resume_after_capture(&app);
         }
         log::error!("event=capture.prepare_failed module=capture code=CAPTURE_PREPARE_FAILED");
     }
@@ -390,6 +391,10 @@ fn prepare(app: &AppHandle, recording: bool, translation: bool, mut latency: Lat
         // 录制复用过的窗口可能处于鼠标穿透/捕获排除状态；新截图恢复普通交互。
         window.set_ignore_cursor_events(false).map_err(err)?;
         window.set_content_protected(false).map_err(err)?;
+    }
+    // 暂存架先隐藏，并沿用桌面合成等待，避免把卡片收进截图。
+    if crate::shelf::suspend_for_capture(app)? {
+        *app.state::<CaptureState>().hidden_at.lock().map_err(err)? = Some(Instant::now());
     }
     // 翻译窗口先隐藏，并沿用合成等待，避免把自己的文字收进截图。
     if let Some(window) = app.get_webview_window("translation") {
@@ -740,6 +745,7 @@ fn cleanup(app: &AppHandle) -> Result<(), String> {
     }
     scroll::chrome::release(app);
     state.active.store(false, Ordering::SeqCst);
+    crate::shelf::resume_after_capture(app);
     // 用户可能在框选期间关闭翻译窗口；取消截图只恢复仍存在的窗口，不重建它。
     if restore_translation {
         if let Some(window) = app.get_webview_window("translation") {

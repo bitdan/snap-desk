@@ -2,6 +2,7 @@
 import { t, te } from '@/shared/i18n/i18n'
 import { onMounted, ref } from 'vue'
 import Button from '@/shared/ui/button/Button.vue'
+import ShelfSettings from '@/features/shelf/components/ShelfSettings.vue'
 import ClipboardSettings from '@/features/clipboard/components/ClipboardSettings.vue'
 import ResourceSettings from '@/features/resources/components/ResourceSettings.vue'
 import { Check } from 'lucide-vue-next'
@@ -72,6 +73,7 @@ onMounted(() => { void run(refresh); void refreshAutostart() })
       <p v-if="startupError" class="notice error" role="alert">{{ te(startupError) }}</p>
     </section>
     <ClipboardSettings :disabled="busy" />
+    <ShelfSettings />
     <section class="general-section general-font"><h2>{{ t('导出字体') }}</h2><ResourceSettings kind="font" /></section>
     <section class="general-section general-storage">
     <h2>{{ t('文件与存储') }}</h2>

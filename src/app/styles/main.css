@@ -133,3 +133,6 @@ kbd { display: inline-block; border: 1px solid #d8dee4; border-bottom-width: 2px
 [data-theme=dark] .app-shell .history-item:hover { background: #303843; }
 [data-theme=dark] .app-shell :is(.history-item.is-selected, .history-categories button.active) { background: #223c62; color: #a9ccff; border-color: #6386b8; }
 [data-theme=dark] .history-context-menu button:hover { background: #303843; }
+
+/* 暂存架透明范围不使用 CSS 鼠标穿透；收起由原生隐藏整个窗口。 */
+.shelf-window-root, .shelf-window-root body, .shelf-window-root #app { width: 100%; height: 100%; overflow: hidden; background: transparent; }

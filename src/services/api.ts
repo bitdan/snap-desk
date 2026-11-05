@@ -1,4 +1,5 @@
 /** 稳定的桌面 API 汇总入口；命令、事件与类型由所属功能维护，此处只做组合。 */
+import { shelfApi } from '@/features/shelf/api'
 import { diagnosticsApi } from '@/features/diagnostics/api'
 import { resourcesApi } from '@/features/resources/api'
 import { recognitionApi } from '@/features/recognition/api'
@@ -23,9 +24,11 @@ export * from '@/features/pins/events'
 export * from '@/features/settings/events'
 export * from '@/features/scroll/events'
 export * from '@/features/clipboard/events'
+export * from '@/features/shelf/events'
 export * from '@/features/recognition/events'
 
 export const api = {
+  ...shelfApi,
   ...diagnosticsApi,
   ...resourcesApi,
   ...recognitionApi,

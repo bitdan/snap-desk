@@ -124,6 +124,7 @@ impl Service {
     }
     pub fn changed(&self, app: &AppHandle) {
         let revision = self.revision.fetch_add(1, Ordering::AcqRel) + 1;
+        let _ = app.emit_to("shelf", "shelf-changed", ());
         let _ = app.emit_to(
             "main",
             "clipboard-changed",

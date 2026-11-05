@@ -104,6 +104,7 @@ pub enum ShortcutAction {
     Record,
     History,
     Translate,
+    Shelf,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -114,6 +115,7 @@ pub struct Shortcuts {
     pub record: String,
     pub history: String,
     pub translate: String,
+    pub shelf: String,
 }
 /// 区分缺失字段与显式禁用；兼容旧翻译映射，保留已自定义的快捷键。
 #[derive(Deserialize)]
@@ -124,6 +126,7 @@ struct ShortcutsWire {
     record: String,
     history: Option<String>,
     translate: Option<String>,
+    shelf: String,
     // 只读取旧版本的两个翻译映射，保存时统一输出 translate。
     translate_selection: Option<String>,
     translate_clipboard: Option<String>,
@@ -137,6 +140,7 @@ impl Default for ShortcutsWire {
             record: keys.record,
             history: None,
             translate: None,
+            shelf: keys.shelf,
             translate_selection: None,
             translate_clipboard: None,
         }
@@ -157,6 +161,7 @@ impl From<ShortcutsWire> for Shortcuts {
             record: wire.record,
             history: wire.history.unwrap_or_else(|| Self::default().history),
             translate,
+            shelf: wire.shelf,
         };
         if missing {
             keys.preserve_legacy_mapping();
@@ -174,6 +179,7 @@ impl Default for Shortcuts {
             record: "F3".into(),
             history: "F4".into(),
             translate: "Alt+T".into(),
+            shelf: String::new(),
         }
     }
 }
@@ -194,13 +200,14 @@ impl Shortcuts {
             .iter().any(|key| parse_shortcut(key).ok().flatten() == translate)
         { self.translate.clear(); }
     }
-    pub fn entries(&self) -> [(ShortcutAction, &str, &str); 5] {
+    pub fn entries(&self) -> [(ShortcutAction, &str, &str); 6] {
         [
             (ShortcutAction::Capture, "区域截图", &self.capture),
             (ShortcutAction::Pin, "剪贴板贴图", &self.pin),
             (ShortcutAction::Record, "开始 / 停止录屏", &self.record),
             (ShortcutAction::History, "剪贴板历史", &self.history),
             (ShortcutAction::Translate, "翻译", &self.translate),
+            (ShortcutAction::Shelf, "展开 / 收起暂存架", &self.shelf),
         ]
     }
 }

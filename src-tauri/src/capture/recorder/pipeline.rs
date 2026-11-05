@@ -436,6 +436,7 @@ pub(super) fn collect(
     app.state::<CaptureState>()
         .active
         .store(false, Ordering::SeqCst);
+    crate::shelf::resume_after_capture(&app);
     let _ = app.emit_to("main", "capture-result", &message);
     // 不主动改变主界面的显示状态；成功路径已在结果消息和原生成品状态中发布。
 }

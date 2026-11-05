@@ -4,6 +4,7 @@ mod capture;
 mod clipboard;
 mod diagnostics;
 mod pins;
+mod shelf;
 mod recognition;
 mod resources;
 mod settings;

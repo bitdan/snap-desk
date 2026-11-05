@@ -9,7 +9,8 @@
     "pin-*",
     "scroll-preview",
     "scroll-controls",
-    "recording-controls"
+    "recording-controls",
+    "shelf"
   ],
   "permissions": [
     "core:event:allow-listen",

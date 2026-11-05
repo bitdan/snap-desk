@@ -43,14 +43,14 @@ describe('全局快捷键动作映射与录入', () => {
   const event = (key: string, code = key, modifiers = {}) => ({ key, code, ctrlKey: false, altKey: false, shiftKey: false, metaKey: false, ...modifiers })
   it('默认快捷键独立复制，可分别清空并允许重新分配 F2/F3', () => {
     const shortcuts = defaultSettings().shortcuts
-    expect(shortcuts).toEqual({ capture: 'F1', pin: 'F2', record: 'F3', history: 'F4', translate: 'Alt+T' })
+    expect(shortcuts).toEqual({ capture: 'F1', pin: 'F2', record: 'F3', history: 'F4', translate: 'Alt+T', shelf: '' })
     shortcuts.capture = 'F2'; shortcuts.pin = ''; shortcuts.record = ''
     expect(validateShortcuts(shortcuts)).toBeNull()
     expect(defaultSettings().shortcuts.capture).toBe('F1')
-    expect(validateShortcuts({ capture: '', pin: '', record: '', history: '', translate: '' })).toBeNull()
+    expect(validateShortcuts({ capture: '', pin: '', record: '', history: '', translate: '', shelf: '' })).toBeNull()
   })
   it('报告冲突动作，修饰键顺序不影响冲突判断', () => {
-    const error = validateShortcuts({ capture: 'Ctrl+Shift+S', pin: 'Shift+Ctrl+S', record: '', history: '', translate: '' })
+    const error = validateShortcuts({ capture: 'Ctrl+Shift+S', pin: 'Shift+Ctrl+S', record: '', history: '', translate: '', shelf: '' })
     expect(error).toContain('区域截图'); expect(error).toContain('剪贴板贴图')
   })
   it('修饰键只预览，完整组合与功能键完成录入', () => {
@@ -64,8 +64,8 @@ describe('全局快捷键动作映射与录入', () => {
     for (const key of ['Backspace', 'Delete']) expect(captureShortcut(event(key))).toEqual({ value: '' })
     for (const key of ['Escape', 'Backspace', 'Delete']) expect(captureShortcut(event(key, key, { ctrlKey: true }))).toEqual({ value: `Ctrl+${key}` })
     expect(captureShortcut(event('a', 'KeyA'))).toEqual({ value: 'A' })
-    expect(validateShortcuts({ capture: 'F', pin: '', record: '', history: '', translate: '' })).toBeNull()
-    expect(validateShortcuts({ capture: 'Ctrl+Ctrl+S', pin: '', record: '', history: '', translate: '' })).toContain('重复')
+    expect(validateShortcuts({ capture: 'F', pin: '', record: '', history: '', translate: '', shelf: '' })).toBeNull()
+    expect(validateShortcuts({ capture: 'Ctrl+Ctrl+S', pin: '', record: '', history: '', translate: '', shelf: '' })).toContain('重复')
   })
   it.each([
     [' ', 'Space', {}, 'Space'], ['Enter', 'Enter', {}, 'Enter'], ['1', 'Digit1', {}, '1'],
@@ -78,11 +78,11 @@ describe('全局快捷键动作映射与录入', () => {
     ['MediaPlayPause', 'MediaPlayPause', {}, 'MediaPlayPause'],
   ])('扩展按键录入并通过保存校验：%s / %s', (key, code, modifiers, value) => {
     expect(captureShortcut(event(key, code, modifiers))).toEqual({ value })
-    expect(validateShortcuts({ capture: value, pin: '', record: '', history: '', translate: '' })).toBeNull()
+    expect(validateShortcuts({ capture: value, pin: '', record: '', history: '', translate: '', shelf: '' })).toBeNull()
   })
   it('不接受多个主键、纯修饰键或系统库不支持的键', () => {
     for (const key of ['F25', 'Unidentified', 'Dead', 'Ctrl', 'Ctrl+A+B']) {
-      expect(validateShortcuts({ capture: key, pin: '', record: '', history: '', translate: '' })).not.toBeNull()
+      expect(validateShortcuts({ capture: key, pin: '', record: '', history: '', translate: '', shelf: '' })).not.toBeNull()
     }
     expect(captureShortcut(event('Unidentified'))).toHaveProperty('error')
   })

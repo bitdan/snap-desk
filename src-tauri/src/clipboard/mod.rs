@@ -1,4 +1,4 @@
-//! 剪贴板历史的受限 Tauri 入口；每个命令只允许 main 窗口访问。
+//! 剪贴板历史的受限入口；历史管理仅限 main，暂存架只复用单条读取、复制、贴图和拖出。
 mod blob_store;
 mod classification;
 pub mod export;
@@ -33,7 +33,26 @@ async fn work<T: Send + 'static>(
     window: WebviewWindow,
     f: impl FnOnce(&AppHandle, &Service) -> Result<T, String> + Send + 'static,
 ) -> Result<T, String> {
-    crate::capture::require_window(&window, "main")?;
+    work_impl(app, window, false, f).await
+}
+
+/// 暂存架只复用单条读取、复制、贴图和拖出，不开放历史删除及配置命令。
+async fn item_work<T: Send + 'static>(
+    app: AppHandle,
+    window: WebviewWindow,
+    f: impl FnOnce(&AppHandle, &Service) -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    work_impl(app, window, true, f).await
+}
+async fn work_impl<T: Send + 'static>(
+    app: AppHandle,
+    window: WebviewWindow,
+    shelf: bool,
+    f: impl FnOnce(&AppHandle, &Service) -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    if !(shelf && window.label() == "shelf") {
+        crate::capture::require_window(&window, "main")?;
+    }
     tauri::async_runtime::spawn_blocking(move || f(&app, &app.state::<Service>()))
         .await
         .map_err(|_| "历史任务执行失败。".to_string())?
@@ -80,7 +99,7 @@ pub async fn clipboard_get_text(
     window: WebviewWindow,
     id: i64,
 ) -> Result<String, String> {
-    work(app, window, move |_, s| {
+    item_work(app, window, move |_, s| {
         let stored = s.data()?.repo.get(id)?;
         if stored.item.kind != Kind::Text {
             return Err("此条目不是文本。".into());
@@ -131,7 +150,7 @@ pub async fn clipboard_get_thumbnail(
     window: WebviewWindow,
     id: i64,
 ) -> Result<String, String> {
-    work(app, window, move |_, s| {
+    item_work(app, window, move |_, s| {
         let d = s.data()?;
         let _guard = d.operation.lock().map_err(|_| "历史存储忙碌。")?;
         let item = d.repo.get(id)?;
@@ -188,7 +207,7 @@ pub async fn clipboard_restore(
     window: WebviewWindow,
     id: i64,
 ) -> Result<(), String> {
-    work(app, window, move |app, s| {
+    item_work(app, window, move |app, s| {
         let content = {
             let d = s.data()?;
             let _guard = d.operation.lock().map_err(|_| "历史存储忙碌。")?;
@@ -215,7 +234,7 @@ pub async fn clipboard_pin_item(
     window: WebviewWindow,
     id: i64,
 ) -> Result<(), String> {
-    work(app, window, move |app, s| {
+    item_work(app, window, move |app, s| {
         let content = {
             let d = s.data()?;
             let _guard = d.operation.lock().map_err(|_| "历史存储忙碌。")?;
@@ -341,4 +360,30 @@ pub(crate) fn settings_imported(app: &AppHandle) {
 pub fn open_history(app: &AppHandle) {
     crate::capture::show_main(app);
     let _ = app.emit_to("main", "clipboard-open", ());
+}
+
+/// 按历史 ID 拖出原图、文件或文本；原图临时文件沿用贴图的生命周期管理。
+#[tauri::command]
+pub async fn clipboard_drag_item(
+    app: AppHandle,
+    window: WebviewWindow,
+    id: i64,
+) -> Result<(), String> {
+    item_work(app, window, move |app, service| {
+        let content = {
+            let data = service.data()?;
+            let _guard = data.operation.lock().map_err(|_| "历史存储忙碌。")?;
+            data.content(id)?
+        };
+        let (format, bytes) = match content {
+            Content::Text(text) => (13, crate::shared::native_drag::wide_bytes(&text)),
+            Content::Files(paths) => (15, crate::shared::native_drag::file_bytes(&paths)),
+            Content::Image(image) => (
+                15,
+                crate::shared::native_drag::image_file_bytes(app, &image)?,
+            ),
+        };
+        crate::shared::native_drag::start(app, format, bytes)
+    })
+    .await
 }

@@ -5,6 +5,7 @@ import type { DirectoryView } from '../../src/features/settings/types'
 
 const api = vi.hoisted(() => ({ appDirectories: vi.fn(), chooseCaptureDirectory: vi.fn(), chooseRecordingDirectory: vi.fn(), autostartEnabled: vi.fn(), exportSettings: vi.fn(), importSettings: vi.fn() }))
 vi.mock('../../src/services/api', () => ({ api, desktop: true }))
+vi.mock('../../src/features/shelf/components/ShelfSettings.vue', () => ({ default: { render: () => null } }))
 vi.mock('../../src/features/clipboard/components/ClipboardSettings.vue', () => ({ default: { render: () => null } }))
 vi.mock('../../src/features/resources/components/ResourceSettings.vue', () => ({ default: { render: () => null } }))
 vi.mock('../../src/shared/ui/button/Button.vue', async () => {
