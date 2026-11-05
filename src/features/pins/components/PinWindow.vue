@@ -52,6 +52,8 @@ const error = ref('')
 const message = ref('')
 const controls = computed(() => frame.value?.view.toolbarExpanded ?? true)
 const controlsHovered = ref(false)
+/** 键盘唤出时临时保持工具栏可见，聚焦后再交给 :focus-visible 维持。 */
+const keyboardVisible = ref(false)
 let controlsHideTimer: ReturnType<typeof setTimeout> | undefined
 function keepControlsVisible() {
   clearTimeout(controlsHideTimer)
@@ -59,6 +61,7 @@ function keepControlsVisible() {
 }
 function hideControls() {
   clearTimeout(controlsHideTimer)
+  keyboardVisible.value = false
   if (!document.querySelector('.select-menu[data-state="open"]')) controlsHovered.value = false
 }
 // 留出穿过图片与底栏间隙的时间；隐藏的底栏不接收指针事件，不能自行唤出。
@@ -126,7 +129,7 @@ async function setView(patch: Partial<PinView>) {
   if (!frame.value) return
   await run(async () => { frame.value!.view = await api.setPinView({ ...frame.value!.view, ...patch }) })
 }
-function toggleControls() { void setView({ toolbarExpanded: !controls.value }) }
+function toggleControls() { return setView({ toolbarExpanded: !controls.value }) }
 function updateFocus() { focused.value = document.hasFocus(); if (!focused.value) closeMenu() }
 function closeMenu(restoreFocus = false) {
   contextMenu.value = null
@@ -234,7 +237,19 @@ function key(event: KeyboardEvent) {
   }
   if (key === 'escape') { event.preventDefault(); void action('hide'); return }
   if ((event.target as HTMLElement).closest('button, input, select')) return
-  if (key === 'tab') { event.preventDefault(); toggleControls() }
+  if (key === 'tab') {
+    event.preventDefault()
+    if (controls.value) { void toggleControls(); return }
+    // Tab 展开工具栏后把焦点送进第一个控件，避免只切换显隐却无法继续键盘操作。
+    keyboardVisible.value = true
+    void toggleControls().then(() => nextTick()).then(() => {
+      if (!controls.value) { keyboardVisible.value = false; return }
+      const first = toolbar.value?.querySelector<HTMLElement>('button:not(:disabled), select:not(:disabled), input:not(:disabled)')
+      if (first) first.focus()
+      else keyboardVisible.value = false
+    })
+    return
+  }
   else if (key === '+' || key === '=') { event.preventDefault(); zoom(1) }
   else if (key === '-') { event.preventDefault(); zoom(-1) }
 }
@@ -270,7 +285,7 @@ function closeOnResize() {
 </script>
 
 <template>
-  <div class="pin-shell" :class="{ 'is-focused': focused, 'controls-visible': controlsHovered || !!error || !!message }" :style="shellStyle" @pointerleave="hideControls" @contextmenu.prevent>
+  <div class="pin-shell" :class="{ 'is-focused': focused, 'controls-visible': controlsHovered || keyboardVisible || !!error || !!message }" :style="shellStyle" @pointerleave="hideControls" @contextmenu.prevent>
     <div v-show="imageReady" class="pin-stage" :inert="!!recognitionMode" tabindex="0" :aria-label='t("贴图，右键打开菜单")' :title="t('Ctrl＋左键拖出内容；拖入微信前可松开 Ctrl')" :style="[stageStyle, pinAppearanceStyle(appearance, display.stageWidth, display.stageHeight, frame?.view.opacity ?? 1, focused)]" @pointerenter="keepControlsVisible" @pointerleave="scheduleControlsHide" @pointerdown="drag" @pointermove="contentDrag.move" @pointerup="contentDrag.cancel" @pointercancel="contentDrag.cancel" @lostpointercapture="contentDrag.cancel" @wheel.prevent="wheel" @contextmenu.capture="openMenu">
       <div v-if="frame" class="pin-canvas">
         <div class="pin-image-content" :style="{ width: `${display.imageWidth}px`, height: `${display.imageHeight}px`, opacity: frame.view.opacity }">
