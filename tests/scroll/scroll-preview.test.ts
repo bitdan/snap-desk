@@ -38,6 +38,13 @@ describe('滚动采样状态与控制', () => {
     save.props.onClick(); await flushComponent()
     expect(mocks.controlScroll).toHaveBeenCalledWith(7, false, false)
   })
+  it('合并新帧时控制条短暂提示已合并，未合并不打断原状态', async () => {
+    await mount()
+    receive({ ...view, revision: 2, message: '等待页面稳定' }); await flushComponent()
+    expect(findNode(root, node => node.text === '等待页面稳定')).toBeDefined()
+    receive({ ...view, revision: 3, frames: 3, height: 480 }); await flushComponent()
+    expect(findNode(root, node => node.text === '已合并 · 3 帧')).toBeDefined()
+  })
   it('恢复时保存可信部分，迟到事件不能恢复已关闭会话', async () => {
     await mount()
     receive({ ...view, revision: 2, status: 'recovering', message: '请滚回重叠区' }); await flushComponent()

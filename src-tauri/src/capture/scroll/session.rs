@@ -143,12 +143,11 @@ fn view(session: &ScrollSession, collecting: bool) -> Result<ScrollView, String>
     })
 }
 
-/// 控制条只显示状态与操作，不渲染预览；复制前清空 base64，避免同一张缩略图发两遍。
+/// 预览窗与控制条接收同一版本快照；图片是否渲染由各窗口自行决定。
 fn emit_update(app: &AppHandle, update: &ScrollView) {
-    let _ = app.emit_to("scroll-preview", "scroll-updated", update);
-    let mut controls = update.clone();
-    controls.preview.clear();
-    let _ = app.emit_to("scroll-controls", "scroll-updated", &controls);
+    for label in ["scroll-preview", "scroll-controls"] {
+        let _ = app.emit_to(label, "scroll-updated", update);
+    }
 }
 
 #[tauri::command]

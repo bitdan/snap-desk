@@ -27,16 +27,24 @@ let disposed = false
 let updates = 0
 let closedThroughId = 0
 let actionGeneration = 0
+/** 控制条不显示图片，用短暂的“已合并”提示让用户知道这一帧确实拼上了。 */
+const mergedFrames = ref<number | null>(null)
+let mergedTimer: ReturnType<typeof setTimeout> | undefined
 function receive(next: ScrollView) {
   if (disposed) return
   const accepted = newerScrollPreview(view.value, next, closedThroughId)
   if (accepted !== next) return
   updates++
+  const merged = view.value?.id === next.id && next.frames > view.value.frames
   // 新失败版本表示后台已经结束本轮输出，恢复重试/取消入口；重复快照不打断新请求。
   if (next.id !== view.value?.id || (next.status === 'failed' && next.revision > (view.value?.revision ?? -1))) {
     actionGeneration++; busy.value = false; error.value = ''
   }
   view.value = next
+  if (!controls || !merged) return
+  mergedFrames.value = next.frames
+  clearTimeout(mergedTimer)
+  mergedTimer = setTimeout(() => { mergedFrames.value = null }, 1400)
 }
 // 单轴回滚时移动视口框，不重复增长画布。
 const marker = computed(() => view.value ? scrollViewportStyle(view.value) : {})
@@ -82,7 +90,7 @@ onMounted(async () => {
     if (!disposed && updates === revision && current) receive(current)
   } catch (e) { error.value = String(e) }
 })
-onUnmounted(() => { disposed = true; window.removeEventListener('keydown', key); off?.(); offClosed?.() })
+onUnmounted(() => { disposed = true; clearTimeout(mergedTimer); window.removeEventListener('keydown', key); off?.(); offClosed?.() })
 </script>
 
 <template>
@@ -102,7 +110,7 @@ onUnmounted(() => { disposed = true; window.removeEventListener('keydown', key);
     <footer v-else>
       <div class="progress" :title="te(hint)">
         <span class="status"><i :class="{ stopped: busy || !view?.collecting }" />{{ t(status) }}</span>
-        <small v-if="view" aria-live="polite">{{ te(view.message) || t("{0} 帧 · {1} px", { 0: view.frames, 1: view.height }) }}</small>
+        <small v-if="view" aria-live="polite" :class="{ merged: mergedFrames !== null }">{{ mergedFrames !== null ? t("已合并 · {0} 帧", { 0: mergedFrames }) : te(view.message) || t("{0} 帧 · {1} px", { 0: view.frames, 1: view.height }) }}</small>
       </div>
       <span v-if="error" class="error-indicator" role="alert" :title="te(error)" :aria-label="te(error)"><AlertCircle :size="16" /></span>
       <button class="save" :disabled="busy || !view || view.status === 'finishing'" :title="recovering ? t('保存并复制已拼接内容（Ctrl+C）') : t('完成并复制（Ctrl+C）')" @click="finish(false)"><Save :size="15" />{{ failed ? t("重试") : recovering ? t("保存已确认部分") : t("完成") }}</button>
@@ -129,6 +137,7 @@ footer { display: flex; align-items: center; gap: 7px; min-width: 0; }
 .status { display: flex; align-items: center; gap: 5px; white-space: nowrap; }
 .status i { width: 6px; height: 6px; border-radius: 50%; background: #7c3aed; flex: none; }.status i.stopped { background: #a1a1aa; }
 small { color: #71717a; font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+small.merged { color: #24834b; font-weight: 600; }
 button { flex: none; display: flex; align-items: center; justify-content: center; gap: 5px; height: 30px; border-radius: 5px; padding: 0 9px; }
 .save { background: #7c3aed; color: white; }.cancel { padding: 0 5px; }.cancel:hover:not(:disabled) { background: #fee2e2; color: #b91c1c; }
 button:disabled { opacity: .5; }.error, .error-indicator { color: #b91c1c; }.error-indicator { display: flex; }

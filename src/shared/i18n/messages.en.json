@@ -695,6 +695,7 @@
   "文字识别资源": "OCR resources",
   "导出字体": "Export font",
   "已拼接 {0} 帧": "Stitched {0} frames",
+  "已合并 · {0} 帧": "Merged · {0} frames",
   "正在拼接的滚动截图": "Scroll capture being stitched",
   "当前采集画面": "Current captured frame",
   "当前采集画面的位置": "Current frame position",
