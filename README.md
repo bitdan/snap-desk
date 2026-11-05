@@ -131,6 +131,7 @@ Snap Desk 是免费开源软件，使用 GPL-3.0-only 许可证。第三方在�
 
 ## 致谢
 
+- [Tendedero](https://github.com/alejandrobujan/tendedero)（Alejandro Buján）：顶部暂存架的悬挂式卡片、悬停展开、点击复制与拖出分享等交互参考了该项目，感谢其开源分享。
 - [Tauri](https://github.com/tauri-apps/tauri)：好用的 GUI 框架。
 - [Pot](https://github.com/pot-app/pot-desktop)：翻译与 OCR 模块参考了该项目，感谢其开源分享。
 - [wechat_ocr_sdk](https://github.com/MapleREHub/wechat_ocr_sdk)：提供调用 WeChat PC 内置 OCR 引擎的 Rust 适配层。
