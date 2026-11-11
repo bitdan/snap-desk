@@ -99,6 +99,12 @@ function navigate(event: KeyboardEvent) {
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f') {
     event.preventDefault(); focusSearch(); return
   }
+  // Ctrl+1～9 直接取当前列表的第 N 条，不必先移动焦点；在搜索框里同样生效。
+  if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && /^[1-9]$/.test(event.key)) {
+    const item = items.value[Number(event.key) - 1]
+    if (item) { event.preventDefault(); void activate(item) }
+    return
+  }
   if (event.key === 'Escape') {
     // 没有选择或关键词时不拦截，交给窗口级处理收起整个窗口。
     if (selected.value.length || keyword.value) handleEscape(event, () => {
@@ -221,11 +227,16 @@ async function run(action: () => Promise<unknown>, success = '') {
   catch (e) { error.value = String(e) }
   finally { busy.value = false }
 }
-/** 回车或双击：写回系统剪贴板后收起窗口，焦点回到原应用即可粘贴；固定时保留窗口。 */
+/** 回车、双击或 Ctrl+数字：默认直接粘贴到唤出前的窗口（由后端交还焦点并收起）；
+ *  设置里关闭直接粘贴，或没有可粘贴的外部窗口时，只写回系统剪贴板再收起。固定时保留窗口。 */
 async function activate(item: Item) {
   if (busy.value) return
-  await run(() => api.clipboardRestore(item.id), '已复制。')
-  if (!error.value && !keepOpen.value) await hideWindow()
+  let pasted = false
+  if (status.value?.pasteOnActivate) await run(async () => { pasted = await api.clipboardPaste(item.id, keepOpen.value) })
+  else await run(() => api.clipboardRestore(item.id))
+  if (error.value) return
+  message.value = pasted ? '已粘贴。' : '已复制。'
+  if (!pasted && !keepOpen.value) await hideWindow()
 }
 /** 收藏只更新本地一条记录，避免整页刷新丢掉滚动位置；收藏分类下仍需重查以移除条目。 */
 async function toggleFavorite(item: Item) {
@@ -378,7 +389,7 @@ onUnmounted(() => { disposed = true; revision++; window.removeEventListener('key
     </footer>
     <DetachedWindow :open="helpOpen" :title="t('帮助')" :width="480" :height="220" @close="helpOpen = false">
       <section class="history-help-popup" :aria-label='t("帮助")' @keydown.stop="helpKey">
-        <p>{{ t("回车或双击复制并收起 · 单击选中 · Ctrl 多选 · Shift 连选 · Ctrl+C 仅复制 · 右键更多操作") }}</p>
+        <p>{{ status?.pasteOnActivate ? t("回车或双击粘贴到原窗口 · Ctrl+1～9 粘贴第 N 条 · 单击选中 · Ctrl 多选 · Shift 连选 · Ctrl+C 仅复制 · 右键更多操作") : t("回车或双击复制并收起 · Ctrl+1～9 复制第 N 条 · 单击选中 · Ctrl 多选 · Shift 连选 · Ctrl+C 仅复制 · 右键更多操作") }}</p>
         <p v-if="category === 'file'">{{ t("仅记录文件路径，原文件移动或删除后失效。") }}</p>
       </section>
     </DetachedWindow>

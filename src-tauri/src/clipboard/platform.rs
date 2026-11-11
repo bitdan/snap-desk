@@ -21,6 +21,18 @@ pub fn write_files(_: &[String]) -> Result<(), String> {
     Err("当前平台尚未支持复制文件引用。".into())
 }
 #[cfg(not(target_os = "windows"))]
+pub fn foreground_window() -> usize {
+    0
+}
+#[cfg(not(target_os = "windows"))]
+pub fn activate(_: usize) -> Result<(), String> {
+    Err("当前平台尚未支持直接粘贴。".into())
+}
+#[cfg(not(target_os = "windows"))]
+pub fn send_paste(_: usize) -> Result<(), String> {
+    Err("当前平台尚未支持直接粘贴。".into())
+}
+#[cfg(not(target_os = "windows"))]
 pub fn snapshot(
     _: &super::model::ClipboardSettings,
 ) -> Result<Option<super::reader::Snapshot>, String> {

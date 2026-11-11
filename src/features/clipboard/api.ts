@@ -12,6 +12,8 @@ export const clipboardApi = {
   clipboardThumbnail: (id: number) => invoke<string>('clipboard_get_thumbnail', { id }),
   clipboardImage: (id: number) => invoke<string>('clipboard_get_image', { id }),
   clipboardRestore: (id: number) => invoke<void>('clipboard_restore', { id }),
+  /** 写回剪贴板并粘贴到唤出前的窗口；返回 false 表示没有可粘贴的外部窗口，内容仅已复制。 */
+  clipboardPaste: (id: number, keepOpen: boolean) => invoke<boolean>('clipboard_paste', { id, keepOpen }),
   clipboardPin: (id: number) => invoke<void>('clipboard_pin_item', { id }),
   clipboardFavorite: (id: number, favorite: boolean) => invoke<void>('clipboard_set_favorite', { id, favorite }),
   clipboardDelete: (ids: number[]) => invoke<void>('clipboard_delete', { ids }),

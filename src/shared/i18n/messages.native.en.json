@@ -881,5 +881,11 @@
   "创建 OCR 临时文件失败：{0}": "Failed to create an OCR temporary file: {0}",
   "写入 OCR 临时图片失败：{0}": "Failed to write the OCR temporary image: {0}",
   "WeChat OCR 识别失败，请重试或手动切换引擎：{0}": "WeChat OCR failed. Retry or switch engines manually: {0}",
-  "未找到微信 4.x 运行库，请确认已安装微信 4.x。": "WeChat 4.x runtime not found. Check that WeChat 4.x is installed."
+  "未找到微信 4.x 运行库，请确认已安装微信 4.x。": "WeChat 4.x runtime not found. Check that WeChat 4.x is installed.",
+  "原窗口已关闭，内容已复制，可手动粘贴。": "The previous window was closed. The content is copied; paste it manually.",
+  "请松开按键后重试，内容已复制，可手动粘贴。": "Release the keys and try again. The content is copied; paste it manually.",
+  "未能回到原窗口，内容已复制，可手动粘贴。": "Could not return to the previous window. The content is copied; paste it manually.",
+  "无法粘贴到原窗口，内容已复制，可手动粘贴。": "Could not paste into the previous window. The content is copied; paste it manually.",
+  "当前平台尚未支持直接粘贴。": "Direct paste is not supported on this platform yet.",
+  "排除应用无效：最多 50 个程序文件名，每个不超过 100 字且不含路径。": "Invalid excluded apps: up to 50 executable names, 100 characters each, without paths."
 }

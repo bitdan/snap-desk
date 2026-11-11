@@ -1,6 +1,9 @@
 //! 剪贴板独立窗口：由快捷键、托盘或主窗口唤出，贴近光标显示，失焦后由前端决定是否收起。
 //! 坐标均为物理像素；定位只使用鼠标所在显示器的工作区，不遮挡任务栏。
-use std::sync::Mutex;
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Mutex,
+};
 use tauri::{
     AppHandle, Emitter, Manager, PhysicalPosition, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
 };
@@ -8,6 +11,22 @@ use tauri::{
 pub(super) const LABEL: &str = "clipboard";
 /// 快捷键连按时串行化创建与显示，避免两次请求同时构建同名窗口。
 static GATE: Mutex<()> = Mutex::new(());
+
+/// 直接粘贴的目标：唤出前的前台窗口句柄数值，0 表示没有可粘贴的外部窗口。
+static TARGET: AtomicUsize = AtomicUsize::new(0);
+
+pub(super) fn target() -> usize {
+    TARGET.load(Ordering::Acquire)
+}
+
+/// 固定窗口后用户会在别的应用与本窗口之间来回切换；失焦时记下切换到的窗口，
+/// 再回来选择条目时粘贴到它。前台仍是本程序（预览、导出等子窗口）时保留原目标。
+pub(super) fn remember_switched_target() {
+    let hwnd = super::platform::foreground_window();
+    if hwnd != 0 {
+        TARGET.store(hwnd, Ordering::Release);
+    }
+}
 
 /// 首次使用时创建并常驻复用；预览、导出和确认弹窗沿用固定空白页的开窗通道。
 fn ensure(app: &AppHandle) -> Result<WebviewWindow, String> {
@@ -57,6 +76,10 @@ fn place(app: &AppHandle, window: &WebviewWindow) {
 pub(super) fn show(app: &AppHandle) -> Result<(), String> {
     let _gate = GATE.lock().map_err(|_| "剪贴板窗口忙碌。")?;
     let window = ensure(app)?;
+    // 必须在取得焦点之前记录；从主窗口按钮唤出时得到 0，随后的回车只复制不粘贴。
+    if !window.is_focused().unwrap_or(false) {
+        TARGET.store(super::platform::foreground_window(), Ordering::Release);
+    }
     if !window.is_visible().unwrap_or(false) {
         place(app, &window);
     }

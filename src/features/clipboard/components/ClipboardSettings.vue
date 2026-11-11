@@ -4,13 +4,15 @@ import { t, te } from '@/shared/i18n/i18n'
 import { onMounted, onUnmounted, ref } from 'vue'
 import { useAutoSave } from '@/shared/ui/use-auto-save'
 import { api, desktop, onClipboardState } from '@/services/api'
-import { defaultClipboardSettings, type ClipboardStatus } from '@/features/clipboard/clipboard'
+import { defaultClipboardSettings, parseExcludedApps, validateExcludedApps, type ClipboardStatus } from '@/features/clipboard/clipboard'
 import Button from '@/shared/ui/button/Button.vue'
 
 /** 主窗口的剪贴板页：唤出独立窗口，并集中放置记录开关、记录范围与自动清理。 */
 defineProps<{ disabled?: boolean; shortcut?: string }>()
 const settings = ref(defaultClipboardSettings())
 const ready = ref(false), busy = ref(false), error = ref('')
+// 名单以文本草稿编辑，保存时再解析；避免输入到一半的逗号被立即规整掉。
+const excludedText = ref('')
 // null 表示状态尚未读取，不能把未知状态显示成“已暂停”。
 const status = ref<ClipboardStatus | null>(null)
 let disposed = false, offState: (() => void) | undefined
@@ -19,7 +21,7 @@ async function load() {
   busy.value = true; error.value = ''
   try {
     const [app, state] = await Promise.all([api.status(), api.clipboardStatus()])
-    settings.value = app.settings.clipboard; status.value = state; ready.value = true
+    settings.value = app.settings.clipboard; excludedText.value = app.settings.clipboard.excludedApps.join(', '); status.value = state; ready.value = true
   } catch (e) { error.value = String(e) }
   finally { busy.value = false }
 }
@@ -39,16 +41,16 @@ async function toggleRecording() {
 }
 const autosave = useAutoSave(async () => {
   if (!ready.value || !desktop) return
-  const value = { ...settings.value }
+  const value = { ...settings.value, excludedApps: parseExcludedApps(excludedText.value) }
   // 只覆盖当前面板字段，记录启停沿用后端最新值，避免与剪贴板窗口里的开关互相覆盖。
   const current = (await api.status()).settings.clipboard
-  await api.clipboardConfigure({ ...current, saveCopiedText: value.saveCopiedText, saveCopiedImages: value.saveCopiedImages, saveCopiedFiles: value.saveCopiedFiles, maxItems: value.maxItems, maxStorageMb: value.maxStorageMb, retainDays: value.retainDays })
+  await api.clipboardConfigure({ ...current, saveCopiedText: value.saveCopiedText, saveCopiedImages: value.saveCopiedImages, saveCopiedFiles: value.saveCopiedFiles, maxItems: value.maxItems, maxStorageMb: value.maxStorageMb, retainDays: value.retainDays, pasteOnActivate: value.pasteOnActivate, excludedApps: value.excludedApps })
 }, () => {
   const value = settings.value
   return !Number.isInteger(value.maxItems) || value.maxItems < 100 || value.maxItems > 5000
     || !Number.isInteger(value.maxStorageMb) || value.maxStorageMb < 50 || value.maxStorageMb > 2048
     || !Number.isInteger(value.retainDays) || value.retainDays < 0 || value.retainDays > 3650
-    ? '历史限制无效：条目 100～5000、容量 50～2048 MiB、保留期 0～3650 天。' : null
+    ? '历史限制无效：条目 100～5000、容量 50～2048 MiB、保留期 0～3650 天。' : validateExcludedApps(parseExcludedApps(excludedText.value))
 })
 async function flush() { await autosave.flush(); return ready.value && !error.value && !autosave.error.value }
 defineExpose({ flush, load })
@@ -86,6 +88,14 @@ onUnmounted(() => { disposed = true; offState?.() })
           <div class="setting-field"><label for="history-count">{{ t("最多条目") }}</label><input id="history-count" v-model.number="settings.maxItems" type="number" min="100" max="5000" required /></div>
           <div class="setting-field"><label for="history-size">{{ t("容量上限（MiB）") }}</label><input id="history-size" v-model.number="settings.maxStorageMb" type="number" min="50" max="2048" required /></div>
           <div class="setting-field"><label for="history-days">{{ t("保留天数（0 为不限）") }}</label><input id="history-days" v-model.number="settings.retainDays" type="number" min="0" max="3650" required /></div>
+        </div>
+        <div class="setting-row">
+          <label for="history-paste">{{ t("回车或双击后直接粘贴到原窗口") }}</label>
+          <input id="history-paste" v-model="settings.pasteOnActivate" type="checkbox" role="switch" />
+        </div>
+        <div class="setting-field clipboard-excluded">
+          <label for="history-excluded">{{ t("不记录这些程序复制的内容") }}</label>
+          <input id="history-excluded" v-model="excludedText" type="text" autocomplete="off" spellcheck="false" :placeholder='t("程序文件名，用逗号分隔，如 KeePass.exe, 1Password.exe")' />
         </div>
         <div class="clipboard-settings-footer"><p class="settings-note">{{ t("自动清理不删除收藏。") }}</p><span class="settings-save-status" role="status" v-if="autosave.saving.value || autosave.saved.value" :class="{ 'status-ok': !autosave.saving.value }"><Check v-if="!autosave.saving.value" :size="14" class="status-check" />{{ autosave.saving.value ? t("正在保存…") : t("已自动保存") }}</span></div>
       </fieldset>

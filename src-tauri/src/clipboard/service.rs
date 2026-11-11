@@ -126,6 +126,11 @@ impl Service {
                 .cloned()
                 .or_else(|| self.error.lock().ok().and_then(|e| e.clone()))
                 .or_else(|| self.capture_error.lock().ok().and_then(|e| e.clone())),
+            paste_on_activate: self
+                .settings
+                .lock()
+                .map(|settings| settings.paste_on_activate)
+                .unwrap_or(false),
         }
     }
     pub fn changed(&self, app: &AppHandle) {

@@ -211,24 +211,52 @@ pub async fn clipboard_restore(
     window: WebviewWindow,
     id: i64,
 ) -> Result<(), String> {
-    item_work(app, window, move |app, s| {
-        let content = {
-            let d = s.data()?;
-            let _guard = d.operation.lock().map_err(|_| "历史存储忙碌。")?;
-            d.content(id)?
-        };
-        let _gate = s.write_gate.lock().map_err(|_| "剪贴板写入状态不可用。")?;
-        match &content {
-            Content::Text(t) => app
-                .clipboard()
-                .write_text(t.clone())
-                .map_err(|_| "复制文本失败，请重试。".to_string())?,
-            Content::Image(i) => crate::shared::image_io::copy(app, i)?,
-            Content::Files(paths) => platform::write_files(paths)?,
+    item_work(app, window, move |app, s| restore(app, s, id)).await
+}
+/// 把历史条目写回系统剪贴板，并记下序号与哈希，监听线程据此跳过这次自写入。
+fn restore(app: &AppHandle, s: &Service, id: i64) -> Result<(), String> {
+    let content = {
+        let d = s.data()?;
+        let _guard = d.operation.lock().map_err(|_| "历史存储忙碌。")?;
+        d.content(id)?
+    };
+    let _gate = s.write_gate.lock().map_err(|_| "剪贴板写入状态不可用。")?;
+    match &content {
+        Content::Text(t) => app
+            .clipboard()
+            .write_text(t.clone())
+            .map_err(|_| "复制文本失败，请重试。".to_string())?,
+        Content::Image(i) => crate::shared::image_io::copy(app, i)?,
+        Content::Files(paths) => platform::write_files(paths)?,
+    }
+    *s.restored.lock().map_err(|_| "恢复状态不可用。")? =
+        Some((platform::sequence(), content.hash()));
+    Ok(())
+}
+/// 回车、双击或 Ctrl+数字：写回系统剪贴板后把焦点交还唤出前的窗口并发送 Ctrl+V。
+/// 返回 false 表示没有可粘贴的外部窗口（例如从主窗口唤出），此时内容只是已复制。
+/// 仅限剪贴板窗口调用；`keep_open` 为窗口的固定状态，固定时不收起。
+#[tauri::command]
+pub async fn clipboard_paste(
+    app: AppHandle,
+    window: WebviewWindow,
+    id: i64,
+    keep_open: bool,
+) -> Result<bool, String> {
+    crate::capture::require_window(&window, window::LABEL)?;
+    work(app, window, move |app, s| {
+        restore(app, s, id)?;
+        let target = window::target();
+        if target == 0 {
+            return Ok(false);
         }
-        *s.restored.lock().map_err(|_| "恢复状态不可用。")? =
-            Some((platform::sequence(), content.hash()));
-        Ok(())
+        // 先交还焦点再收起：收起后本程序不再是前台进程，系统可能拒绝切换前台窗口。
+        platform::activate(target)?;
+        if !keep_open {
+            window::hide(app)?;
+        }
+        platform::send_paste(target)?;
+        Ok(true)
     })
     .await
 }
@@ -414,6 +442,7 @@ pub fn window_blurred(app: &AppHandle) {
     let app = app.clone();
     std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_millis(200));
+        window::remember_switched_target();
         let Some(window) = app.get_webview_window(window::LABEL) else {
             return;
         };
