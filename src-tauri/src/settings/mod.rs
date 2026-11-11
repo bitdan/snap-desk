@@ -255,6 +255,8 @@ pub struct Settings {
     /// 普通截图包含系统光标，与录屏光标设置独立。
     pub screenshot_cursor: bool,
     pub screenshot_snap: bool,
+    /// 框选完成后的动作：none 显示工具栏，copy / pin / save 直接执行并结束截图。
+    pub screenshot_after: String,
     pub export: ExportSettings,
     pub recording_export: RecordingExportSettings,
     pub pin_appearance: crate::pins::PinAppearance,
@@ -287,6 +289,8 @@ struct SettingsWire {
     screenshot_cursor: bool,
     #[serde(default = "enabled_by_default")]
     screenshot_snap: bool,
+    #[serde(default = "no_after_action")]
+    screenshot_after: String,
     #[serde(default)]
     export: ExportSettings,
     #[serde(default)]
@@ -317,6 +321,7 @@ impl TryFrom<SettingsWire> for Settings {
             delay_seconds: wire.delay_seconds,
             screenshot_cursor: wire.screenshot_cursor,
             screenshot_snap: wire.screenshot_snap,
+            screenshot_after: wire.screenshot_after,
             export: wire.export,
             recording_export: wire.recording_export,
             pin_appearance: wire.pin_appearance,
@@ -332,6 +337,9 @@ impl TryFrom<SettingsWire> for Settings {
 fn enabled_by_default() -> bool {
     true
 }
+fn no_after_action() -> String {
+    "none".into()
+}
 impl Default for Settings {
     fn default() -> Self {
         Self {
@@ -341,6 +349,7 @@ impl Default for Settings {
             delay_seconds: 0,
             screenshot_cursor: false,
             screenshot_snap: true,
+            screenshot_after: no_after_action(),
             export: ExportSettings::default(),
             recording_export: RecordingExportSettings::default(),
             pin_appearance: crate::pins::PinAppearance::default(),
@@ -384,6 +393,9 @@ impl Settings {
         self.recording_export.validate()?;
         self.pin_appearance.validate()?;
         self.clipboard.validate()?;
+        if !["none", "copy", "pin", "save"].contains(&self.screenshot_after.as_str()) {
+            return Err("截图后动作无效。".into());
+        }
         if ![0, 3, 5].contains(&self.delay_seconds) {
             return Err("截图延时只能为 0、3 或 5 秒。".into());
         }

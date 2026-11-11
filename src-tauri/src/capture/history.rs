@@ -184,6 +184,7 @@ mod tests {
                 recording: false,
                 translation: false,
                 snap_enabled: false,
+                after_action: "none".into(),
                 origin_x: 0,
                 origin_y: 0,
                 displays: vec![],

@@ -86,6 +86,8 @@ pub struct Frame {
     translation: bool,
     /// 窗口候选始终提供给录屏列表；此开关独立控制截图的鼠标吸附。
     snap_enabled: bool,
+    /// 框选完成后直接执行的动作；录屏和翻译截图固定为 none，由各自流程接力。
+    after_action: String,
     origin_x: i32,
     origin_y: i32,
     displays: Vec<crate::capture::desktop::Display>,
@@ -430,12 +432,13 @@ fn prepare(app: &AppHandle, recording: bool, translation: bool, mut latency: Lat
     #[cfg(not(windows))]
     let _ = dwm_started;
     let capture_started = Instant::now();
-    let (include_cursor, snap) = {
+    let (include_cursor, snap, after_action) = {
         let settings = app.state::<crate::settings::SettingsState>();
         let guard = settings.0.lock().map_err(err)?;
         (
             !recording && guard.value.screenshot_cursor,
             guard.value.screenshot_snap,
+            if recording || translation { "none".to_string() } else { guard.value.screenshot_after.clone() },
         )
     };
     let mut desktop = crate::capture::desktop::capture(false, include_cursor, recording || snap)?;
@@ -484,6 +487,7 @@ fn prepare(app: &AppHandle, recording: bool, translation: bool, mut latency: Lat
         recording,
         translation,
         snap_enabled: recording || snap,
+        after_action,
         origin_x: desktop.x,
         origin_y: desktop.y,
         displays: desktop.displays.clone(),

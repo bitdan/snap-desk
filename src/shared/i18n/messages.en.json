@@ -1217,5 +1217,10 @@
   "识别后自动合并换行": "Merge line breaks automatically after recognition",
   "把同一段落的多行拼成一行，空行仍分段；可在结果里还原。": "Joins the lines of a paragraph into one; blank lines still separate paragraphs. You can restore the original in the result.",
   "翻译后自动复制译文": "Copy the translation automatically",
-  "关闭 Esc": "Close · Esc"
+  "关闭 Esc": "Close · Esc",
+  "框选完成后": "After selecting a region",
+  "直接执行时不显示工具栏；按住 Ctrl 框选可临时保留工具栏。录屏和截图翻译不受影响。": "Direct actions skip the toolbar; hold Ctrl while selecting to keep it once. Recording and capture translation are not affected.",
+  "直接复制": "Copy immediately",
+  "直接贴图": "Pin immediately",
+  "直接保存": "Save immediately"
 }

@@ -28,6 +28,7 @@ import RecordingSourceSelect from '@/features/recording/components/RecordingSour
 import { fromPixels } from '@/features/capture/capture-targets'
 import { useCaptureSelection } from '@/features/capture/use-capture-selection'
 import { useCaptureActions } from '@/features/capture/use-capture-actions'
+import { autoFinishAction } from '@/features/capture/after-action'
 import { useCaptureRecognition } from '@/features/capture/use-capture-recognition'
 import { useCaptureRecording } from '@/features/capture/use-capture-recording'
 
@@ -60,6 +61,11 @@ const {
   recordingMode,
   onRecordingRegion: () => { void selectedRecordingRegion() },
   onAutoTranslate: () => { if (frame.value?.translation && valid.value) void recognizeText(true) },
+  // 只有手动框选或点选窗口才直接执行；回放、录屏和翻译截图各有自己的后续流程，按住 Ctrl 抬起则留在工具栏继续标注。
+  onAutoFinish: event => {
+    const action = autoFinishAction(frame.value, { ctrlKey: event.ctrlKey, recording: recordingMode.value, valid: !!valid.value })
+    if (action) void finish(action)
+  },
 })
 const screenImage = shallowRef<HTMLImageElement | null>(null)
 const imageReady = ref(false)

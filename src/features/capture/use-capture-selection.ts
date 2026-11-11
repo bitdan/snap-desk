@@ -27,12 +27,14 @@ interface SelectionOptions {
   /** 录屏模式与翻译截图需要在框选结束时接力。 */
   onRecordingRegion: () => void
   onAutoTranslate: () => void
+  /** 设置了“框选后直接执行”时在这里接力；传入抬起事件以便按住 Ctrl 临时保留工具栏。 */
+  onAutoFinish: (event: PointerEvent) => void
 }
 
 /** 所有选区状态只描述当前覆盖层会话；关闭或替换截图时由宿主调用 reselect 清理。 */
 export function useCaptureSelection({
   root, frame, viewport, busy, error, colorCopied, annotating, getEditor, marked,
-  recordingMode, onRecordingRegion, onAutoTranslate,
+  recordingMode, onRecordingRegion, onAutoTranslate, onAutoFinish,
 }: SelectionOptions) {
   const selection = ref<Rect | null>(null)
   const selectedTarget = ref<number | null>(null)
@@ -121,6 +123,7 @@ export function useCaptureSelection({
     gesture.value = null
     if (drawn) onRecordingRegion()
     if (drawn) onAutoTranslate()
+    if (drawn) onAutoFinish(e)
   }
 
   function abortGesture() { if (gesture.value) selection.value = gesture.value.initial; gesture.value = null }

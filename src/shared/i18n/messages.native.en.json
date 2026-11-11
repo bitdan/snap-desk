@@ -883,5 +883,6 @@
   "无法粘贴到原窗口，内容已复制，可手动粘贴。": "Could not paste into the previous window. The content is copied; paste it manually.",
   "当前平台尚未支持直接粘贴。": "Direct paste is not supported on this platform yet.",
   "排除应用无效：最多 50 个程序文件名，每个不超过 100 字且不含路径。": "Invalid excluded apps: up to 50 executable names, 100 characters each, without paths.",
-  "{0}；恢复贴图窗口失败：{1}": "{0}; could not restore pin windows: {1}"
+  "{0}；恢复贴图窗口失败：{1}": "{0}; could not restore pin windows: {1}",
+  "截图后动作无效。": "Invalid after-capture action."
 }

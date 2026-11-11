@@ -3,6 +3,7 @@ import InfoTip from '@/shared/ui/InfoTip.vue'
 import { handleWindowEscape as handleEscape } from '@/shared/ui/escape'
 import { useAutoSave } from '@/shared/ui/use-auto-save'
 import SelectControl from '@/shared/ui/SelectControl.vue'
+import SettingRow from '@/shared/ui/SettingRow'
 import { updateSettings } from '@/features/settings/settings-write'
 import { t, te } from '@/shared/i18n/i18n'
 import { computed, defineAsyncComponent, onMounted, onUnmounted, ref, watch } from 'vue'
@@ -95,7 +96,7 @@ function saveAppearance(value: Appearance) {
   if (status.value) void saveSettings({ ...status.value.settings, appearance: value }, '通用')
 }
 const captureAutoSave = useAutoSave(async () => {
-  const value = { export: { ...draft.value.export }, screenshotCursor: draft.value.screenshotCursor, screenshotSnap: draft.value.screenshotSnap }
+  const value = { export: { ...draft.value.export }, screenshotCursor: draft.value.screenshotCursor, screenshotSnap: draft.value.screenshotSnap, screenshotAfter: draft.value.screenshotAfter }
   await updateSettings(current => ({ ...current, ...value }))
   await refreshStatus()
 }, () => validateExportSettings(draft.value.export))
@@ -106,7 +107,7 @@ const shortcutAutoSave = useAutoSave(async () => {
 }, () => editingShortcut.value ? '请先结束快捷键录入或当前截图。' : validateShortcuts(draft.value.shortcuts))
 function resetCapture() {
   const value = defaultSettings()
-  draft.value.export = value.export; draft.value.screenshotCursor = value.screenshotCursor; draft.value.screenshotSnap = value.screenshotSnap
+  draft.value.export = value.export; draft.value.screenshotCursor = value.screenshotCursor; draft.value.screenshotSnap = value.screenshotSnap; draft.value.screenshotAfter = value.screenshotAfter
   captureAutoSave.schedule(); void captureAutoSave.flush()
 }
 function resetShortcuts() {
@@ -248,6 +249,7 @@ onUnmounted(() => { disposed = true; window.removeEventListener('keydown', key);
           <form class="settings-card mb-5" @submit.prevent @input="captureAutoSave.schedule" @change="captureAutoSave.commit" @focusout="captureAutoSave.flush">
             <div class="setting-row"><label for="screenshot-cursor">{{ t('截图包含光标') }}</label><input id="screenshot-cursor" v-model="draft.screenshotCursor" type="checkbox" :disabled="locked || status?.platform !== 'windows'" /></div>
             <div class="setting-row"><label for="screenshot-snap">{{ t('窗口 / 元素吸附') }}</label><input id="screenshot-snap" v-model="draft.screenshotSnap" type="checkbox" :disabled="locked || status?.platform !== 'windows'" /></div>
+            <SettingRow :label="t('框选完成后')" for="screenshot-after" :tip="t('直接执行时不显示工具栏；按住 Ctrl 框选可临时保留工具栏。录屏和截图翻译不受影响。')"><SelectControl id="screenshot-after" v-model="draft.screenshotAfter" :disabled="locked" :options="[{ value: 'none', label: t('显示工具栏') }, { value: 'copy', label: t('直接复制') }, { value: 'pin', label: t('直接贴图') }, { value: 'save', label: t('直接保存') }]" @update:model-value="captureAutoSave.commit" /></SettingRow>
             <h2 class="section-heading">{{ t("文件与导出") }}</h2>
             <div class="setting-row"><label for="export-format">{{ t('保存格式') }}</label><SelectControl id="export-format" v-model="draft.export.format" :disabled="locked" :options="[{ value: 'png', label: t('PNG · 无损透明') }, { value: 'jpeg', label: t('JPEG · 白底') }, { value: 'webp', label: t('WebP · 无损透明') }]" @update:model-value="captureAutoSave.commit" /></div>
             <div v-if="draft.export.format === 'jpeg'" class="setting-row"><label for="jpeg-quality">{{ t('JPEG 质量') }}</label><input id="jpeg-quality" v-model.number="draft.export.jpegQuality" type="number" min="1" max="100" step="1" required :disabled="locked" class="w-24 rounded-lg border border-zinc-200 px-3 py-2" /></div>
