@@ -35,7 +35,6 @@ fn benchmark_native_pin_ladder() {
             view: PinView::default(),
             annotations: vec![],
             original_annotations: vec![],
-            group: String::new(),
         };
         let start = Instant::now();
         let first = frame("benchmark", &pin, None).unwrap();
