@@ -43,6 +43,7 @@ export const ipcCommands = [
   "clipboard_list",
   "clipboard_pin_item",
   "clipboard_restore",
+  "clipboard_paste",
   "clipboard_set_favorite",
   "shelf_snapshot",
   "shelf_configure",

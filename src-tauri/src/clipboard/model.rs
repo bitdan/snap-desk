@@ -13,6 +13,10 @@ pub struct ClipboardSettings {
     pub save_copied_text: bool,
     pub save_copied_files: bool,
     pub retain_days: u32,
+    /// 回车、双击或 Ctrl+数字后，把内容直接粘贴到唤出前的窗口；关闭时只写回系统剪贴板。
+    pub paste_on_activate: bool,
+    /// 不记录这些程序复制的内容；只保存可执行文件名（如 `KeePass.exe`），比较时不分大小写。
+    pub excluded_apps: Vec<String>,
 }
 impl Default for ClipboardSettings {
     fn default() -> Self {
@@ -27,6 +31,8 @@ impl Default for ClipboardSettings {
             save_copied_text: true,
             save_copied_files: true,
             retain_days: 0,
+            paste_on_activate: true,
+            excluded_apps: Vec::new(),
         }
     }
 }
@@ -40,7 +46,24 @@ impl ClipboardSettings {
         {
             return Err("历史限制无效：100～5000 条、50～2048 MiB、文本至多 1 MiB、图片至多 1600 万像素、保留期 0～3650 天。".into());
         }
+        // 只接受文件名：不含路径分隔符，避免把整条路径当作进程名而永远匹配不上。
+        if self.excluded_apps.len() > 50
+            || self.excluded_apps.iter().any(|name| {
+                name.is_empty()
+                    || name.chars().count() > 100
+                    || name.trim() != name
+                    || name.contains(['/', '\\', ':'])
+            })
+        {
+            return Err("排除应用无效：最多 50 个程序文件名，每个不超过 100 字且不含路径。".into());
+        }
         Ok(())
+    }
+    /// 进程名与排除名单按不区分大小写比较；名单为空时调用方无需查询进程。
+    pub fn excludes(&self, process: &str) -> bool {
+        self.excluded_apps
+            .iter()
+            .any(|name| name.eq_ignore_ascii_case(process))
     }
 }
 
@@ -156,6 +179,8 @@ pub struct Status {
     pub byte_size: u64,
     pub revision: u64,
     pub error: Option<String>,
+    /// 剪贴板窗口据此决定回车是粘贴还是仅复制，无需读取完整应用设置。
+    pub paste_on_activate: bool,
 }
 pub fn validate_ids(ids: &[i64]) -> Result<(), String> {
     if ids.is_empty()

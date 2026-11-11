@@ -152,6 +152,33 @@ pub fn snapshot(settings: &ClipboardSettings) -> Result<Option<Snapshot>, String
                 return Ok(None);
             }
         }
+        // 系统约定的“不进入剪贴板历史”标记：格式存在且值为 0 时跳过。
+        let history = RegisterClipboardFormatW(w!("CanIncludeInClipboardHistory"));
+        if history != 0 && IsClipboardFormatAvailable(history).is_ok() {
+            if let Ok(handle) = GetClipboardData(history) {
+                let global = HGLOBAL(handle.0);
+                if GlobalSize(global) >= 4 {
+                    let ptr = GlobalLock(global);
+                    if !ptr.is_null() {
+                        let allowed = std::ptr::read_unaligned(ptr as *const u32) != 0;
+                        let _ = GlobalUnlock(global);
+                        if !allowed {
+                            return Ok(None);
+                        }
+                    }
+                }
+            }
+        }
+        // 名单为空时不查询进程；有名单时按写入剪贴板的程序判断，取不到所有者则看前台窗口。
+        if !settings.excluded_apps.is_empty() {
+            let owner = GetClipboardOwner()
+                .ok()
+                .filter(|hwnd| !hwnd.0.is_null())
+                .unwrap_or_else(|| GetForegroundWindow());
+            if process_name(owner).is_some_and(|name| settings.excludes(&name)) {
+                return Ok(None);
+            }
+        }
         let png = RegisterClipboardFormatW(w!("PNG"));
         // 资源管理器复制图片文件时也可能附带其他格式；CF_HDROP 优先保留文件语义。
         for format in [15, png, 17, 8, 13] {
@@ -219,6 +246,123 @@ pub fn snapshot(settings: &ClipboardSettings) -> Result<Option<Snapshot>, String
         }
     }
     Ok(None)
+}
+
+/// 窗口所属进程的可执行文件名（不含目录）；无权限或窗口已销毁时返回 None。
+fn process_name(hwnd: HWND) -> Option<String> {
+    use windows::Win32::{
+        Foundation::CloseHandle,
+        System::Threading::{
+            OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
+            PROCESS_QUERY_LIMITED_INFORMATION,
+        },
+    };
+    if hwnd.0.is_null() {
+        return None;
+    }
+    unsafe {
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(hwnd, Some(&mut pid));
+        if pid == 0 {
+            return None;
+        }
+        let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
+        // 缓冲区按 UTF-16 码元计；len 传入容量，返回实际长度（不含结尾 0）。
+        let mut buffer = [0u16; 1024];
+        let mut len = buffer.len() as u32;
+        let result = QueryFullProcessImageNameW(
+            process,
+            PROCESS_NAME_WIN32,
+            windows::core::PWSTR(buffer.as_mut_ptr()),
+            &mut len,
+        );
+        let _ = CloseHandle(process);
+        result.ok()?;
+        let path = String::from_utf16_lossy(&buffer[..len as usize]);
+        path.rsplit(['\\', '/']).next().map(str::to_string)
+    }
+}
+
+/// 唤出剪贴板窗口前的前台窗口；属于本程序（主窗口、贴图等）或没有前台窗口时返回 0。
+/// HWND 转为纯数值保存，使用前由 `activate` 重新确认窗口仍然存在。
+pub fn foreground_window() -> usize {
+    unsafe {
+        let hwnd = GetForegroundWindow();
+        if hwnd.0.is_null() {
+            return 0;
+        }
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(hwnd, Some(&mut pid));
+        if pid == 0 || pid == std::process::id() {
+            return 0;
+        }
+        hwnd.0 as usize
+    }
+}
+
+/// 把焦点交还原窗口。此时本程序仍是前台进程，系统允许它指定下一个前台窗口。
+pub fn activate(target: usize) -> Result<(), String> {
+    let hwnd = HWND(target as *mut _);
+    unsafe {
+        if !IsWindow(Some(hwnd)).as_bool() {
+            return Err("原窗口已关闭，内容已复制，可手动粘贴。".into());
+        }
+        let _ = SetForegroundWindow(hwnd);
+    }
+    Ok(())
+}
+
+/// 确认原窗口已在前台且触发按键已松开，再发送 Ctrl+V；任何一步不满足都不注入按键。
+pub fn send_paste(target: usize) -> Result<(), String> {
+    use std::time::{Duration, Instant};
+    use windows::Win32::UI::Input::KeyboardAndMouse::*;
+    let deadline = Instant::now() + Duration::from_secs(1);
+    loop {
+        let front = unsafe { GetForegroundWindow().0 as usize == target };
+        // 回车若仍按着会在原窗口触发自动重复；Shift/Alt/Win 会把 Ctrl+V 变成别的组合键。
+        // Ctrl 允许按着：Ctrl+数字触发时用户的 Ctrl 与注入的 Ctrl 效果相同。
+        let held = [VK_RETURN, VK_SHIFT, VK_MENU, VK_LWIN, VK_RWIN, VK_V]
+            .iter()
+            .any(|key| unsafe { GetAsyncKeyState(i32::from(key.0)) < 0 });
+        if front && !held {
+            break;
+        }
+        if Instant::now() >= deadline {
+            return Err(if front {
+                "请松开按键后重试，内容已复制，可手动粘贴。".into()
+            } else {
+                "未能回到原窗口，内容已复制，可手动粘贴。".into()
+            });
+        }
+        std::thread::sleep(Duration::from_millis(15));
+    }
+    let key = |code, flags| INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: code,
+                dwFlags: flags,
+                ..Default::default()
+            },
+        },
+    };
+    let inputs = [
+        key(VK_CONTROL, KEYBD_EVENT_FLAGS::default()),
+        key(VK_V, KEYBD_EVENT_FLAGS::default()),
+        key(VK_V, KEYEVENTF_KEYUP),
+        key(VK_CONTROL, KEYEVENTF_KEYUP),
+    ];
+    let sent = unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) };
+    if sent != inputs.len() as u32 {
+        if sent > 0 {
+            // 部分注入也必须释放已按下的 Ctrl/V，避免影响用户后续输入。
+            unsafe {
+                SendInput(&inputs[2..], std::mem::size_of::<INPUT>() as i32);
+            }
+        }
+        return Err("无法粘贴到原窗口，内容已复制，可手动粘贴。".into());
+    }
+    Ok(())
 }
 
 /// 恢复为复制文件的 CF_HDROP 数据，不继承原剪切操作，避免粘贴时移动源文件。

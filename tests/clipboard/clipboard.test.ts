@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { defaultSettings, validateShortcuts } from '../../src/features/settings/settings'
-import { defaultClipboardSettings, reorderSelection, toggleSelection, selectClipboardItems } from '../../src/features/clipboard/clipboard'
+import { defaultClipboardSettings, parseExcludedApps, validateExcludedApps, reorderSelection, toggleSelection, selectClipboardItems } from '../../src/features/clipboard/clipboard'
 const mocks = vi.hoisted(() => ({ invoke: vi.fn(), listen: vi.fn() }))
 vi.mock('@tauri-apps/api/core', () => ({ invoke: mocks.invoke, isTauri: () => true }))
 vi.mock('@tauri-apps/api/event', () => ({ listen: mocks.listen }))
@@ -73,5 +73,25 @@ describe('历史 IPC 契约', () => {
     mocks.listen.mock.calls.at(-1)![1]({ payload: '磁盘不可用' }); expect(callback).toHaveBeenLastCalledWith('磁盘不可用')
     await onClipboardState(callback)
     mocks.listen.mock.calls.at(-1)![1]({ payload: { enabled: false } }); expect(callback).toHaveBeenLastCalledWith({ enabled: false })
+  })
+})
+
+describe("直接粘贴与排除应用", () => {
+  it("默认开启直接粘贴且不排除任何程序", () => {
+    expect(defaultClipboardSettings()).toMatchObject({ pasteOnActivate: true, excludedApps: [] })
+  })
+  it("名单按逗号、分号或换行拆分，去空白并不分大小写去重", () => {
+    expect(parseExcludedApps(" KeePass.exe, keepass.EXE；1Password.exe\n\n ")).toEqual(["KeePass.exe", "1Password.exe"])
+    expect(parseExcludedApps("")).toEqual([])
+  })
+  it("拒绝带路径的条目和超过 50 个的名单", () => {
+    expect(validateExcludedApps(["KeePass.exe"])).toBeNull()
+    expect(validateExcludedApps(["C:\\Tools\\KeePass.exe"])).not.toBeNull()
+    expect(validateExcludedApps(Array.from({ length: 51 }, (_, i) => `app${i}.exe`))).not.toBeNull()
+  })
+  it("粘贴命令携带条目与固定状态", async () => {
+    mocks.invoke.mockResolvedValueOnce(true)
+    await expect(api.clipboardPaste(7, false)).resolves.toBe(true)
+    expect(mocks.invoke).toHaveBeenLastCalledWith("clipboard_paste", { id: 7, keepOpen: false })
   })
 })

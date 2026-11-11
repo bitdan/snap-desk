@@ -415,6 +415,7 @@ pub fn run() {
             clipboard::clipboard_get_thumbnail,
             clipboard::clipboard_get_image,
             clipboard::clipboard_restore,
+            clipboard::clipboard_paste,
             clipboard::clipboard_pin_item,
             clipboard::clipboard_set_favorite,
             clipboard::clipboard_delete,

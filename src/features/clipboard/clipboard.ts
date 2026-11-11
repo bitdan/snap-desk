@@ -2,9 +2,24 @@
 export interface ClipboardSettings {
   enabled: boolean; maxItems: number; maxStorageMb: number; maxTextBytes: number;
   maxImagePixels: number; saveCopiedImages: boolean; saveCopiedText: boolean; saveCopiedFiles: boolean; retainDays: number;
+  pasteOnActivate: boolean; excludedApps: string[];
 }
 export function defaultClipboardSettings(): ClipboardSettings {
-  return { enabled: true, maxItems: 500, maxStorageMb: 200, maxTextBytes: 1048576, maxImagePixels: 16000000, saveCopiedImages: true, saveCopiedText: true, saveCopiedFiles: true, retainDays: 0 }
+  return { enabled: true, maxItems: 500, maxStorageMb: 200, maxTextBytes: 1048576, maxImagePixels: 16000000, saveCopiedImages: true, saveCopiedText: true, saveCopiedFiles: true, retainDays: 0, pasteOnActivate: true, excludedApps: [] }
+}
+/** 排除名单的输入框内容：逗号、分号或换行分隔的程序文件名；去重时不分大小写，保留首次写法。 */
+export function parseExcludedApps(text: string): string[] {
+  const seen = new Set<string>()
+  return text.split(/[,;，；\n]/).map(name => name.trim()).filter(name => {
+    const key = name.toLowerCase()
+    if (!name || seen.has(key)) return false
+    seen.add(key); return true
+  })
+}
+/** 与 Rust ClipboardSettings::validate 的名单规则一致，返回错误文案或 null。 */
+export function validateExcludedApps(names: string[]): string | null {
+  return names.length > 50 || names.some(name => [...name].length > 100 || /[\\/:]/.test(name))
+    ? '排除应用无效：最多 50 个程序文件名，每个不超过 100 字且不含路径。' : null
 }
 export type ClipboardKind = 'text' | 'image' | 'file'
 export type ClipboardTextCategory = 'link' | 'color' | 'path'
@@ -16,7 +31,7 @@ export interface ClipboardItem {
 }
 export interface ClipboardQuery { keyword?: string; kind?: ClipboardKind; textCategory?: ClipboardTextCategory; favoritesOnly?: boolean; limit?: number; cursor?: string }
 export interface ClipboardPage { items: ClipboardItem[]; nextCursor: string | null; revision: number }
-export interface ClipboardStatus { enabled: boolean; supported: boolean; count: number; byteSize: number; revision: number; error: string | null }
+export interface ClipboardStatus { enabled: boolean; supported: boolean; count: number; byteSize: number; revision: number; error: string | null; pasteOnActivate: boolean }
 export interface ClipboardExportOptions { ids: number[]; texts?: (string | null)[]; mode: 'pdf' | 'longPng' | 'separate'; pageSize: 'A4' | 'original'; gapPx: number; marginMm: number; background: 'white' | 'transparent' }
 export interface ClipboardExportResult { status: 'saved' | 'cancelled'; outputPaths: string[] }
 
