@@ -113,6 +113,8 @@ fn recognize_inner(image: &image::RgbaImage, service: &RecognitionService, op: u
         lines,
         elapsed_ms: started.elapsed().as_millis() as u64,
         warnings,
+        auto_copy: false,
+        merge_lines: false,
     })
 }
 

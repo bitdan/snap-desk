@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { lineRanges, mergeLines, ocrDisplaySize, ocrImageView, ocrWindowSize, tidySpaces } from '../../src/features/recognition/ocr-workspace'
+import { initialOcrText, lineRanges, mergeLines, ocrDisplaySize, ocrImageView, ocrWindowSize, tidySpaces } from '../../src/features/recognition/ocr-workspace'
 import type { OcrLine, OcrResult } from '../../src/features/recognition/ai'
 
 const line = (id: string, text: string, order: number, polygon: OcrLine['polygon'] = null): OcrLine => ({ id, text, order, polygon, confidence: null, language: null, paragraphId: null })
@@ -36,4 +36,9 @@ it('原图按截图屏幕尺寸显示，窗口随原图大小并限制在屏幕�
   expect(ocrWindowSize(image, 1.5, { width: 1920, height: 1080 })).toEqual({ width: 824, height: 620 })
   const huge = { url: 'u', width: 4000, height: 3000 }
   expect(ocrWindowSize(huge, 1, { width: 1920, height: 1080 })).toEqual({ width: 1766, height: 950 })
+})
+
+it('设置开启自动合并换行时草稿先合并，未开启保持识别原文', () => {
+  expect(initialOcrText({ fullText: 'hello\nworld', mergeLines: true })).toBe('hello world')
+  expect(initialOcrText({ fullText: 'hello\nworld' })).toBe('hello\nworld')
 })

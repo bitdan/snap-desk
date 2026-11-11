@@ -295,6 +295,8 @@ mod platform {
             lines,
             elapsed_ms,
             warnings: vec![],
+            auto_copy: false,
+            merge_lines: false,
         })
     }
 

@@ -11,6 +11,7 @@ import ServiceSettings from './ServiceSettings.vue'
 import ProviderMenu from './ProviderMenu.vue'
 import SelectControl from '@/shared/ui/SelectControl.vue'
 import Button from '@/shared/ui/button/Button.vue'
+import InfoTip from '@/shared/ui/InfoTip.vue'
 import ResourceSettings from '@/features/resources/components/ResourceSettings.vue'
 
 const editingServiceId = ref('')
@@ -116,6 +117,11 @@ onUnmounted(() => { disposed = true })
       <Button variant="outline" :disabled="checkingWechat" @click="refreshWechat">{{ t('重新检测') }}</Button>
     </div>
     <ResourceSettings v-else-if="ready && draft.provider === 'local-ppocr'" kind="ocr" />
+    <!-- 识别后的动作与引擎无关；配置在线服务时让位给服务表单。 -->
+    <section v-if="ready && !configuringPreset && !editingServiceId" class="ocr-behavior" :aria-label="t('识别后')">
+      <div class="setting-row"><label for="ocr-auto-copy">{{ t('识别后自动复制文字') }}</label><input id="ocr-auto-copy" v-model="draft.autoCopy" type="checkbox" role="switch" @change="autosave.commit" /></div>
+      <div class="setting-row"><div class="flex items-center gap-1"><label for="ocr-merge-lines">{{ t('识别后自动合并换行') }}</label><InfoTip :text="t('把同一段落的多行拼成一行，空行仍分段；可在结果里还原。')" /></div><input id="ocr-merge-lines" v-model="draft.mergeLines" type="checkbox" role="switch" @change="autosave.commit" /></div>
+    </section>
     <div v-if="!configuringPreset && !editingServiceId && (autosave.saving.value || autosave.saved.value)" class="save-status" :class="{ 'status-ok': !autosave.saving.value }" role="status"><Check v-if="!autosave.saving.value" :size="14" />{{ autosave.saving.value ? t('正在保存…') : t('已自动保存') }}</div>
     <p v-if="autosave.error.value" class="error" role="alert">{{ te(autosave.error.value) }}<Button variant="ghost" @click="autosave.retry">{{ t('重试') }}</Button></p>
     <p v-if="error" class="error" role="alert">{{ te(error) }}</p>
@@ -128,6 +134,7 @@ onUnmounted(() => { disposed = true })
 .ocr-field { display:grid; grid-template-columns:124px minmax(0,1fr); align-items:center; gap:12px; margin:8px 0; }
 .system-status { display:flex; align-items:center; flex-wrap:wrap; gap:8px; margin:8px 0; }
 .system-status span { overflow-wrap:anywhere; }
+.ocr-behavior { margin-top:12px; border-top:1px solid var(--desk-border,#e1e4e8); }
 .hint, .save-status { color:var(--desk-muted, #57606a); font-size:12px; line-height:1.6; margin:8px 0; }
 .save-status.status-ok { color:var(--ui-success-fg,#24834b); }
 .error { color:#b91c1c; overflow-wrap:anywhere; }

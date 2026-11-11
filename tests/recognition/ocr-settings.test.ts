@@ -276,3 +276,12 @@ it('微信检测尚未完成时可打开面板，显示检测中而非误判为�
   resolve({ supported: true, detected: true, error: null }); await flushComponent()
   expect(text(root)).toContain('已找到 WeChat OCR 组件')
 })
+
+it('识别后动作开关随引擎面板显示，切换引擎保留已保存的开关', async () => {
+  settings.ocr = { ...settings.ocr, autoCopy: true, mergeLines: true }
+  await mount()
+  expect(findNode(root, node => node.props.id === 'ocr-auto-copy')).toBeDefined()
+  expect(findNode(root, node => node.props.id === 'ocr-merge-lines')).toBeDefined()
+  engine('windows-media').props.onClick(); await flushComponent()
+  expect(settings.ocr).toMatchObject({ provider: 'windows-media', autoCopy: true, mergeLines: true })
+})

@@ -7,7 +7,7 @@ import { handleEscape } from '@/shared/ui/escape'
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { Copy, ExternalLink, LoaderCircle, QrCode, RotateCcw, ScanText } from 'lucide-vue-next'
 import OcrWorkspace from '@/features/recognition/components/OcrWorkspace.vue'
-import { ocrWindowSize } from '@/features/recognition/ocr-workspace'
+import { initialOcrText, ocrWindowSize } from '@/features/recognition/ocr-workspace'
 import { api } from '@/services/api'
 import type { PinFrame } from '@/features/pins/types'
 import type { QrResult } from '@/features/recognition/types'
@@ -37,7 +37,7 @@ async function recognize() {
     pendingLink.value = null
     if (props.mode !== 'qr') {
       const result = await api.recognizePinText()
-      if (!disposed) { draft.value = result.fullText; ocr.value = result }
+      if (!disposed) { draft.value = initialOcrText(result); ocr.value = result }
     } else {
       const result = await api.recognizePinQr()
       if (!disposed) qr.value = result

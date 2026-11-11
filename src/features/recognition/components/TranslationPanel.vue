@@ -84,6 +84,8 @@ async function translate() {
       : await api.translateTexts(id, { texts: [source.value], sourceLanguage: sourceLanguage.value || null, targetLanguage: target.value }, true, config.value)
     if (!disposed && !cancelled && requestId === id && result.requestId === id) {
       translated.value = 'translatedText' in result ? result.translatedText : result.translations[0]?.translatedText ?? ''
+      // 设置开启“翻译后自动复制译文”时直接写入剪贴板，沿用手动复制的提示与错误处理。
+      if (config.value.autoCopy) void copy()
     }
   } catch (e) { if (!disposed && !cancelled && requestId === id) error.value = String(e) }
   finally { if (requestId === id) { busy.value = false; requestId = null } }
