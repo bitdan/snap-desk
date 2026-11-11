@@ -44,7 +44,6 @@
 .app-shell kbd { background:var(--desk-soft); border-color:var(--desk-border); color:var(--desk-muted); }
 .app-shell .general-settings-page { max-width:none; }
 .app-shell .general-settings-page .general-section { border-color:var(--desk-border); }
-.app-shell .pin-empty { display:flex; align-items:center; justify-content:center; min-height:180px; padding:24px; border:1px dashed var(--desk-border); border-radius:8px; background:var(--desk-soft); color:var(--desk-muted); text-align:center; }
 .app-shell .scope-note { color:var(--desk-muted); }
 @media (max-width:760px) { .app-shell .sidebar { width:154px; padding-inline:8px; } .app-shell .topbar { padding-inline:16px; } .app-shell .page-content { padding:16px; } .app-shell .topbar button.inline-flex { font-size:12px; padding-inline:6px; } }
 @media (max-width:560px) { .app-shell .sidebar { width:132px; } .app-shell .brand { font-size:13px; gap:6px; padding-inline:4px; } .app-shell .brand-icon { width:28px; height:28px; } .app-shell .page-breadcrumb > span { display:none; } .app-shell .topbar { height:auto; min-height:58px; flex-wrap:wrap; padding-block:8px; } .app-shell .setting-row > :is(input:not([type=checkbox]),select) { max-width:100%; } }

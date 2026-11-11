@@ -127,7 +127,7 @@ kbd { display: inline-block; border: 1px solid #d8dee4; border-bottom-width: 2px
 [data-theme=dark] .history-context-menu { background: #20252c; color: #e6edf3; border-color: #39424e; color-scheme: dark; }
 [data-theme=dark] .history-context-menu :is(input, select, .bg-white) { background: #181b20; color: #e6edf3; border-color: #39424e; }
 [data-theme=dark] .app-shell :is(.diagnostics-list, .diagnostics-entry) { border-color: #39424e; }
-[data-theme=dark] .app-shell :is(.pin-empty, .text-zinc-700) { color: #b6c2cf; }
+[data-theme=dark] .app-shell .text-zinc-700 { color: #b6c2cf; }
 [data-theme=dark] .history-context-menu button:hover { background: #303843; }
 
 /* 暂存架透明范围不使用 CSS 鼠标穿透；收起由原生隐藏整个窗口。 */
