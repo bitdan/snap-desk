@@ -41,7 +41,12 @@ const stats = computed(() => {
 })
 const changed = computed(() => text.value !== (props.result.fullText ?? ''))
 
-onMounted(() => { if (view.value === 'ocr') void nextTick(() => editor.value?.focus()) })
+onMounted(() => {
+  if (view.value !== 'ocr') return
+  void nextTick(() => editor.value?.focus())
+  // 设置开启“识别后自动复制”时，结果一出现即写入剪贴板；翻译视图以译文为目的，不复制原文。
+  if (props.result.autoCopy) void copy()
+})
 
 function edit(value: string) { text.value = value; message.value = ''; localError.value = '' }
 function onInput(event: Event) { edit((event.target as HTMLTextAreaElement).value) }

@@ -10,6 +10,9 @@ pub struct OcrSettings {
     pub service_id: String,
     /// auto 使用 Windows 用户语言优先级；其他值是系统已安装 OCR 语言的 BCP-47 标签。
     pub language: String,
+    /// 识别完成后的整理动作由前端执行；这里只保存开关，随识别结果下发给截图和贴图窗口。
+    pub auto_copy: bool,
+    pub merge_lines: bool,
 }
 impl Default for OcrSettings {
     fn default() -> Self {
@@ -17,6 +20,8 @@ impl Default for OcrSettings {
             provider: "local-ppocr".into(),
             service_id: String::new(),
             language: "auto".into(),
+            auto_copy: false,
+            merge_lines: false,
         }
     }
 }
@@ -103,8 +108,8 @@ mod tests {
         for language in ["auto", "en-US", "zh-Hans-CN"] {
             assert!(OcrSettings {
                 provider: "windows-media".into(),
-                service_id: String::new(),
-                language: language.into()
+                language: language.into(),
+                ..value.clone()
             }
             .validate()
             .is_ok());

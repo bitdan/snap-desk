@@ -3,6 +3,7 @@
 import { nextTick, ref, watch, type Ref } from 'vue'
 import { api } from '@/services/api'
 import type { OcrResult } from '@/features/recognition/ai'
+import { initialOcrText } from '@/features/recognition/ocr-workspace'
 import type { QrResult } from '@/features/recognition/types'
 import type { Annotation } from '@/features/annotations/annotations'
 import type { Rect } from '@/shared/geometry/selection'
@@ -47,7 +48,7 @@ export function useCaptureRecognition({ frame, pixels, busy, error, blocked, ges
     try {
       const text = await api.recognizeCapture(id, pixels.value)
       if (frame.value?.id === id) {
-        ocrDraft.value = text.fullText
+        ocrDraft.value = initialOcrText(text)
         if (translate && frame.value.translation) { ocrResult.value = text; await sendTranslation(id) }
         else { ocrMode.value = translate ? 'translate' : 'ocr'; ocrResult.value = text }
       }

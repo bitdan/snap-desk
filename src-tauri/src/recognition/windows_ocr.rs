@@ -184,5 +184,7 @@ fn recognize_inner(
         lines,
         elapsed_ms: 0,
         warnings: vec![],
+        auto_copy: false,
+        merge_lines: false,
     })
 }

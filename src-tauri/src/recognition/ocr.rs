@@ -176,6 +176,8 @@ fn recognize_regions(engine: &OAROCR, image: &image::RgbaImage) -> Result<OcrRes
         lines,
         elapsed_ms: 0,
         warnings: Vec::new(),
+        auto_copy: false,
+        merge_lines: false,
     })
 }
 

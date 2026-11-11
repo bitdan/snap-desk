@@ -61,8 +61,14 @@ impl OcrProvider for WechatOcrProvider {
 /// 截图文字、截图翻译及贴图使用同一入口，设置快照只读取一次。
 pub fn recognize_selected(app: &tauri::AppHandle, image: &image::RgbaImage) -> Result<OcrResult, String> {
     let (settings, service) = ocr_config::snapshot(app)?;
-    if let Some(service) = service { return online_ocr::recognize(image, &service); }
-    provider(&settings.provider)?.recognize(app, image, &settings)
+    let mut result = match service {
+        Some(service) => online_ocr::recognize(image, &service)?,
+        None => provider(&settings.provider)?.recognize(app, image, &settings)?,
+    };
+    // 截图与贴图窗口读不到完整设置，识别后的动作开关随结果一并返回。
+    result.auto_copy = settings.auto_copy;
+    result.merge_lines = settings.merge_lines;
+    Ok(result)
 }
 pub fn provider(id: &str) -> Result<&'static dyn OcrProvider, String> {
     match id {
@@ -103,6 +109,9 @@ pub struct OcrResult {
     pub lines: Vec<OcrLine>,
     pub elapsed_ms: u64,
     pub warnings: Vec<String>,
+    /// 由 recognize_selected 按当前设置填入，各引擎构造时一律为 false。
+    pub auto_copy: bool,
+    pub merge_lines: bool,
 }
 
 #[cfg(test)]

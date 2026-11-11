@@ -115,4 +115,10 @@ describe('独立文字翻译工作区', () => {
     await button('翻译').props.onClick(); await flushComponent()
     expect(api.translateText).not.toHaveBeenCalled(); expect(text(root)).toContain('翻译文字超过 32 KB')
   })
+  it('开启翻译后自动复制时译文直接写入剪贴板，默认不复制', async () => {
+    await mount(true)
+    expect(api.copyOcrText).not.toHaveBeenCalled()
+    memoryRenderer.render(null, root); settings.ai.autoCopy = true; await mount(true); await flushComponent()
+    expect(api.copyOcrText).toHaveBeenCalledExactlyOnceWith('你好')
+  })
 })

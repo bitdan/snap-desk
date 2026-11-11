@@ -18,9 +18,12 @@ export interface OcrResult {
   lines: OcrLine[]
   elapsedMs: number
   warnings: string[]
+  /** 设置里的识别后动作，随结果下发；截图和贴图窗口不读取完整设置。 */
+  autoCopy?: boolean
+  mergeLines?: boolean
 }
 /** 默认本地 OCR + 离线翻译；在线服务需要显式选择和文本上传确认。 */
-export interface AiSettings { serviceId?: string; provider: 'local-ctranslate2' | 'online-llm' | 'deepl'; endpoint: string; model: string; targetLanguage: string; timeoutSeconds: number; localIdleSeconds: number }
+export interface AiSettings { serviceId?: string; provider: 'local-ctranslate2' | 'online-llm' | 'deepl'; endpoint: string; model: string; targetLanguage: string; timeoutSeconds: number; localIdleSeconds: number; autoCopy?: boolean }
 export const targetLanguages = [
   { value: 'zh-CN', label: '简体中文' }, { value: 'en', label: '英语' },
   { value: 'ja', label: '日语' }, { value: 'ko', label: '韩语' },

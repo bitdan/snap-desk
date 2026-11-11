@@ -22,6 +22,8 @@ pub struct AiSettings {
     pub timeout_seconds: u64,
     /// 本地进程空闲回收秒数；0 保持缓存，旧配置默认五分钟。
     pub local_idle_seconds: u64,
+    /// 翻译完成后自动复制译文；由翻译界面执行。
+    pub auto_copy: bool,
 }
 /// 区分旧字段缺失与显式选择，避免旧日语目标因本地只支持中英而使整个设置失效。
 #[derive(Deserialize)]
@@ -34,6 +36,7 @@ struct AiSettingsWire {
     target_language: String,
     timeout_seconds: u64,
     local_idle_seconds: u64,
+    auto_copy: bool,
     /// 兼容旧配置，右键翻译入口已移除，不再保存此字段。
     #[serde(rename = "selectionContextMenu")]
     _selection_context_menu: bool,
@@ -49,6 +52,7 @@ impl Default for AiSettingsWire {
             target_language: value.target_language,
             timeout_seconds: value.timeout_seconds,
             local_idle_seconds: value.local_idle_seconds,
+            auto_copy: value.auto_copy,
             _selection_context_menu: false,
         }
     }
@@ -72,6 +76,7 @@ impl From<AiSettingsWire> for AiSettings {
             target_language: wire.target_language,
             timeout_seconds: wire.timeout_seconds,
             local_idle_seconds: wire.local_idle_seconds,
+            auto_copy: wire.auto_copy,
         }
     }
 }
@@ -85,6 +90,7 @@ impl Default for AiSettings {
             target_language: "zh-CN".into(),
             timeout_seconds: 45,
             local_idle_seconds: 300,
+            auto_copy: false,
         }
     }
 }

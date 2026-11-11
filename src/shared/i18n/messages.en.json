@@ -1215,5 +1215,10 @@
   "回车或双击后直接粘贴到原窗口": "Paste into the previous window on Enter or double-click",
   "不记录这些程序复制的内容": "Do not record content copied by these apps",
   "程序文件名，用逗号分隔，如 KeePass.exe, 1Password.exe": "Executable names separated by commas, e.g. KeePass.exe, 1Password.exe",
-  "排除应用无效：最多 50 个程序文件名，每个不超过 100 字且不含路径。": "Invalid excluded apps: up to 50 executable names, 100 characters each, without paths."
+  "排除应用无效：最多 50 个程序文件名，每个不超过 100 字且不含路径。": "Invalid excluded apps: up to 50 executable names, 100 characters each, without paths.",
+  "识别后": "After recognition",
+  "识别后自动复制文字": "Copy text automatically after recognition",
+  "识别后自动合并换行": "Merge line breaks automatically after recognition",
+  "把同一段落的多行拼成一行，空行仍分段；可在结果里还原。": "Joins the lines of a paragraph into one; blank lines still separate paragraphs. You can restore the original in the result.",
+  "翻译后自动复制译文": "Copy the translation automatically"
 }

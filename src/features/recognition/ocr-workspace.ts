@@ -66,6 +66,11 @@ export function mergeLines(text: string): string {
     .replace(/\s*\n\s*/g, ' ')
     .trim()).join('\n\n')
 }
+/** 识别结果进入可编辑草稿前的整理：设置开启“自动合并换行”时先合并，原始结果仍可一键还原。 */
+export function initialOcrText(result: Pick<OcrResult, 'fullText' | 'mergeLines'>): string {
+  const text = result.fullText ?? ''
+  return result.mergeLines ? mergeLines(text) : text
+}
 /** 整理空格：去掉 OCR 常见的汉字间空格、行首尾空白，并把连续空格压成一个。 */
 export function tidySpaces(text: string): string {
   return text.replace(/\r\n?/g, '\n').split('\n').map(line => line
