@@ -2,9 +2,12 @@
 import { t, te } from '@/shared/i18n/i18n'
 import ConfirmDialog from '@/shared/ui/ConfirmDialog.vue'
 import DetachedWindow from '@/shared/ui/DetachedWindow.vue'
+import Button from '@/shared/ui/button/Button.vue'
 import { handleEscape } from '@/shared/ui/escape'
-import { nextTick, onMounted, onUnmounted, ref } from 'vue'
-import OcrResultCard from '@/features/recognition/components/OcrResultCard.vue'
+import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
+import { Copy, ExternalLink, LoaderCircle, QrCode, RotateCcw, ScanText } from 'lucide-vue-next'
+import OcrWorkspace from '@/features/recognition/components/OcrWorkspace.vue'
+import { ocrWindowSize } from '@/features/recognition/ocr-workspace'
 import { api } from '@/services/api'
 import type { PinFrame } from '@/features/pins/types'
 import type { QrResult } from '@/features/recognition/types'
@@ -16,17 +19,12 @@ const panel = ref<HTMLElement | null>(null)
 const busy = ref(false), error = ref(''), message = ref('')
 let disposed = false
 const ocr = ref<OcrResult | null>(null), qr = ref<QrResult | null>(null)
-// 与截图一致：识别结果是可编辑草稿，翻译来回切换不会丢失修正。
+// 与截图一致：识别结果是可编辑草稿，识别与翻译视图来回切换不会丢失修正。
 const draft = ref('')
-const openingTranslation = ref(false)
-/** 贴图识别后也交给同一个独立窗口，保留用户修正过的 OCR 草稿。 */
-async function translate() {
-  if (openingTranslation.value) return
-  openingTranslation.value = true; error.value = ''
-  try { await api.openTranslation(draft.value); emit('close') }
-  catch (e) { if (!disposed) error.value = String(e) }
-  finally { openingTranslation.value = false }
-}
+// 识别工作区左侧显示贴图原图；旋转等变换后宽高比不符时由工作区自动不画识别框。
+const image = computed(() => ({ url: props.frame.dataUrl, width: props.frame.width, height: props.frame.height }))
+const ocrWindow = computed(() => ocrWindowSize(image.value, globalThis.devicePixelRatio ?? 1, { width: globalThis.screen?.availWidth ?? 1280, height: globalThis.screen?.availHeight ?? 800 }))
+const title = computed(() => props.mode === 'qr' ? t('图片二维码识别') : props.mode === 'translate' ? t('图片翻译') : t('文字识别结果'))
 const pendingLink = ref<number | null>(null)
 async function run(task: () => Promise<void>) {
   if (busy.value) return
@@ -39,10 +37,7 @@ async function recognize() {
     pendingLink.value = null
     if (props.mode !== 'qr') {
       const result = await api.recognizePinText()
-      if (!disposed) {
-        ocr.value = result; draft.value = result.fullText
-        if (props.mode === 'translate' && draft.value.trim()) await translate()
-      }
+      if (!disposed) { draft.value = result.fullText; ocr.value = result }
     } else {
       const result = await api.recognizePinQr()
       if (!disposed) qr.value = result
@@ -66,57 +61,59 @@ function key(event: KeyboardEvent) {
     return
   }
   // 识别处理中也允许返回贴图；迟到结果由 disposed 忽略，不重新打开面板。
-  if (handleEscape(event, () => emit('close'))) return
-  // 对话框内循环焦点，防止 Tab 移到背后的贴图工具。
-  if (event.key !== 'Tab') return
-  const nodes = [...(panel.value?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), textarea:not(:disabled)') ?? [])]
-  if (!nodes.length) { event.preventDefault(); return }
-  const first = nodes[0], last = nodes[nodes.length - 1]
-  if (event.shiftKey && ((event.currentTarget as HTMLElement).ownerDocument.activeElement === first || (event.currentTarget as HTMLElement).ownerDocument.activeElement === panel.value)) { event.preventDefault(); last?.focus() }
-  else if (!event.shiftKey && ((event.currentTarget as HTMLElement).ownerDocument.activeElement === last || (event.currentTarget as HTMLElement).ownerDocument.activeElement === panel.value)) { event.preventDefault(); first?.focus() }
+  handleEscape(event, () => emit('close'))
 }
 onMounted(() => { void nextTick(() => panel.value?.focus()); void recognize() })
 onUnmounted(() => { disposed = true })
 </script>
 
 <template>
-  <DetachedWindow :open="true" :title="mode === 'qr' ? t('图片二维码识别') : t('文字识别结果')" :width="1000" :height="650" @close="emit('close')">
-    <section v-if="mode !== 'qr' && ocr" class="pin-recognition result-shell" :aria-label="t('文字识别结果')">
-      <OcrResultCard standalone v-model:text="draft" @translate="translate" @close="emit('close')" />
-      <p v-if="error" role="alert" class="recognition-error">{{ te(error) }}</p>
-    </section>
-    <section v-else ref="panel" class="pin-recognition" :aria-label="mode !== 'qr' ? t('图片文字识别') : t('图片二维码识别')" tabindex="-1" @keydown.stop="key">
-      <header><strong>{{ mode !== 'qr' ? t("图片文字识别") : t("图片二维码识别") }}</strong><button @click="emit('close')">{{ t("关闭") }}</button></header>
+  <DetachedWindow :open="true" :title="title" :width="mode === 'qr' ? 480 : ocrWindow.width" :height="mode === 'qr' ? 420 : ocrWindow.height" @close="emit('close')">
+    <OcrWorkspace v-if="mode !== 'qr' && ocr" v-model:text="draft" :result="ocr" :image="image" :mode="mode === 'translate' ? 'translate' : 'ocr'" :error="error" @close="emit('close')" />
+    <section v-else ref="panel" class="pin-recognition" :aria-label="title" tabindex="-1" @keydown.stop="key">
       <div class="pin-recognition-body">
-        <p v-if="busy" role="status">{{ t("正在处理…") }}</p>
-        <p v-if="error" role="alert" class="recognition-error">{{ te(error) }}</p>
-        <p v-if="message" role="status">{{ t(message) }}</p>
-        <template v-if="mode === 'qr' && qr">
-          <p v-if="!qr.items.length">{{ t("未发现二维码，请保留完整码及白边。") }}</p>
-          <div v-for="(item, index) in qr.items" :key="index" class="qr-item">
-            <p class="qr-text" dir="auto">{{ item.text }}</p>
-            <footer><button :disabled="busy" @click="qrAction(index, 'copy')">{{ t("复制内容") }}</button><button v-if="item.url" :disabled="busy" @click="requestLink(index)">{{ t("打开链接…") }}</button></footer>
-          </div>
+        <div v-if="busy && !qr" class="pin-recognition-state" role="status"><LoaderCircle :size="22" class="pin-recognition-spinner" aria-hidden="true" />{{ mode === 'qr' ? t('正在识别二维码…') : t('正在识别文字…') }}</div>
+        <div v-else-if="error && !qr" class="pin-recognition-state">
+          <ScanText v-if="mode !== 'qr'" :size="22" aria-hidden="true" /><QrCode v-else :size="22" aria-hidden="true" />
+          <p role="alert" class="pin-recognition-error">{{ te(error) }}</p>
+        </div>
+        <template v-else-if="qr">
+          <p v-if="!qr.items.length" class="pin-recognition-state">{{ t("未发现二维码，请保留完整码及白边。") }}</p>
+          <article v-for="(item, index) in qr.items" :key="index" class="pin-qr-item">
+            <p class="pin-qr-text" dir="auto">{{ item.text }}</p>
+            <div class="pin-qr-actions">
+              <Button variant="outline" :disabled="busy" @click="qrAction(index, 'copy')"><Copy :size="14" />{{ t("复制内容") }}</Button>
+              <Button v-if="item.url" variant="outline" :disabled="busy" @click="requestLink(index)"><ExternalLink :size="14" />{{ t("打开链接…") }}</Button>
+            </div>
+          </article>
+          <p v-if="error" role="alert" class="pin-recognition-error">{{ te(error) }}</p>
         </template>
       </div>
-      <footer><button :disabled="busy" @click="recognize">{{ t("重新识别") }}</button></footer>
+      <footer class="pin-recognition-footer">
+        <span v-if="message" class="pin-recognition-message" role="status">{{ t(message) }}</span>
+        <Button variant="ghost" :disabled="busy" @click="recognize"><RotateCcw :size="14" />{{ t("重新识别") }}</Button>
+        <Button variant="outline" @click="emit('close')">{{ t("关闭") }}</Button>
+      </footer>
     </section>
     <ConfirmDialog :open="pendingLink !== null" :title="t('确认打开链接')" :description="t('将在浏览器打开：') + '\n' + (qr?.items[pendingLink ?? -1]?.url ?? '')" :confirm-label="t('确认打开')" :busy="busy" :error="te(error)" @update:open="updateLinkOpen" @confirm="pendingLink !== null && qrAction(pendingLink, 'open')" />
   </DetachedWindow>
 </template>
 
-<style scoped>
-.pin-recognition { width: 100%; height: 100%; box-sizing: border-box; display: flex; flex-direction: column; min-height: 0; overflow: hidden; padding: 12px; background: #fff; color: #24292f; font-size: 13px; user-select: text; }
-.pin-recognition-body { flex: 1; min-height: 0; overflow: auto; }
-.result-shell { padding: 0; border: 0; }
-.result-shell :deep(.recognition-result) { flex: 1; min-height: 0; }
-header, footer { flex-shrink: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-header { justify-content: space-between; border-bottom: 1px solid #e1e4e8; padding-bottom: 8px; }
-footer { margin-top: 8px; }
-button { min-height: 32px; padding: 4px 8px; border: 1px solid #d8dee4; border-radius: 4px; }
-button:disabled { opacity: .5; }
-button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px solid #2563eb; outline-offset: 1px; }
-.recognition-error { color: #b91c1c; overflow-wrap: anywhere; }
-.qr-text { white-space: pre-wrap; overflow-wrap: anywhere; }
-.qr-item { border-bottom: 1px solid #e1e4e8; padding: 8px 0; }
+<style>
+.pin-recognition { --pr-bg:#fff; --pr-soft:#f3f5f8; --pr-border:#e1e4e8; --pr-text:#24292f; --pr-muted:#6b7280; --pr-danger:#b42318;
+  display:flex; flex-direction:column; width:100%; height:100%; min-height:0; background:var(--pr-bg); color:var(--pr-text); font-size:13px; user-select:text; outline:none; }
+[data-theme=dark] .pin-recognition { --pr-bg:#1b1f24; --pr-soft:#252b33; --pr-border:#39424e; --pr-text:#e6edf3; --pr-muted:#9aa7b4; --pr-danger:#ff8a80; }
+.pin-recognition-body { display:flex; flex:1; flex-direction:column; gap:8px; min-height:0; padding:12px; overflow:auto; }
+.pin-recognition-state { display:flex; flex:1; flex-direction:column; align-items:center; justify-content:center; gap:10px; margin:0; color:var(--pr-muted); text-align:center; }
+.pin-recognition-spinner { animation:result-spin 1s linear infinite; }
+.pin-recognition-error { margin:0; color:var(--pr-danger); overflow-wrap:anywhere; }
+.pin-qr-item { padding:10px 12px; border:1px solid var(--pr-border); border-radius:8px; background:var(--pr-soft); }
+.pin-qr-text { margin:0 0 8px; white-space:pre-wrap; overflow-wrap:anywhere; line-height:1.6; }
+.pin-qr-actions { display:flex; flex-wrap:wrap; gap:6px; }
+.pin-qr-actions button { height:30px; padding:0 10px; font-size:12px; }
+.pin-recognition-footer { display:flex; align-items:center; justify-content:flex-end; gap:8px; padding:8px 12px; border-top:1px solid var(--pr-border); }
+.pin-recognition-footer button { height:32px; padding:0 12px; }
+.pin-recognition-message { margin-right:auto; color:var(--ui-success-fg, #24834b); font-size:12px; }
+@keyframes result-spin { to { transform:rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .pin-recognition-spinner { animation:none; } }
 </style>

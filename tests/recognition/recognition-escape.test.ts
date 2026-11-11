@@ -23,11 +23,10 @@ vi.mock('reka-ui', async () => {
   return Object.fromEntries(['AlertDialogRoot', 'AlertDialogPortal', 'AlertDialogOverlay', 'AlertDialogContent', 'AlertDialogTitle', 'AlertDialogDescription', 'AlertDialogCancel'].map(name => [name, pass]))
 })
 import PinRecognition from '../../src/features/recognition/components/PinRecognition.vue'
-import ImageTranslation from '../../src/features/recognition/components/ImageTranslation.vue'
 import TranslationPanel from '../../src/features/recognition/components/TranslationPanel.vue'
-import OcrResultCard from '../../src/features/recognition/components/OcrResultCard.vue'
+import OcrWorkspace from '../../src/features/recognition/components/OcrWorkspace.vue'
 import QrResultCard from '../../src/features/recognition/components/QrResultCard.vue'
-const components = { PinRecognition, ImageTranslation, TranslationPanel, OcrResultCard, QrResultCard }
+const components = { PinRecognition, TranslationPanel, OcrWorkspace, QrResultCard }
 const recognition = { provider: 'local-ppocr', fullText: 'hello', lines: [], imageWidth: 640, imageHeight: 480 }
 const frame = { label: 'pin-1', width: 640, height: 480, dataUrl: '', view: { zoom: 1, opacity: 1, locked: false, topmost: true, toolbarExpanded: true }, annotations: [], transparencySupported: true }
 import InfoTip from '../../src/shared/ui/InfoTip.vue'
@@ -36,7 +35,7 @@ const clients: Record<string, Component> = Object.fromEntries(Object.entries(com
 clientComponent(ConfirmDialog, new URL('../../src/shared/ui/ConfirmDialog.vue', import.meta.url))
 let root = new MemoryNode('root'), close = vi.fn()
 async function mount(name: keyof typeof components, overrides = {}) {
-  const props = { onClose: close, text: 'hello', frame, mode: 'ocr', recognition, image: { dataUrl: '', width: 640, height: 480 }, captureResult: { id: 7, items: [] }, ...overrides }
+  const props = { onClose: close, text: 'hello', frame, mode: 'ocr', recognition, result: recognition, image: null, captureResult: { id: 7, items: [] }, ...overrides }
   memoryRenderer.render(h(clients[name], props), root)
   await flushComponent()
   return findNode(root, node => typeof node.props.onKeydown === 'function')!
@@ -110,52 +109,43 @@ describe('识别与翻译面板真实交互', () => {
     await flushComponent()
     expect(findNode(root, node => node.type === 'textarea' && node.props.id === 'translation-output')?.value).toBe('')
   })
-  it('DeepL 无模型也能自动翻译，不需要再次勾选确认，卸载取消当前批次', async () => {
-    const settings = { ...defaultAiSettings(), provider: 'deepl', endpoint: 'https://api-free.deepl.com/v2/translate' }
-    api.aiTranslationConfig.mockResolvedValue(settings)
-    api.translateTexts.mockReturnValue(new Promise(() => {}))
-    await mount('ImageTranslation')
-    expect(findNode(root, node => node.type === 'input' && node.props.type === 'checkbox')).toBeUndefined()
-    expect(api.translateTexts).toHaveBeenCalledExactlyOnceWith(expect.any(String), { texts: ['hello'], sourceLanguage: null, targetLanguage: 'zh-CN' }, true, settings)
-    expect(api.translateText).not.toHaveBeenCalled()
-    const requestId = api.translateTexts.mock.calls[0][0]
-    memoryRenderer.render(null, root); await flushComponent()
-    expect(api.cancelAiJob).toHaveBeenCalledExactlyOnceWith(requestId)
-  })
   it('贴图使用截图的可编辑结果卡，复制用户修正后的文字', async () => {
     api.recognizePinText.mockResolvedValueOnce({ ...recognition, fullText: '识别原文' })
     await mount('PinRecognition')
     const input = findNode(root, node => node.type === 'textarea')!
     expect(input.props['aria-label']).toBe('识别文字，可编辑')
     expect(input.props.readonly).toBeUndefined()
-    input.props['onUpdate:modelValue']('修正后的原文'); await flushComponent()
+    input.props.onInput({ target: { value: '修正后的原文' } }); await flushComponent()
     const copy = findNode(root, node => node.type === 'button' && content(node).trim() === '复制文字')!
     copy.props.onClick(); await flushComponent()
     expect(api.copyOcrText).toHaveBeenCalledExactlyOnceWith('修正后的原文')
   })
-  it('贴图将修正后的原文送入独立窗口，成功后关闭识别面板', async () => {
+  it('贴图翻译在识别工作区内就地切换，沿用修正后的原文，不再打开独立窗口', async () => {
     api.recognizePinText.mockResolvedValueOnce({ ...recognition, fullText: '识别原文' })
     await mount('PinRecognition')
-    findNode(root, node => node.type === 'textarea')!.props['onUpdate:modelValue']('修正后的原文')
+    findNode(root, node => node.type === 'textarea')!.props.onInput({ target: { value: '修正后的原文' } })
     await flushComponent()
     findNode(root, node => node.type === 'button' && content(node).trim() === '翻译文字')!.props.onClick()
     await flushComponent()
-    expect(api.openTranslation).toHaveBeenCalledExactlyOnceWith('修正后的原文')
-    expect(close).toHaveBeenCalledOnce()
-    expect(api.recognizePinText).toHaveBeenCalledOnce()
-    expect(api.translateText).not.toHaveBeenCalled()
-  })
-  it('贴图直接翻译入口识别后打开独立窗口，失败保留可编辑原文供重试', async () => {
-    api.recognizePinText.mockResolvedValueOnce({ ...recognition, fullText: '直接翻译的原文' })
-    api.openTranslation.mockRejectedValueOnce(new Error('窗口打开失败'))
-    await mount('PinRecognition', { mode: 'translate' })
-    expect(api.openTranslation).toHaveBeenCalledExactlyOnceWith('直接翻译的原文')
+    expect(findNode(root, node => node.type === 'textarea' && node.props.id === 'translation-source')!.value).toBe('修正后的原文')
+    await flushComponent()
+    // 中文原文会自动切到英文目标，走批量契约；两种调用都应携带修正后的原文。
+    expect([...api.translateText.mock.calls.map(call => call[1]), ...api.translateTexts.mock.calls.map(call => call[1].texts[0])]).toEqual(['修正后的原文'])
+    expect(api.openTranslation).not.toHaveBeenCalled()
     expect(close).not.toHaveBeenCalled()
-    expect(findNode(root, node => node.type === 'textarea')!.value).toBe('直接翻译的原文')
-    expect(content(root)).toContain('窗口打开失败')
-    findNode(root, node => node.type === 'button' && content(node).trim() === '翻译文字')!.props.onClick()
+    // 返回识别保留草稿。
+    findNode(root, node => node.type === 'button' && content(node).trim() === '返回识别')!.props.onClick()
     await flushComponent()
-    expect(close).toHaveBeenCalledOnce()
+    expect(findNode(root, node => node.type === 'textarea')!.value).toBe('修正后的原文')
+  })
+  it('贴图直接翻译入口识别后直接进入翻译视图', async () => {
+    api.recognizePinText.mockResolvedValueOnce({ ...recognition, fullText: '直接翻译的原文' })
+    await mount('PinRecognition', { mode: 'translate' })
+    expect(findNode(root, node => node.type === 'textarea' && node.props.id === 'translation-source')!.value).toBe('直接翻译的原文')
+    await flushComponent()
+    // 中文原文会自动切到英文目标，走批量契约；两种调用都应携带修正后的原文。
+    expect([...api.translateText.mock.calls.map(call => call[1]), ...api.translateTexts.mock.calls.map(call => call[1].texts[0])]).toEqual(['直接翻译的原文'])
+    expect(api.openTranslation).not.toHaveBeenCalled()
     expect(api.recognizePinText).toHaveBeenCalledOnce()
   })
   it('贴图空识别结果与截图一致，允许手动输入后复制或翻译', async () => {
@@ -165,7 +155,7 @@ describe('识别与翻译面板真实交互', () => {
     const copy = () => findNode(root, node => node.type === 'button' && content(node).trim() === '复制文字')!
     expect(input.value).toBe('')
     expect(copy().props.disabled).toBe(true)
-    input.props['onUpdate:modelValue']('补充文字'); await flushComponent()
+    input.props.onInput({ target: { value: '补充文字' } }); await flushComponent()
     expect(copy().props.disabled).toBe(false)
     copy().props.onClick(); await flushComponent()
     expect(api.copyOcrText).toHaveBeenCalledExactlyOnceWith('补充文字')
@@ -192,7 +182,7 @@ describe('识别与翻译面板真实交互', () => {
     finish({ ...recognition, fullText: 'late', lines: [{ id: 'old', text: 'late', order: 0 }] }); await flushComponent()
     expect(findNode(root, node => node.type === 'textarea')?.value).toBe('fresh')
   })
-  it.each(['ImageTranslation', 'TranslationPanel'] as const)('%s 在真实翻译期间卸载会取消请求，取消失败也能正常退出', async name => {
+  it.each(['TranslationPanel'] as const)('%s 在真实翻译期间卸载会取消请求，取消失败也能正常退出', async name => {
     await mount(name)
     expect(api.translateText).toHaveBeenCalledOnce()
     const requestId = api.translateText.mock.calls[0][0]
@@ -247,14 +237,13 @@ describe('窗口识别面板 Esc 兜底', () => {
 })
 
 describe('进入翻译即使用已配置服务', () => {
-  it.each(['ImageTranslation', 'TranslationPanel'] as const)('%s 在线失败只显示错误，不改用本地服务', async name => {
+  it.each(['TranslationPanel'] as const)('%s 在线失败只显示错误，不改用本地服务', async name => {
     const settings = { ...defaultAiSettings(), provider: 'online-llm', endpoint: 'https://example.test/v1/chat/completions', model: 'configured-model' }
     api.aiTranslationConfig.mockResolvedValue(settings)
     api.translateText.mockRejectedValue(new Error('服务不可用'))
     api.translateTexts.mockRejectedValue(new Error('服务不可用'))
     await mount(name); await flushComponent()
-    const request = name === 'ImageTranslation' ? api.translateTexts : api.translateText
-    const other = name === 'ImageTranslation' ? api.translateText : api.translateTexts
+    const request = api.translateText, other = api.translateTexts
     expect(request).toHaveBeenCalledOnce()
     expect(request.mock.calls[0][2]).toBe(true)
     expect(request.mock.calls[0][3]).toEqual(settings)
@@ -263,16 +252,16 @@ describe('进入翻译即使用已配置服务', () => {
     expect(content(root)).not.toContain('本地离线翻译')
     const checkbox = findNode(root, node => node.type === 'input' && node.props.type === 'checkbox')
     // 自动方向控件不属于上传授权；进入翻译仍不需要额外确认。
-    expect(checkbox?.parent?.props.class ?? null).toBe(name === 'TranslationPanel' ? 'translation-auto' : null)
+    expect(checkbox?.parent?.props.class ?? null).toBe('translation-auto')
   })
-  it.each(['ImageTranslation', 'TranslationPanel'] as const)('%s 配置未就绪时不发送请求，也不切换默认引擎', async name => {
+  it.each(['TranslationPanel'] as const)('%s 配置未就绪时不发送请求，也不切换默认引擎', async name => {
     api.aiTranslationConfig.mockResolvedValue({ ...defaultAiSettings(), provider: 'deepl', endpoint: '' })
     await mount(name)
     expect(api.translateText).not.toHaveBeenCalled()
     expect(api.translateTexts).not.toHaveBeenCalled()
     expect(content(root)).toContain('在“翻译”中选择服务')
   })
-  it.each(['ImageTranslation', 'TranslationPanel'] as const)('%s 关闭期间配置迟到不触发请求', async name => {
+  it.each(['TranslationPanel'] as const)('%s 关闭期间配置迟到不触发请求', async name => {
     let resolve!: (value: unknown) => void
     api.aiTranslationConfig.mockReturnValue(new Promise(done => { resolve = done }))
     await mount(name)
@@ -284,13 +273,15 @@ describe('进入翻译即使用已配置服务', () => {
 })
 
 
-it('独立 OCR 结果只保留系统标题栏，仍可编辑、复制并通过 Escape 关闭', async () => {
-  const panel = await mount('OcrResultCard', { standalone: true })
+it('识别工作区没有内部标题栏，可编辑、整理、复制并通过 Escape 关闭', async () => {
+  const panel = await mount('OcrWorkspace', { text: 'hello  world' + String.fromCharCode(10) + 'next line' })
   expect(findNode(root, node => node.type === 'header')).toBeUndefined()
   expect(findNode(root, node => node.type === 'textarea')).toBeDefined()
+  findNode(root, node => node.props['aria-label'] === '合并换行')!.props.onClick(); await flushComponent()
+  findNode(root, node => node.props['aria-label'] === '整理空格')!.props.onClick(); await flushComponent()
   const copy = findNode(root, node => node.type === 'button' && content(node).includes('复制文字'))!
   await copy.props.onClick(); await flushComponent()
-  expect(api.copyOcrText).toHaveBeenCalledWith('hello')
+  expect(api.copyOcrText).toHaveBeenCalledWith('hello world next line')
   panel.props.onKeydown(escape())
   expect(close).toHaveBeenCalledOnce()
 })

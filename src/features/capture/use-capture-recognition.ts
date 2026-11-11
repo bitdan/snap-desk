@@ -26,6 +26,8 @@ export function useCaptureRecognition({ frame, pixels, busy, error, blocked, ges
   const qrResult = ref<QrResult | null>(null)
   const ocrResult = ref<OcrResult | null>(null)
   const ocrDraft = ref('')
+  /** 截图工具栏的“截图翻译”在识别工作区内就地翻译；从翻译窗口发起的截图仍交回翻译窗口。 */
+  const ocrMode = ref<'ocr' | 'translate'>('ocr')
   const openingTranslation = ref(false)
   const ocrEntryWasTranslation = ref(false)
   const translationTrigger = ref<HTMLButtonElement | null>(null)
@@ -45,8 +47,9 @@ export function useCaptureRecognition({ frame, pixels, busy, error, blocked, ges
     try {
       const text = await api.recognizeCapture(id, pixels.value)
       if (frame.value?.id === id) {
-        ocrDraft.value = text.fullText; ocrResult.value = text
-        if (translate) await sendTranslation(id)
+        ocrDraft.value = text.fullText
+        if (translate && frame.value.translation) { ocrResult.value = text; await sendTranslation(id) }
+        else { ocrMode.value = translate ? 'translate' : 'ocr'; ocrResult.value = text }
       }
     } catch (e) { error.value = String(e) }
     finally { busy.value = false }
@@ -79,6 +82,6 @@ export function useCaptureRecognition({ frame, pixels, busy, error, blocked, ges
   return {
     qrResult, ocrResult, ocrDraft, openingTranslation,
     translationTrigger, ocrTrigger,
-    closeOcr, recognizeText, sendTranslation, recognizeQr,
+    ocrMode, closeOcr, recognizeText, sendTranslation, recognizeQr,
   }
 }

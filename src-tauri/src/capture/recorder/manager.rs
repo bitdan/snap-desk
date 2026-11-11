@@ -25,7 +25,7 @@ mod stats;
 mod timeline;
 mod lifecycle;
 mod pipeline;
-pub use lifecycle::{ExitState, request_exit};
+pub use lifecycle::{ExitState, request_exit, request_restart};
 use lifecycle::{progress, WorkerGuard};
 #[cfg(test)]
 use lifecycle::exit_timed_out;

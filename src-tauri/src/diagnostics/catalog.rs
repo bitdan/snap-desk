@@ -207,6 +207,7 @@ pub const COMMANDS: &[&str] = &[
     "current_scroll",
     "download_resources",
     "drag_pin",
+    "set_pin_region",
     "drag_pin_content",
     "export_settings",
     "import_settings",

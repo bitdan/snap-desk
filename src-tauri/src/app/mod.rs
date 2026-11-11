@@ -180,6 +180,13 @@ pub fn run() {
                 enabled,
                 None::<&str>,
             )?;
+            let restart = MenuItem::with_id(
+                app,
+                "restart",
+                native_i18n::text(app.handle(), "重启"),
+                true,
+                None::<&str>,
+            )?;
             let quit = MenuItem::with_id(
                 app,
                 "quit",
@@ -190,7 +197,8 @@ pub fn run() {
             let menu = Menu::with_items(
                 app,
                 &[
-                    &capture, &pin, &recording, &history, &translation_menu, &open, &shortcuts, &quit,
+                    &capture, &pin, &recording, &history, &translation_menu, &open, &shortcuts, &restart,
+                    &quit,
                 ],
             )?;
             app.manage(settings::ShortcutMenu(shortcuts));
@@ -246,7 +254,10 @@ pub fn run() {
                             }
                         });
                     }
-                    // 先完成正在录制的视频，避免退出截断输出。
+                    // 先完成正在录制的视频，避免退出或重启截断输出。
+                    "restart" => {
+                        capture::recording::request_restart(app);
+                    }
                     "quit" => {
                         capture::recording::request_exit(app);
                     }
@@ -261,6 +272,7 @@ pub fn run() {
                     ("剪贴板", history),
                     ("翻译", translation_menu),
                     ("打开 Snap Desk", open),
+                    ("重启", restart),
                     ("退出", quit),
                 ],
                 icon: tray,
@@ -475,6 +487,7 @@ pub fn run() {
             pins::manage_pins,
             pins::set_pin_view,
             pins::drag_pin,
+            pins::set_pin_region,
             pins::drag::drag_pin_content,
             pins::transform_pin,
             pins::pin_action,
@@ -487,6 +500,13 @@ pub fn run() {
             // 录屏的退出流程完成后才收到 Exit；等待历史在途写入释放。
             if matches!(event, tauri::RunEvent::Exit) {
                 log::info!("event=app.exiting module=app");
+                // 重启会先拉起新进程再结束本进程；先释放系统热键，避免新进程注册时仍被占用。
+                {
+                    use tauri_plugin_global_shortcut::GlobalShortcutExt;
+                    if let Err(error) = app.global_shortcut().unregister_all() {
+                        log::warn!("event=app.shortcut_release_failed module=app error={error}");
+                    }
+                }
                 shutdown(app);
             }
         });

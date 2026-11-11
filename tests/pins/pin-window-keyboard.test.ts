@@ -6,7 +6,7 @@ import type { PinFrame } from '../../src/features/pins/types'
 
 const api = vi.hoisted(() => ({
   currentPin: vi.fn(), setPinView: vi.fn(), pinAction: vi.fn(), setPinAnnotations: vi.fn(),
-  transformPin: vi.fn(), dragPin: vi.fn(), dragPinContent: vi.fn(),
+  transformPin: vi.fn(), dragPin: vi.fn(), dragPinContent: vi.fn(), setPinRegion: vi.fn(),
 }))
 vi.mock('../../src/services/api', () => ({ api, onPinVisibility: async () => () => {} }))
 vi.mock('../../src/features/pins/events', () => ({ onPinAppearance: async () => () => {}, onPinView: async () => () => {} }))
@@ -60,6 +60,7 @@ beforeEach(() => {
   api.setPinView.mockImplementation(async view => view)
   api.pinAction.mockResolvedValue(false)
   api.dragPin.mockResolvedValue(undefined)
+  api.setPinRegion.mockResolvedValue(undefined)
   api.dragPinContent.mockResolvedValue(undefined)
 })
 afterEach(() => { memoryRenderer.render(null, root); vi.unstubAllGlobals() })

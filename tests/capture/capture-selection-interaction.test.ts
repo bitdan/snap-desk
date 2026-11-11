@@ -24,8 +24,10 @@ vi.mock('../../src/features/recording/components/RecordingSourceSelect.vue', () 
 vi.mock('../../src/features/recording/components/RecordingAnnotations.vue', () => ({ default: { render: () => null } }))
 vi.mock('../../src/features/scroll/components/ScrollCaptureIcon.vue', () => ({ default: { render: () => null } }))
 import Capture from '../../src/features/capture/components/CaptureOverlay.vue'
-import OcrResultCard from '../../src/features/recognition/components/OcrResultCard.vue'
-clientComponent(OcrResultCard, new URL('../../src/features/recognition/components/OcrResultCard.vue', import.meta.url))
+import OcrWorkspace from '../../src/features/recognition/components/OcrWorkspace.vue'
+clientComponent(OcrWorkspace, new URL('../../src/features/recognition/components/OcrWorkspace.vue', import.meta.url))
+import TranslationPanel from '../../src/features/recognition/components/TranslationPanel.vue'
+clientComponent(TranslationPanel, new URL('../../src/features/recognition/components/TranslationPanel.vue', import.meta.url))
 const Component = clientComponent(Capture, new URL('../../src/features/capture/components/CaptureOverlay.vue', import.meta.url))
 let root: MemoryNode
 const workspace = () => findNode(root, node => node.type === 'workspace')!
@@ -152,20 +154,27 @@ it('绘制标注期间保留工具栏和定位；指针工具空白拖动可调�
   expect(editor.history.present).toHaveLength(1)
 })
 
-it('截图翻译将 OCR 原文交给独立窗口，成功交接后才释放截图', async () => {
-  api.recognizeCapture.mockResolvedValueOnce({ fullText: 'screen text', requestId: 'ocr' })
+it('截图工具栏的截图翻译在识别工作区内就地翻译，不交接也不释放截图', async () => {
+  api.recognizeCapture.mockResolvedValueOnce({ fullText: 'screen text', requestId: 'ocr', lines: [] })
   findNode(root, node => node.props['aria-label'] === '截图翻译')!.props.onClick()
   await flushComponent()
   expect(api.recognizeCapture).toHaveBeenCalledExactlyOnceWith(1, { x: 100, y: 100, width: 400, height: 300 })
-  expect(api.openTranslation).toHaveBeenCalledExactlyOnceWith('screen text')
-  expect(api.cancel).toHaveBeenCalledExactlyOnceWith(1)
-  expect(api.openTranslation.mock.invocationCallOrder[0]).toBeLessThan(api.cancel.mock.invocationCallOrder[0])
+  expect(findNode(root, node => node.props['data-window'] === '截图翻译')).toBeDefined()
+  expect(findNode(root, node => node.type === 'textarea' && node.props.id === 'translation-source')?.value).toBe('screen text')
+  expect(api.openTranslation).not.toHaveBeenCalled()
+  expect(api.cancel).not.toHaveBeenCalled()
+  expect(overlay()).toBeDefined()
 })
-it('翻译窗口打开失败时保留截图与识别草稿', async () => {
-  api.recognizeCapture.mockResolvedValueOnce({ fullText: 'screen text', requestId: 'ocr' })
-  api.openTranslation.mockRejectedValueOnce(new Error('窗口打开失败'))
-  findNode(root, node => node.props['aria-label'] === '截图翻译')!.props.onClick()
+it('从翻译窗口发起的截图在交接失败时保留截图与识别草稿', async () => {
+  captureEvents.frame({ id: 2, width: 1000, height: 800, previewRevision: 1, originX: 0, originY: 0, displays: [], targets: [], recording: false, translation: true })
   await flushComponent()
+  api.recognizeCapture.mockResolvedValueOnce({ fullText: 'screen text', requestId: 'ocr', lines: [] })
+  api.openTranslation.mockRejectedValueOnce(new Error('窗口打开失败'))
+  overlay().props.onPointerdown(event(50, 60))
+  overlay().props.onPointermoveCapture(event(350, 260))
+  overlay().props.onPointerup(event(350, 260))
+  await flushComponent()
+  expect(api.openTranslation).toHaveBeenCalledExactlyOnceWith('screen text')
   expect(api.cancel).not.toHaveBeenCalled()
   expect(overlay()).toBeDefined()
   expect(nodeText(root)).toContain('窗口打开失败')

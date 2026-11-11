@@ -7,6 +7,8 @@ pub struct ExitState {
     /// 更新安装与录屏任务互斥，独立于正常退出意图，失败时可安全撤销。
     updating: AtomicBool,
     pub(super) requested: AtomicBool,
+    /// 托盘“重启”与退出共用收尾流程，只在最后一步改为重新拉起进程。
+    restart: AtomicBool,
     pub(super) workers: std::sync::atomic::AtomicUsize,
     progress: Mutex<Progress>,
 }
@@ -68,7 +70,7 @@ impl Drop for WorkerGuard {
     fn drop(&mut self) {
         let state = self.0.state::<ExitState>();
         if state.release_worker() {
-            self.0.exit(0);
+            finish(&self.0);
         }
     }
 }
@@ -113,12 +115,31 @@ pub(super) fn exit_timed_out(stage: &str, idle: Duration, total: Duration) -> bo
 
 /// 退出按真实帧提交、阶段切换及文件增长延长等待，让正常停止有机会发布成品。
 pub fn request_exit(app: &AppHandle) {
+    begin_exit(app, false);
+}
+
+/// 重启沿用退出的录屏收尾；超时强制退出时不再拉起新进程。
+pub fn request_restart(app: &AppHandle) {
+    begin_exit(app, true);
+}
+
+/// 正常收尾完成后的唯一出口：按意图退出或重启。
+fn finish(app: &AppHandle) {
+    if app.state::<ExitState>().restart.load(Ordering::SeqCst) {
+        app.request_restart();
+    } else {
+        app.exit(0);
+    }
+}
+
+fn begin_exit(app: &AppHandle, restart: bool) {
     let state = app.state::<ExitState>();
     if state.requested.swap(true, Ordering::SeqCst) {
         return;
     }
+    state.restart.store(restart, Ordering::SeqCst);
     if state.workers.load(Ordering::SeqCst) == 0 {
-        app.exit(0);
+        finish(app);
         return;
     }
     let watchdog = app.clone();
