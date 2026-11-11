@@ -21,8 +21,8 @@ afterEach(() => memoryRenderer.render(null, root))
 
 it('默认关闭且只选择图片；启用时仅保存视图配置', async () => {
   const toggle = findNode(root, n => n.props.role === 'switch')!
-  expect(toggle.props['onUpdate:modelValue']).toBeTypeOf('function')
-  toggle.props['onUpdate:modelValue'](true); toggle.props.onChange(); await flushComponent()
+  expect(toggle.props['aria-checked']).toBe(false)
+  toggle.props.onClick(); await flushComponent()
   expect(api.shelfConfigure).toHaveBeenCalledWith({ enabled: true, topHover: false, categories: ['image'] })
 })
 

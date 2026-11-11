@@ -4,6 +4,8 @@ import { onMounted, ref } from 'vue'
 import { api, desktop } from '@/services/api'
 import { t, te } from '@/shared/i18n/i18n'
 import Button from '@/shared/ui/button/Button.vue'
+import SwitchControl from '@/shared/ui/SwitchControl'
+import SettingRow from '@/shared/ui/SettingRow'
 import { defaultShelfSettings, shelfCategories } from '../types'
 
 const settings = ref(defaultShelfSettings()), ready = ref(false), busy = ref(false), error = ref('')
@@ -35,18 +37,13 @@ onMounted(load)
   <section class="general-section shelf-settings" aria-labelledby="shelf-settings-title">
     <div class="flex items-center gap-1"><h2 id="shelf-settings-title">{{ t('顶部暂存架') }}</h2><InfoTip :text="t('与剪贴板历史共用数据；删除历史会同步移除卡片。固定仅保留架上位置，不阻止历史自动清理。')" /></div>
     <fieldset :disabled="!desktop || !ready || busy">
-      <!-- 启停项与本页“记录剪贴板历史”同为右侧开关（外观见 settings.css），保持原生 input 以沿用标签点击和空格键。 -->
-      <div class="setting-row">
-        <label for="shelf-enabled">{{ t('开启顶部暂存架') }}</label>
-        <div class="shelf-row-control">
-          <Button variant="outline" :disabled="!settings.enabled" @click="show">{{ t('展开暂存架') }}</Button>
-          <input id="shelf-enabled" v-model="settings.enabled" type="checkbox" role="switch" @change="save" />
-        </div>
-      </div>
-      <div class="setting-row">
-        <label for="shelf-top-hover">{{ t('鼠标停留屏幕顶部中央时展开') }}</label>
-        <input id="shelf-top-hover" v-model="settings.topHover" type="checkbox" role="switch" :disabled="!settings.enabled" @change="save" />
-      </div>
+      <SettingRow :label="t('开启顶部暂存架')" for="shelf-enabled">
+        <Button variant="outline" :disabled="!settings.enabled" @click="show">{{ t('展开暂存架') }}</Button>
+        <SwitchControl id="shelf-enabled" v-model="settings.enabled" @change="save" />
+      </SettingRow>
+      <SettingRow :label="t('鼠标停留屏幕顶部中央时展开')" for="shelf-top-hover">
+        <SwitchControl id="shelf-top-hover" v-model="settings.topHover" :disabled="!settings.enabled" @change="save" />
+      </SettingRow>
       <div class="setting-row shelf-categories" role="group" aria-labelledby="shelf-categories-title">
         <span id="shelf-categories-title">{{ t('放置类别') }}</span>
         <div class="shelf-category-options">
@@ -63,6 +60,5 @@ onMounted(load)
 <style scoped>
 fieldset { padding: 0; margin: 0; border: 0; min-width: 0; }
 .shelf-option { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; }
-.shelf-row-control { display: flex; align-items: center; gap: 12px; }
 .shelf-category-options { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px 16px; }
 </style>
