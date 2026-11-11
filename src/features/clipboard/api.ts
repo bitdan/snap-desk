@@ -16,6 +16,8 @@ export const clipboardApi = {
   clipboardFavorite: (id: number, favorite: boolean) => invoke<void>('clipboard_set_favorite', { id, favorite }),
   clipboardDelete: (ids: number[]) => invoke<void>('clipboard_delete', { ids }),
   clipboardClear: (includeFavorites: boolean) => invoke<void>('clipboard_clear', { includeFavorites }),
+  clipboardSetEnabled: (enabled: boolean) => invoke<ClipboardStatus>('clipboard_set_enabled', { enabled }),
+  clipboardWindow: (action: 'open' | 'hide' | 'drag') => invoke<void>('clipboard_window_control', { action }),
   clipboardConfigure: (settings: ClipboardSettings) => invoke<ClipboardStatus>('clipboard_configure', { settings }),
   clipboardExport: (options: ClipboardExportOptions) => invoke<ClipboardExportResult>('clipboard_export', { options }),
 }

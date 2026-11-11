@@ -2,8 +2,9 @@
 use super::{window, ShelfSettings, ShelfSnapshot, ShelfState};
 use tauri::{AppHandle, Manager, WebviewWindow};
 
+/// 剪贴板窗口可读取架上状态并把历史条目放上/取下暂存架；设置仍仅限主窗口。
 fn require(window: &WebviewWindow) -> Result<(), String> {
-    if matches!(window.label(), "main" | "shelf") {
+    if matches!(window.label(), "main" | "shelf" | "clipboard") {
         Ok(())
     } else {
         Err("窗口无权访问暂存架。".into())

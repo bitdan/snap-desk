@@ -45,6 +45,9 @@ pub enum Background {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Options {
     pub ids: Vec<i64>,
+    /// 组合编辑器里改写过的文本，与 ids 一一对应；None 沿用历史原文，不回写历史。
+    #[serde(default)]
+    pub texts: Vec<Option<String>>,
     pub mode: Mode,
     pub page_size: PageSize,
     pub gap_px: u32,
@@ -54,6 +57,12 @@ pub struct Options {
 impl Options {
     fn validate(&self) -> Result<(), String> {
         validate_ids(&self.ids)?;
+        if !self.texts.is_empty() && self.texts.len() != self.ids.len() {
+            return Err("改写文本与素材数量不一致。".into());
+        }
+        if self.texts.iter().flatten().any(|text| text.trim().is_empty() || text.len() > 1024 * 1024) {
+            return Err("改写后的文本不能为空，且不超过 1 MiB。".into());
+        }
         if self.gap_px > 200
             || !self.margin_mm.is_finite()
             || !(0.0..=30.0).contains(&self.margin_mm)
@@ -77,7 +86,12 @@ enum Snapshot {
 fn io_error(_: impl std::fmt::Display) -> String {
     "导出读写失败，请检查目标目录权限和剩余空间。".into()
 }
-fn snapshot(service: &Service, ids: &[i64], dir: &Path) -> Result<Vec<Snapshot>, String> {
+fn snapshot(
+    service: &Service,
+    ids: &[i64],
+    texts: &[Option<String>],
+    dir: &Path,
+) -> Result<Vec<Snapshot>, String> {
     let data = service.data()?;
     let _guard = data.operation.lock().map_err(|_| "历史存储忙碌。")?;
     let mut snapshots = Vec::new();
@@ -88,11 +102,18 @@ fn snapshot(service: &Service, ids: &[i64], dir: &Path) -> Result<Vec<Snapshot>,
         if total > 256 * 1024 * 1024 {
             return Err("所选素材超过 256 MiB，请分批导出。".into());
         }
+        let edited = texts.get(index).cloned().flatten();
+        if edited.is_some() && row.item.kind != Kind::Text {
+            return Err("只有文本素材可以改写。".into());
+        }
         match row.item.kind {
             Kind::File => {
                 return Err("文件条目仅保存引用，不支持组合导出。请复制后在资源管理器粘贴。".into())
             }
-            Kind::Text => snapshots.push(Snapshot::Text(row.text.ok_or("文本记录损坏。")?)),
+            Kind::Text => snapshots.push(Snapshot::Text(match edited {
+                Some(text) => text,
+                None => row.text.ok_or("文本记录损坏。")?,
+            })),
             Kind::Image => {
                 let target = dir.join(format!("{index}.png"));
                 fs::copy(
@@ -282,8 +303,18 @@ pub async fn clipboard_export(
     window: WebviewWindow,
     options: Options,
 ) -> Result<ExportResult, String> {
-    crate::capture::require_window(&window, "main")?;
+    // 历史列表已移到独立剪贴板窗口，导出由该窗口（及其编辑子窗口的原 WebView）发起。
+    if !super::service::UI_WINDOWS.contains(&window.label()) {
+        return Err("当前窗口无权执行此操作。".into());
+    }
     options.validate()?;
+    // 组合编辑器是剪贴板窗口的子窗口，命令却归属剪贴板窗口；保存对话框挂到当前聚焦的编辑器上，
+    // 否则无主的系统对话框会被置顶的剪贴板窗口和编辑器压在下面。
+    let parent = app
+        .webview_windows()
+        .into_values()
+        .find(|candidate| candidate.label().starts_with("dialog-") && candidate.is_focused().unwrap_or(false))
+        .unwrap_or(window);
     tauri::async_runtime::spawn_blocking(move || {
         let service = app.state::<Service>();
         service
@@ -301,7 +332,12 @@ pub async fn clipboard_export(
             "剪贴板导出快照",
             (0..options.ids.len()).map(|i| format!("{i}.png")).collect(),
         )?;
-        let items = snapshot(&app.state::<Service>(), &options.ids, temp.path())?;
+        let items = snapshot(
+            &app.state::<Service>(),
+            &options.ids,
+            &options.texts,
+            temp.path(),
+        )?;
         // TXT 与纯图片不依赖字体；缺字体时在打开保存对话框之前提示用户。
         let font_bytes = if options.mode != Mode::Separate
             && items.iter().any(|item| matches!(item, Snapshot::Text(_)))
@@ -325,7 +361,8 @@ pub async fn clipboard_export(
         let mut dialog = app
             .dialog()
             .file()
-            .set_title(crate::shared::native_i18n::text(&app, "导出剪贴板素材"));
+            .set_title(crate::shared::native_i18n::text(&app, "导出剪贴板素材"))
+            .set_parent(&parent);
         if remember {
             if let Some(dir) = crate::shared::image_io::current_directory(&app)? {
                 dialog = dialog.set_directory(dir);
@@ -470,6 +507,7 @@ mod tests {
     fn options() -> Options {
         Options {
             ids: vec![1],
+            texts: vec![],
             mode: Mode::Pdf,
             page_size: PageSize::A4,
             gap_px: 16,
@@ -576,6 +614,7 @@ mod tests {
     fn rejects_unbounded_and_duplicate_requests() {
         let mut value = Options {
             ids: vec![1, 1],
+            texts: vec![],
             mode: Mode::Pdf,
             page_size: PageSize::A4,
             gap_px: 16,
@@ -586,5 +625,12 @@ mod tests {
         value.ids = vec![1];
         value.margin_mm = f32::NAN;
         assert!(value.validate().is_err());
+        value.margin_mm = 12.0;
+        value.texts = vec![Some("  ".into())];
+        assert!(value.validate().is_err());
+        value.texts = vec![None, None];
+        assert!(value.validate().is_err());
+        value.texts = vec![Some("改写".into())];
+        assert!(value.validate().is_ok());
     }
 }

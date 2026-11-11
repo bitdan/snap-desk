@@ -101,7 +101,7 @@ src-tauri/src/
   app/                 # Tauri 组装、在线更新、托盘与快捷键
   capture/             # 截图；含 recorder/ 和 scroll/
   pins/                # 桌面贴图
-  clipboard/           # 剪贴板历史与导出
+  clipboard/           # 剪贴板历史、独立列表窗口与导出
   shelf/               # 顶部暂存架：历史视图、偏好与窗口
   recognition/         # OCR、二维码、翻译与凭据
   settings/            # 配置、快捷键、自启与目录

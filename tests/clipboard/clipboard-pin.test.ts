@@ -6,13 +6,15 @@ import { h } from 'vue'
 import { clientComponent, findNode, flushComponent, MemoryNode, memoryRenderer } from '../helpers/component-host'
 import { handleWindowEscape } from '../../src/shared/ui/escape'
 
-const api = vi.hoisted(() => ({ clipboardList: vi.fn(), clipboardStatus: vi.fn(), status: vi.fn(), clipboardPin: vi.fn(), clipboardClear: vi.fn(), clipboardDelete: vi.fn() }))
-const clipboardEvents = vi.hoisted(() => ({ changed: () => {}, error: (_value: string) => {} }))
+const api = vi.hoisted(() => ({ clipboardList: vi.fn(), clipboardStatus: vi.fn(), status: vi.fn(), clipboardPin: vi.fn(), clipboardClear: vi.fn(), clipboardDelete: vi.fn(), clipboardWindow: vi.fn(), shelfSnapshot: vi.fn(), clipboardText: vi.fn(), clipboardThumbnail: vi.fn(), clipboardExport: vi.fn() }))
+const clipboardEvents = vi.hoisted(() => ({ changed: () => {}, error: (_value: string) => {}, blur: () => {}, open: () => {} }))
 const listControls = vi.hoisted(() => ({ resetScroll: vi.fn() }))
 vi.mock('../../src/services/api', () => ({ api, desktop: true,
   onClipboardChanged: async (callback: () => void) => { clipboardEvents.changed = callback; return () => { clipboardEvents.changed = () => {} } },
   onClipboardError: async (callback: (value: string) => void) => { clipboardEvents.error = callback; return () => { clipboardEvents.error = () => {} } },
-  onClipboardState: async () => () => {}, onClipboardOpen: async () => () => {},
+  onClipboardState: async () => () => {},
+  onClipboardOpen: async (callback: () => void) => { clipboardEvents.open = callback; return () => { clipboardEvents.open = () => {} } },
+  onClipboardBlur: async (callback: () => void) => { clipboardEvents.blur = callback; return () => { clipboardEvents.blur = () => {} } },
 }))
 vi.mock('reka-ui', async () => {
   const { defineComponent, h } = await import('vue')
@@ -44,9 +46,11 @@ vi.mock('../../src/features/clipboard/components/ClipboardItem.vue', async () =>
   return { default: defineComponent({ props: ['item'], emits: ['select'], setup: (props, { emit }) => () => h('button', { 'data-id': props.item.id, onClick: () => emit('select') }) }) }
 })
 import History from '../../src/features/clipboard/components/ClipboardHistory.vue'
+import Composer from '../../src/features/clipboard/components/ClipboardComposer.vue'
 import InfoTip from '../../src/shared/ui/InfoTip.vue'
 clientComponent(InfoTip, new URL('../../src/shared/ui/InfoTip.vue', import.meta.url))
 const Component = clientComponent(History, new URL('../../src/features/clipboard/components/ClipboardHistory.vue', import.meta.url))
+clientComponent(Composer, new URL('../../src/features/clipboard/components/ClipboardComposer.vue', import.meta.url))
 clientComponent(ConfirmDialog, new URL('../../src/shared/ui/ConfirmDialog.vue', import.meta.url))
 let root: MemoryNode
 let savedPreferences: Map<string, string>
@@ -73,6 +77,10 @@ beforeEach(async () => {
     { id: 1, kind: 'text' }, { id: 2, kind: 'text' }, { id: 3, kind: 'image' }, { id: 4, kind: 'file' },
   ], nextCursor: null })
   api.clipboardPin.mockResolvedValue(undefined)
+  api.clipboardWindow.mockResolvedValue(undefined)
+  api.shelfSnapshot.mockResolvedValue({ settings: { enabled: false }, items: [], keptIds: [] })
+  api.clipboardText.mockImplementation(async (id: number) => `原文 ${id}`)
+  api.clipboardThumbnail.mockResolvedValue('data:image/png;base64,')
   memoryRenderer.render(h(Component), root); await flushComponent()
 })
 afterEach(() => { memoryRenderer.render(null, root); vi.useRealTimers(); vi.unstubAllGlobals() })
@@ -166,20 +174,68 @@ it('清空确认和导出弹窗先响应 Esc，焦点不在弹窗内也不直接
   expect(exit).not.toHaveBeenCalled()
 })
 
-it('没有选择或关键词时，剪贴板页不吞掉主窗口 Esc', () => {
-  const event = { key: 'Escape', defaultPrevented: false, isComposing: false, target: new MemoryNode('input'), preventDefault: vi.fn() }
-  findNode(root, node => node.props.class === 'clipboard-history')!.props.onKeydown(event)
-  expect(event.preventDefault).not.toHaveBeenCalled()
+it('组合编辑器按选择顺序载入素材，调整顺序与改写后按编辑器内的顺序导出', async () => {
+  const text = (node: MemoryNode): string => node.text + node.children.map(text).join('')
+  api.clipboardExport.mockResolvedValue({ status: 'saved', outputPaths: ['a.pdf'] })
+  await select(3, 1, 4)
+  // 选中文件引用时不能组合导出。
+  expect(findNode(root, node => node.props['aria-label'] === '组合导出所选条目')!.props.disabled).toBe(true)
+  await select(4)
+  findNode(root, node => node.props['aria-label'] === '组合导出所选条目')!.props.onClick()
+  await flushComponent()
+  const cards = () => { const found: MemoryNode[] = []; const walk = (node: MemoryNode) => { if (node.props['data-composer-index'] !== undefined) found.push(node); node.children.forEach(walk) }; walk(root); return found }
+  expect(cards().map(card => text(card))).toEqual([expect.stringContaining('1 × 1'), expect.stringContaining('原文 1')])
+  expect(api.clipboardText.mock.calls).toEqual([[1]])
+  // Alt+↓ 把图片移到文本之后，再改写文本。
+  cards()[0].props.onKeydown({ altKey: true, key: 'ArrowDown', target: cards()[0], currentTarget: { ownerDocument: { querySelector: () => null } }, preventDefault: vi.fn() })
+  await flushComponent()
+  findNode(cards()[0], node => node.props['aria-label'] === '改写文本' && node.type === 'button')!.props.onClick()
+  await flushComponent()
+  findNode(cards()[0], node => node.type === 'textarea')!.props.onInput({ target: { value: '改写后的文本' } })
+  await flushComponent()
+  findNode(root, node => node.type === 'button' && text(node) === '选择位置并导出')!.props.onClick()
+  await flushComponent()
+  expect(api.clipboardExport).toHaveBeenCalledWith({ mode: 'pdf', pageSize: 'A4', gapPx: 16, marginMm: 12, background: 'white', ids: [1, 3], texts: ['改写后的文本', null] })
+  expect(findNode(root, node => node.props['data-window'] === '组合导出')).toBeUndefined()
 })
 
-it('列表和网格可切换，保留已选条目及批量操作顺序', async () => {
+it('没有选择或关键词时，列表不拦截 Esc，交给窗口级处理收起剪贴板窗口', async () => {
+  const event = { key: 'Escape', defaultPrevented: false, isComposing: false, repeat: false, target: new MemoryNode('input'), preventDefault: vi.fn() }
+  findNode(root, node => node.props.class === 'clipboard-history')!.props.onKeydown(event)
+  expect(event.preventDefault).not.toHaveBeenCalled()
+  expect(api.clipboardWindow).not.toHaveBeenCalled()
+  window.dispatchEvent(Object.assign(new Event('keydown'), { key: 'Escape', isComposing: false, repeat: false }))
+  await flushComponent()
+  expect(api.clipboardWindow.mock.calls).toEqual([['hide']])
+})
+
+it('失焦自动收起；固定窗口或子窗口打开时保留，固定状态持久保存', async () => {
+  const text = (node: MemoryNode): string => node.text + node.children.map(text).join('')
+  findNode(root, node => node.type === 'button' && text(node) === '清空')!.props.onClick()
+  await flushComponent()
+  clipboardEvents.blur(); await flushComponent()
+  expect(api.clipboardWindow).not.toHaveBeenCalled()
+  findNode(root, node => node.props.role === 'alertdialog')!.props.onKeydown({ key: 'Escape', defaultPrevented: false, isComposing: false, repeat: false, preventDefault: vi.fn(), stopPropagation: vi.fn() })
+  await flushComponent()
+  const keep = () => findNode(root, node => node.props['aria-label'] === '固定窗口，失去焦点时不收起')!
+  keep().props.onClick(); await flushComponent()
+  expect(keep().props['aria-pressed']).toBe(true)
+  expect(savedPreferences.get('snap-desk.clipboard-keep-open.v1')).toBe('1')
+  clipboardEvents.blur(); await flushComponent()
+  expect(api.clipboardWindow).not.toHaveBeenCalled()
+  keep().props.onClick(); await flushComponent()
+  clipboardEvents.blur(); await flushComponent()
+  expect(api.clipboardWindow.mock.calls).toEqual([['hide']])
+})
+
+it('再次唤出时回到最新记录；已有选择时保留现场，批量操作仍按选择顺序', async () => {
+  api.clipboardList.mockClear()
+  clipboardEvents.open(); await flushComponent()
+  expect(api.clipboardList).toHaveBeenCalledOnce()
   await select(2, 1)
-  findNode(root, node => node.props['aria-label'] === '网格视图')!.props.onClick()
-  await flushComponent()
-  expect(findNode(root, node => node.props['data-layout'] === 'grid')).toBeDefined()
-  expect(findNode(root, node => node.props['aria-label'] === '网格视图')!.props['aria-pressed']).toBe(true)
-  findNode(root, node => node.props['aria-label'] === '列表视图')!.props.onClick()
-  await flushComponent()
+  api.clipboardList.mockClear()
+  clipboardEvents.open(); await flushComponent()
+  expect(api.clipboardList).not.toHaveBeenCalled()
   await pinButton().props.onClick(); await flushComponent()
   expect(api.clipboardPin.mock.calls).toEqual([[2], [1]])
 })

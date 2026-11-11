@@ -18,11 +18,11 @@ describe('历史配置及选择顺序', () => {
     expect(selectClipboardItems([9], 1, order, 100, { range: true })).toEqual([1])
     expect(selectClipboardItems([], 150, Array.from({ length: 150 }, (_, i) => i + 1), 1, { range: true })).toHaveLength(100)
   })
-  it('默认关闭，不共享可变配置，历史键参加冲突检测', () => {
+  it('默认开启记录，不共享可变配置，历史键参加冲突检测', () => {
     const settings = defaultSettings()
-    expect(settings.clipboard.enabled).toBe(false)
-    settings.clipboard.enabled = true
-    expect(defaultSettings().clipboard.enabled).toBe(false)
+    expect(settings.clipboard.enabled).toBe(true)
+    settings.clipboard.enabled = false
+    expect(defaultSettings().clipboard.enabled).toBe(true)
     expect(settings.clipboard.saveCopiedFiles).toBe(true)
     expect(settings.shortcuts.history).toBe('F4')
     expect(validateShortcuts({ ...settings.shortcuts, capture: 'F4' })).toContain('冲突')

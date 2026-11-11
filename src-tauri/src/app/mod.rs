@@ -308,6 +308,9 @@ pub fn run() {
                     }
                 });
             }
+            if window.label() == "clipboard" && matches!(event, tauri::WindowEvent::Focused(false)) {
+                clipboard::window_blurred(window.app_handle());
+            }
             if matches!(event, tauri::WindowEvent::Resized(_)) && window.label().contains("-edge-")
             {
                 if let Some(webview) = window.app_handle().get_webview_window(window.label()) {
@@ -391,6 +394,8 @@ pub fn run() {
             shelf::commands::shelf_item_action,
             clipboard::clipboard_drag_item,
             clipboard::clipboard_status,
+            clipboard::clipboard_set_enabled,
+            clipboard::clipboard_window_control,
             clipboard::clipboard_list,
             clipboard::clipboard_get_text,
             clipboard::clipboard_open_link,

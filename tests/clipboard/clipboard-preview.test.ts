@@ -28,23 +28,45 @@ beforeEach(() => {
 })
 afterEach(() => { memoryRenderer.render(null, root); vi.unstubAllGlobals() })
 
-it.each(['image', 'text'] as const)('%s 双击和回车只预览，Ctrl+C 复制；连续单击不会重复切换选择', async kind => {
-  const select = vi.fn(), preview = vi.fn(), restore = vi.fn()
-  memoryRenderer.render(h(ClipboardItem, { item: { ...image, kind }, selected: true, busy: false, onSelect: select, onPreview: preview, onRestore: restore }), root)
+it.each(['image', 'text'] as const)('%s 双击和回车复制并收起，Ctrl+C 仅复制，预览走悬浮按钮；连续单击不会重复切换选择', async kind => {
+  const select = vi.fn(), preview = vi.fn(), restore = vi.fn(), activate = vi.fn()
+  memoryRenderer.render(h(ClipboardItem, { item: { ...image, kind }, selected: true, busy: false, onSelect: select, onPreview: preview, onRestore: restore, onActivate: activate }), root)
   await flushComponent()
-  const content = findNode(root, node => node.props.class === 'history-content')!
-  content.props.onClick({ detail: 1, ctrlKey: false, metaKey: false, shiftKey: false })
-  content.props.onClick({ detail: 2 })
-  content.props.onDblclick()
-  expect(select.mock.calls).toEqual([[{ toggle: false, range: false }]])
-  expect(preview).toHaveBeenCalledOnce()
-  expect(restore).not.toHaveBeenCalled()
   const article = findNode(root, node => node.type === 'article')!
+  article.props.onClick({ detail: 1, ctrlKey: false, metaKey: false, shiftKey: false })
+  article.props.onClick({ detail: 2 })
+  article.props.onDblclick()
+  expect(select.mock.calls).toEqual([[{ toggle: false, range: false }]])
+  expect(activate).toHaveBeenCalledOnce()
+  expect(preview).not.toHaveBeenCalled()
   const event = { target: { matches: () => false }, repeat: false, isComposing: false, preventDefault: vi.fn(), stopPropagation: vi.fn() }
   article.props.onKeydown({ ...event, key: 'Enter' })
-  expect(preview).toHaveBeenCalledTimes(2)
+  expect(activate).toHaveBeenCalledTimes(2)
+  // 焦点在卡片内的操作按钮上时，回车属于按钮自身，不再触发整条复制。
+  article.props.onKeydown({ ...event, key: 'Enter', target: { matches: () => true } })
+  expect(activate).toHaveBeenCalledTimes(2)
   article.props.onKeydown({ ...event, key: 'c', ctrlKey: true })
   expect(restore).toHaveBeenCalledOnce()
+  findNode(root, node => node.type === 'button' && node.props['aria-label'] === '预览')!.props.onClick()
+  expect(preview).toHaveBeenCalledOnce()
+  expect(restore).toHaveBeenCalledOnce()
+})
+
+it('暂存架未开启时不显示联动入口；开启后按架上状态切换放上与取下', async () => {
+  const text = (node: MemoryNode): string => node.text + node.children.map(text).join('')
+  const entry = () => findNode(root, node => node.type === 'div' && ['放到暂存架', '从暂存架取下'].includes(text(node)))
+  const shelf = vi.fn()
+  memoryRenderer.render(h(ClipboardItem, { item: image, selected: false, busy: false, shelfKept: null, onShelf: shelf }), root)
+  await flushComponent()
+  expect(entry()).toBeUndefined()
+  memoryRenderer.render(h(ClipboardItem, { item: image, selected: false, busy: false, shelfKept: false, onShelf: shelf }), root)
+  await flushComponent()
+  expect(text(entry()!)).toBe('放到暂存架')
+  memoryRenderer.render(h(ClipboardItem, { item: image, selected: false, busy: false, shelfKept: true, onShelf: shelf }), root)
+  await flushComponent()
+  expect(text(entry()!)).toBe('从暂存架取下')
+  entry()!.props.onSelect()
+  expect(shelf).toHaveBeenCalledOnce()
 })
 
 it('文字预览读取全文并保留换行，允许选中复制，不用列表摘要冒充全文', async () => {

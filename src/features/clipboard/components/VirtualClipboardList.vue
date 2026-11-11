@@ -3,23 +3,17 @@ import { computed, nextTick, onMounted, onUnmounted, ref, shallowRef, watch, typ
 import type { ClipboardItem } from '@/features/clipboard/clipboard'
 import { rowAt, rowOffsets, visibleRows } from '@/shared/collections/virtual-list'
 
-const props = defineProps<{ items: ClipboardItem[]; layout?: 'list' | 'grid'; hasMore?: boolean; loading?: boolean }>()
+const props = defineProps<{ items: ClipboardItem[]; hasMore?: boolean; loading?: boolean }>()
 const emit = defineEmits<{ nearEnd: [] }>()
 const viewport = ref<HTMLElement | null>(null)
 const top = ref(0), height = ref(500)
 const width = ref(0)
-const columns = computed(() => props.layout === 'grid' ? Math.max(1, Math.floor((width.value + 8) / 248)) : 1)
 const measured = shallowRef(new Map<number, number>())
-// 网格按整行虚拟化，行高由整行最高卡片决定；不为历史总量创建全部 DOM。
-const groups = computed(() => {
-  const result: ClipboardItem[][] = []
-  for (let i = 0; i < props.items.length; i += columns.value) result.push(props.items.slice(i, i + columns.value))
-  return result
-})
-const offsets = computed(() => rowOffsets(groups.value.map(group => measured.value.get(group[0].id)
-  ?? (props.layout === 'grid' ? 224 : group[0].kind === 'image' ? 140 : group[0].kind === 'file' ? 136 : 78))))
+// 单列卡片按行虚拟化，只挂载视口附近的条目；未测量的行按类型估算高度（含 6px 行距）。
+const offsets = computed(() => rowOffsets(props.items.map(item => measured.value.get(item.id)
+  ?? (item.kind === 'image' ? 170 : item.kind === 'file' ? 140 : 76))))
 const range = computed(() => visibleRows(offsets.value, top.value, height.value))
-const rows = computed(() => groups.value.slice(range.value.start, range.value.end))
+const rows = computed(() => props.items.slice(range.value.start, range.value.end))
 /** 按虚拟列表的完整高度判断剩余距离；追加或窗口变大后也补足视口。 */
 watch([top, height, () => offsets.value.at(-1) ?? 0, () => props.hasMore, () => props.loading], () => {
   if (props.hasMore && !props.loading && (offsets.value.at(-1) ?? 0) - top.value - height.value <= 200) emit('nearEnd')
@@ -82,18 +76,15 @@ function observeRow(id: number, value: Element | ComponentPublicInstance | null)
 async function focusIndex(index: number) {
   const root = viewport.value
   if (!root || !props.items[index]) return
-  const group = Math.floor(index / columns.value)
-  const start = offsets.value[group], end = offsets.value[group + 1]
+  const start = offsets.value[index], end = offsets.value[index + 1]
   if (start < root.scrollTop) root.scrollTop = start
   else if (end > root.scrollTop + root.clientHeight) root.scrollTop = end - root.clientHeight
   scroll(); await nextTick()
   if (disposed) return
-  const row = elements.get(props.items[group * columns.value]?.id)
-    ?.querySelector<HTMLElement>(`[data-history-index="${index}"] .history-item`)
+  const row = elements.get(props.items[index].id)?.querySelector<HTMLElement>('.history-item')
   row?.focus({ preventScroll: true }); row?.scrollIntoView({ block: 'nearest' }); scroll()
 }
 function resetScroll() { if (viewport.value) viewport.value.scrollTop = 0; top.value = 0 }
-watch([() => props.layout, columns], () => { measured.value = new Map(); resetScroll() })
 watch(() => props.items, items => {
   const ids = new Set(items.map(item => item.id))
   measured.value = new Map([...measured.value].filter(([id]) => ids.has(id)))
@@ -107,20 +98,14 @@ onUnmounted(() => {
   disposed = true; observer?.disconnect(); elements.clear(); pendingMeasurements.clear()
   if (measurementFrame !== undefined) cancelAnimationFrame(measurementFrame)
 })
-defineExpose({ focusIndex, resetScroll, columns })
+defineExpose({ focusIndex, resetScroll })
 </script>
 
 <template>
-  <div ref="viewport" class="history-list" :class="{ 'is-grid': layout === 'grid' }" style="overflow-anchor:none" @scroll.passive="scroll">
+  <div ref="viewport" class="history-list" style="overflow-anchor:none" @scroll.passive="scroll">
     <div aria-hidden="true" :style="{ height: `${range.before}px` }" />
-    <div v-for="(group, rowIndex) in rows" :key="group[0].id" :ref="element => observeRow(group[0].id, element)" :data-history-id="group[0].id" class="history-virtual-row" :style="{ display: 'grid', gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`, gap: '8px' }">
-      <div v-for="(item, column) in group" :key="item.id" :data-history-index="(range.start + rowIndex) * columns + column"><slot :item="item" /></div>
-    </div>
+    <div v-for="(item, rowIndex) in rows" :key="item.id" :ref="element => observeRow(item.id, element)" :data-history-id="item.id" :data-history-index="range.start + rowIndex" class="history-virtual-row"><slot :item="item" /></div>
     <div aria-hidden="true" :style="{ height: `${range.after}px` }" />
     <slot name="footer" />
   </div>
 </template>
-
-<style scoped>
-.history-list.is-grid .history-virtual-row { padding-bottom:8px; }
-</style>

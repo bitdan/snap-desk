@@ -49,6 +49,12 @@ pub struct Service {
     /// 防止切换页面后再次导出导致多个 PDF/长图编码同时占用大量内存。
     pub exporting: AtomicBool,
 }
+/// 历史事件同时通知独立剪贴板窗口与主窗口的设置页；窗口不存在时发送自动忽略。
+pub(super) const UI_WINDOWS: [&str; 2] = ["main", "clipboard"];
+/// 监听通知之外的兜底检查间隔；只比较系统序列号，不打开剪贴板。
+const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(1500);
+/// 同一份内容连续读取失败的上限，超过后放弃，避免超限内容被无限重试。
+const CAPTURE_ATTEMPTS: u8 = 3;
 pub fn now() -> i64 {
     chrono::Utc::now().timestamp_millis()
 }
@@ -125,23 +131,29 @@ impl Service {
     pub fn changed(&self, app: &AppHandle) {
         let revision = self.revision.fetch_add(1, Ordering::AcqRel) + 1;
         let _ = app.emit_to("shelf", "shelf-changed", ());
-        let _ = app.emit_to(
-            "main",
-            "clipboard-changed",
-            serde_json::json!({"revision":revision}),
-        );
+        for label in UI_WINDOWS {
+            let _ = app.emit_to(
+                label,
+                "clipboard-changed",
+                serde_json::json!({"revision":revision}),
+            );
+        }
     }
     pub fn report(&self, app: &AppHandle, error: String) {
         if let Ok(mut e) = self.error.lock() {
             *e = Some(error.clone());
         }
-        let _ = app.emit_to("main", "clipboard-error", error);
+        for label in UI_WINDOWS {
+            let _ = app.emit_to(label, "clipboard-error", &error);
+        }
     }
     fn report_capture(&self, app: &AppHandle, error: String) {
         if let Ok(mut current) = self.capture_error.lock() {
             *current = Some(error.clone());
         }
-        let _ = app.emit_to("main", "clipboard-error", error);
+        for label in UI_WINDOWS {
+            let _ = app.emit_to(label, "clipboard-error", &error);
+        }
     }
     /// 保持既有字符串事件契约；有持续故障就继续显示，否则空字符串撤下单次错误。
     /// 不调用 status()，避免 worker 被 configure 等待退出时重入 running 锁。
@@ -158,7 +170,9 @@ impl Service {
         if let Some(message) =
             capture_recovery_message(&mut capture_error, persistent_error.as_deref())
         {
-            let _ = app.emit_to("main", "clipboard-error", message);
+            for label in UI_WINDOWS {
+                let _ = app.emit_to(label, "clipboard-error", &message);
+            }
         }
     }
     /// 只由后台命令或 setup 调用。先停旧监听并等待在途写入，再替换配置。
@@ -184,11 +198,16 @@ impl Service {
             .name("clipboard-storage".into())
             .spawn(move || {
                 let mut last = baseline;
+                let mut failures = 0u8;
                 let interval = std::time::Duration::from_secs(3600);
                 let mut maintenance = std::time::Instant::now();
                 loop {
-                    let notification =
-                        rx.recv_timeout(interval.saturating_sub(maintenance.elapsed()));
+                    // 系统通知可能丢失（远程桌面重连、会话切换、其他程序长时间占用剪贴板），
+                    // 因此最多等待一个轮询周期就核对一次序列号，漏掉的复制也能补记。
+                    let wait = interval
+                        .saturating_sub(maintenance.elapsed())
+                        .min(POLL_INTERVAL);
+                    let notification = rx.recv_timeout(wait);
                     if worker_stop.load(Ordering::Acquire) {
                         break;
                     }
@@ -200,20 +219,31 @@ impl Service {
                         }
                         maintenance = std::time::Instant::now();
                     }
-                    match notification {
-                        Err(mpsc::RecvTimeoutError::Disconnected) => break,
-                        Err(mpsc::RecvTimeoutError::Timeout) => {
-                            continue;
-                        }
-                        Ok(()) => {}
+                    if matches!(notification, Err(mpsc::RecvTimeoutError::Disconnected)) {
+                        break;
                     }
+                    // 通知与轮询走同一判断：序列号没变就没有新内容。
                     let seq = platform::sequence();
                     if seq == last {
                         continue;
                     }
                     match service.capture(&handle, &worker_stop) {
-                        Ok(()) => last = seq,
-                        Err(e) => service.report_capture(&handle, e),
+                        Ok(()) => {
+                            last = seq;
+                            failures = 0;
+                        }
+                        Err(e) => {
+                            failures += 1;
+                            // 首次失败即提示；之后每个轮询周期自动重试，成功时由 capture 撤下提示。
+                            if failures == 1 {
+                                log::warn!("event=clipboard.capture_failed module=clipboard code=CLIPBOARD_CAPTURE_FAILED");
+                                service.report_capture(&handle, e);
+                            }
+                            if failures >= CAPTURE_ATTEMPTS {
+                                last = seq;
+                                failures = 0;
+                            }
+                        }
                     }
                 }
             })

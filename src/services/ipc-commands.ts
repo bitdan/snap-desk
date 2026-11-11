@@ -50,6 +50,8 @@ export const ipcCommands = [
   "shelf_item_action",
   "clipboard_drag_item",
   "clipboard_status",
+  "clipboard_set_enabled",
+  "clipboard_window_control",
   "complete_onboarding",
   "control_recording",
   "control_scroll",

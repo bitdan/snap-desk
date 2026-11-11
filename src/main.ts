@@ -31,6 +31,7 @@ async function mount() {
   document.documentElement.classList.toggle('capture-window', kind === 'capture')
   document.documentElement.classList.toggle('pin-window', kind === 'pin')
   document.documentElement.classList.toggle('shelf-window-root', kind === 'shelf')
+  document.documentElement.classList.toggle('clipboard-window-root', kind === 'clipboard')
   document.documentElement.classList.toggle('selection-edge', kind === 'selection-edge')
   let component
   if (kind === 'selection-edge') {
@@ -42,6 +43,7 @@ async function mount() {
     await import('@/app/styles/main.css')
     component = kind === 'capture' ? (await import('@/features/capture/components/CaptureOverlay.vue')).default
       : kind === 'shelf' ? (await import('@/features/shelf/components/ShelfWindow.vue')).default
+      : kind === 'clipboard' ? (await import('@/features/clipboard/components/ClipboardHistory.vue')).default
       : kind === 'pin' ? (await import('@/features/pins/components/PinWindow.vue')).default
       : kind === 'translation' ? (await import('@/features/recognition/components/TranslationWindow.vue')).default
       : kind === 'scroll-preview' || kind === 'scroll-controls' ? (await import('@/features/scroll/components/ScrollPreview.vue')).default

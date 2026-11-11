@@ -10,8 +10,12 @@ export interface DetachedWindowSession { window: Window; target: HTMLElement; di
 
 /** about:blank 继承打开者的同源环境，原生端只接收这一固定地址的开窗请求。 */
 export function openDetachedWindow(owner: Window, options: DetachedWindowOptions, closed: () => void, escape: () => void): DetachedWindowSession | null {
-  const left = Math.round(owner.screenX + Math.max(0, (owner.outerWidth - options.width) / 2))
-  const top = Math.round(owner.screenY + Math.max(0, (owner.outerHeight - options.height) / 2))
+  // 以打开者为中心；子窗口比打开者大（如窄剪贴板窗口打开组合编辑器）时夹紧到屏幕可用区，不跑出屏幕。
+  const screen = owner.screen as Screen & { availLeft?: number; availTop?: number }
+  const fit = (size: number, ownerStart: number, ownerSize: number, areaStart: number, areaSize: number) =>
+    Math.round(Math.max(areaStart, Math.min(ownerStart + (ownerSize - size) / 2, areaStart + areaSize - size)))
+  const left = fit(options.width, owner.screenX, owner.outerWidth, screen?.availLeft ?? 0, screen?.availWidth ?? Infinity)
+  const top = fit(options.height, owner.screenY, owner.outerHeight, screen?.availTop ?? 0, screen?.availHeight ?? Infinity)
   const opened = owner.open(dialogWindowUrl, '_blank', `popup=yes,width=${options.width},height=${options.height},left=${left},top=${top}`)
   if (!opened) return null
   const popup: Window = opened

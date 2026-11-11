@@ -4,6 +4,7 @@ export const windowKinds = [
   'capture',
   'pin',
   'shelf',
+  'clipboard',
   'translation',
   'recording-controls',
   'scroll-preview',

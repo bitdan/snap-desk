@@ -32,8 +32,6 @@ class ElementNode {
   constructor(public tag: string) {}
   querySelector(selector: string): ElementNode | undefined {
     for (const child of this.children) {
-      const match = selector.match(/^\[data-history-index="(\d+)"\] (.+)$/)
-      if (match && child.dataset.historyIndex === match[1]) return child.querySelector(match[2])
       if (selector === '.history-item' && child.className === 'history-item') return child
       const nested = child.querySelector(selector)
       if (nested) return nested
@@ -42,7 +40,7 @@ class ElementNode {
 }
 afterEach(() => vi.unstubAllGlobals())
 
-it.each(['list', 'grid'] as const)('%s mounts a bounded range and focuses an unmounted item', async layout => {
+it('mounts a bounded range and focuses an unmounted item', async () => {
   vi.stubGlobal('HTMLElement', ElementNode)
   const disconnect = vi.fn()
   let nextFrame = 0
@@ -77,10 +75,9 @@ it.each(['list', 'grid'] as const)('%s mounts a bounded range and focuses an unm
     },
   })
   const items = ref(Array.from({ length: 5000 }, (_, id) => ({ id, kind: id % 2 ? 'image' : 'text' } as ClipboardItem)))
-  const list = ref<{ focusIndex(index: number): Promise<void>; resetScroll(): void; columns: number } | null>(null)
-  const mode = ref(layout)
+  const list = ref<{ focusIndex(index: number): Promise<void>; resetScroll(): void } | null>(null)
   const hasMore = ref(true), loading = ref(false), nearEnd = vi.fn()
-  const app = renderer.createApp({ setup: () => () => h(VirtualClipboardList, { ref: list, items: items.value, layout: mode.value, hasMore: hasMore.value, loading: loading.value, onNearEnd: nearEnd }, {
+  const app = renderer.createApp({ setup: () => () => h(VirtualClipboardList, { ref: list, items: items.value, hasMore: hasMore.value, loading: loading.value, onNearEnd: nearEnd }, {
     default: ({ item }: { item: ClipboardItem }) => h('article', { class: 'history-item', 'data-id': item.id }),
   }) })
   const host = new ElementNode('host')
@@ -93,7 +90,6 @@ it.each(['list', 'grid'] as const)('%s mounts a bounded range and focuses an unm
     expect(frames.size).toBe(1)
     paint()
     await nextTick()
-    expect(list.value!.columns).toBe(layout === 'grid' ? 4 : 1)
     const rows = () => viewport.children.filter(node => node.dataset.historyId !== undefined)
     expect(rows().length).toBeLessThan(20)
     expect(rows().some(row => row.dataset.historyId === '4999')).toBe(false)
@@ -102,16 +98,13 @@ it.each(['list', 'grid'] as const)('%s mounts a bounded range and focuses an unm
     expect(nearEnd).toHaveBeenCalledOnce()
     loading.value = true; await nextTick()
     expect(rows().length).toBeLessThan(20)
-    const item = (index: number) => rows().map(row => row.querySelector(`[data-history-index="${index}"] .history-item`)).find(Boolean)!
+    const item = (index: number) => rows().find(row => row.dataset.historyIndex === String(index))!.querySelector('.history-item')!
     expect(item(4999).focus).toHaveBeenCalled()
     await list.value!.focusIndex(4998)
     expect(item(4998).focus).toHaveBeenCalled()
     expect(nearEnd).toHaveBeenCalledOnce()
     hasMore.value = false; loading.value = false; await nextTick()
     expect(nearEnd).toHaveBeenCalledOnce()
-    mode.value = layout === 'grid' ? 'list' : 'grid'
-    await nextTick()
-    expect(list.value!.columns).toBe(layout === 'grid' ? 1 : 4)
     list.value!.resetScroll()
     items.value = items.value.slice(0, 40)
     await nextTick()

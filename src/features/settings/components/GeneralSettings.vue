@@ -2,8 +2,6 @@
 import { t, te } from '@/shared/i18n/i18n'
 import { onMounted, ref } from 'vue'
 import Button from '@/shared/ui/button/Button.vue'
-import ShelfSettings from '@/features/shelf/components/ShelfSettings.vue'
-import ClipboardSettings from '@/features/clipboard/components/ClipboardSettings.vue'
 import ResourceSettings from '@/features/resources/components/ResourceSettings.vue'
 import { Check } from 'lucide-vue-next'
 import { api, desktop } from '@/services/api'
@@ -67,13 +65,11 @@ onMounted(() => { void run(refresh); void refreshAutostart() })
       <div class="setting-row flex-wrap gap-3">
         <div class="min-w-0 flex-1"><strong>{{ t('开机自启') }}</strong></div>
         <span :class="autostart && !startupBusy ? 'status-ok' : 'text-sm text-zinc-500'" role="status"><Check v-if="autostart && !startupBusy" :size="14" />{{ startupBusy ? t('处理中…') : autostart === null ? t('状态未读取') : autostart ? t('已开启') : t('已关闭') }}</span>
-        <button type="button" class="autostart-switch" role="switch" :disabled="!desktop || startupBusy || autostart === null" :aria-checked="autostart === true" :aria-label='t("开机自启")' :aria-busy="startupBusy" @click="toggleAutostart"><span aria-hidden="true" /></button>
+        <button type="button" class="settings-switch" role="switch" :disabled="!desktop || startupBusy || autostart === null" :aria-checked="autostart === true" :aria-label='t("开机自启")' :aria-busy="startupBusy" @click="toggleAutostart"><span aria-hidden="true" /></button>
         <Button v-if="autostart === null && !startupBusy" variant="ghost" :disabled="!desktop" @click="refreshAutostart">{{ t('重新读取') }}</Button>
       </div>
       <p v-if="startupError" class="notice error" role="alert">{{ te(startupError) }}</p>
     </section>
-    <ClipboardSettings :disabled="busy" />
-    <ShelfSettings />
     <section class="general-section general-font"><h2>{{ t('导出字体') }}</h2><ResourceSettings kind="font" /></section>
     <section class="general-section general-storage">
     <h2>{{ t('文件与存储') }}</h2>
@@ -81,7 +77,7 @@ onMounted(() => { void run(refresh); void refreshAutostart() })
     <p v-if="message" class="notice" role="status">{{ t(message) }}</p>
     <div class="settings-card">
       <div v-for="directory in directories.filter(item => item.kind !== 'logs')" :key="directory.kind" class="setting-row directory-row">
-        <div class="directory-content"><strong>{{ t(labels[directory.kind].name) }}</strong><p class="directory-path" :class="{ 'directory-error': directory.error }">{{ te(directory.error) || directory.path || t('系统默认位置') }}</p><small v-if="directory.kind === 'clipboard'">{{ t('请通过剪贴板页面清理历史，勿手动删除数据库。') }}</small></div>
+        <div class="directory-content"><strong>{{ t(labels[directory.kind].name) }}</strong><p class="directory-path" :class="{ 'directory-error': directory.error }">{{ te(directory.error) || directory.path || t('系统默认位置') }}</p><small v-if="directory.kind === 'clipboard'">{{ t('请在剪贴板窗口清理历史，勿手动删除数据库。') }}</small></div>
         <div class="directory-actions">
           <Button variant="outline" :disabled="busy || !directory.path" @click="run(() => api.openAppDirectory(directory.kind))">{{ t('打开') }}</Button>
           <Button variant="ghost" :disabled="busy || !directory.path" @click="run(() => api.copyAppDirectory(directory.kind), '目录路径已复制。')">{{ t('复制路径') }}</Button>
@@ -98,10 +94,4 @@ onMounted(() => { void run(refresh); void refreshAutostart() })
 </template>
 
 <style scoped>
-.autostart-switch { flex-shrink:0; width:38px; height:22px; padding:2px; border-radius:12px; background:#a1a1aa; transition:background .15s; }
-.autostart-switch span { display:block; width:18px; height:18px; border-radius:50%; background:#fff; transition:transform .15s; }
-.autostart-switch[aria-checked=true] { background:#2563eb; }
-.autostart-switch[aria-checked=true] span { transform:translateX(16px); }
-.autostart-switch:disabled { opacity:.45; cursor:not-allowed; }
-.autostart-switch:focus-visible { outline:2px solid #2563eb; outline-offset:3px; }
 </style>

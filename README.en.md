@@ -95,7 +95,7 @@ See the [translation technical guide (Chinese)](TECHNICAL.md#翻译接入) for d
 
 ### Clipboard Manager
 
-- [x] **Offline** · Text, image, and file-path history with categories, sorting, search, favorites, and previews.
+- [x] **Offline** · A standalone clipboard window opened by shortcut, with text, image, and file-path history, categories, sorting, search, favorites, and previews.
 - [x] **Offline** · Copy, pin, and export to PDF, long PNG images, or individual files. File history stores paths only.
 
 ### Settings & Updates

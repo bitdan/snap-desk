@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Camera, Video, Pin, Folder, ArrowUpRight, Scan, Github } from 'lucide-vue-next'
+import { Camera, Video, Pin, ClipboardList, ArrowUpRight, Scan, Github } from 'lucide-vue-next'
 import Button from '@/shared/ui/button/Button.vue'
 import { t } from '@/shared/i18n/i18n'
 import type { Shortcuts } from '@/features/settings/settings'
@@ -11,7 +11,7 @@ const guides = [
   { page: '截图', icon: Camera, key: 'capture', title: '框选与标注', text: '框选后使用工具栏标注、复制或保存；滚动截图也从选区工具栏开始。' },
   { page: '录屏', icon: Video, key: 'record', title: '录制屏幕', text: '设置格式与画质，选择范围后确认声音。录制中可暂停，停止后自动导出。' },
   { page: '贴图', icon: Pin, key: 'pin', title: '桌面参考图', text: '把剪贴板文字、图片或本地图片贴在桌面，在贴图页管理显示和分组。' },
-  { page: '剪贴板', icon: Folder, key: 'history', title: '查找复制记录', text: '按类型筛选或搜索，右键记录进行复制、收藏或删除。记录范围在通用设置中调整。' },
+  { page: '剪贴板', icon: ClipboardList, key: 'history', title: '查找复制记录', text: '快捷键唤出独立窗口，搜索或按类型筛选；回车或双击复制并收起，右键可贴图、收藏或删除。记录范围在剪贴板页调整。' },
 ] as const
 </script>
 

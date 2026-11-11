@@ -1,14 +1,13 @@
 <script setup lang="ts">
-import InfoTip from '@/shared/ui/InfoTip.vue'
-import SelectControl from '@/shared/ui/SelectControl.vue'
 import { useCategoryOrder, type ClipboardCategory } from '@/features/clipboard/use-category-order'
 import { t, te } from '@/shared/i18n/i18n'
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import DetachedWindow from '@/shared/ui/DetachedWindow.vue'
 import ConfirmDialog from '@/shared/ui/ConfirmDialog.vue'
-import { api, desktop, onClipboardChanged, onClipboardError, onClipboardState, onClipboardOpen } from '@/services/api'
-import { defaultClipboardSettings, selectClipboardItems, type ClipboardSelectionGesture, type ClipboardItem as Item, type ClipboardStatus, type ClipboardKind, type ClipboardTextCategory, type ClipboardExportOptions } from '@/features/clipboard/clipboard'
-import { Link, Palette, Folder, Search, ClipboardList, Type, Image, Star, X, Download, Pin, Trash2, Files, List, LayoutGrid, LoaderCircle } from 'lucide-vue-next'
+import { api, desktop, onClipboardChanged, onClipboardError, onClipboardState, onClipboardOpen, onClipboardBlur } from '@/services/api'
+import { selectClipboardItems, type ClipboardSelectionGesture, type ClipboardItem as Item, type ClipboardStatus, type ClipboardKind, type ClipboardTextCategory, type ClipboardExportOptions } from '@/features/clipboard/clipboard'
+import ClipboardComposer from '@/features/clipboard/components/ClipboardComposer.vue'
+import { Search, X, Download, Pin, PinOff, Trash2, LoaderCircle, RefreshCw, CircleHelp } from 'lucide-vue-next'
 import ClipboardItem from '@/features/clipboard/components/ClipboardItem.vue'
 import VirtualClipboardList from '@/features/clipboard/components/VirtualClipboardList.vue'
 import ClipboardPreview from '@/features/clipboard/components/ClipboardPreview.vue'
@@ -24,13 +23,14 @@ const selectedIds = computed(() => new Set(selected.value))
 const itemsById = computed(() => new Map(items.value.map(item => [item.id, item])))
 const previewItem = ref<Item | null>(null)
 let selectionAnchor: number | null = null
-const viewKey = 'snap-desk.clipboard-view.v1'
-const layout = ref<'list' | 'grid'>((() => {
-  try { return localStorage.getItem(viewKey) === 'grid' ? 'grid' : 'list' } catch { return 'list' }
+/** 固定后失焦不收起，便于对照其他窗口连续复制；偏好只影响本窗口。 */
+const keepOpenKey = 'snap-desk.clipboard-keep-open.v1'
+const keepOpen = ref((() => {
+  try { return localStorage.getItem(keepOpenKey) === '1' } catch { return false }
 })())
-function setLayout(value: 'list' | 'grid') {
-  layout.value = value
-  try { localStorage.setItem(viewKey, value) } catch { /* 存储不可用时仍允许当前窗口切换。 */ }
+function toggleKeepOpen() {
+  keepOpen.value = !keepOpen.value
+  try { localStorage.setItem(keepOpenKey, keepOpen.value ? '1' : '0') } catch { /* 存储不可用时仍允许当前窗口切换。 */ }
 }
 async function closePreview() {
   const index = items.value.findIndex(item => item.id === previewItem.value?.id)
@@ -38,12 +38,12 @@ async function closePreview() {
   await nextTick()
   if (index >= 0) await list.value?.focusIndex(index)
 }
-const status = ref<ClipboardStatus | null>(null), settings = ref(defaultClipboardSettings())
+const status = ref<ClipboardStatus | null>(null)
 const keyword = ref(''), category = ref<ClipboardCategory>('')
 const textCategory = computed(() => ['link', 'color', 'path'].includes(category.value) ? category.value as ClipboardTextCategory : undefined)
 const kind = computed(() => textCategory.value ? 'text' : category.value === 'favorites' ? undefined : category.value as ClipboardKind | '')
 const favorites = computed(() => category.value === 'favorites')
-const categoryOptions = [{ value: '' as const, label: '全部', icon: ClipboardList }, { value: 'text' as const, label: '文本', icon: Type }, { value: 'link' as const, label: '链接', icon: Link }, { value: 'color' as const, label: '颜色', icon: Palette }, { value: 'path' as const, label: '文件路径', icon: Folder }, { value: 'image' as const, label: '图片', icon: Image }, { value: 'file' as const, label: '文件', icon: Files }, { value: 'favorites' as const, label: '收藏', icon: Star }]
+const categoryOptions = [{ value: '' as const, label: '全部' }, { value: 'text' as const, label: '文本' }, { value: 'link' as const, label: '链接' }, { value: 'color' as const, label: '颜色' }, { value: 'path' as const, label: '文件路径' }, { value: 'image' as const, label: '图片' }, { value: 'file' as const, label: '文件' }, { value: 'favorites' as const, label: '收藏' }]
 const canExport = computed(() => selected.value.length > 0 && selected.value.every(id => ['text', 'image'].includes(selectedItems.value[id]?.kind)))
 const busy = ref(false), loading = ref(false), error = ref(''), message = ref('')
 const categoryOrder = useCategoryOrder(() => busy.value || !desktop, value => { category.value = value })
@@ -56,16 +56,38 @@ const confirm = ref<'delete' | 'clear' | null>(null), includeFavorites = ref(fal
 const helpOpen = ref(false)
 useEscapeLayer(() => exportOpen.value, () => { if (!busy.value) exportOpen.value = false })
 useEscapeLayer(() => helpOpen.value, () => { helpOpen.value = false })
-function exportKey(event: KeyboardEvent) { handleEscape(event, () => { if (!busy.value) exportOpen.value = false }) }
 function helpKey(event: KeyboardEvent) { handleEscape(event, () => { helpOpen.value = false }) }
 /** 事件中的条件分支放在脚本内，避免被模板编译器当成 JavaScript 表达式解析。 */
 function updateExportOpen(open: boolean) {
   if (!busy.value) exportOpen.value = open
 }
-const options = ref<Omit<ClipboardExportOptions, 'ids'>>({ mode: 'pdf', pageSize: 'A4', gapPx: 16, marginMm: 12, background: 'white' })
 const searchInput = ref<HTMLInputElement | null>(null)
 const list = ref<InstanceType<typeof VirtualClipboardList> | null>(null)
 function focusSearch() { searchInput.value?.focus(); searchInput.value?.select() }
+/** 窗口没有系统标题栏：顶栏和底栏的空白处交给原生拖动，控件自身的按下不触发。 */
+function dragWindow(event: PointerEvent) {
+  if (!desktop || event.button !== 0 || (event.target as HTMLElement).closest('button, input, a')) return
+  event.preventDefault()
+  // 拖动期间的焦点转交不能被当成“离开窗口”而收起。
+  draggingUntil = Date.now() + 1500
+  void api.clipboardWindow('drag').catch(e => { error.value = String(e) })
+}
+let draggingUntil = 0
+async function hideWindow() {
+  if (!desktop) return
+  try { await api.clipboardWindow('hide') } catch (e) { error.value = String(e) }
+}
+/** 子窗口（预览、导出、确认、帮助）打开或操作进行中时，失焦和 Esc 都不能收起宿主窗口。 */
+function occupied() {
+  return busy.value || !!confirm.value || exportOpen.value || helpOpen.value || !!previewItem.value
+}
+/** 原生端已延迟复核；页面仍持有焦点（例如刚点进列表）或正在拖动时同样不收起。 */
+function windowBlurred() {
+  if (keepOpen.value || occupied() || Date.now() < draggingUntil || globalThis.document?.hasFocus?.()) return
+  void hideWindow()
+}
+/** 焦点不在列表内时的 Esc 兜底：先关最上层弹层，没有弹层才收起窗口。 */
+function windowKey(event: KeyboardEvent) { handleWindowEscape(event, () => { void hideWindow() }) }
 /** 搜索与列表共用方向键；条目焦点与批量选择独立，浏览不会改变导出顺序。 */
 function navigate(event: KeyboardEvent) {
   if (event.defaultPrevented || event.isComposing || event.keyCode === 229 || previewItem.value) return
@@ -78,14 +100,14 @@ function navigate(event: KeyboardEvent) {
     event.preventDefault(); focusSearch(); return
   }
   if (event.key === 'Escape') {
+    // 没有选择或关键词时不拦截，交给窗口级处理收起整个窗口。
     if (selected.value.length || keyword.value) handleEscape(event, () => {
       if (selected.value.length) { selected.value = []; selectedItems.value = {}; selectionAnchor = null }
       else { keyword.value = ''; focusSearch() }
     })
     return
   }
-  const directions = layout.value === 'grid' ? ['ArrowDown', 'ArrowUp', 'ArrowLeft', 'ArrowRight', 'Home', 'End'] : ['ArrowDown', 'ArrowUp', 'Home', 'End']
-  if (!directions.includes(event.key) || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return
+  if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key) || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return
   const fromSearch = target === searchInput.value
   if (fromSearch && !['ArrowDown', 'ArrowUp'].includes(event.key)) return
   const row = target.closest<HTMLElement>('.history-item')
@@ -93,11 +115,15 @@ function navigate(event: KeyboardEvent) {
   if (!items.value.length) return
   event.preventDefault()
   const current = row ? Number(row.closest<HTMLElement>('[data-history-index]')?.dataset.historyIndex ?? -1) : -1
-  const step = layout.value === 'grid' && ['ArrowDown', 'ArrowUp'].includes(event.key) ? list.value?.columns ?? 1 : 1
   const index = event.key === 'Home' ? 0 : event.key === 'End' ? items.value.length - 1
     : current < 0 ? (event.key === 'ArrowDown' ? 0 : items.value.length - 1)
-    : Math.max(0, Math.min(items.value.length - 1, current + (['ArrowDown', 'ArrowRight'].includes(event.key) ? step : -step)))
+    : Math.max(0, Math.min(items.value.length - 1, current + (event.key === 'ArrowDown' ? 1 : -1)))
   void list.value?.focusIndex(index)
+}
+/** 分类较多时单行横向滚动；滚轮的纵向量换成横向，避免窄窗口里换行挤占列表。 */
+function scrollCategories(event: WheelEvent) {
+  const bar = event.currentTarget as HTMLElement
+  if (bar.scrollWidth > bar.clientWidth) bar.scrollLeft += event.deltaY || event.deltaX
 }
 function selectItem(item: Item, gesture: ClipboardSelectionGesture = { toggle: true }) {
   selected.value = selectClipboardItems(selected.value, item.id, items.value.map(value => value.id), selectionAnchor, gesture)
@@ -105,6 +131,7 @@ function selectItem(item: Item, gesture: ClipboardSelectionGesture = { toggle: t
   const available = itemsById.value
   selectedItems.value = Object.fromEntries(selected.value.map(id => [id, available.get(id) ?? selectedItems.value[id]]))
 }
+function clearSelection() { selected.value = []; selectedItems.value = {}; selectionAnchor = null }
 let revision = 0, changeRevision = 0, disposed = false, loadedMore = false, listScrolled = false
 let clipboardErrorRevision = 0, latestClipboardError: string | null = null
 let refreshTimer: ReturnType<typeof setTimeout> | undefined, searchTimer: ReturnType<typeof setTimeout> | undefined
@@ -179,7 +206,7 @@ function scheduleRefresh() {
 // 输入停顿后查询；分类立即生效，清除旧选择和旧请求，避免显示过期结果。
 function applyFilter() {
   clearTimeout(searchTimer); searchTimer = undefined
-  selected.value = []; selectedItems.value = {}; selectionAnchor = null; list.value?.resetScroll(); void refresh()
+  clearSelection(); list.value?.resetScroll(); void refresh()
 }
 watch(keyword, () => {
   revision++; clearTimeout(searchTimer)
@@ -194,6 +221,12 @@ async function run(action: () => Promise<unknown>, success = '') {
   catch (e) { error.value = String(e) }
   finally { busy.value = false }
 }
+/** 回车或双击：写回系统剪贴板后收起窗口，焦点回到原应用即可粘贴；固定时保留窗口。 */
+async function activate(item: Item) {
+  if (busy.value) return
+  await run(() => api.clipboardRestore(item.id), '已复制。')
+  if (!error.value && !keepOpen.value) await hideWindow()
+}
 /** 收藏只更新本地一条记录，避免整页刷新丢掉滚动位置；收藏分类下仍需重查以移除条目。 */
 async function toggleFavorite(item: Item) {
   await run(async () => {
@@ -205,12 +238,28 @@ async function toggleFavorite(item: Item) {
     if (favorites.value) await refresh()
   })
 }
-async function configure(enabled = settings.value.enabled) {
+/** 暂存架与历史共用条目 ID；这里只读取架上有哪些条目，用于右键菜单的放上/取下。 */
+const shelfIds = ref<Set<number> | null>(null)
+async function loadShelf() {
+  if (!desktop) return
+  try {
+    const snapshot = await api.shelfSnapshot()
+    if (!disposed) shelfIds.value = snapshot.settings.enabled ? new Set(snapshot.items.map(item => item.id)) : null
+  } catch { if (!disposed) shelfIds.value = null }
+}
+async function toggleShelf(item: Item) {
+  const placed = shelfIds.value?.has(item.id) ?? false
+  await run(async () => {
+    // 固定同时撤销“已从架上移除”的隐藏标记；取下只影响架子，不删除历史。
+    await api.shelfItemAction(item.id, placed ? 'remove' : 'keep')
+    await loadShelf()
+  }, placed ? '已从暂存架取下。' : '已放到暂存架。')
+}
+async function setRecording(enabled: boolean) {
   await run(async () => {
     const errors = clipboardErrorRevision
-    applyStatus(await api.clipboardConfigure({ ...settings.value, enabled }), errors)
-    settings.value = (await api.status()).settings.clipboard
-  }, enabled ? '历史记录已开启，仅记录此后复制的内容。' : '历史记录已暂停。')
+    applyStatus(await api.clipboardSetEnabled(enabled), errors)
+  }, enabled ? '已开始记录，仅记录此后复制的内容。' : '')
 }
 /** 确认框由模态层管理焦点；删除期间禁止关闭，失败时在框内保留原因。 */
 function updateConfirmOpen(open: boolean) {
@@ -226,13 +275,20 @@ async function remove() {
     if (action === 'clear') await api.clipboardClear(includeFavorites.value)
     else await api.clipboardDelete(selected.value)
     clipboardThumbnails.clear()
-    selected.value = []; selectedItems.value = {}; confirm.value = null; await refresh()
+    clearSelection(); confirm.value = null; await refresh()
   }, '历史条目已删除。')
 }
-async function exportItems() {
+/** 打开编辑器时按选择顺序取一份素材快照；顺序、移除与改写都在编辑器内完成。 */
+const composerItems = ref<Item[]>([])
+function openComposer() {
   if (!canExport.value) return
+  error.value = ''; message.value = ''
+  composerItems.value = selected.value.map(id => selectedItems.value[id]).filter(Boolean)
+  exportOpen.value = true
+}
+async function exportItems(payload: ClipboardExportOptions) {
   await run(async () => {
-    const result = await api.clipboardExport({ ...options.value, ids: selected.value })
+    const result = await api.clipboardExport(payload)
     message.value = result.status === 'cancelled' ? '已取消导出。' : `已保存 ${result.outputPaths.length} 个文件。`
     if (result.status === 'saved') exportOpen.value = false
   })
@@ -253,85 +309,82 @@ function clipboardError(value: string) {
   error.value = value
   if (status.value) status.value.error = latestClipboardError
 }
+/** 窗口常驻复用：再次唤出时回到搜索框，没有进行中的选择或弹窗就回到最新记录。 */
+function opened() {
+  focusSearch(); message.value = ''
+  void loadShelf()
+  if (!selected.value.length && !occupied()) void refresh()
+}
 onMounted(async () => {
+  window.addEventListener('keydown', windowKey)
   await nextTick(); focusSearch()
   if (!desktop) return
   try {
-    for (const subscribe of [() => onClipboardOpen(focusSearch), () => onClipboardChanged(scheduleRefresh), () => onClipboardError(clipboardError), () => onClipboardState(value => { status.value = value })]) {
+    for (const subscribe of [() => onClipboardOpen(opened), () => onClipboardBlur(windowBlurred), () => onClipboardChanged(scheduleRefresh), () => onClipboardError(clipboardError), () => onClipboardState(value => { status.value = value })]) {
       const off = await subscribe(); if (disposed) { off(); return }; disposers.push(off)
     }
-    settings.value = (await api.status()).settings.clipboard
+    void loadShelf()
     await refresh()
   } catch (e) { error.value = String(e) }
 })
-onUnmounted(() => { disposed = true; revision++; clearTimeout(refreshTimer); clearTimeout(searchTimer); disposers.forEach(off => off()); clipboardThumbnails.clear() })
+onUnmounted(() => { disposed = true; revision++; window.removeEventListener('keydown', windowKey); clearTimeout(refreshTimer); clearTimeout(searchTimer); disposers.forEach(off => off()); clipboardThumbnails.clear() })
 </script>
 <template>
   <section class="clipboard-history" @keydown="navigate">
-    <header class="history-header">
-      <span class="history-count">{{ status?.count ?? 0 }} {{ t("条 ·") }} {{ ((status?.byteSize ?? 0) / 1048576).toFixed(1) }} MiB</span>
-      <div class="history-header-actions"><Button variant="ghost" :disabled="busy || foregroundLoading || !desktop" @click="refresh()">{{ t("刷新") }}</Button><Button variant="ghost" class="history-clear" :disabled="busy || !status?.count" @click="requestDelete('clear')">{{ t("清空") }}</Button></div>
-      <label class="history-recording"><span>{{ status?.enabled ? t("正在记录") : t("已暂停") }}</span><input type="checkbox" role="switch" :aria-label='t("记录剪贴板历史")' :checked="status?.enabled ?? false" :disabled="busy || !desktop || !status?.supported" @click.prevent="configure(!status?.enabled)" /><span class="recording-track" aria-hidden="true"></span></label>
+    <header class="history-topbar" @pointerdown="dragWindow">
+      <form class="history-search" role="search" @submit.prevent="applyFilter">
+        <Search :size="16" aria-hidden="true" /><input ref="searchInput" v-model="keyword" :aria-label='t("搜索文本或文件路径")' :placeholder='t("搜索文本或文件路径（Ctrl+F）")' maxlength="200" /><button v-if="keyword" type="button" :aria-label='t("清除搜索")' @click="keyword = ''; focusSearch()"><X :size="16" /></button>
+      </form>
+      <button type="button" class="history-icon-button" :aria-pressed="keepOpen" :aria-label="t('固定窗口，失去焦点时不收起')" :title="t('固定窗口，失去焦点时不收起')" @click="toggleKeepOpen"><Pin v-if="keepOpen" :size="16" /><PinOff v-else :size="16" /></button>
+      <button type="button" class="history-icon-button" :aria-label="t('收起')" :title="t('收起（Esc）')" @click="hideWindow"><X :size="16" /></button>
     </header>
-    <p v-if="updatesPending" class="history-count" role="status">{{ t("内容已更新，点击刷新。") }}</p>
-    <p v-if="status && !status.supported" class="notice">{{ t("当前平台尚未支持自动监听；现有手动贴图不受影响。") }}</p>
-    <p v-if="error || status?.error" class="notice error" role="alert">{{ te(error || status?.error) }}</p>
-    <p v-if="orderError" role="status">{{ t(orderError) }}</p>
-    <p v-if="message" role="status">{{ t(message) }}</p>
-    <form class="history-search" role="search" @submit.prevent="applyFilter">
-      <Search :size="16" aria-hidden="true" /><input ref="searchInput" v-model="keyword" :aria-label='t("搜索文本或文件路径")' :placeholder='t("搜索文本或文件路径（Ctrl+F）")' maxlength="200" /><button v-if="keyword" type="button" :aria-label='t("清除搜索")' @click="keyword = ''; focusSearch()"><X :size="16" /></button>
-    </form>
-    <div class="history-viewbar">
-    <nav class="history-categories" :aria-label='t("历史分类")'>
-      <button v-for="tab in categories" :key="tab.value" :class="{ active: category === tab.value, 'sorting-source': sorting === tab.value, 'sorting-target': sortingTarget === tab.value && sorting !== tab.value }" :data-clipboard-category="tab.value" :title="t('{0}（拖动排序，Alt+←/→调整顺序）', { 0: t(tab.label) })" :aria-pressed="category === tab.value" :disabled="busy || !desktop" @pointerdown="categoryOrder.start($event, tab.value)" @pointermove="categoryOrder.move" @pointerup="categoryOrder.finish" @pointercancel="categoryOrder.cancel" @lostpointercapture="categoryOrder.cancel" @dragstart.prevent @keydown="categoryOrder.key($event, tab.value)" @click="categoryOrder.choose($event, tab.value)"><component :is="tab.icon" :size="16" aria-hidden="true" />{{ t(tab.label) }}</button>
-        <button @click="helpOpen = true" class="history-help-trigger" :aria-label='t("帮助")' :title='t("帮助")'>?</button>
-        <DetachedWindow :open="helpOpen" :title="t('帮助')" :width="480" :height="220" @close="helpOpen = false">
-          <section class="history-help-popup" :aria-label='t("帮助")' @keydown.stop="helpKey">
-            <p>{{ t("单击选中 · Ctrl 多选 · Shift 连选 · 双击文字或图片预览 · Ctrl+C 复制") }}</p>
-            <p v-if="category === 'file'">{{ t("仅记录文件路径，原文件移动或删除后失效。") }}</p>
-          </section>
-        </DetachedWindow>
+    <nav class="history-categories" :aria-label='t("历史分类")' @wheel.passive="scrollCategories">
+      <button v-for="tab in categories" :key="tab.value" :class="{ active: category === tab.value, 'sorting-source': sorting === tab.value, 'sorting-target': sortingTarget === tab.value && sorting !== tab.value }" :data-clipboard-category="tab.value" :title="t('{0}（拖动排序，Alt+←/→调整顺序）', { 0: t(tab.label) })" :aria-pressed="category === tab.value" :disabled="busy || !desktop" @pointerdown="categoryOrder.start($event, tab.value)" @pointermove="categoryOrder.move" @pointerup="categoryOrder.finish" @pointercancel="categoryOrder.cancel" @lostpointercapture="categoryOrder.cancel" @dragstart.prevent @keydown="categoryOrder.key($event, tab.value)" @click="categoryOrder.choose($event, tab.value)">{{ t(tab.label) }}</button>
     </nav>
-    <div class="history-layout-switch" role="group" :aria-label="t('显示方式')">
-      <button type="button" :aria-pressed="layout === 'list'" :aria-label="t('列表视图')" :title="t('列表视图')" @click="setLayout('list')"><List :size="16" /></button>
-      <button type="button" :aria-pressed="layout === 'grid'" :aria-label="t('网格视图')" :title="t('网格视图')" @click="setLayout('grid')"><LayoutGrid :size="16" /></button>
-    </div>
-    </div>
-    <DetachedWindow :open="exportOpen" :title="t('组合导出')" :width="640" :height="360" :busy="busy" @close="updateExportOpen(false)">
-    <section class="history-export-dialog" @keydown.stop="exportKey">
-      <div class="flex items-center gap-1"><span>{{ selected.length }} {{ t("个素材") }}</span><InfoTip :text="t('按选择顺序导出，图片使用原图。')" /></div>
-      <fieldset :disabled="busy">
-      <div class="history-tools"><SelectControl v-model="options.mode" :aria-label="t('导出方式')" :options="[{ value: 'pdf', label: t('多页 PDF') }, { value: 'longPng', label: t('纵向长图 PNG') }, { value: 'separate', label: t('分别导出 PNG / TXT') }]" /><SelectControl v-if="options.mode === 'pdf'" v-model="options.pageSize" :aria-label="t('页面大小')" :options="[{ value: 'A4', label: 'A4' }, { value: 'original', label: t('图片原始比例') }]" /><label v-if="options.mode === 'pdf'">{{ t("边距 mm") }}<input v-model.number="options.marginMm" type="number" min="0" max="30" /></label><label v-if="options.mode === 'longPng'">{{ t("间距 px") }}<input v-model.number="options.gapPx" type="number" min="0" max="200" /></label><SelectControl v-if="options.mode === 'longPng'" v-model="options.background" :aria-label="t('背景')" :options="[{ value: 'white', label: t('白底') }, { value: 'transparent', label: t('透明背景') }]" /></div>
-      </fieldset>
-      <p v-if="error" class="notice error" role="alert">{{ te(error) }}</p>
-      <p v-else-if="message" role="status">{{ t(message) }}</p>
-      <div class="history-export-actions"><Button :disabled="busy || !selected.length" @click="exportItems">{{ busy ? t("正在导出…") : t("选择位置并导出") }}</Button><Button variant="outline" :disabled="busy" @click="exportOpen = false">{{ t("关闭") }}</Button></div>
-    </section>
-    </DetachedWindow>
-    <div class="history-browser">
-    <VirtualClipboardList ref="list" :items="items" :layout="layout" :has-more="!!cursor && !loadMoreFailed" :loading="loading || busy" role="region" :aria-label='t("历史记录列表")' :aria-busy="foregroundLoading" @scroll="listScroll" @near-end="loadMore">
+    <div v-if="status && status.supported && !status.enabled" class="history-notice history-paused" role="status"><span>{{ t("记录已暂停，新复制的内容不会保存。") }}</span><Button variant="ghost" :disabled="busy || !desktop" @click="setRecording(true)">{{ t("继续记录") }}</Button></div>
+    <p v-if="updatesPending" class="history-notice" role="status">{{ t("内容已更新，点击刷新。") }}</p>
+    <p v-if="status && !status.supported" class="history-notice">{{ t("当前平台尚未支持自动监听；现有手动贴图不受影响。") }}</p>
+    <p v-if="error || status?.error" class="history-notice error" role="alert">{{ te(error || status?.error) }}</p>
+    <p v-if="orderError" class="history-notice" role="status">{{ t(orderError) }}</p>
+    <VirtualClipboardList ref="list" :items="items" :has-more="!!cursor && !loadMoreFailed" :loading="loading || busy" role="region" :aria-label='t("历史记录列表")' :aria-busy="foregroundLoading" @scroll="listScroll" @near-end="loadMore">
       <template #default="{ item }">
-      <ClipboardItem :item="item" :selected="selectedIds.has(item.id)" :busy="busy" @select="selectItem(item, $event)" @preview="previewItem = item" @restore="run(() => api.clipboardRestore(item.id), '已复制。')" @delete="selected = [item.id]; selectedItems = { [item.id]: item }; requestDelete('delete')" @pin="run(() => api.clipboardPin(item.id))" @favorite="toggleFavorite(item)" />
+      <ClipboardItem :item="item" :selected="selectedIds.has(item.id)" :busy="busy" :shelf-kept="shelfIds ? shelfIds.has(item.id) : null" @select="selectItem(item, $event)" @activate="activate(item)" @preview="previewItem = item" @restore="run(() => api.clipboardRestore(item.id), '已复制。')" @delete="selected = [item.id]; selectedItems = { [item.id]: item }; requestDelete('delete')" @pin="run(() => api.clipboardPin(item.id))" @favorite="toggleFavorite(item)" @shelf="toggleShelf(item)" />
       </template>
       <template #footer>
-      <p v-if="!items.length" class="history-empty">{{ foregroundLoading ? t("正在加载…") : keyword || category ? t("没有匹配的记录，试试其他关键词或分类。") : status?.enabled ? t("暂无记录，复制文字或图片后会显示在这里。") : t("暂无记录，开启右上方开关后开始记录。") }}</p>
+      <p v-if="!items.length" class="history-empty">{{ foregroundLoading ? t("正在加载…") : keyword || category ? t("没有匹配的记录，试试其他关键词或分类。") : status?.enabled === false ? t("暂无记录。") : t("暂无记录，复制文字或图片后会显示在这里。") }}</p>
       <div v-if="loadingMore || loadMoreFailed && cursor" class="history-load-more">
         <span v-if="loadingMore" role="status"><LoaderCircle :size="18" class="history-spinner" />{{ t('加载中…') }}</span>
         <Button v-else variant="ghost" :disabled="loading || busy" @click="loadMore(true)">{{ t('重试') }}</Button>
       </div>
       </template>
     </VirtualClipboardList>
-    <!-- 侧栏独立于列表滚动并始终预留宽度，选择条目不会挤动列表或影响双击。 -->
-    <aside class="history-action-rail" :aria-label='t("所选条目操作")'>
-      <template v-if="selected.length">
-        <span class="history-selected-count" role="status" :title="t('已选 {0} / 100 条', { 0: selected.length })">{{ t("已选") }}<br />{{ selected.length }}</span>
-        <Button class="history-action" :disabled="busy || !canExport" :title="canExport ? t('组合导出') : t('组合导出仅支持文本和图片，文件引用请复制后粘贴')" :aria-label='t("组合导出所选条目")' @click="error = ''; message = ''; exportOpen = true"><Download :size="18" /></Button>
-        <Button class="history-action" variant="outline" :disabled="busy" :title='t("悬浮贴图")' :aria-label='t("将所选内容贴图")' @click="pinSelected"><Pin :size="18" /></Button>
-        <Button class="history-action history-delete" variant="outline" :disabled="busy" :title='t("删除所选")' :aria-label='t("删除所选条目")' @click="requestDelete('delete')"><Trash2 :size="18" /></Button>
-        <Button class="history-action" variant="ghost" :disabled="busy" :title='t("取消选择")' :aria-label='t("取消选择")' @click="selected = []; selectedItems = {}"><X :size="18" /></Button>
-      </template>
-    </aside>
-    </div>
+    <!-- 底栏固定高度：未选择时显示容量与全局操作，选择后原位换成批量操作，列表不被挤动。 -->
+    <footer class="history-footer" @pointerdown="dragWindow">
+      <span v-if="selected.length" class="history-selected-count" role="status" :title="t('已选 {0} / 100 条', { 0: selected.length })">{{ t("已选") }} {{ selected.length }}</span>
+      <span v-else-if="message" class="history-message" role="status">{{ t(message) }}</span>
+      <span v-else class="history-count">{{ status?.count ?? 0 }} {{ t("条 ·") }} {{ ((status?.byteSize ?? 0) / 1048576).toFixed(1) }} MiB</span>
+      <div class="history-footer-actions" role="group" :aria-label='selected.length ? t("所选条目操作") : undefined'>
+        <template v-if="selected.length">
+          <Button class="history-action" variant="ghost" :disabled="busy || !canExport" :title="canExport ? t('组合导出') : t('组合导出仅支持文本和图片，文件引用请复制后粘贴')" :aria-label='t("组合导出所选条目")' @click="openComposer"><Download :size="16" /></Button>
+          <Button class="history-action" variant="ghost" :disabled="busy" :title='t("悬浮贴图")' :aria-label='t("将所选内容贴图")' @click="pinSelected"><Pin :size="16" /></Button>
+          <Button class="history-action history-delete" variant="ghost" :disabled="busy" :title='t("删除所选")' :aria-label='t("删除所选条目")' @click="requestDelete('delete')"><Trash2 :size="16" /></Button>
+          <Button class="history-action" variant="ghost" :disabled="busy" :title='t("取消选择")' :aria-label='t("取消选择")' @click="clearSelection"><X :size="16" /></Button>
+        </template>
+        <button v-else type="button" class="history-icon-button" :aria-label='t("帮助")' :title='t("帮助")' @click="helpOpen = true"><CircleHelp :size="15" /></button>
+        <!-- 刷新在两种状态下都保留：有选择时后台更新只提示，需要用户主动刷新。 -->
+        <Button variant="ghost" :disabled="busy || foregroundLoading || !desktop" @click="refresh()"><RefreshCw :size="14" aria-hidden="true" />{{ t("刷新") }}</Button>
+        <Button v-if="!selected.length" variant="ghost" class="history-clear" :disabled="busy || !status?.count" @click="requestDelete('clear')">{{ t("清空") }}</Button>
+      </div>
+    </footer>
+    <DetachedWindow :open="helpOpen" :title="t('帮助')" :width="480" :height="220" @close="helpOpen = false">
+      <section class="history-help-popup" :aria-label='t("帮助")' @keydown.stop="helpKey">
+        <p>{{ t("回车或双击复制并收起 · 单击选中 · Ctrl 多选 · Shift 连选 · Ctrl+C 仅复制 · 右键更多操作") }}</p>
+        <p v-if="category === 'file'">{{ t("仅记录文件路径，原文件移动或删除后失效。") }}</p>
+      </section>
+    </DetachedWindow>
+    <DetachedWindow :open="exportOpen" :title="t('组合导出')" :width="960" :height="640" :busy="busy" @close="updateExportOpen(false)">
+      <ClipboardComposer :items="composerItems" :busy="busy" :error="error" :message="message" @export="exportItems" @close="updateExportOpen(false)" />
+    </DetachedWindow>
   </section>
   <ConfirmDialog :open="!!confirm" :title="confirm === 'clear' ? t('清空') : t('删除所选')" :description="(confirm === 'clear' ? t('清空历史记录？默认保留收藏。') : t('删除选中的 {0} 条记录（包含选中的收藏）？', { 0: selected.length })) + ' ' + t('此操作不可撤销。')" :confirm-label="t('确认删除')" :busy="busy" destructive :error="te(error)" @update:open="updateConfirmOpen" @confirm="remove">
     <label v-if="confirm === 'clear'" class="history-confirm-option"><input v-model="includeFavorites" type="checkbox" :disabled="busy" />{{ t("同时删除收藏") }}</label>
@@ -339,91 +392,55 @@ onUnmounted(() => { disposed = true; revision++; clearTimeout(refreshTimer); cle
   <ClipboardPreview :item="previewItem" @close="closePreview" />
 </template>
 <style>
-.history-export-dialog { width:100%; min-height:100%; box-sizing:border-box; overflow-y:auto; background:#fff; font-size:13px; }
-.history-export-dialog { padding:20px; }
-.history-confirm-option { display:flex; align-items:center; gap:8px; min-height:32px; }
-.history-confirm-option input[type=checkbox] { width:16px; height:16px; margin:0; accent-color:#2563eb; }
-.history-export-title { font-size:18px; font-weight:600; }
-.history-export-description { margin:8px 0 16px; color:#57606a; font-size:12px; }
-.history-export-dialog input, .history-export-dialog select { border:1px solid #d4d4d8; border-radius:4px; padding:6px; max-width:100%; }
-.history-export-dialog input[type=number] { width:90px; }
-.history-export-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:16px; }
-.clipboard-history { display:flex; flex-direction:column; flex:1; min-height:0; font-size:13px; gap:8px; overflow-y:auto; }
+/* 独立窗口自带一套色值：不依赖主窗口的 .app-shell 变量，深色主题在此统一覆盖。 */
+.clipboard-history { --clip-bg:#fff; --clip-text:#24292f; --clip-muted:#6b7280; --clip-border:#e1e4e8; --clip-card:#f6f7f8; --clip-card-hover:#eef1f4; --clip-actions:#eef1f4; --clip-press:#dfe5ec; --clip-selected:#eff6ff; --clip-selected-border:#93b4ff; --clip-accent:#2563eb; --clip-notice:#eef4fc; --clip-notice-text:#315a86; --history-danger:#b42318; --history-danger-bg:#fff1f0; }
+[data-theme=dark] .clipboard-history { --clip-bg:#1b1f24; --clip-text:#e6edf3; --clip-muted:#9aa7b4; --clip-border:#39424e; --clip-card:#252b33; --clip-card-hover:#2d3540; --clip-actions:#2d3540; --clip-press:#3a4452; --clip-selected:#223c62; --clip-selected-border:#6386b8; --clip-accent:#6ea8ff; --clip-notice:#22364d; --clip-notice-text:#c4dfff; --history-danger:#ff9c95; --history-danger-bg:#3b2327; color-scheme:dark; }
+.clipboard-history { display:flex; flex-direction:column; height:100%; min-height:0; border:1px solid var(--clip-border); background:var(--clip-bg); color:var(--clip-text); font-size:13px; user-select:none; }
 .clipboard-history > * { flex-shrink:0; }
-.clipboard-history .history-browser { display:flex; flex:1 1 160px; min-height:160px; gap:8px; }
-.history-browser .history-list { flex:1; min-width:0; overflow-y:auto; overscroll-behavior:contain; }
-.history-action-rail { display:flex; flex-direction:column; align-items:center; gap:12px; width:48px; flex-shrink:0; padding:8px 4px; overflow-y:auto; }
-.history-action-rail .history-action { width:36px; height:36px; min-height:36px; padding:0; border-radius:50%; }
-.history-selected-count { font-size:12px; color:#57606a; text-align:center; line-height:1.5; }
-.history-action-rail .history-delete { margin-top:auto; }
-.history-count { color:#57606a; font-size:12px; white-space:nowrap; }
-.history-header-actions { display:flex; margin-left:auto; }
-.history-header-actions button { padding:4px 8px; height:28px; font-size:12px; }
-.history-help-popup { padding:16px; background:#fff; color:#57606a; font-size:12px; line-height:1.6; }
-.history-help-popup p { margin:0; }
-.history-help-popup p + p { margin-top:4px; }
-[data-theme=dark] .history-help-popup { background:#20252c; color:#a8b3c2; border-color:#39424e; }
-.history-empty { padding:32px 16px; text-align:center; color:#71717a; }
-.history-tools { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin:12px 0; }
-.history-header { display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap; }
-.history-header h1 { margin-bottom:4px; }.history-header .subtitle { margin:0; }
-.history-recording { display:flex; align-items:center; gap:8px; font-size:13px; position:relative; cursor:pointer; }
-.history-recording input { position:absolute; right:0; width:38px; height:22px; opacity:0; }
-.recording-track { width:38px; height:22px; border-radius:12px; background:#a1a1aa; transition:background .15s; pointer-events:none; }
-.recording-track::after { content:''; display:block; width:18px; height:18px; margin:2px; border-radius:50%; background:white; transition:transform .15s; }
-.history-recording input:checked + .recording-track { background:#2563eb; }
-.history-recording input:checked + .recording-track::after { transform:translateX(16px); }
-.history-recording input:focus-visible + .recording-track { outline:2px solid #2563eb; outline-offset:3px; }
-.history-recording input:disabled + .recording-track { opacity:.45; }
-.clipboard-history input:not([type=checkbox]), .clipboard-history select { border:1px solid #d4d4d8; border-radius:6px; padding:6px; max-width:220px; }
-.clipboard-history input[type=number] { width:90px; }
-.history-item { display:flex; gap:8px; align-items:center; padding:8px; margin:0; border:1px solid transparent; border-bottom-color:#e4e4e7; border-radius:4px; transition:background .15s, box-shadow .15s; }
-.history-item:hover { background:#f8fafc; }
-.history-item.is-selected { background:#eff6ff; border-color:#93b4ff; box-shadow:0 2px 8px #2563eb26; }
-.history-item:focus-within { border-color:#93b4ff; }
-.history-item:focus-visible { outline:2px solid #2563eb; outline-offset:-2px; }
-.history-content { flex:1; min-width:0; text-align:left; }.history-content img { max-width:100%; max-height:96px; object-fit:contain; }
-.history-text { white-space:pre-wrap; overflow-wrap:anywhere; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; line-height:1.5; }
-.history-meta { display:flex; flex-wrap:wrap; justify-content:space-between; gap:4px 12px; color:#71717a; margin-top:4px; font-size:12px; }
-.history-image-placeholder { display:flex; height:96px; align-items:center; justify-content:center; }
-.history-content img { height:96px; display:block; margin:0 auto; box-shadow:0 1px 5px #0002; }
-.history-search { display:flex; align-items:center; gap:8px; color:#71717a; padding:2px 8px; border:1px solid #d8dee4; border-radius:4px; }
+.history-topbar { display:flex; align-items:center; gap:4px; padding:10px 10px 8px; cursor:default; }
+.history-search { display:flex; flex:1; align-items:center; gap:8px; min-width:0; height:32px; padding:0 8px; border:1px solid transparent; border-radius:8px; background:var(--clip-card); color:var(--clip-muted); }
 .history-search > svg { flex-shrink:0; }
-.history-search button { display:flex; align-items:center; justify-content:center; min-width:24px; min-height:24px; }
-.clipboard-history .history-search input { border:0; outline:none; max-width:none; min-width:0; width:100%; background:transparent; }
-.history-search:focus-within { box-shadow:0 1px #2563eb; }
-.history-categories { display:flex; flex:1; flex-wrap:wrap; min-width:0; gap:2px; }
-.history-categories button { white-space:nowrap; flex-shrink:0; display:flex; touch-action:none; user-select:none; gap:6px; align-items:center; justify-content:center; min-height:32px; padding:6px 10px; line-height:18px; border-bottom:2px solid transparent; color:#71717a; }
+.history-search input { flex:1; min-width:0; height:100%; border:0; outline:none; background:transparent; color:var(--clip-text); user-select:text; }
+.history-search input::placeholder { color:var(--clip-muted); }
+.history-search button { display:flex; align-items:center; justify-content:center; width:24px; height:24px; border-radius:4px; }
+.history-search:focus-within { border-color:var(--clip-accent); background:var(--clip-bg); }
+.history-icon-button { display:flex; flex-shrink:0; align-items:center; justify-content:center; width:32px; height:32px; border-radius:6px; color:var(--clip-muted); }
+.history-icon-button:hover { background:var(--clip-card-hover); color:var(--clip-text); }
+.history-icon-button[aria-pressed=true] { background:var(--clip-selected); color:var(--clip-accent); }
+.history-icon-button:focus-visible, .history-search button:focus-visible { outline:2px solid var(--clip-accent); outline-offset:-2px; }
+.history-categories { display:flex; gap:4px; padding:0 10px 8px; overflow-x:auto; scrollbar-width:none; }
+.history-categories::-webkit-scrollbar { display:none; }
+.history-categories button { flex-shrink:0; height:26px; padding:0 9px; border-radius:13px; color:var(--clip-muted); font-size:12px; white-space:nowrap; touch-action:none; }
+.history-categories button:hover:enabled { background:var(--clip-card-hover); color:var(--clip-text); }
+.history-categories button.active { background:var(--clip-selected); color:var(--clip-accent); font-weight:600; }
 .history-categories button.sorting-source { opacity:.5; }
-.history-categories button.sorting-target { box-shadow:inset 2px 0 #2563eb; }
-.history-categories button.active { color:#2563eb; border-bottom-color:#2563eb; background:#eff6ff; }
-@media (max-width:600px) { .history-categories button { padding-inline:8px; } }
-.history-categories .history-help-trigger { flex:0 0 32px; align-self:center; height:32px; margin-left:auto; padding:0; border:0; border-radius:4px; font-size:16px; }
-.history-categories .history-help-trigger:hover { background:#f6f7f8; }
-[data-theme=dark] .history-categories .history-help-trigger:hover { background:#2b333d; }
-.history-categories button:focus-visible { outline:2px solid #2563eb; outline-offset:-2px; }
-.clipboard-history pre { white-space:pre-wrap; overflow-wrap:anywhere; max-height:360px; overflow:auto; }
-.history-viewbar { display:flex; align-items:center; gap:8px; border-bottom:1px solid var(--desk-border, #e1e4e8); }
-.history-layout-switch { display:flex; flex-shrink:0; gap:2px; padding:2px; border:1px solid var(--desk-border, #e1e4e8); border-radius:6px; }
-.history-layout-switch button { display:flex; align-items:center; justify-content:center; width:32px; height:28px; border-radius:4px; color:var(--desk-muted, #57606a); }
-.history-layout-switch button:hover { background:var(--desk-soft, #f6f7f8); }
-.history-layout-switch button[aria-pressed=true] { color:var(--desk-accent, #2563eb); background:var(--desk-selected, #eff6ff); }
-.history-load-more { display:flex; justify-content:center; padding:12px 0; }
+.history-categories button.sorting-target { box-shadow:inset 2px 0 var(--clip-accent); }
+.history-categories button:focus-visible { outline:2px solid var(--clip-accent); outline-offset:-2px; }
+.history-notice { display:flex; align-items:center; justify-content:space-between; gap:8px; margin:0 10px 8px; padding:6px 10px; border-radius:6px; background:var(--clip-notice, #eef4fc); color:var(--clip-notice-text, #315a86); font-size:12px; line-height:1.5; overflow-wrap:anywhere; user-select:text; }
+.history-notice.error { background:var(--history-danger-bg, #fff1f0); color:var(--history-danger, #b42318); }
+.history-paused button { flex-shrink:0; height:24px; padding:0 8px; font-size:12px; }
+.clipboard-history .history-list { flex:1 1 0; min-height:0; padding:0 10px; overflow-y:auto; overscroll-behavior:contain; scrollbar-width:thin; }
+.history-list .history-virtual-row { padding-bottom:6px; }
+.history-empty { padding:48px 16px; text-align:center; color:var(--clip-muted); }
+.history-load-more { display:flex; justify-content:center; padding:8px 0 12px; }
 .history-load-more > span { display:inline-flex; align-items:center; gap:6px; }
+.history-load-more button { min-width:64px; min-height:32px; }
 .history-spinner { animation:history-spin 1s linear infinite; }
 @keyframes history-spin { to { transform:rotate(360deg); } }
 @media (prefers-reduced-motion:reduce) { .history-spinner { animation:none; } }
-.history-load-more button { min-width:64px; min-height:32px; }
-.history-list.is-grid .history-item { position:relative; align-items:flex-start; height:216px; padding:12px; border:1px solid var(--desk-border, #e1e4e8); border-radius:6px; background:var(--desk-bg, #fff); }
-.history-list.is-grid .history-item.is-selected { border-color:#93b4ff; background:var(--desk-selected, #eff6ff); }
-.history-list.is-grid .history-content { display:flex; flex-direction:column; align-self:stretch; }
-.history-list.is-grid .history-content img, .history-list.is-grid .history-image-placeholder { width:100%; height:140px; max-height:140px; box-shadow:none; }
-.history-list.is-grid .history-text { -webkit-line-clamp:6; }
-.history-list.is-grid .history-meta { width:100%; margin-top:auto; padding-top:8px; font-size:11px; }
-/* 入口用红色文字，实际删除确认使用实色危险按钮；取消保持普通操作样式。 */
-.clipboard-history { --history-danger:#b42318; --history-danger-bg:#fff1f0; --history-danger-border:#fecaca; }
+.history-footer { display:flex; align-items:center; justify-content:space-between; gap:8px; height:40px; padding:0 6px 0 12px; border-top:1px solid var(--clip-border); color:var(--clip-muted); font-size:12px; }
+.history-count, .history-message, .history-selected-count { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.history-message { color:var(--ui-success-fg, #24834b); }
+.history-selected-count { color:var(--clip-accent); font-weight:600; }
+.history-footer-actions { display:flex; flex-shrink:0; align-items:center; gap:2px; }
+.history-footer-actions button { height:28px; padding:0 8px; gap:4px; font-size:12px; }
+.history-footer-actions .history-icon-button, .history-footer-actions .history-action { width:28px; padding:0; }
 .clipboard-history .history-clear, .clipboard-history .history-delete { color:var(--history-danger); }
 .clipboard-history .history-clear:hover:enabled, .clipboard-history .history-delete:hover:enabled { color:var(--history-danger); background:var(--history-danger-bg); }
-.clipboard-history .history-delete { border-color:var(--history-danger-border); }
-[data-theme=dark] .clipboard-history { --history-danger:#ff9c95; --history-danger-bg:#3b2327; --history-danger-border:#74414a; }
+/* 帮助、导出与确认内容被移入独立子窗口，样式不能依赖 .clipboard-history 祖先。 */
+.history-help-popup { min-height:100%; padding:16px; background:#fff; color:#57606a; font-size:12px; line-height:1.6; }
+.history-help-popup p { margin:0; }
+.history-help-popup p + p { margin-top:4px; }
+[data-theme=dark] .history-help-popup { background:#20252c; color:#a8b3c2; }
+.history-confirm-option { display:flex; align-items:center; gap:8px; min-height:32px; }
 </style>

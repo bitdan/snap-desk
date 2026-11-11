@@ -19,6 +19,15 @@
 .general-settings-page .setting-field :is(input,select) { width:100%; min-width:0; height:32px; padding:4px 8px; border:1px solid #d8dee4; border-radius:4px; background:#fff; color:inherit; }
 .general-settings-page .setting-field label { color:#57606a; font-size:12px; }
 .app-shell .general-settings-page .setting-row { min-height:48px; }
+/* 设置页共用的开关外观：开机自启、剪贴板记录等立即生效的启停项。 */
+.general-settings-page .settings-switch { flex-shrink:0; width:38px; height:22px; padding:2px; border-radius:12px; background:#a1a1aa; transition:background .15s; }
+.general-settings-page .settings-switch span { display:block; width:18px; height:18px; border-radius:50%; background:#fff; transition:transform .15s; }
+.general-settings-page .settings-switch[aria-checked=true] { background:#2563eb; }
+.general-settings-page .settings-switch[aria-checked=true] span { transform:translateX(16px); }
+.general-settings-page .settings-switch:disabled { opacity:.45; cursor:not-allowed; }
+.general-settings-page .settings-switch:focus-visible { outline:2px solid #2563eb; outline-offset:3px; }
+.general-settings-page .clipboard-launch { display:flex; align-items:center; flex-wrap:wrap; gap:12px; padding-bottom:8px; }
+.general-settings-page .clipboard-settings > h2 { margin-top:16px; }
 .general-settings-page .clipboard-record-options { display:flex; flex-wrap:wrap; gap:8px 24px; margin-bottom:12px; }
 .general-settings-page .clipboard-record-options label { display:flex; align-items:center; gap:8px; min-height:28px; cursor:pointer; }
 .general-settings-page .clipboard-limits { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:16px; }

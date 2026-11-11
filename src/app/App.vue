@@ -6,7 +6,7 @@ import SelectControl from '@/shared/ui/SelectControl.vue'
 import { updateSettings } from '@/features/settings/settings-write'
 import { t, te } from '@/shared/i18n/i18n'
 import { computed, defineAsyncComponent, onMounted, onUnmounted, ref, watch } from 'vue'
-import { Camera, Timer, Keyboard, Info, Scan, Languages, KeyRound, PanelLeftClose, Pin, Video, Folder, ArrowLeftRight, CircleHelp, Settings as SettingsIcon, FileText, Check } from 'lucide-vue-next'
+import { Camera, Timer, Keyboard, Info, Scan, Languages, KeyRound, PanelLeftClose, Pin, Video, ClipboardList, ArrowLeftRight, CircleHelp, Settings as SettingsIcon, FileText, Check } from 'lucide-vue-next'
 const DiagnosticsSettings = defineAsyncComponent(() => import('@/features/diagnostics/components/DiagnosticsSettings.vue'))
 const ConfigTransferSettings = defineAsyncComponent(() => import('@/features/settings/components/ConfigTransferSettings.vue'))
 const GeneralSettings = defineAsyncComponent(() => import('@/features/settings/components/GeneralSettings.vue'))
@@ -15,15 +15,17 @@ const ServiceSettings = defineAsyncComponent(() => import('@/features/recognitio
 const AiProviderSettings = defineAsyncComponent(() => import('@/features/recognition/components/AiProviderSettings.vue'))
 import SupportPages from '@/app/components/SupportPages.vue'
 import './styles/workspace.css'
+import '@/features/settings/settings.css'
 import OnboardingGuide from '@/app/components/OnboardingGuide.vue'
 import ShortcutInput from '@/features/settings/components/ShortcutInput.vue'
 import ShortcutCompatibility from '@/features/settings/components/ShortcutCompatibility.vue'
 const loadRecordingPanel = () => import('@/features/recording/components/RecordingPanel.vue')
 const RecordingPanel = defineAsyncComponent(loadRecordingPanel)
-const ClipboardHistory = defineAsyncComponent(() => import('@/features/clipboard/components/ClipboardHistory.vue'))
+const ClipboardSettings = defineAsyncComponent(() => import('@/features/clipboard/components/ClipboardSettings.vue'))
+const ShelfSettings = defineAsyncComponent(() => import('@/features/shelf/components/ShelfSettings.vue'))
 const PinManager = defineAsyncComponent(() => import('@/features/pins/components/PinManager.vue'))
 import Button from '@/shared/ui/button/Button.vue'
-import { api, desktop, onDelay, onError, onSettingsChanged, onSettingsImported, onClipboardOpen, type Settings } from '@/services/api'
+import { api, desktop, onDelay, onError, onSettingsChanged, onSettingsImported, type Settings } from '@/services/api'
 import type { AppStatus } from '@/features/settings/types'
 import { defaultSettings, exportFilenamePreview, validateExportSettings, validateShortcuts, shortcutActions, needsOnboarding } from '@/features/settings/settings'
 import { errorMessage } from '@/services/errors'
@@ -41,7 +43,7 @@ function prefetchPage(name: string) {
 }
 // 导航按操作、配置与支持分组，日志拥有独立页面。
 const groups = [
-  { name: '工具', items: [{ name: '截图', icon: Camera }, { name: '录屏', icon: Video }, { name: '贴图', icon: Pin }, { name: '剪贴板', icon: Folder }] },
+  { name: '工具', items: [{ name: '截图', icon: Camera }, { name: '录屏', icon: Video }, { name: '贴图', icon: Pin }, { name: '剪贴板', icon: ClipboardList }] },
   { name: '设置', items: [{ name: '通用', icon: SettingsIcon }, { name: '快捷键', icon: Keyboard }, { name: '导入/导出', icon: ArrowLeftRight }, { name: '文字识别', icon: Scan }, { name: '翻译', icon: Languages }, { name: '服务管理', icon: KeyRound }] },
   { name: '支持', items: [{ name: '日志', icon: FileText }, { name: '帮助', icon: CircleHelp }, { name: '关于', icon: Info }] },
 ]
@@ -174,7 +176,7 @@ async function initialize() {
   if (!desktop || initializing.value || disposed) return
   initializing.value = true; initializationFailed.value = false; error.value = ''
   try {
-    for (const subscribe of [() => onClipboardOpen(() => { page.value = '剪贴板' }), () => onSettingsChanged(applySettingsSnapshot), () => onSettingsImported(configImported), () => onError(e => { error.value = e }), () => onDelay(value => { delayRevision++; remaining.value = value })]) {
+    for (const subscribe of [() => onSettingsChanged(applySettingsSnapshot), () => onSettingsImported(configImported), () => onError(e => { error.value = e }), () => onDelay(value => { delayRevision++; remaining.value = value })]) {
       // 单个事件订阅失败只影响该通知，不能把整个主界面判为初始化失败。
       try {
         const off = await subscribe()
@@ -221,7 +223,7 @@ onUnmounted(() => { disposed = true; window.removeEventListener('keydown', key);
     </aside>
     <main class="workspace">
       <header class="topbar"><div class="page-breadcrumb"><span>{{ t(pageGroup) }}</span><span aria-hidden="true">/</span><h1>{{ t(page) }}</h1></div><div class="flex items-center gap-2"><Button variant="ghost" :disabled="locked" :aria-pressed="status?.settings.shortcutsEnabled" :title="t(status?.settings.shortcutsEnabled ? '禁用全部全局快捷键' : '启用全部全局快捷键')" @click="toggleShortcuts"><Check v-if="status?.settings.shortcutsEnabled && !status.shortcutError" :size="15" class="status-check" /><Keyboard v-else :size="15" />{{ t('快捷键') }} {{ !status ? t('未读取') : status.shortcutError ? t('注册异常') : status.settings.shortcutsEnabled ? t('已启用') : t('已禁用') }}</Button><Button variant="ghost" :title="t('隐藏主窗口，保留托盘运行')" :disabled="!desktop" @click="hide"><PanelLeftClose :size="15" />{{ t('收起') }}</Button></div></header>
-      <div class="page-content" :data-page="page" :class="{ 'clipboard-page': page === '剪贴板', 'logs-page': page === '日志' }">
+      <div class="page-content" :data-page="page" :class="{ 'logs-page': page === '日志' }">
         <UpdateNotice :show-trigger="page !== '关于'" @version="availableUpdate = $event" />
         <div v-if="initializing" class="notice" role="status">{{ t("正在读取应用设置…") }}</div>
         <div v-if="!desktop" class="notice">{{ t('请在桌面应用中使用截图和快捷键。') }}</div>
@@ -257,7 +259,11 @@ onUnmounted(() => { disposed = true; window.removeEventListener('keydown', key);
           </form>
         </template>
 
-        <ClipboardHistory v-else-if="page === '剪贴板'" />
+        <!-- 历史列表在独立窗口；这里只保留唤出入口以及记录、暂存架两组设置。 -->
+        <section v-else-if="page === '剪贴板'" class="general-settings-page">
+          <ClipboardSettings :disabled="locked" :shortcut="status?.settings.shortcutsEnabled ? status.settings.shortcuts.history : ''" />
+          <ShelfSettings />
+        </section>
         <DiagnosticsSettings v-else-if="page === '日志'" />
         <GeneralSettings v-else-if="page === '通用'">
           <AppearanceSettings :busy="locked" :saved="savedSection === '通用'" @save="saveAppearance" />

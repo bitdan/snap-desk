@@ -906,7 +906,7 @@ mod tests {
         assert_eq!(old.shortcuts.pin, "F2");
         assert_eq!(old.shortcuts.record, "F3");
         assert_eq!(old.shortcuts.history, "F4");
-        assert!(!old.clipboard.enabled);
+        assert!(old.clipboard.enabled);
         assert!(!old.receive_prerelease_updates);
         for json in [
             r#"{"shortcut":"F4"}"#,

@@ -1,4 +1,4 @@
-//! 剪贴板历史的受限入口；历史管理仅限 main，暂存架只复用单条读取、复制、贴图和拖出。
+//! 剪贴板历史的受限入口；历史管理限剪贴板窗口与主窗口，暂存架只复用单条读取、复制、贴图和拖出。
 mod blob_store;
 mod classification;
 pub mod export;
@@ -8,6 +8,7 @@ mod platform;
 mod reader;
 mod repository;
 mod service;
+mod window;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use model::*;
 use service::Content;
@@ -50,8 +51,11 @@ async fn work_impl<T: Send + 'static>(
     shelf: bool,
     f: impl FnOnce(&AppHandle, &Service) -> Result<T, String> + Send + 'static,
 ) -> Result<T, String> {
-    if !(shelf && window.label() == "shelf") {
-        crate::capture::require_window(&window, "main")?;
+    // 列表在独立剪贴板窗口，设置入口在主窗口；两者共用同一组历史命令。
+    let allowed =
+        service::UI_WINDOWS.contains(&window.label()) || shelf && window.label() == "shelf";
+    if !allowed {
+        return Err("当前窗口无权执行此操作。".into());
     }
     tauri::async_runtime::spawn_blocking(move || f(&app, &app.state::<Service>()))
         .await
@@ -312,7 +316,30 @@ pub async fn clipboard_configure(
     settings: ClipboardSettings,
 ) -> Result<Status, String> {
     settings.validate()?;
+    work(app, window, move |app, s| apply_settings(app, s, move |_| settings)).await
+}
+/// 剪贴板窗口只切换记录启停；其余字段沿用已提交配置，窗口无需读取完整应用设置。
+#[tauri::command]
+pub async fn clipboard_set_enabled(
+    app: AppHandle,
+    window: WebviewWindow,
+    enabled: bool,
+) -> Result<Status, String> {
     work(app, window, move |app, s| {
+        apply_settings(app, s, move |mut current| {
+            current.enabled = enabled;
+            current
+        })
+    })
+    .await
+}
+/// 在设置写闸门内基于最新已提交配置生成新值，再依次重启监听、落盘和按新配额维护。
+fn apply_settings(
+    app: &AppHandle,
+    s: &Service,
+    change: impl FnOnce(ClipboardSettings) -> ClipboardSettings,
+) -> Result<Status, String> {
+    {
         let state = app.state::<crate::settings::SettingsState>();
         // 与普通设置保存共用写闸门；剪贴板启停和配置落盘都在设置数据锁之外。
         let _gate = state.1.gate().map_err(|_| "设置不可用。")?;
@@ -320,11 +347,15 @@ pub async fn clipboard_configure(
             let current = state.0.lock().map_err(|_| "设置不可用。")?;
             (current.value.clipboard.clone(), current.value.clone())
         };
+        let settings = change(old.clone());
         next.clipboard = settings.clone();
         if let Err(error) = s.configure(app, settings) {
             let _ = s.configure(app, old.clone());
             s.report(app, error.clone());
-            let _ = app.emit_to("main", "clipboard-state", s.status());
+            let status = s.status();
+            for label in service::UI_WINDOWS {
+                let _ = app.emit_to(label, "clipboard-state", &status);
+            }
             return Err(error);
         }
         let path = app
@@ -348,10 +379,11 @@ pub async fn clipboard_configure(
         }
         let _ = app.emit_to("main", "settings-changed", &next);
         let status = s.status();
-        let _ = app.emit_to("main", "clipboard-state", &status);
+        for label in service::UI_WINDOWS {
+            let _ = app.emit_to(label, "clipboard-state", &status);
+        }
         Ok(status)
-    })
-    .await
+    }
 }
 /// 完整配置提交成功后再按新配额维护，失败的导入不能清理历史。
 pub(crate) fn settings_imported(app: &AppHandle) {
@@ -359,12 +391,79 @@ pub(crate) fn settings_imported(app: &AppHandle) {
     if let Err(error) = service.maintain(app) {
         service.report(app, error);
     }
-    let _ = app.emit_to("main", "clipboard-state", service.status());
+    let status = service.status();
+    for label in service::UI_WINDOWS {
+        let _ = app.emit_to(label, "clipboard-state", &status);
+    }
 }
 
+/// 快捷键与托盘在主线程回调；建窗可能等待 UI 线程，必须移到阻塞任务中执行。
 pub fn open_history(app: &AppHandle) {
-    crate::capture::show_main(app);
-    let _ = app.emit_to("main", "clipboard-open", ());
+    let app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        if let Err(error) = window::toggle(&app) {
+            crate::capture::report_error(&app, error);
+        }
+    });
+}
+
+/// 窗口失焦只转告前端：是否收起取决于固定状态及是否有预览、导出等子窗口。
+/// WebView2 在点击页面、开始拖动时会把焦点在外层窗口与内部 WebView 之间转交，
+/// 期间会先报一次失焦再立刻报获得焦点；因此延迟复核，仍未取得焦点才算真正离开。
+pub fn window_blurred(app: &AppHandle) {
+    let app = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        let Some(window) = app.get_webview_window(window::LABEL) else {
+            return;
+        };
+        if window.is_visible().unwrap_or(false) && !window.is_focused().unwrap_or(true) {
+            let _ = app.emit_to(window::LABEL, "clipboard-blur", ());
+        }
+    });
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum WindowAction {
+    Open,
+    Hide,
+    Drag,
+}
+
+/// 主窗口只能唤出；收起与拖动仅限剪贴板窗口自身，其他窗口不能操纵它。
+/// 同步命令在主线程执行：系统拖动必须在鼠标仍按下时由 UI 线程发起，否则按下已结束、拖动无效。
+/// 显示与收起会等待 UI 线程处理窗口消息，因此移到后台线程，不能在这里阻塞主线程。
+#[tauri::command]
+pub fn clipboard_window_control(
+    app: AppHandle,
+    window: WebviewWindow,
+    action: WindowAction,
+) -> Result<(), String> {
+    match action {
+        WindowAction::Drag => {
+            crate::capture::require_window(&window, window::LABEL)?;
+            window.start_dragging().map_err(|e| e.to_string())
+        }
+        WindowAction::Open => {
+            crate::capture::require_window(&window, "main")?;
+            tauri::async_runtime::spawn_blocking(move || {
+                if let Err(error) = window::show(&app) {
+                    crate::capture::report_error(&app, error);
+                }
+            });
+            Ok(())
+        }
+        WindowAction::Hide => {
+            crate::capture::require_window(&window, window::LABEL)?;
+            tauri::async_runtime::spawn_blocking(move || {
+                if let Err(error) = window::hide(&app) {
+                    crate::capture::report_error(&app, error);
+                }
+            });
+            Ok(())
+        }
+    }
 }
 
 /// 按历史 ID 拖出原图、文件或文本；原图临时文件沿用贴图的生命周期管理。

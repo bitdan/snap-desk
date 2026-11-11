@@ -4,6 +4,7 @@
   "description": "Local application windows may submit diagnostic events only.",
   "windows": [
     "main",
+    "clipboard",
     "capture",
     "pin-*",
     "scroll-preview",

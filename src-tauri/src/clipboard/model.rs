@@ -17,7 +17,8 @@ pub struct ClipboardSettings {
 impl Default for ClipboardSettings {
     fn default() -> Self {
         Self {
-            enabled: false,
+            // 默认记录：新安装或配置重置后复制即有历史；暂停入口在剪贴板设置。
+            enabled: true,
             max_items: 500,
             max_storage_mb: 200,
             max_text_bytes: 1_048_576,
