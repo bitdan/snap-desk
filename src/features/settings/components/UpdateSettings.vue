@@ -2,6 +2,8 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { Check } from 'lucide-vue-next'
 import Button from '@/shared/ui/button/Button.vue'
+import SwitchControl from '@/shared/ui/SwitchControl'
+import SettingRow from '@/shared/ui/SettingRow'
 import { t, te } from '@/shared/i18n/i18n'
 import { api, desktop } from '@/services/api'
 import { onSettingsImported, requestUpdateWindow } from '@/features/settings/events'
@@ -74,10 +76,9 @@ onUnmounted(() => { disposed = true; if (timer) clearInterval(timer); unsubscrib
   <section class="update-settings">
     <h2 class="section-heading">{{ t('应用更新') }}</h2>
     <p v-if="updatePreview" class="notice">{{ t('模拟更新，不会下载文件或退出应用。') }}</p>
-    <div class="setting-row flex-wrap gap-3">
-      <label for="receive-prerelease" class="min-w-0 flex-1">{{ t('测试版更新') }}</label>
-      <button id="receive-prerelease" type="button" class="update-switch" role="switch" :aria-label="t('测试版更新')" :aria-checked="preview === true" :disabled="updatePreview || !desktop || preview === null || operating || saving" @click="togglePreview"><span aria-hidden="true" /></button>
-    </div>
+    <SettingRow :label="t('测试版更新')" for="receive-prerelease">
+      <SwitchControl id="receive-prerelease" :model-value="preview === true" :disabled="updatePreview || !desktop || preview === null || operating || saving" @update:model-value="togglePreview" />
+    </SettingRow>
     <div class="setting-row flex-wrap gap-3">
       <div class="update-version"><span>{{ view ? `v${view.currentVersion}` : t('版本待读取') }}</span><span v-if="view && !hasUpdate && ['checking', 'latest', 'error'].includes(view.phase)" role="status" :class="view.phase === 'latest' ? 'status-ok' : ''"><Check v-if="view.phase === 'latest'" :size="14" />{{ t(phaseLabel) }}</span></div>
       <Button variant="outline" :disabled="!enabled || (!hasUpdate && operating) || saving" @click="hasUpdate ? requestUpdateWindow() : run(api.checkAppUpdate)"><span v-if="hasUpdate" class="update-dot" aria-hidden="true" />{{ t(hasUpdate ? '有更新' : '检查更新') }}</Button>
@@ -92,10 +93,4 @@ onUnmounted(() => { disposed = true; if (timer) clearInterval(timer); unsubscrib
 .update-settings { padding: 0 0 16px; border-bottom: 1px solid var(--desk-border); }
 .update-version { display:flex; flex-wrap:wrap; align-items:center; gap:8px 12px; }
 .update-dot { width:6px; height:6px; flex:none; border-radius:50%; background:#dc2626; }
-.update-switch { flex-shrink:0; width:38px; height:22px; padding:2px; border-radius:12px; background:#a1a1aa; transition:background .15s; }
-.update-switch span { display:block; width:18px; height:18px; border-radius:50%; background:#fff; transition:transform .15s; }
-.update-switch[aria-checked=true] { background:#2563eb; }
-.update-switch[aria-checked=true] span { transform:translateX(16px); }
-.update-switch:disabled { opacity:.45; cursor:not-allowed; }
-.update-switch:focus-visible { outline:2px solid #2563eb; outline-offset:3px; }
 </style>

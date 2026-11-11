@@ -2,6 +2,8 @@
 import { t, te } from '@/shared/i18n/i18n'
 import { onMounted, ref } from 'vue'
 import Button from '@/shared/ui/button/Button.vue'
+import SwitchControl from '@/shared/ui/SwitchControl'
+import SettingRow from '@/shared/ui/SettingRow'
 import ResourceSettings from '@/features/resources/components/ResourceSettings.vue'
 import { Check } from 'lucide-vue-next'
 import { api, desktop } from '@/services/api'
@@ -62,12 +64,11 @@ onMounted(() => { void run(refresh); void refreshAutostart() })
   <section class="general-settings-page">
     <section class="general-section">
       <slot />
-      <div class="setting-row flex-wrap gap-3">
-        <div class="min-w-0 flex-1"><strong>{{ t('开机自启') }}</strong></div>
+      <SettingRow :label="t('开机自启')" for="autostart">
         <span :class="autostart && !startupBusy ? 'status-ok' : 'text-sm text-zinc-500'" role="status"><Check v-if="autostart && !startupBusy" :size="14" />{{ startupBusy ? t('处理中…') : autostart === null ? t('状态未读取') : autostart ? t('已开启') : t('已关闭') }}</span>
-        <button type="button" class="settings-switch" role="switch" :disabled="!desktop || startupBusy || autostart === null" :aria-checked="autostart === true" :aria-label='t("开机自启")' :aria-busy="startupBusy" @click="toggleAutostart"><span aria-hidden="true" /></button>
+        <SwitchControl id="autostart" :model-value="autostart === true" :disabled="!desktop || startupBusy || autostart === null" :busy="startupBusy" @update:model-value="toggleAutostart" />
         <Button v-if="autostart === null && !startupBusy" variant="ghost" :disabled="!desktop" @click="refreshAutostart">{{ t('重新读取') }}</Button>
-      </div>
+      </SettingRow>
       <p v-if="startupError" class="notice error" role="alert">{{ te(startupError) }}</p>
     </section>
     <section class="general-section general-font"><h2>{{ t('导出字体') }}</h2><ResourceSettings kind="font" /></section>

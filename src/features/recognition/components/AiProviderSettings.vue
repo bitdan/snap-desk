@@ -17,6 +17,8 @@ import type { AiSettings, LocalTranslationStatus } from '@/features/recognition/
 import { Check } from 'lucide-vue-next'
 import Button from '@/shared/ui/button/Button.vue'
 import InfoTip from '@/shared/ui/InfoTip.vue'
+import SwitchControl from '@/shared/ui/SwitchControl'
+import SettingRow from '@/shared/ui/SettingRow'
 import { cloudFirst, connectionMode, supportsTranslation, translationPresetId, translationService, type RecognitionService } from '@/features/recognition/services'
 
 const activeSettings = ref<AiSettings | null>(null)
@@ -241,7 +243,7 @@ async function modelAction(modelId: string, action: 'download' | 'import' | 'del
       <div class="translation-options">
         <label>{{ t("默认目标语言") }}<SelectControl v-model="draft.targetLanguage" :disabled="busy || !ready" :aria-label="t('目标语言')" :options="languages.map(item => ({ value: item.value, label: t(item.label) }))" @update:model-value="autosave.commit" /></label>
         <label>{{ t("超时（秒）") }}<input v-model.number="draft.timeoutSeconds" type="number" min="5" max="120" /></label>
-        <div class="setting-row"><label for="translation-auto-copy">{{ t("翻译后自动复制译文") }}</label><input id="translation-auto-copy" v-model="draft.autoCopy" type="checkbox" role="switch" /></div>
+        <SettingRow :label='t("翻译后自动复制译文")' for="translation-auto-copy"><SwitchControl id="translation-auto-copy" v-model="draft.autoCopy" @change="autosave.commit" /></SettingRow>
         <div v-if="local" class="idle-field"><div class="field-label"><label for="translation-idle-seconds">{{ t("闲置回收（秒）") }}</label><InfoTip :text="t('0 不回收；可设为 30～3600 秒。')" /></div><input id="translation-idle-seconds" v-model.number="draft.localIdleSeconds" type="number" min="0" max="3600" step="1" /></div>
       </div>
       <div class="actions"><span v-if="autosave.saving.value || autosave.saved.value" class="settings-save-status" :class="{ 'status-ok': !autosave.saving.value }" role="status"><Check v-if="!autosave.saving.value" :size="14" />{{ autosave.saving.value ? t("正在保存…") : t("已自动保存") }}</span><Button variant="outline" :disabled="!local && !localEndpoint && !configured" @click="credentialAction('test')">{{ t("测试已保存配置") }}</Button><InfoTip v-if="!local && !localEndpoint" :text="t('测试会发送 Hello，可能产生费用。')" /><Button v-if="!local && !draft.serviceId" variant="ghost" :disabled="!configured" @click="credentialAction('delete')">{{ t("删除已保存密钥") }}</Button></div>
@@ -270,7 +272,7 @@ input:focus-visible, select:focus-visible { outline:2px solid #2563eb; outline-o
 .model-name { overflow-wrap:anywhere; }
 .model-actions { display:flex; align-items:center; justify-content:flex-end; flex-wrap:wrap; gap:6px; }
 .translation-options { display:flex; flex-direction:column; gap:8px; margin:16px 0; }
-.translation-options > label { display:grid; grid-template-columns:124px minmax(0,1fr); align-items:center; gap:12px; margin:0; font-size:13px; }
+.translation-options label { display:grid; grid-template-columns:124px minmax(0,1fr); align-items:center; gap:12px; margin:0; font-size:13px; }
 .translation-options :is(input,select) { font-size:13px; color:#24292f; }
 .idle-field { display:grid; grid-template-columns:124px minmax(0,1fr); gap:12px; align-items:center; }
 .field-label { display:flex; align-items:center; gap:2px; }

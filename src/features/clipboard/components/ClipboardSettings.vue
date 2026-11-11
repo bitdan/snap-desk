@@ -6,6 +6,8 @@ import { useAutoSave } from '@/shared/ui/use-auto-save'
 import { api, desktop, onClipboardState } from '@/services/api'
 import { defaultClipboardSettings, parseExcludedApps, validateExcludedApps, type ClipboardStatus } from '@/features/clipboard/clipboard'
 import Button from '@/shared/ui/button/Button.vue'
+import SwitchControl from '@/shared/ui/SwitchControl'
+import SettingRow from '@/shared/ui/SettingRow'
 
 /** 主窗口的剪贴板页：唤出独立窗口，并集中放置记录开关、记录范围与自动清理。 */
 defineProps<{ disabled?: boolean; shortcut?: string }>()
@@ -70,11 +72,10 @@ onUnmounted(() => { disposed = true; offState?.() })
       <kbd v-if="shortcut">{{ shortcut }}</kbd>
       <span v-if="status" class="settings-note">{{ status.count }} {{ t("条 ·") }} {{ (status.byteSize / 1048576).toFixed(1) }} MiB</span>
     </div>
-    <div class="setting-row flex-wrap gap-3">
-      <div class="min-w-0 flex-1"><strong>{{ t("记录剪贴板历史") }}</strong></div>
+    <SettingRow :label='t("记录剪贴板历史")' for="history-recording">
       <span :class="status?.enabled ? 'status-ok' : 'text-sm text-zinc-500'" role="status"><Check v-if="status?.enabled" :size="14" />{{ !status ? t("状态未读取") : !status.supported ? t("当前平台不支持") : status.enabled ? t("正在记录") : t("已暂停") }}</span>
-      <button type="button" class="settings-switch" role="switch" :disabled="disabled || !desktop || busy || !status?.supported" :aria-checked="status?.enabled === true" :aria-label='t("记录剪贴板历史")' :aria-busy="busy" @click="toggleRecording"><span aria-hidden="true" /></button>
-    </div>
+      <SwitchControl id="history-recording" :model-value="status?.enabled === true" :disabled="disabled || !desktop || busy || !status?.supported" :busy="busy" @update:model-value="toggleRecording" />
+    </SettingRow>
     <p v-if="status?.error" class="notice error" role="alert">{{ te(status.error) }}</p>
     <h2 id="clipboard-settings-title">{{ t("剪贴板记录与自动清理") }}</h2>
     <form @submit.prevent @input="autosave.schedule" @change="autosave.commit" @focusout="autosave.flush">
@@ -89,10 +90,9 @@ onUnmounted(() => { disposed = true; offState?.() })
           <div class="setting-field"><label for="history-size">{{ t("容量上限（MiB）") }}</label><input id="history-size" v-model.number="settings.maxStorageMb" type="number" min="50" max="2048" required /></div>
           <div class="setting-field"><label for="history-days">{{ t("保留天数（0 为不限）") }}</label><input id="history-days" v-model.number="settings.retainDays" type="number" min="0" max="3650" required /></div>
         </div>
-        <div class="setting-row">
-          <label for="history-paste">{{ t("回车或双击后直接粘贴到原窗口") }}</label>
-          <input id="history-paste" v-model="settings.pasteOnActivate" type="checkbox" role="switch" />
-        </div>
+        <SettingRow :label='t("回车或双击后直接粘贴到原窗口")' for="history-paste">
+          <SwitchControl id="history-paste" v-model="settings.pasteOnActivate" @change="autosave.commit" />
+        </SettingRow>
         <div class="setting-field clipboard-excluded">
           <label for="history-excluded">{{ t("不记录这些程序复制的内容") }}</label>
           <input id="history-excluded" v-model="excludedText" type="text" autocomplete="off" spellcheck="false" :placeholder='t("程序文件名，用逗号分隔，如 KeePass.exe, 1Password.exe")' />
