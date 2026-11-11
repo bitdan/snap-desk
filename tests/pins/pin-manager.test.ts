@@ -3,8 +3,8 @@ import { h, nextTick } from 'vue'
 import { clientComponent, findNode, MemoryNode, memoryRenderer } from '../helpers/component-host'
 import { defaultSettings } from '../../src/features/settings/settings'
 
-const api = vi.hoisted(() => ({ status: vi.fn(), saveSettings: vi.fn(), listPins: vi.fn(), managePins: vi.fn(), pinClipboard: vi.fn(), pinFile: vi.fn(), setPinGroup: vi.fn() }))
-vi.mock('../../src/services/api', () => ({ api, desktop: true, onPinsChanged: async () => () => {} }))
+const api = vi.hoisted(() => ({ status: vi.fn(), saveSettings: vi.fn(), pinClipboard: vi.fn(), pinFile: vi.fn() }))
+vi.mock('../../src/services/api', () => ({ api, desktop: true }))
 vi.mock('../../src/shared/ui/SelectControl.vue', async () => ({ default: (await import('../helpers/select-control')).SelectControlStub }))
 vi.mock('../../src/shared/ui/button/Button.vue', async () => {
   const { defineComponent, h } = await import('vue')
@@ -43,7 +43,6 @@ describe('贴图管理与外观', () => {
   })
   it('页面只有创建入口与外观设置，不再列出或筛选贴图', async () => {
     memoryRenderer.render(h(Component), root); await flush()
-    expect(api.listPins).not.toHaveBeenCalled()
     expect(findNode(root, node => node.type === 'article')).toBeUndefined()
     expect(findNode(root, node => node.props.id === 'pin-corner')).toBeDefined()
   })

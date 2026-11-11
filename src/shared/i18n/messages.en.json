@@ -510,8 +510,6 @@
   "恢复 100% 查看比例": "Reset zoom to 100%",
   "放大": "Zoom in",
   "复制 Ctrl/⌘+C": "Copy · Ctrl/⌘+C",
-  "隐藏 Esc": "Hide · Esc",
-  "关闭 Ctrl/⌘+W": "Close · Ctrl/⌘+W",
   "收起工具（Tab）": "Hide tools (Tab)",
   "收起工具": "Hide tools",
   "图片处理": "Image adjustments",
@@ -526,7 +524,6 @@
   "解锁贴图": "Unlock pin",
   "锁定贴图": "Lock pin",
   "收起工具栏": "Collapse toolbar",
-  "隐藏贴图": "Hide pin",
   "关闭贴图": "Close pin",
   "左转": "Rotate left",
   "右转": "Rotate right",
@@ -764,7 +761,6 @@
   "订阅 {0}：{1}": "Subscribe to {0}: {1}",
   "桌面通信返回了空错误响应，请退出应用后重试。": "Desktop returned an empty error response. Exit the app and try again.",
   "桌面通信失败，未返回错误详情。": "Desktop communication failed without error details.",
-  "分组名称最多 32 个字符，且不能包含控制字符。": "Group names must be at most 32 characters without control characters.",
   "请输入有效秒数，最多三位小数。": "Enter valid seconds with up to three decimal places.",
   "时间超出有效范围。": "Time is outside the valid range.",
   "结束时间须大于开始时间，至少保留 0.02 秒且不能超过原片时长。": "End must follow start, leave at least 0.02 seconds and stay within the original duration.",
@@ -1220,5 +1216,6 @@
   "识别后自动复制文字": "Copy text automatically after recognition",
   "识别后自动合并换行": "Merge line breaks automatically after recognition",
   "把同一段落的多行拼成一行，空行仍分段；可在结果里还原。": "Joins the lines of a paragraph into one; blank lines still separate paragraphs. You can restore the original in the result.",
-  "翻译后自动复制译文": "Copy the translation automatically"
+  "翻译后自动复制译文": "Copy the translation automatically",
+  "关闭 Esc": "Close · Esc"
 }

@@ -1,7 +1,7 @@
 /** 本功能拥有的 IPC 命令；底层调用统一经过 services/ipc。 */
 import type { Rect } from '@/shared/geometry/selection'
 import type { Annotation } from '@/features/annotations/annotations'
-import type { PinView, PinFrame, PinSummary, PinTransform, PinAction, PinManageAction } from '@/features/pins/types'
+import type { PinView, PinFrame, PinTransform, PinAction } from '@/features/pins/types'
 import { invoke } from '@/services/ipc'
 
 export const pinsApi = {
@@ -11,9 +11,6 @@ export const pinsApi = {
   pinFile: () => invoke<boolean>('pin_file'),
   currentPin: (knownRevision: number | null = null) => invoke<PinFrame>('current_pin', { knownRevision }),
   setPinAnnotations: (annotations: Annotation[]) => invoke<void>('set_pin_annotations', { annotations }),
-  listPins: () => invoke<PinSummary[]>('list_pins'),
-  managePins: (action: PinManageAction, label: string | null = null, group: string | null = null) => invoke<void>('manage_pins', { action, label, group }),
-  setPinGroup: (labels: string[], group: string) => invoke<void>('set_pin_group', { labels, group }),
   setPinView: (view: PinView) => invoke<PinView>('set_pin_view', { view }),
   dragPin: () => invoke<void>('drag_pin'),
   /** 物理像素、相对窗口左上角；null 恢复完整窗口。 */

@@ -1136,7 +1136,6 @@ pub async fn pin_capture(
             return Err(error);
         }
         let _ = pin.set_focus();
-        let _ = app.emit_to("main", "pins-changed", ());
         let _ = app.emit_to("main", "capture-result", "截图已贴到桌面。");
         Ok(())
     })

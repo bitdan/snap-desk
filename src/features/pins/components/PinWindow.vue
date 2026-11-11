@@ -4,7 +4,7 @@ import { handleWindowEscape as handleEscape } from '@/shared/ui/escape'
 import { useEscapeLayer } from '@/shared/ui/use-escape-layer'
 import { t, te } from '@/shared/i18n/i18n'
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
-import { Pin, PinOff, Lock, Unlock, Minus, Plus, Copy, Save, EyeOff, X, ChevronDown, ChevronUp, Move, Check } from 'lucide-vue-next'
+import { Pin, PinOff, Lock, Unlock, Minus, Plus, Copy, Save, X, ChevronDown, ChevronUp, Move, Check } from 'lucide-vue-next'
 import PinRecognition from '@/features/recognition/components/PinRecognition.vue'
 import AnnotationSurface from '@/features/annotations/components/AnnotationSurface.vue'
 import AnnotationToolbar from '@/features/annotations/components/AnnotationToolbar.vue'
@@ -280,8 +280,8 @@ function key(event: KeyboardEvent) {
   }
   if (handleEscape(event, () => {
     if (busy.value || editor.pending) return
-    // 草稿从未保存；先放弃草稿解除交互锁，再走既有隐藏贴图接口。
-    editor.abort(); void action('hide')
+    // 草稿从未保存；先放弃草稿解除交互锁，再关闭贴图。贴图没有可恢复的隐藏状态，Esc 即关闭。
+    editor.abort(); void action('close')
   })) return
   if (event.defaultPrevented || event.isComposing || event.keyCode === 229) return
   if (annotating.value && editor.key(event)) return
@@ -295,7 +295,7 @@ function key(event: KeyboardEvent) {
   if (command && ['c', 's', 'w'].includes(key)) {
     event.preventDefault(); void action(key === 'c' ? 'copy' : key === 's' ? 'save' : 'close'); return
   }
-  if (key === 'escape') { event.preventDefault(); void action('hide'); return }
+  if (key === 'escape') { event.preventDefault(); void action('close'); return }
   if ((event.target as HTMLElement).closest('button, input, select')) return
   // 只有从贴图画面按 Tab 才接管：展开时直接进入第一个控件，收起时先展开再聚焦。
   // 不改写 Shift+Tab，也不拦截窗口首次 Tab（浏览器先把焦点移到画面）。
@@ -376,8 +376,7 @@ function closeOnResize() {
           <span class="pin-divider" />
           <button :disabled="busy" :title='t("复制 Ctrl/⌘+C")' :aria-label='t("复制")' @click="action('copy')"><Copy :size="16" /></button>
           <button :disabled="busy" :title='t("保存图片 Ctrl/⌘+S")' :aria-label='t("保存图片")' @click="action('save')"><Save :size="16" /></button>
-          <button :disabled="busy" :title='t("隐藏 Esc")' :aria-label='t("隐藏")' @click="action('hide')"><EyeOff :size="16" /></button>
-          <button :disabled="busy" :title='t("关闭 Ctrl/⌘+W")' :aria-label='t("关闭")' @click="action('close')"><X :size="16" /></button>
+          <button :disabled="busy" :title='t("关闭 Esc")' :aria-label='t("关闭")' @click="action('close')"><X :size="16" /></button>
           <button :disabled="busy" :title='t("收起工具（Tab）")' :aria-label='t("收起工具")' @click="toggleControls"><ChevronDown :size="16" /></button>
         </template>
         <template #options><div class="pin-row pin-options">
@@ -409,8 +408,7 @@ function closeOnResize() {
       <button role="menuitemcheckbox" :aria-checked="controls" :disabled="busy || editor.pending || editor.interacting" @click="closeMenu(true); toggleControls()"><Check v-if="controls" :size="14" class="menu-check" aria-hidden="true" />{{ t("显示工具栏") }}<span>Tab</span></button>
       <button role="menuitemcheckbox" :aria-checked="!!frame?.view.clickThrough" :disabled="busy || editor.pending || editor.interacting" :title="t('用全局贴图快捷键恢复鼠标操作')" @click="closeMenu(); setView({ clickThrough: !frame?.view.clickThrough })"><Check v-if="frame?.view.clickThrough" :size="14" class="menu-check" aria-hidden="true" />{{ t("鼠标穿透") }}<span>Ctrl+Alt+P</span></button>
       <div role="separator" />
-      <button role="menuitem" @click="closeMenu(true); action('hide')">{{ t("隐藏贴图") }}<span>Esc</span></button>
-      <button role="menuitem" @click="closeMenu(true); action('close')">{{ t("关闭贴图") }}<span>Ctrl/⌘+W</span></button>
+      <button role="menuitem" @click="closeMenu(true); action('close')">{{ t("关闭贴图") }}<span>Esc</span></button>
     </div>
   </div>
 </template>
