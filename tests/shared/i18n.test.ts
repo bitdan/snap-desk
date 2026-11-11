@@ -97,7 +97,6 @@ describe('application language coverage', () => {
     for (const [file, expressions] of [
       ['src/features/recognition/components/OcrWorkspace.vue', ['box.text']],
       ['src/features/recognition/components/PinRecognition.vue', ['item.text']],
-      ['src/features/pins/components/PinManager.vue', ['pin.label']],
       ['src/features/clipboard/components/ClipboardItem.vue', ['file.name', 'item.preview']],
       ['src/shared/ui/ConfirmDialog.vue', ['description']],
     ] as const) {
@@ -108,8 +107,6 @@ describe('application language coverage', () => {
     const ocr = parse(readFileSync('src/features/recognition/components/OcrWorkspace.vue', 'utf8')).descriptor.template!.content
     expect(ocr).toContain(':value="text"')
     expect(ocr).not.toContain('t(text)')
-    const pins = readFileSync('src/features/pins/components/PinManager.vue', 'utf8')
-    expect(pins).toContain('groups.map(value => ({ value, label: value }))')
     // 不从 DOM 扫描或替换文本；这一边界避免语言切换误改用户内容。
     expect(readFileSync('src/shared/i18n/i18n.ts', 'utf8')).not.toContain('MutationObserver')
     expect(readFileSync('src/shared/ui/TooltipLayer.vue', 'utf8')).not.toContain('t(text)')

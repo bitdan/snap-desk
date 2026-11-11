@@ -5,27 +5,24 @@ import { Check, Pin, RotateCcw } from 'lucide-vue-next'
 import { api, desktop } from '@/services/api'
 import { updateSettings } from '@/features/settings/settings-write'
 import { defaultPinAppearance, pinAppearanceStyle, validatePinAppearance } from '../pins'
-import type { PinAppearance } from '../types'
 import { t, te } from '@/shared/i18n/i18n'
 import { useAutoSave } from '@/shared/ui/use-auto-save'
 import SelectControl from '@/shared/ui/SelectControl.vue'
 import Button from '@/shared/ui/button/Button.vue'
 
-const emit = defineEmits<{ preview: [value: PinAppearance] }>()
 const draft = ref(defaultPinAppearance()), ready = ref(false), loadError = ref('')
 const previewStyle = computed(() => pinAppearanceStyle(draft.value, 168, 92))
 async function load() {
   if (!desktop) return
   try {
     draft.value = { ...(await api.status()).settings.pinAppearance }; ready.value = true; loadError.value = ''
-    emit('preview', { ...draft.value })
   } catch (e) { loadError.value = String(e) }
 }
 const autosave = useAutoSave(async () => {
   const value = { ...draft.value }
   await updateSettings(current => ({ ...current, pinAppearance: value }))
 }, () => validatePinAppearance(draft.value))
-function changed() { emit('preview', { ...draft.value }); autosave.schedule() }
+function changed() { autosave.schedule() }
 function reset() { draft.value = defaultPinAppearance(); changed(); void autosave.flush() }
 onMounted(load)
 </script>
