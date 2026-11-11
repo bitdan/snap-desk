@@ -40,6 +40,8 @@ struct PinLayout {
     collapsed_height: f64,
     min_visible_side: f64,
     min_image_width: f64,
+    /// 展开工具栏完整显示所需宽度；窗口至少这么宽，工具栏不再随图片缩放被截断。
+    toolbar_width: f64,
     min_image_height: f64,
 }
 impl PinLayout {
@@ -62,7 +64,7 @@ impl PinLayout {
         &self, origin: PhysicalPosition<i32>, width: u32, height: u32, scale: f64, zoom: f64,
     ) -> (PhysicalPosition<i32>, PhysicalSize<u32>) {
         let inset = self.image_inset(scale);
-        let width = (f64::from(width) * zoom).max(self.min_image_width * scale);
+        let width = (f64::from(width) * zoom).max(self.toolbar_width * scale);
         let height = (f64::from(height) * zoom).max(self.min_image_height * scale);
         (
             PhysicalPosition::new(origin.x - inset, origin.y - inset),
@@ -91,8 +93,9 @@ impl PinLayout {
         max_height: f64,
         expanded: bool,
     ) -> (f64, f64) {
-        let width = (f64::from(width) * zoom).max(self.min_image_width)
-            + (self.padding + self.border) * 2.0;
+        // 展开时窗口不窄于完整工具栏；多出的透明区域在空闲时由 set_pin_region 裁掉。
+        let minimum = if expanded { self.toolbar_width } else { self.min_image_width };
+        let width = (f64::from(width) * zoom).max(minimum) + (self.padding + self.border) * 2.0;
         let height =
             (f64::from(height) * zoom).max(self.min_image_height) + self.chrome_height(expanded);
         (width.min(max_width), height.min(max_height))
@@ -1015,10 +1018,22 @@ pub async fn set_pin_view(
         let old_size = window.inner_size().map_err(err)?;
         let old_position = window.outer_position().map_err(err)?;
         // 底栏展开或放大时，将窗口限制在显示器工作区内，避免按钮掉到任务栏下方。
+        // 水平方向只保证图片本身留在工作区：为工具栏加宽的透明部分允许越过屏幕右缘，
+        // 否则靠右的小贴图会在缩放时被整体推向左侧；前端按可见宽度限制工具栏。
+        let image_width = layout
+            .window_size(
+                pin.image.width(),
+                pin.image.height(),
+                view.zoom / scale,
+                f64::from(work_area.size.width) / scale,
+                f64::from(work_area.size.height) / scale,
+                false,
+            )
+            .0;
+        let left = f64::from(work_area.position.x);
         let x = f64::from(old_position.x).clamp(
-            f64::from(work_area.position.x),
-            f64::from(work_area.position.x) + f64::from(work_area.size.width)
-                - (width * scale).ceil(),
+            left,
+            left.max(left + f64::from(work_area.size.width) - (image_width * scale).ceil()),
         );
         let y = f64::from(old_position.y).clamp(
             f64::from(work_area.position.y),
@@ -1070,6 +1085,59 @@ pub async fn set_pin_view(
     })
     .await
     .map_err(err)?
+}
+
+/// 空闲贴图只保留图片（含阴影边距）区域，其余透明部分交给系统直接命中下层窗口；
+/// `None` 恢复完整窗口，供工具栏、菜单和识别面板使用。坐标为相对窗口左上角的物理像素。
+#[tauri::command]
+pub async fn set_pin_region(
+    app: AppHandle,
+    window: WebviewWindow,
+    region: Option<crate::capture::Rect>,
+) -> Result<(), String> {
+    own(&app, &window)?;
+    // SetWindowRgn 同步向窗口线程发消息，不能在 IPC 线程池以外的主线程回调里调用。
+    tauri::async_runtime::spawn_blocking(move || apply_region(&window, region))
+        .await
+        .map_err(err)?
+}
+
+#[cfg(windows)]
+fn apply_region(window: &WebviewWindow, region: Option<crate::capture::Rect>) -> Result<(), String> {
+    use windows::Win32::{
+        Foundation::HWND,
+        Graphics::Gdi::{CreateRectRgn, DeleteObject, SetWindowRgn, HGDIOBJ},
+    };
+    let hwnd = HWND(window.hwnd().map_err(err)?.0);
+    unsafe {
+        let Some(rect) = region else {
+            return if SetWindowRgn(hwnd, None, true) == 0 {
+                Err("无法恢复贴图窗口区域。".into())
+            } else {
+                Ok(())
+            };
+        };
+        let size = window.inner_size().map_err(err)?;
+        let right = rect.x.saturating_add(rect.width).min(size.width);
+        let bottom = rect.y.saturating_add(rect.height).min(size.height);
+        if rect.x >= right || rect.y >= bottom {
+            return Err("贴图交互区域无效。".into());
+        }
+        let handle = CreateRectRgn(rect.x as i32, rect.y as i32, right as i32, bottom as i32);
+        if handle.0.is_null() {
+            return Err("无法创建贴图交互区域。".into());
+        }
+        // 成功后区域归系统所有；失败时自行释放，避免泄漏 GDI 对象。
+        if SetWindowRgn(hwnd, Some(handle), true) == 0 {
+            let _ = DeleteObject(HGDIOBJ(handle.0));
+            return Err("无法设置贴图交互区域。".into());
+        }
+    }
+    Ok(())
+}
+#[cfg(not(windows))]
+fn apply_region(_: &WebviewWindow, _: Option<crate::capture::Rect>) -> Result<(), String> {
+    Ok(())
 }
 
 #[tauri::command]
@@ -1369,7 +1437,9 @@ mod tests {
                 let (position, size) = layout.source_bounds(origin, 1233, 626, scale, 1.0);
                 assert_eq!(position.x + inset, origin.x);
                 assert_eq!(position.y + inset, origin.y);
-                assert_eq!(size.width - inset as u32 * 2, 1233);
+                // 窗口不窄于完整工具栏；图片仍从左上角开始。
+                let content = 1233.0_f64.max(layout.toolbar_width * scale);
+                assert_eq!(size.width, (content + f64::from(inset) * 2.0).ceil() as u32);
                 assert!(f64::from(size.height) >= 626.0 + f64::from(inset) * 2.0
                     + (layout.gap + layout.expanded_height) * scale);
             }
@@ -1613,7 +1683,12 @@ mod tests {
     fn bottom_toolbar_does_not_consume_image_height() {
         let layout = PinLayout::load();
         let (width, height) = layout.window_size(800, 600, 1.0, 1920.0, 1080.0, true);
-        assert_eq!(width - (layout.padding + layout.border) * 2.0, 800.0);
+        assert_eq!(
+            width - (layout.padding + layout.border) * 2.0,
+            layout.toolbar_width.max(800.0)
+        );
+        let (wide, _) = layout.window_size(1600, 600, 1.0, 1920.0, 1080.0, true);
+        assert_eq!(wide - (layout.padding + layout.border) * 2.0, 1600.0);
         assert_eq!(height - layout.chrome_height(true), 600.0);
         let (_, collapsed) = layout.window_size(800, 600, 1.0, 1920.0, 1080.0, false);
         assert_eq!(collapsed - layout.chrome_height(false), 600.0);
@@ -1628,6 +1703,10 @@ mod tests {
         let (width, height) = layout.window_size(1, 1, 1.0, 1200.0, 800.0, true);
         assert_eq!(
             width,
+            layout.toolbar_width + (layout.padding + layout.border) * 2.0
+        );
+        assert_eq!(
+            layout.window_size(1, 1, 1.0, 1200.0, 800.0, false).0,
             layout.min_image_width + (layout.padding + layout.border) * 2.0
         );
         assert_eq!(height, layout.min_image_height + layout.chrome_height(true));
@@ -1637,10 +1716,10 @@ mod tests {
             (1280.0, 720.0)
         );
         assert_eq!(
-            layout.window_size(600, 800, 0.5, 1200.0, 800.0, true),
+            layout.window_size(600, 800, 0.5, 1200.0, 800.0, false),
             (
                 300.0 + (layout.padding + layout.border) * 2.0,
-                400.0 + layout.chrome_height(true)
+                400.0 + layout.chrome_height(false)
             )
         );
     }

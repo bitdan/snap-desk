@@ -6,7 +6,8 @@ import { t, te } from '@/shared/i18n/i18n'
 import { convertFileSrc } from '@tauri-apps/api/core'
 import ScrollCaptureIcon from '@/features/scroll/components/ScrollCaptureIcon.vue'
 import QrResultCard from '@/features/recognition/components/QrResultCard.vue'
-import OcrResultCard from '@/features/recognition/components/OcrResultCard.vue'
+import OcrWorkspace from '@/features/recognition/components/OcrWorkspace.vue'
+import { ocrWindowSize } from '@/features/recognition/ocr-workspace'
 import { computed, nextTick, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue'
 import { Copy, Save, X, Monitor, RotateCcw, Scan, Pin, Video, QrCode, ScanText, Languages, AppWindow, GripVertical, Check, MousePointer2, Volume2, VolumeX, Mic, MicOff, ArrowLeft } from 'lucide-vue-next'
 import { api, onFrame, onCaptureClosed, onCapturePin, onScroll } from '@/services/api'
@@ -91,6 +92,34 @@ async function captureNative() {
   finally { busy.value = false }
 }
 const handles: Handle[] = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w']
+// 尺寸标签默认贴在选区上方外侧；顶部放不下时，大选区退回内部，小选区改放左右外侧，避免盖住内容。
+const SIZE_LABEL = { width: 190, height: 22, gap: 6 }
+const sizeLabelStyle = computed(() => {
+  const s = selection.value
+  if (!s) return {}
+  const d = activeDisplay.value
+  const overflowRight = s.x + SIZE_LABEL.width > d.x + d.width
+  const alignX = overflowRight ? { left: 'auto', right: '0' } : { left: '0', right: 'auto' }
+  if (s.y - d.y >= SIZE_LABEL.height + SIZE_LABEL.gap) return { ...alignX, top: `${-SIZE_LABEL.height - SIZE_LABEL.gap}px` }
+  if (s.height >= 64 && s.width >= SIZE_LABEL.width + 12) return { ...alignX, top: '6px' }
+  return s.x + s.width + SIZE_LABEL.gap + SIZE_LABEL.width <= d.x + d.width
+    ? { left: `calc(100% + ${SIZE_LABEL.gap}px)`, right: 'auto', top: '0' }
+    : { left: 'auto', right: `calc(100% + ${SIZE_LABEL.gap}px)`, top: '0' }
+})
+// 选区（含上方尺寸标签）压到左上角按钮条时，按钮条让到右上角；两侧都被占用时保持原位。
+const modebar = ref<HTMLElement | null>(null)
+const modebarRight = computed(() => {
+  const s = selection.value
+  if (!s) return false
+  const d = activeDisplay.value
+  const width = (modebar.value?.offsetWidth ?? 320) + 28
+  const height = (modebar.value?.offsetHeight ?? 36) + 28
+  const top = s.y - SIZE_LABEL.height - SIZE_LABEL.gap
+  if (top >= d.y + height) return false
+  const hitsLeft = s.x < d.x + width
+  const hitsRight = s.x + s.width > d.x + d.width - width
+  return hitsLeft && !hitsRight
+})
 let off: (() => void) | undefined
 let offClosed: (() => void) | undefined
 // current() 的旧响应或迟到 ready 事件不能让已关闭的大图重新驻留。
@@ -99,13 +128,17 @@ let offScroll: (() => void) | undefined
 let offPin: (() => void) | undefined
 let disposed = false
 // 识别面板只属于当前截图会话；选区、标注和录屏入口分别维护自己的状态与守卫。
-const { qrResult, ocrResult, ocrDraft, translationTrigger, ocrTrigger, closeOcr, recognizeText, sendTranslation, recognizeQr } = useCaptureRecognition({
+const { qrResult, ocrResult, ocrDraft, ocrMode, translationTrigger, ocrTrigger, closeOcr, recognizeText, recognizeQr } = useCaptureRecognition({
   frame, pixels, busy, error,
   blocked: () => editor.pending || editor.interacting,
   gestureActive: () => !!gesture.value,
   annotations: () => editor.history.present,
   releaseFrame,
 })
+// 识别工作区左侧显示截图选区原图；OCR 坐标按选区像素映射到整屏图上。
+const ocrImage = computed(() => frame.value && pixels.value && imageUrl.value ? { url: imageUrl.value, width: frame.value.width, height: frame.value.height, crop: { ...pixels.value } } : null)
+// 窗口按截图原尺寸加文字区计算，打开时取当前屏幕可用区域。
+const ocrWindow = computed(() => ocrWindowSize(ocrImage.value, globalThis.devicePixelRatio ?? 1, { width: globalThis.screen?.availWidth ?? 1280, height: globalThis.screen?.availHeight ?? 800 }))
 // 录屏准备条与截图选区共用当前帧，但能力查询、格式偏好和接管清理独立维护。
 const {
   recordingTrigger, recordingConfirmTrigger, recordingSource,
@@ -325,7 +358,7 @@ onUnmounted(() => { releaseFrame(); disposed = true; offClosed?.(); off?.(); off
     <img v-if="frame" :key="frame.id" ref="screenImage" class="screen-image" :src="imageUrl" crossorigin="anonymous" :alt='t("当前屏幕截图")' draggable="false" @load="loaded" @error="imageFailed" />
     <!-- 截图和录屏共用选区入口：开始框选前保持原图，仅在形成选区后遮暗外围。 -->
     <div v-if="!selection" class="capture-tip" :style="{ left: `${activeDisplay.x + activeDisplay.width / 2}px`, top: `${activeDisplay.y + 64}px`, maxWidth: `${activeDisplay.width - 32}px`, whiteSpace: 'normal' }">{{ recordingMode ? t("拖动选择录屏范围") : frame?.targets.length ? t("点击吸附 · Tab 切换层级 · 拖动框选 · Alt 选窗口 · Shift 自由框选") : t("拖动框选屏幕") }} <span>{{ recordingMode ? t("Esc 退出 · Ctrl / ⌘ + A 全屏 · R 最近选区") : t("C 取色 · Esc 取消 · Ctrl / ⌘ + A 全屏 · R 最近选区") }}</span></div>
-    <div v-if="frame" class="capture-modebar" :style="{ left: `${activeDisplay.x + 16}px`, top: `${activeDisplay.y + 16}px` }" @pointerdown.stop @contextmenu.stop.prevent>
+    <div v-if="frame" ref="modebar" class="capture-modebar" :style="modebarRight ? { left: `${activeDisplay.x + activeDisplay.width - 16}px`, top: `${activeDisplay.y + 16}px`, transform: 'translateX(-100%)' } : { left: `${activeDisplay.x + 16}px`, top: `${activeDisplay.y + 16}px` }" @pointerdown.stop @contextmenu.stop.prevent>
       <template v-if="!recordingMode">
         <button :disabled="busy || editor.pending || editor.interacting || !!gesture" :title="t('上一张截图（,）')" @click="replay('previous')">{{ t('上一张 ,') }}</button>
         <span v-if="frame.replay">{{ t('截图历史 {0}/{1}', { 0: frame.replay.index, 1: frame.replay.total }) }}</span>
@@ -337,7 +370,7 @@ onUnmounted(() => { releaseFrame(); disposed = true; offClosed?.(); off?.(); off
     </div>
     <div v-if="hoverTarget !== null" class="snap-target" :style="hoverStyle" />
     <div v-if="selection" class="selection" :class="{ 'annotation-active': annotating }" :style="{ ...boxStyle, boxShadow: valid ? undefined : 'none' }" @pointerdown.stop="selectionDown">
-      <span class="size-label">{{ pixels?.width }} × {{ pixels?.height }} px · ({{ pixels?.x }}, {{ pixels?.y }})</span>
+      <span class="size-label" :style="sizeLabelStyle">{{ pixels?.width }} × {{ pixels?.height }} px · ({{ pixels?.x }}, {{ pixels?.y }})</span>
       <template v-if="!editor.interacting && !editor.pending && !busy">
         <span v-for="edge in ['top', 'right', 'bottom', 'left']" :key="edge" :class="['selection-drag-edge', edge]" @pointerdown.stop="down($event, 'move')" />
         <span v-for="handle in handles" :key="handle" :class="['resize-handle', handle]" @pointerdown.stop="down($event, handle)" />
@@ -387,11 +420,8 @@ onUnmounted(() => { releaseFrame(); disposed = true; offClosed?.(); off?.(); off
       </template>
     </AnnotationWorkspace>
     <CaptureMagnifier v-if="showMagnifier && screenImage && pointer && frame" :image="screenImage" :point="pointer" :viewport="viewport" :image-size="frame" :format="colorFormat" :relative="relativeCoordinates" :origin="pixels" :copied="colorCopied" :bounds="pointerDisplay" />
-    <DetachedWindow :open="ocrResult !== null" :title="t('文字识别结果')" :width="1000" :height="650" @close="closeOcr">
-      <div v-if="ocrResult" class="qr-dialog ocr-dialog">
-        <OcrResultCard standalone v-model:text="ocrDraft" @translate="sendTranslation()" @close="closeOcr" />
-        <p v-if="error" class="result-error" role="alert">{{ te(error) }}</p>
-      </div>
+    <DetachedWindow :open="ocrResult !== null" :title="ocrMode === 'translate' ? t('截图翻译') : t('文字识别结果')" :width="ocrWindow.width" :height="ocrWindow.height" @close="closeOcr">
+      <OcrWorkspace v-if="ocrResult" v-model:text="ocrDraft" :result="ocrResult" :image="ocrImage" :mode="ocrMode" :error="error" @close="closeOcr" />
     </DetachedWindow>
     <DetachedWindow :open="!!qrResult" :title="t('二维码识别结果')" :width="480" :height="420" @close="qrResult = null">
       <div v-if="qrResult" class="qr-dialog">
@@ -434,7 +464,6 @@ onUnmounted(() => { releaseFrame(); disposed = true; offClosed?.(); off?.(); off
 :global([data-theme=dark]) .recording-toggles button[aria-pressed=false] { color:#a8b3c2; }
 :global([data-theme=dark]) .recording-ready-row select:hover:enabled { background:#303f56; }
 .qr-dialog { width: 100%; height: 100%; overflow-y: auto; color: #20232b; }
-.ocr-dialog { overflow: hidden; }
 
 .capture-modebar { position: absolute; top: 8px; left: 8px; z-index: 4; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; max-width: calc(100vw - 16px); border-radius: 6px; padding: 6px 8px; background: #242330ed; color: white; font-size: 12px; cursor: default; }
 .capture-modebar button { display: flex; align-items: center; gap: 5px; padding: 3px; }

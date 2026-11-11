@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { nextTick, onMounted, onUnmounted, ref } from 'vue'
-import { Camera, Pin, X } from 'lucide-vue-next'
+import { Camera, Languages, Pin, X } from 'lucide-vue-next'
 import { api, onTranslationOpen } from '@/services/api'
 import { t, te } from '@/shared/i18n/i18n'
 import { handleWindowEscape } from '@/shared/ui/escape'
@@ -64,7 +64,7 @@ onUnmounted(() => { disposed = true; off?.() })
   <main class="translation-window" :aria-label="t('文字翻译')" @keydown="handleWindowEscape($event, close)">
     <header class="translation-tools">
       <Button variant="ghost" :disabled="controlling" :aria-pressed="pinned" :aria-label="pinned ? t('取消置顶') : t('置顶窗口')" :title="pinned ? t('取消置顶') : t('置顶窗口')" @click="control(pinned ? 'unpin' : 'pin')"><Pin :size="17" :fill="pinned ? 'currentColor' : 'none'" /></Button>
-      <div class="window-drag" @pointerdown="$event.button === 0 && control('drag')" />
+      <div class="window-drag" @pointerdown="$event.button === 0 && control('drag')"><Languages :size="14" aria-hidden="true" />{{ t('文字翻译') }}</div>
       <Button variant="ghost" :aria-label="t('关闭翻译')" :title="t('关闭（Esc）')" @click="close"><X :size="16" /></Button>
     </header>
     <p v-if="error" class="window-error" role="alert">{{ te(error) }}</p>
@@ -76,15 +76,18 @@ onUnmounted(() => { disposed = true; off?.() })
 </template>
 
 <style scoped>
-.translation-window { height:100vh; display:flex; flex-direction:column; gap:8px; overflow:auto; padding:0 8px 8px; background:#f5f5f7; color:#27272a; font-size:13px; }
+.translation-window { height:100vh; display:flex; flex-direction:column; gap:8px; overflow:auto; padding:0 10px 10px; border:1px solid #e4e4e7; box-sizing:border-box; background:#f5f5f7; color:#27272a; font-size:13px; }
 /* 隐藏浮窗边缘的滚动条，保留小窗口和长内容的滚轮、键盘滚动。 */
 .translation-window { scrollbar-width:none; }
 .translation-window::-webkit-scrollbar { display:none; }
-.translation-tools { position:sticky; top:0; z-index:2; background:inherit; display:flex; align-items:center; flex-shrink:0; height:34px; margin:0 -4px -4px; gap:4px; }
+.translation-tools { position:sticky; top:0; z-index:2; background:inherit; display:flex; align-items:center; flex-shrink:0; height:40px; margin:0 -6px -2px; gap:4px; }
 .translation-tools :deep(button) { width:28px; min-height:28px; height:28px; padding:5px; color:#71717a; }
 .translation-tools :deep(button[aria-pressed=true]) { color:#2563eb; }
-.window-drag { flex:1; align-self:stretch; cursor:default; }
+/* 拖动区同时作为标题，与剪贴板窗口的顶栏一致；图标和文字不拦截拖动。 */
+.window-drag { flex:1; align-self:stretch; display:flex; align-items:center; justify-content:center; gap:6px; color:#71717a; font-size:12px; font-weight:600; cursor:default; user-select:none; }
+.window-drag > * { pointer-events:none; }
 .window-error { margin:0; padding:4px; font-size:12px; color:#b42318; overflow-wrap:anywhere; }
-:global([data-theme=dark]) .translation-window { background:#18181b; color:#f4f4f5; }
+:global([data-theme=dark]) .translation-window { border-color:#3f3f46; background:#18181b; color:#f4f4f5; }
+:global([data-theme=dark]) .window-drag { color:#a1a1aa; }
 :global([data-theme=dark]) .translation-tools :deep(button) { color:#a1a1aa; }
 </style>

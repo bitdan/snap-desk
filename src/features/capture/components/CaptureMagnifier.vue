@@ -57,7 +57,8 @@ onUnmounted(() => cancelAnimationFrame(animation))
 </template>
 
 <style scoped>
-.capture-magnifier { position: absolute; z-index: 3; pointer-events: none; box-sizing: border-box; width: 167px; height: 212px; border: 1px solid #222; background: #242424; color: white; overflow: hidden; }
+/* 高于左上角按钮条：光标贴近屏幕角落时放大镜不被遮挡；不接收指针，不影响按钮点击。 */
+.capture-magnifier { position: absolute; z-index: 5; pointer-events: none; box-sizing: border-box; width: 167px; height: 212px; border: 1px solid #222; background: #242424; color: white; overflow: hidden; }
 /* 每个原图像素显示为 11px，截取中间九行，中央像素仍与采样坐标严格对应。 */
 .magnifier-preview { position: relative; width: 165px; height: 99px; overflow: hidden; background: #52525b; }
 canvas { position: absolute; top: -33px; left: 0; width: 165px; height: 165px; image-rendering: pixelated; }

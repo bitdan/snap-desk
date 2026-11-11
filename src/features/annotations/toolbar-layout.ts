@@ -3,9 +3,13 @@ import { clamp, type Point, type Size, type Rect } from '@/shared/geometry/selec
 
 /** 两种采集模式共用选区下方定位；工具展开后按实际尺寸向屏幕内避让。 */
 export function annotationToolbarPosition(selection: Rect, display: Rect, size: Size) {
+  const minTop = display.y + 8, maxTop = Math.max(minTop, display.y + display.height - size.height - 8)
+  const below = selection.y + selection.height + 12
+  // 下方放不下时翻到选区上方（让出尺寸标签一行），不压住选区内容；上下都放不下才贴边重叠。
+  const above = selection.y - size.height - 12 - 28
   return {
     left: `${clamp(selection.x, display.x + 8, Math.max(display.x + 8, display.x + display.width - size.width - 8))}px`,
-    top: `${clamp(selection.y + selection.height + 12, display.y + 8, Math.max(display.y + 8, display.y + display.height - size.height - 8))}px`,
+    top: `${below <= maxTop ? below : above >= minTop ? above : clamp(below, minTop, maxTop)}px`,
     maxWidth: `${Math.max(1, display.width - 16)}px`,
   }
 }

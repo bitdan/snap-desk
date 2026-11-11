@@ -12,7 +12,8 @@ import { updateSettings } from '@/features/settings/settings-write'
 import { automaticTarget, detectTextLanguage } from '@/features/recognition/translation-direction'
 
 const emit = defineEmits<{ close: []; back: []; busy: [value: boolean] }>()
-const props = withDefaults(defineProps<{ workspace?: boolean; standalone?: boolean; autoTranslate?: boolean }>(), { workspace: false, autoTranslate: true })
+// pasteable=false：贴图窗口无权读取剪贴板原文，嵌入识别工作区时隐藏该按钮。
+const props = withDefaults(defineProps<{ workspace?: boolean; standalone?: boolean; autoTranslate?: boolean; pasteable?: boolean }>(), { workspace: false, autoTranslate: true, pasteable: true })
 const source = defineModel<string>('text', { required: true })
 const translated = ref('')
 const busy = ref(false), error = ref(''), message = ref(''), target = ref('')
@@ -167,7 +168,7 @@ function key(event: KeyboardEvent) {
       <div class="source-tools">
         <div class="icon-group">
           <Button variant="ghost" :disabled="!source.trim() || copying" :title="t('复制原文')" :aria-label="t('复制原文')" @click="copyText(source, '原文已复制。')"><Copy :size="15" /></Button>
-          <Button variant="ghost" :disabled="busy || readingClipboard" :title="t('读取剪贴板')" :aria-label="t('读取剪贴板')" @click="paste"><ClipboardPaste :size="15" /></Button>
+          <Button v-if="pasteable" variant="ghost" :disabled="busy || readingClipboard" :title="t('读取剪贴板')" :aria-label="t('读取剪贴板')" @click="paste"><ClipboardPaste :size="15" /></Button>
           <Button variant="ghost" :disabled="busy || !source.trim()" :title="t('合并换行')" :aria-label="t('合并换行')" @click="mergeLines"><WrapText :size="15" /></Button>
           <Button variant="ghost" :disabled="busy || readingClipboard || !source" :title="t('清空')" :aria-label="t('清空')" @click="source = ''; invalidate()"><Trash2 :size="15" /></Button>
           <slot name="source-actions" />
