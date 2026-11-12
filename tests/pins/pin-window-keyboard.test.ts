@@ -16,8 +16,9 @@ vi.mock('../../src/features/recognition/components/PinRecognition.vue', () => ({
 vi.mock('../../src/features/annotations/components/AnnotationSurface.vue', () => ({ default: { render: () => null } }))
 vi.mock('../../src/features/annotations/components/AnnotationToolbar.vue', async () => {
   const { defineComponent, h } = await import('vue')
-  return { default: defineComponent({ setup: (_, { slots }) => () => h('toolbar', [slots.leading?.(), slots.actions?.(), slots.options?.()]) }) }
+  return { default: defineComponent({ setup: (_, { slots }) => () => h('toolbar', [slots.leading?.(), slots.trailing?.()]) }) }
 })
+vi.mock('../../src/features/pins/components/PinMenuButton.vue', () => ({ default: { render: () => null } }))
 import PinWindow from '../../src/features/pins/components/PinWindow.vue'
 const Component = clientComponent(PinWindow, new URL('../../src/features/pins/components/PinWindow.vue', import.meta.url))
 
@@ -35,14 +36,15 @@ const controlsNode = () => findNode(root, node => String(node.props.class).inclu
 function targetFor(node: MemoryNode | null) {
   return { closest: (selector: string) => node && selector.includes('.pin-stage') ? node : null }
 }
-function pressTab(target: ReturnType<typeof targetFor>, shiftKey = false) {
+function press(key: string, target: ReturnType<typeof targetFor>, shiftKey = false) {
   const event = {
-    key: 'Tab', shiftKey, ctrlKey: false, metaKey: false, altKey: false,
+    key, shiftKey, ctrlKey: false, metaKey: false, altKey: false,
     defaultPrevented: false, preventDefault: vi.fn(), target,
   } as unknown as KeyboardEvent
   keydown()(event)
   return event
 }
+const pressTab = (target: ReturnType<typeof targetFor>, shiftKey = false) => press('Tab', target, shiftKey)
 async function mount(expanded = true) {
   api.currentPin.mockResolvedValue(frame(expanded))
   memoryRenderer.render(h(Component), root)
@@ -95,5 +97,28 @@ describe('贴图窗口键盘路径', () => {
     await flushComponent()
     expect(body.preventDefault).not.toHaveBeenCalled()
     expect(backward.preventDefault).not.toHaveBeenCalled()
+  })
+
+  it('空格开关工具栏，鼠标悬停不再自动唤出', async () => {
+    await mount(false)
+    const show = press(' ', targetFor(stageNode()))
+    await flushComponent()
+    expect(show.preventDefault).toHaveBeenCalledOnce()
+    expect(api.setPinView).toHaveBeenLastCalledWith({ ...frame(false).view, toolbarExpanded: true })
+    press(' ', targetFor(stageNode()))
+    await flushComponent()
+    expect(api.setPinView).toHaveBeenLastCalledWith({ ...frame(false).view, toolbarExpanded: false })
+    expect(stageNode().props.onPointerenter).toBeUndefined()
+  })
+
+  it('工具栏显示时 Esc 先收起工具栏，再按一次才关闭贴图', async () => {
+    await mount(true)
+    press('Escape', targetFor(stageNode()))
+    await flushComponent()
+    expect(api.setPinView).toHaveBeenLastCalledWith({ ...frame(true).view, toolbarExpanded: false })
+    expect(api.pinAction).not.toHaveBeenCalled()
+    press('Escape', targetFor(stageNode()))
+    await flushComponent()
+    expect(api.pinAction).toHaveBeenCalledWith('close')
   })
 })

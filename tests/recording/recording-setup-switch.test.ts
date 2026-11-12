@@ -6,7 +6,7 @@ import { defaultInputEffects } from '../../src/features/recording/recording'
 vi.mock('../../src/shared/ui/SelectControl.vue', async () => ({ default: (await import('../helpers/select-control')).SelectControlStub }))
 vi.mock('../../src/features/recording/components/RecordingOptionMenu.vue', async () => {
   const { defineComponent, h } = await import('vue')
-  return { default: defineComponent({ setup: () => () => h('menu-stub') }) }
+  return { default: defineComponent({ setup: (_, { slots }) => () => h('menu-stub', slots.default?.()) }) }
 })
 import Menu from '../../src/features/recording/components/RecordingSetupMenu.vue'
 const SetupMenu = clientComponent(Menu, new URL('../../src/features/recording/components/RecordingSetupMenu.vue', import.meta.url))

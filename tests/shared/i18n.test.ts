@@ -99,7 +99,7 @@ describe('application language coverage', () => {
   it('keeps OCR, QR, translations, group names and paths outside translation calls', () => {
     for (const [file, expressions] of [
       ['src/features/recognition/components/OcrWorkspace.vue', ['box.text']],
-      ['src/features/recognition/components/PinRecognition.vue', ['item.text']],
+      ['src/features/recognition/components/QrResultView.vue', ['item.text']],
       ['src/features/clipboard/components/ClipboardItem.vue', ['file.name', 'item.preview']],
       ['src/shared/ui/ConfirmDialog.vue', ['description']],
     ] as const) {

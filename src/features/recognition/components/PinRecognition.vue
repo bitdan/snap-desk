@@ -5,8 +5,9 @@ import DetachedWindow from '@/shared/ui/DetachedWindow.vue'
 import Button from '@/shared/ui/button/Button.vue'
 import { handleEscape } from '@/shared/ui/escape'
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
-import { Copy, ExternalLink, LoaderCircle, QrCode, RotateCcw, ScanText } from 'lucide-vue-next'
+import { LoaderCircle, RotateCcw, ScanText } from 'lucide-vue-next'
 import OcrWorkspace from '@/features/recognition/components/OcrWorkspace.vue'
+import QrResultView from '@/features/recognition/components/QrResultView.vue'
 import { initialOcrText, ocrWindowSize } from '@/features/recognition/ocr-workspace'
 import { api } from '@/services/api'
 import type { PinImage } from '@/features/pins/types'
@@ -70,27 +71,18 @@ onUnmounted(() => { disposed = true })
 <template>
   <DetachedWindow :open="true" :title="title" :width="mode === 'qr' ? 480 : ocrWindow.width" :height="mode === 'qr' ? 420 : ocrWindow.height" @close="emit('close')">
     <OcrWorkspace v-if="mode !== 'qr' && ocr" v-model:text="draft" :result="ocr" :image="image" :mode="mode === 'translate' ? 'translate' : 'ocr'" :error="error" @close="emit('close')" />
+    <section v-else-if="mode === 'qr'" ref="panel" class="pin-recognition" :aria-label="title" tabindex="-1" @keydown.stop="key">
+      <QrResultView :result="qr" :loading="busy" :busy="busy" :error="error" :message="message" open-label="打开链接…" retry @copy="qrAction($event, 'copy')" @open="requestLink" @retry="recognize" @close="emit('close')" />
+    </section>
     <section v-else ref="panel" class="pin-recognition" :aria-label="title" tabindex="-1" @keydown.stop="key">
       <div class="pin-recognition-body">
-        <div v-if="busy && !qr" class="pin-recognition-state" role="status"><LoaderCircle :size="22" class="pin-recognition-spinner" aria-hidden="true" />{{ mode === 'qr' ? t('正在识别二维码…') : t('正在识别文字…') }}</div>
-        <div v-else-if="error && !qr" class="pin-recognition-state">
-          <ScanText v-if="mode !== 'qr'" :size="22" aria-hidden="true" /><QrCode v-else :size="22" aria-hidden="true" />
+        <div v-if="busy" class="pin-recognition-state" role="status"><LoaderCircle :size="22" class="pin-recognition-spinner" aria-hidden="true" />{{ t('正在识别文字…') }}</div>
+        <div v-else-if="error" class="pin-recognition-state">
+          <ScanText :size="22" aria-hidden="true" />
           <p role="alert" class="pin-recognition-error">{{ te(error) }}</p>
         </div>
-        <template v-else-if="qr">
-          <p v-if="!qr.items.length" class="pin-recognition-state">{{ t("未发现二维码，请保留完整码及白边。") }}</p>
-          <article v-for="(item, index) in qr.items" :key="index" class="pin-qr-item">
-            <p class="pin-qr-text" dir="auto">{{ item.text }}</p>
-            <div class="pin-qr-actions">
-              <Button variant="outline" :disabled="busy" @click="qrAction(index, 'copy')"><Copy :size="14" />{{ t("复制内容") }}</Button>
-              <Button v-if="item.url" variant="outline" :disabled="busy" @click="requestLink(index)"><ExternalLink :size="14" />{{ t("打开链接…") }}</Button>
-            </div>
-          </article>
-          <p v-if="error" role="alert" class="pin-recognition-error">{{ te(error) }}</p>
-        </template>
       </div>
       <footer class="pin-recognition-footer">
-        <span v-if="message" class="pin-recognition-message" role="status">{{ t(message) }}</span>
         <Button variant="ghost" :disabled="busy" @click="recognize"><RotateCcw :size="14" />{{ t("重新识别") }}</Button>
         <Button variant="outline" @click="emit('close')">{{ t("关闭") }}</Button>
       </footer>
@@ -107,13 +99,8 @@ onUnmounted(() => { disposed = true })
 .pin-recognition-state { display:flex; flex:1; flex-direction:column; align-items:center; justify-content:center; gap:10px; margin:0; color:var(--pr-muted); text-align:center; }
 .pin-recognition-spinner { animation:result-spin 1s linear infinite; }
 .pin-recognition-error { margin:0; color:var(--pr-danger); overflow-wrap:anywhere; }
-.pin-qr-item { padding:10px 12px; border:1px solid var(--pr-border); border-radius:8px; background:var(--pr-soft); }
-.pin-qr-text { margin:0 0 8px; white-space:pre-wrap; overflow-wrap:anywhere; line-height:1.6; }
-.pin-qr-actions { display:flex; flex-wrap:wrap; gap:6px; }
-.pin-qr-actions button { height:30px; padding:0 10px; font-size:12px; }
 .pin-recognition-footer { display:flex; align-items:center; justify-content:flex-end; gap:8px; padding:8px 12px; border-top:1px solid var(--pr-border); }
 .pin-recognition-footer button { height:32px; padding:0 12px; }
-.pin-recognition-message { margin-right:auto; color:var(--ui-success-fg, #24834b); font-size:12px; }
 @keyframes result-spin { to { transform:rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .pin-recognition-spinner { animation:none; } }
 </style>

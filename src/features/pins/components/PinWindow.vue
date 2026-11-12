@@ -1,25 +1,32 @@
 <script setup lang="ts">
-import SelectControl from '@/shared/ui/SelectControl.vue'
 import { handleWindowEscape as handleEscape } from '@/shared/ui/escape'
 import { useEscapeLayer } from '@/shared/ui/use-escape-layer'
 import { t, te } from '@/shared/i18n/i18n'
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
-import { Pin, PinOff, Lock, Unlock, Minus, Plus, Copy, Save, X, ChevronDown, ChevronUp, Move, Check } from 'lucide-vue-next'
+import { Pin, PinOff, Copy, Save, X, Move, Check, SlidersHorizontal, ScanText } from 'lucide-vue-next'
 import PinRecognition from '@/features/recognition/components/PinRecognition.vue'
 import AnnotationSurface from '@/features/annotations/components/AnnotationSurface.vue'
 import AnnotationToolbar from '@/features/annotations/components/AnnotationToolbar.vue'
-import { useFloatingToolbar } from '@/features/annotations/toolbar-layout'
+import PinMenuButton, { type PinMenuItem } from '@/features/pins/components/PinMenuButton.vue'
 import { useAnnotations, type AnnotationTool } from '@/features/annotations/use-annotations'
 import { api, onPinVisibility } from '@/services/api'
 import { usePinImage } from '@/features/pins/pin-image'
 import { createPinDrag } from '@/features/pins/pin-drag'
 import type { PinView, PinAction, PinTransform } from '@/features/pins/types'
-import { canEditPin, minimumZoom, pinDisplaySize, pinImagePadding, stepZoom, defaultPinAppearance, pinAppearanceStyle } from '@/features/pins/pins'
+import { canEditPin, minimumZoom, pinDisplaySize, pinImagePadding, pinStageOrigin, stepZoom, defaultPinAppearance, pinAppearanceStyle } from '@/features/pins/pins'
 import { onPinAppearance, onPinView } from '@/features/pins/events'
 import layout from '@/features/pins/pin-layout.json'
 
 const toolbar = ref<HTMLElement | null>(null)
-const { style: floatingToolbarStyle, start: floatToolbar, reset: resetToolbarPosition } = useFloatingToolbar(toolbar)
+/** 工具栏实际宽度；图片比工具栏宽时右对齐图片，否则从窗口左侧内边距开始。 */
+const toolbarWidth = ref(layout.toolbarWidth)
+watch(toolbar, (node, _, cleanup) => {
+  if (!node) return
+  const measure = () => { const width = node.getBoundingClientRect().width; if (width > 0) toolbarWidth.value = width; syncToolbarWidth() }
+  const observer = new ResizeObserver(measure)
+  observer.observe(node); measure()
+  cleanup(() => observer.disconnect())
+}, { immediate: true, flush: 'post' })
 const imageSession = usePinImage(() => api.currentPin())
 const { frame } = imageSession
 // 首次 IPC 和图片解码完成前不绘制 20px 占位边框，避免贴图看起来先缩小再展开。
@@ -37,36 +44,21 @@ let disposed = false
 const busy = ref(false)
 const recognitionMode = ref<'ocr' | 'qr' | 'translate' | null>(null)
 let recognitionTrigger: HTMLElement | null = null
-async function recognize(mode: 'ocr' | 'qr' | 'translate', event: MouseEvent) {
+async function recognize(mode: 'ocr' | 'qr' | 'translate', trigger: EventTarget | null = null) {
   if (!frame.value || busy.value || editor.pending || editor.interacting) return
-  recognitionTrigger = event.currentTarget as HTMLElement
+  recognitionTrigger = trigger as HTMLElement | null
   closeMenu()
   recognitionMode.value = mode
 }
 async function closeRecognition(restoreFocus = true) {
   if (!recognitionMode.value) return
   recognitionMode.value = null
-  if (restoreFocus && !disposed) void nextTick(() => recognitionTrigger?.isConnected ? recognitionTrigger.focus() : menuTrigger?.focus())
+  if (restoreFocus && !disposed) void nextTick(() => (recognitionTrigger?.isConnected ? recognitionTrigger : menuTrigger?.isConnected ? menuTrigger : stage.value)?.focus())
 }
 const error = ref('')
 const message = ref('')
-const controls = computed(() => frame.value?.view.toolbarExpanded ?? true)
-const controlsHovered = ref(false)
-/** 键盘唤出时临时保持工具栏可见，聚焦后再交给 :focus-visible 维持。 */
-const keyboardVisible = ref(false)
-let controlsHideTimer: ReturnType<typeof setTimeout> | undefined
-function keepControlsVisible() {
-  clearTimeout(controlsHideTimer)
-  measureToolbarRoom()
-  controlsHovered.value = true
-}
-/** 窗口为完整工具栏加宽后可能越过屏幕右缘；显示前按屏幕内的可见宽度限制工具栏，超出部分横向滚动。 */
-const toolbarMaxWidth = ref('100%')
-function measureToolbarRoom() {
-  const screen = window.screen as (Screen & { availLeft?: number }) | undefined
-  const room = screen ? (screen.availLeft ?? 0) + screen.availWidth - window.screenX - pinImagePadding(window.devicePixelRatio) - 8 : NaN
-  toolbarMaxWidth.value = Number.isFinite(room) && room >= layout.minImageWidth && room < window.innerWidth ? `${Math.floor(room)}px` : '100%'
-}
+/** 工具栏只由空格、Tab、右键菜单显式开关，不随鼠标悬停弹出。 */
+const controls = computed(() => frame.value?.view.toolbarExpanded ?? false)
 /** 滚轮或键盘连续缩放期间淡出工具栏，只在图片角上提示比例；停止后恢复。 */
 const zooming = ref(false)
 let zoomTimer: ReturnType<typeof setTimeout> | undefined
@@ -84,19 +76,12 @@ function shellFocusIn(event: FocusEvent) {
 function shellFocusOut(event: FocusEvent) {
   if (!event.relatedTarget || !(event.currentTarget as HTMLElement).contains(event.relatedTarget as Node)) focusVisible.value = false
 }
-function hideControls() {
-  clearTimeout(controlsHideTimer)
-  keyboardVisible.value = false
-  if (!document.querySelector('.select-menu[data-state="open"]')) controlsHovered.value = false
-}
-// 留出穿过图片与底栏间隙的时间；隐藏的底栏不接收指针事件，不能自行唤出。
-function scheduleControlsHide() {
-  clearTimeout(controlsHideTimer)
-  controlsHideTimer = setTimeout(hideControls, 180)
-}
 const viewport = ref({ width: window.innerWidth, height: window.innerHeight, pixelRatio: window.devicePixelRatio })
+/** 图片位置由原生布局给出；工具栏在上方时图片下移，在下方时占用图片下方的一条。 */
+const origin = computed(() => pinStageOrigin(frame.value?.view, viewport.value.pixelRatio))
+const toolbarAbove = computed(() => controls.value && !!frame.value?.view.toolbarAbove)
 const display = computed(() => pinDisplaySize(frame.value?.width ?? 20, frame.value?.height ?? 20,
-  frame.value?.view.zoom ?? 1, viewport.value.width, viewport.value.height, controls.value, viewport.value.pixelRatio))
+  frame.value?.view.zoom ?? 1, viewport.value.width, viewport.value.height, controls.value && !toolbarAbove.value, viewport.value.pixelRatio, origin.value))
 const focused = ref(document.hasFocus())
 const annotating = ref(false)
 const contextMenu = ref<{ x: number; y: number } | null>(null)
@@ -108,18 +93,40 @@ const editor = useAnnotations(() => bounds.value, () => frame.value?.src ?? '', 
   await api.setPinAnnotations(shapes)
   if (frame.value) frame.value.annotations = shapes
 })
-// 图片和底栏是两个网格区域；阴影占用外边距，底栏不再浮在图片上。
-const shellStyle = computed(() => ({
-  padding: `${pinImagePadding(viewport.value.pixelRatio)}px`, gap: `${layout.gap}px`,
-  // 显式限定列宽；长工具栏不能撑大隐式网格列，把居中的图片推到窗口外。
-  gridTemplateColumns: 'minmax(0, 1fr)',
-  gridTemplateRows: `minmax(${layout.minVisibleSide + layout.border * 2}px, 1fr) ${controls.value ? layout.expandedHeight : layout.collapsedHeight}px`,
-}))
 const stageStyle = computed(() => ({
   cursor: editable.value ? 'move' : 'default', borderWidth: `${layout.border}px`,
+  left: `${origin.value.left}px`, top: `${origin.value.top}px`,
   // 使用确定的像素尺寸，边框与内容一起缩放；大图在边框内滚动查看。
   width: `${display.value.stageWidth}px`, height: `${display.value.stageHeight}px`,
 }))
+/** 工具栏贴着图片外侧，与图片之间留出固定间隙，不覆盖图片。 */
+const toolbarStyle = computed(() => {
+  const padding = pinImagePadding(viewport.value.pixelRatio)
+  const stageRight = origin.value.left + display.value.stageWidth
+  // 最大宽度只取决于窗口，不随 left 变化；否则测得的宽度会反过来压窄工具栏，越算越窄。
+  const maxWidth = Math.max(1, viewport.value.width - padding * 2)
+  const width = Math.min(toolbarWidth.value, maxWidth)
+  const preferred = display.value.stageWidth >= width ? stageRight - width : padding
+  const left = Math.max(padding, Math.min(preferred, viewport.value.width - padding - width))
+  return {
+    left: `${left}px`, maxWidth: `${maxWidth}px`,
+    ...(toolbarAbove.value ? { bottom: `${viewport.value.height - origin.value.top + layout.gap}px` }
+      : { top: `${origin.value.top + display.value.stageHeight + layout.gap}px` }),
+  }
+})
+/**
+ * 原生窗口按工具栏宽度加宽；工具栏内容（含样式条）的实际宽度在显示后测量并回写，
+ * 避免固定预留宽度放不下时右端被窗口裁掉。只在差异超过 1px 时更新，测量不依赖窗口宽度。
+ */
+function syncToolbarWidth() {
+  const view = frame.value?.view
+  if (!view || !controls.value || busy.value || editor.pending || editor.interacting || !toolbar.value) return
+  const rows = Array.from(toolbar.value.querySelectorAll<HTMLElement>('.annotation-tool-row'))
+  const natural = Math.ceil(Math.max(0, ...rows.map(row => row.scrollWidth + (row.offsetWidth - row.clientWidth))))
+  const reserved = view.toolbarWidth || layout.toolbarWidth
+  if (natural > 0 && Math.abs(natural - reserved) > 1) void setView({ toolbarWidth: natural })
+}
+watch([controls, busy, () => annotating.value && editor.tool], () => { void nextTick(syncToolbarWidth) }, { flush: 'post' })
 const editable = computed(() => canEditPin(frame.value?.view, busy.value || editor.pending || editor.interacting))
 // 成功提示短暂显示后自动消失，避免工具栏和完整窗口区域被一条旧提示一直撑开。
 let messageTimer: ReturnType<typeof setTimeout> | undefined
@@ -132,9 +139,11 @@ watch(message, value => {
  * 工具栏、菜单、识别面板或提示出现时恢复完整窗口。
  */
 const stage = ref<HTMLElement | null>(null)
-const needsFullWindow = computed(() => !frame.value || !imageReady.value || busy.value || controlsHovered.value
-  || keyboardVisible.value || (focusVisible.value && focused.value) || !!error.value || !!message.value
-  || !!contextMenu.value || !!recognitionMode.value || !!floatingToolbarStyle.value.position || !!frame.value.view.clickThrough)
+/** 工具栏下拉菜单绘制在工具栏外，打开期间保持完整窗口。 */
+const menuOpen = ref(false)
+const needsFullWindow = computed(() => !frame.value || !imageReady.value || busy.value || controls.value
+  || (focusVisible.value && focused.value) || !!error.value || !!message.value
+  || !!contextMenu.value || !!recognitionMode.value || menuOpen.value || !!frame.value.view.clickThrough)
 let regionKey = 'full'
 let regionQueue: Promise<unknown> = Promise.resolve()
 function syncRegion() {
@@ -152,6 +161,7 @@ function syncRegion() {
   regionQueue = regionQueue.then(() => api.setPinRegion(region)).catch(() => { if (regionKey === key) regionKey = '' })
 }
 watch([needsFullWindow, display, viewport], syncRegion, { flush: 'post' })
+const opacities = [1, 0.8, 0.6, 0.4]
 const transforms: { action: PinTransform; label: string }[] = [
   { action: 'rotateLeft', label: '左转' }, { action: 'rotateRight', label: '右转' },
   { action: 'flipHorizontal', label: '水平翻转' }, { action: 'flipVertical', label: '垂直翻转' },
@@ -173,7 +183,7 @@ async function load() {
 }
 async function pinVisibility(visible: boolean) {
   imageSession.visibility(visible)
-  if (!visible) { contentDrag.cancel(); void closeRecognition(false); closeMenu(); hideControls(); return }
+  if (!visible) { contentDrag.cancel(); void closeRecognition(false); closeMenu(); return }
   const revision = appearanceRevision
   try {
     if (await imageSession.refresh()) editor.reset(frame.value!.annotations)
@@ -185,17 +195,36 @@ async function setView(patch: Partial<PinView>) {
   if (!frame.value) return
   await run(async () => { frame.value!.view = await api.setPinView({ ...frame.value!.view, ...patch }) })
 }
-function toggleControls() { return setView({ toolbarExpanded: !controls.value }) }
+/** 收起工具栏同时退出标注；正在绘制的一笔需先完成或放弃。 */
+async function toggleControls() {
+  if (controls.value && (editor.pending || editor.interacting)) return
+  if (controls.value) { annotating.value = false; editor.selected = -1 }
+  await setView({ toolbarExpanded: !controls.value })
+}
+const adjustItems = computed<PinMenuItem[]>(() => [
+  ...transforms.map(item => ({ value: item.action, label: t(item.label) })),
+  { value: 'clear', label: t('清空标注'), separator: true, disabled: !editor.shapes.length },
+  ...(frame.value?.transparencySupported ? opacities.map((value, index) => ({ value: `opacity:${value}`, label: `${t('不透明度')} ${Math.round(value * 100)}%`,
+    checked: Math.abs((frame.value?.view.opacity ?? 1) - value) < 0.001, separator: index === 0 })) : []),
+])
+const recognizeItems = computed<PinMenuItem[]>(() => [
+  { value: 'ocr', label: t('识别文字') }, { value: 'qr', label: t('识别二维码') }, { value: 'translate', label: t('翻译图片') },
+])
+function recognizeFrom(value: string) {
+  if (value === 'ocr' || value === 'qr' || value === 'translate') void recognize(value)
+}
+async function adjust(value: string) {
+  if (value === 'clear') { editor.clear(); return }
+  if (value.startsWith('opacity:')) { await setView({ opacity: Number(value.slice(8)) }); return }
+  const item = transforms.find(item => item.action === value)
+  if (item) await transform(item.action)
+}
 function updateFocus() { focused.value = document.hasFocus(); if (!focused.value) closeMenu() }
 function closeMenu(restoreFocus = false) {
   contextMenu.value = null
   if (restoreFocus) menuTrigger?.focus({ preventScroll: true })
 }
-/** Tab 从画面进入工具栏后，焦点离开工具区即撤销临时可见状态。 */
-function controlsFocusOut(event: FocusEvent) {
-  if (event.relatedTarget && !toolbar.value?.contains(event.relatedTarget as Node)) keyboardVisible.value = false
-}
-/** 选中标注工具时先为底栏留出空间；右键菜单仅保留图片和窗口操作。 */
+/** 选中标注工具时先显示工具栏；右键菜单仅保留图片和窗口操作。 */
 async function startEditing(tool: AnnotationTool = 'edit') {
   closeMenu(true)
   if (!editable.value) return
@@ -262,15 +291,6 @@ function drag(event: PointerEvent) {
   if (event.button !== 0 || !editable.value || annotating.value) return
   contentDrag.down(event)
 }
-async function chooseTransform(value: string) {
-  const item = transforms.find(item => item.action === value)
-  if (item) await transform(item.action)
-}
-async function opacity(event: Event) {
-  const input = event.target as HTMLInputElement
-  await setView({ opacity: Number(input.value) / 100 })
-  input.value = String(Math.round((frame.value?.view.opacity ?? 1) * 100))
-}
 function key(event: KeyboardEvent) {
   if (contextMenu.value) { handleEscape(event, () => closeMenu(true)); return }
   if (recognitionMode.value) {
@@ -280,8 +300,10 @@ function key(event: KeyboardEvent) {
   }
   if (handleEscape(event, () => {
     if (busy.value || editor.pending) return
-    // 草稿从未保存；先放弃草稿解除交互锁，再关闭贴图。贴图没有可恢复的隐藏状态，Esc 即关闭。
-    editor.abort(); void action('close')
+    // 草稿从未保存；先放弃草稿解除交互锁。工具栏显示时 Esc 先收起工具栏，再按一次关闭贴图。
+    editor.abort()
+    if (controls.value) void toggleControls()
+    else void action('close')
   })) return
   if (event.defaultPrevented || event.isComposing || event.keyCode === 229) return
   if (annotating.value && editor.key(event)) return
@@ -297,25 +319,16 @@ function key(event: KeyboardEvent) {
   }
   if (key === 'escape') { event.preventDefault(); void action('close'); return }
   if ((event.target as HTMLElement).closest('button, input, select')) return
-  // 只有从贴图画面按 Tab 才接管：展开时直接进入第一个控件，收起时先展开再聚焦。
+  // 空格开关工具栏；按钮上的空格仍由浏览器触发按钮本身。
+  if (key === ' ' && !command && !event.altKey && !event.shiftKey) { event.preventDefault(); void toggleControls(); return }
+  // 只有从贴图画面按 Tab 才接管：显示工具栏并聚焦第一个控件。
   // 不改写 Shift+Tab，也不拦截窗口首次 Tab（浏览器先把焦点移到画面）。
   const onStage = !!(event.target as HTMLElement).closest?.('.pin-stage')
   if (key === 'tab' && onStage && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey) {
     event.preventDefault()
-    keyboardVisible.value = true
-    const focusFirst = () => {
-      if (!controls.value) { keyboardVisible.value = false; return }
-      const first = toolbar.value?.querySelector<HTMLElement>('button:not(:disabled), select:not(:disabled), input:not(:disabled)')
-      if (first) first.focus()
-      else keyboardVisible.value = false
-    }
-    if (controls.value) {
-      // 收起状态由 CSS visibility 隐藏；先让 keyboardVisible 生效再聚焦，否则浏览器会拒绝隐藏元素。
-      void nextTick().then(focusFirst)
-      return
-    }
-    // 展开会写回原生视图；等待 Vue 更新后再聚焦，避免焦点落在旧 DOM 上。
-    void toggleControls().then(() => nextTick()).then(focusFirst)
+    const focusFirst = () => toolbar.value?.querySelector<HTMLElement>('button:not(:disabled), select:not(:disabled), input:not(:disabled)')?.focus()
+    // 显示会写回原生视图；等待 Vue 更新后再聚焦，隐藏元素无法获得焦点。
+    void (controls.value ? nextTick() : toggleControls().then(() => nextTick())).then(focusFirst)
     return
   }
   else if (key === '+' || key === '=') { event.preventDefault(); flashZoom(); zoom(1) }
@@ -340,7 +353,7 @@ onMounted(async () => {
 onUnmounted(() => {
   contentDrag.cancel()
   disposed = true; offView?.(); offAppearance?.(); offVisibility?.(); imageSession.dispose()
-  clearTimeout(controlsHideTimer); clearTimeout(zoomTimer); clearTimeout(messageTimer)
+  clearTimeout(zoomTimer); clearTimeout(messageTimer)
   window.removeEventListener('pointerdown', dismissMenu)
   window.removeEventListener('resize', closeOnResize)
   window.removeEventListener('keydown', key)
@@ -353,8 +366,8 @@ function closeOnResize() {
 </script>
 
 <template>
-  <div class="pin-shell" :class="{ 'is-focused': focused, 'controls-visible': controlsHovered || keyboardVisible || !!error || !!message, 'is-zooming': zooming }" :style="shellStyle" @pointerleave="hideControls" @focusin="shellFocusIn" @focusout="shellFocusOut" @contextmenu.prevent>
-    <div v-show="imageReady" ref="stage" class="pin-stage" :inert="!!recognitionMode" tabindex="0" :aria-label='t("贴图，按 Tab 进入工具栏，右键打开菜单")' :title="t('Ctrl＋左键拖出内容；拖入微信前可松开 Ctrl')" :style="[stageStyle, pinAppearanceStyle(appearance, display.stageWidth, display.stageHeight, frame?.view.opacity ?? 1, focused)]" @pointerenter="keepControlsVisible" @pointerleave="scheduleControlsHide" @pointerdown="drag" @pointermove="contentDrag.move" @pointerup="contentDrag.cancel" @pointercancel="contentDrag.cancel" @lostpointercapture="contentDrag.cancel" @wheel.prevent="wheel" @contextmenu.capture="openMenu">
+  <div class="pin-shell" :class="{ 'is-focused': focused, 'is-zooming': zooming, 'toolbar-above': toolbarAbove }" @focusin="shellFocusIn" @focusout="shellFocusOut" @contextmenu.prevent>
+    <div v-show="imageReady" ref="stage" class="pin-stage" :inert="!!recognitionMode" tabindex="0" :aria-label='t("贴图，按空格显示或隐藏工具栏，右键打开菜单")' :style="[stageStyle, pinAppearanceStyle(appearance, display.stageWidth, display.stageHeight, frame?.view.opacity ?? 1, focused)]" @pointerdown="drag" @pointermove="contentDrag.move" @pointerup="contentDrag.cancel" @pointercancel="contentDrag.cancel" @lostpointercapture="contentDrag.cancel" @wheel.prevent="wheel" @contextmenu.capture="openMenu">
       <div v-if="frame" class="pin-canvas">
         <div class="pin-image-content" :style="{ width: `${display.imageWidth}px`, height: `${display.imageHeight}px`, opacity: frame.view.opacity }">
           <!-- 与标注栅格化同用 CORS 模式，同一文档内复用已解码底图，不再重复请求协议。 -->
@@ -363,50 +376,39 @@ function closeOnResize() {
         </div>
       </div>
     </div>
-    <span v-if="zooming && frame" class="pin-zoom-badge" :style="{ left: `${pinImagePadding(viewport.pixelRatio) + 8}px`, top: `${pinImagePadding(viewport.pixelRatio) + 8}px` }" aria-hidden="true">{{ Math.round(frame.view.zoom * 100) }}%</span>
-    <section ref="toolbar" :inert="!!recognitionMode" :style="[{ maxWidth: toolbarMaxWidth }, floatingToolbarStyle]" class="pin-controls" :class="{ collapsed: !controls, floating: floatingToolbarStyle.position }" :aria-label='t("贴图工具")' @pointerenter="keepControlsVisible" @pointerleave="scheduleControlsHide" @focusout="controlsFocusOut" @contextmenu.stop.prevent>
-      <AnnotationToolbar v-if="frame && controls" :editor="editor" :disabled="busy || frame.view.locked" :active="annotating" @tool="startEditing" @float="floatToolbar" @reset-position="resetToolbarPosition">
-        <template #leading><button :disabled="!editable" :aria-pressed="!annotating" :title='t("移动贴图")' :aria-label='t("移动贴图")' @click="annotating = false; editor.selected = -1"><Move :size="16" /></button></template>
-        <template #actions>
-          <button :disabled="busy" :aria-pressed="frame.view.topmost" :title='t("置顶开关")' :aria-label='t("置顶开关")' @click="setView({ topmost: !frame.view.topmost })"><component :is="frame.view.topmost ? Pin : PinOff" :size="16" /></button>
-          <button :disabled="busy" :aria-pressed="frame.view.locked" :title="frame.view.locked ? t('解锁') : t('锁定')" :aria-label="frame.view.locked ? t('解锁') : t('锁定')" @click="setView({ locked: !frame.view.locked })"><component :is="frame.view.locked ? Lock : Unlock" :size="16" /></button>
-          <span class="pin-divider" />
-          <button :disabled="!editable || frame.view.zoom <= minZoom" :title='t("缩小")' :aria-label='t("缩小")' @click="zoom(-1)"><Minus :size="16" /></button>
-          <button :disabled="!editable" :title='t("恢复 100% 查看比例")' @click="setView({ zoom: 1 })">{{ Math.round(frame.view.zoom * 100) }}%</button>
-          <button :disabled="!editable" :title='t("放大")' :aria-label='t("放大")' @click="zoom(1)"><Plus :size="16" /></button>
-          <span class="pin-divider" />
-          <button :disabled="busy" :title='t("复制 Ctrl/⌘+C")' :aria-label='t("复制")' @click="action('copy')"><Copy :size="16" /></button>
-          <button :disabled="busy" :title='t("保存图片 Ctrl/⌘+S")' :aria-label='t("保存图片")' @click="action('save')"><Save :size="16" /></button>
-          <button :disabled="busy" :title='t("关闭 Esc")' :aria-label='t("关闭")' @click="action('close')"><X :size="16" /></button>
-          <button :disabled="busy" :title='t("收起工具（Tab）")' :aria-label='t("收起工具")' @click="toggleControls"><ChevronDown :size="16" /></button>
+    <span v-if="zooming && frame" class="pin-badge" :style="{ left: `${origin.left + 8}px`, top: `${origin.top + 8}px` }" aria-hidden="true">{{ Math.round(frame.view.zoom * 100) }}%</span>
+    <!-- 提示贴在图片左下角，不依赖工具栏是否显示。 -->
+    <p v-if="error || message" :role="error ? 'alert' : 'status'" class="pin-badge pin-toast" :class="{ 'pin-error': !!error }" :style="{ left: `${origin.left + 8}px`, top: `${Math.max(origin.top + 8, origin.top + display.stageHeight - 32)}px`, maxWidth: `${Math.max(80, display.stageWidth - 16)}px` }" :title="error ? te(error) : t(message)">{{ error ? te(error) : t(message) }}</p>
+    <section v-show="controls || !frame" ref="toolbar" :inert="!!recognitionMode" :style="toolbarStyle" class="pin-controls" :aria-label='t("贴图工具")' @contextmenu.stop.prevent>
+      <AnnotationToolbar v-if="frame" grouped compact :movable="false" :editor="editor" :disabled="busy || frame.view.locked" :active="annotating" @tool="startEditing">
+        <template #leading><button :disabled="!editable" :aria-pressed="!annotating" :title='t("移动贴图 · 按住 Ctrl 拖动可把内容拖到其他应用")' :aria-label='t("移动贴图")' @click="annotating = false; editor.selected = -1"><Move :size="17" /></button></template>
+        <template #trailing>
+          <span class="tool-divider" />
+          <button class="pin-zoom" :disabled="!editable" :title='t("恢复 100% 查看比例")' @click="setView({ zoom: 1 })">{{ Math.round(frame.view.zoom * 100) }}%</button>
+          <PinMenuButton :icon="SlidersHorizontal" :label="t('图片处理')" :items="adjustItems" :disabled="!editable" :side="toolbarAbove ? 'top' : 'bottom'" @select="adjust" @open-change="menuOpen = $event" />
+          <PinMenuButton :icon="ScanText" :label="t('识别')" :items="recognizeItems" :disabled="busy || editor.pending || editor.interacting" :side="toolbarAbove ? 'top' : 'bottom'" @select="recognizeFrom" @open-change="menuOpen = $event" />
+          <span class="tool-divider" />
+          <button :disabled="busy" :aria-pressed="frame.view.topmost" :title="frame.view.topmost ? t('取消置顶') : t('窗口置顶')" :aria-label="frame.view.topmost ? t('取消置顶') : t('窗口置顶')" @click="setView({ topmost: !frame.view.topmost })"><component :is="frame.view.topmost ? Pin : PinOff" :size="17" /></button>
+          <button :disabled="busy" :title='t("保存图片 Ctrl/⌘+S")' :aria-label='t("保存图片")' @click="action('save')"><Save :size="17" /></button>
+          <button :disabled="busy" :title='t("关闭贴图 Esc")' :aria-label='t("关闭贴图")' @click="action('close')"><X :size="17" /></button>
+          <button class="pin-primary" :disabled="busy" :title='t("复制图片 Ctrl/⌘+C")' :aria-label='t("复制图片")' @click="action('copy')"><Copy :size="17" /></button>
         </template>
-        <template #options><div class="pin-row pin-options">
-          <SelectControl model-value="" :aria-label="t('图片处理')" :disabled="!editable" :options="[{ value: '', label: t('图片处理') }, ...transforms.map(item => ({ value: item.action, label: t(item.label) }))]" @update:model-value="chooseTransform" @open-change="$event ? keepControlsVisible() : scheduleControlsHide()" />
-          <label v-if="frame.transparencySupported" class="pin-opacity">{{ t("不透明度") }} <input type="range" min="20" max="100" step="5" :value="Math.round(frame.view.opacity * 100)" :disabled="busy" @change="opacity" /><span>{{ Math.round(frame.view.opacity * 100) }}%</span></label>
-          <button :disabled="busy || editor.pending || editor.interacting" @click="recognize('ocr', $event)">{{ t("识别文字") }}</button>
-          <button :disabled="busy || editor.pending || editor.interacting" @click="recognize('qr', $event)">{{ t("识别二维码") }}</button>
-          <button :disabled="busy || editor.pending || editor.interacting" @click="recognize('translate', $event)">{{ t("翻译图片") }}</button>
-          <span class="pin-dimensions">{{ frame.width }} × {{ frame.height }} px</span>
-        </div></template>
       </AnnotationToolbar>
-      <div v-else-if="!frame" class="pin-row"><span>{{ busy ? t("正在加载…") : t("图片未加载") }}</span><button :disabled="busy" @click="load">{{ t("重试") }}</button><button :disabled="busy" @click="action('close')">{{ t("关闭") }}</button></div>
-      <button v-else class="pin-toggle" :disabled="busy" :title='t("展开贴图工具（Tab）")' @click="toggleControls"><ChevronUp :size="16" />{{ t("工具") }}</button>
-      <p v-if="error" role="alert" class="pin-status pin-error" :title="te(error)">{{ te(error) }}</p>
-      <p v-else-if="message" role="status" class="pin-status" :title="t(message)">{{ t(message) }}</p>
+      <div v-else class="pin-row"><span>{{ busy ? t("正在加载…") : t("图片未加载") }}</span><button :disabled="busy" @click="load">{{ t("重试") }}</button><button :disabled="busy" @click="action('close')">{{ t("关闭") }}</button></div>
     </section>
     <p v-if="frame?.view.clickThrough" class="pin-pass-through" role="status">{{ t('鼠标穿透中 · 用全局贴图快捷键或托盘恢复') }}</p>
     <PinRecognition v-if="frame && recognitionMode" :frame="frame" :mode="recognitionMode" @close="closeRecognition" />
     <div v-if="contextMenu" ref="menuElement" class="pin-context-menu" role="menu" :aria-label='t("贴图菜单")' :style="{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }" @pointerdown.stop @contextmenu.stop.prevent @keydown.stop="menuKey">
-      <button role="menuitem" :disabled="busy || editor.pending || editor.interacting" @click="recognize('ocr', $event)">{{ t("识别文字") }}</button>
-      <button role="menuitem" :disabled="busy || editor.pending || editor.interacting" @click="recognize('qr', $event)">{{ t("识别二维码") }}</button>
-      <button role="menuitem" :disabled="busy || editor.pending || editor.interacting" @click="recognize('translate', $event)">{{ t("翻译图片") }}</button>
+      <button role="menuitem" :disabled="busy || editor.pending || editor.interacting" @click="recognize('ocr', $event.currentTarget)">{{ t("识别文字") }}</button>
+      <button role="menuitem" :disabled="busy || editor.pending || editor.interacting" @click="recognize('qr', $event.currentTarget)">{{ t("识别二维码") }}</button>
+      <button role="menuitem" :disabled="busy || editor.pending || editor.interacting" @click="recognize('translate', $event.currentTarget)">{{ t("翻译图片") }}</button>
       <div role="separator" />
       <button role="menuitem" @click="closeMenu(true); action('copy')">{{ t("复制图片") }}<span>Ctrl/⌘+C</span></button>
       <button role="menuitem" @click="closeMenu(true); action('save')">{{ t("保存图片") }}<span>Ctrl/⌘+S</span></button>
       <div role="separator" />
       <button role="menuitemcheckbox" :aria-checked="frame?.view.topmost" :disabled="busy || editor.pending || editor.interacting" @click="closeMenu(true); setView({ topmost: !frame?.view.topmost })"><Check v-if="frame?.view.topmost" :size="14" class="menu-check" aria-hidden="true" />{{ t("窗口置顶") }}</button>
       <button role="menuitemcheckbox" :aria-checked="frame?.view.locked" :disabled="busy || editor.pending || editor.interacting" @click="closeMenu(true); setView({ locked: !frame?.view.locked })"><Check v-if="frame?.view.locked" :size="14" class="menu-check" aria-hidden="true" />{{ t("锁定贴图") }}</button>
-      <button role="menuitemcheckbox" :aria-checked="controls" :disabled="busy || editor.pending || editor.interacting" @click="closeMenu(true); toggleControls()"><Check v-if="controls" :size="14" class="menu-check" aria-hidden="true" />{{ t("显示工具栏") }}<span>Tab</span></button>
+      <button role="menuitemcheckbox" :aria-checked="controls" :disabled="busy || editor.pending || editor.interacting" @click="closeMenu(true); toggleControls()"><Check v-if="controls" :size="14" class="menu-check" aria-hidden="true" />{{ t("显示工具栏") }}<span>{{ t("空格") }}</span></button>
       <button role="menuitemcheckbox" :aria-checked="!!frame?.view.clickThrough" :disabled="busy || editor.pending || editor.interacting" :title="t('用全局贴图快捷键恢复鼠标操作')" @click="closeMenu(); setView({ clickThrough: !frame?.view.clickThrough })"><Check v-if="frame?.view.clickThrough" :size="14" class="menu-check" aria-hidden="true" />{{ t("鼠标穿透") }}<span>Ctrl+Alt+P</span></button>
       <div role="separator" />
       <button role="menuitem" @click="closeMenu(true); action('close')">{{ t("关闭贴图") }}<span>Esc</span></button>
@@ -416,41 +418,31 @@ function closeOnResize() {
 
 <style scoped>
 .pin-pass-through { position: fixed; top: 4px; left: 8px; right: 8px; margin: 0; padding: 4px 8px; background: #fff; color: #24292f; border: 1px solid #d1d5db; font-size: 12px; pointer-events: none; z-index: 20; }
-.pin-shell { position: fixed; inset: 0; display: grid; justify-items: center; color: #374151; user-select: none; }
-.pin-stage { grid-row: 1; min-width: 0; min-height: 0; align-self: start; justify-self: start; overflow: auto; border-style: solid; border-color: #a1a1aa; transition: border-color .12s, box-shadow .12s, border-radius .12s; }
+.pin-shell { position: fixed; inset: 0; color: var(--tb-text); user-select: none; }
+.pin-stage { position: absolute; overflow: auto; border-style: solid; border-color: #a1a1aa; transition: border-color .12s, box-shadow .12s, border-radius .12s; }
 /* 缩放及窄窗口时只隐藏滚动条，保留原有滚动与键盘聚焦能力。 */
-.pin-stage, .pin-controls, .pin-row, .pin-controls :deep(.annotation-tool-row) { scrollbar-width: none; }
-.pin-stage::-webkit-scrollbar, .pin-controls::-webkit-scrollbar, .pin-row::-webkit-scrollbar, .pin-controls :deep(.annotation-tool-row::-webkit-scrollbar) { display: none; }
+.pin-stage { scrollbar-width: none; }
+.pin-stage::-webkit-scrollbar { display: none; }
 .pin-stage:focus-visible { outline:2px solid #3264df; outline-offset:2px; }
 .pin-canvas { display: flex; align-items: center; justify-content: center; min-width: 100%; min-height: 100%; width: max-content; height: max-content; }
 .pin-canvas img { flex: none; max-width: none; }
 .pin-image-content { position: relative; flex: none; }
 .pin-image-content img { display: block; width: 100%; height: 100%; }
-.pin-controls { grid-row: 2; min-width: 0; width: max-content; max-width: 100%; height: 100%; justify-self: start; overflow: auto; padding: 4px 6px; border: 1px solid #d4d4d8; border-radius: 7px; background: #fffffff5; box-shadow: 0 2px 6px #0002; font: 13px 'Segoe UI', 'Microsoft YaHei', sans-serif; transition: opacity .12s; }
-/* 滚轮/键盘缩放期间工具栏淡出，窗口高度变化时不跟着跳动；拖出的浮动工具栏不受影响。 */
-.pin-shell.is-zooming .pin-controls:not(.floating) { opacity: 0; pointer-events: none; }
-.pin-zoom-badge { position: fixed; z-index: 6; padding: 2px 7px; border-radius: 4px; background: #242330dc; color: #fff; font: 12px 'Segoe UI', 'Microsoft YaHei', sans-serif; font-variant-numeric: tabular-nums; pointer-events: none; }
-/* 隐藏时保留底栏占位，避免图片跳动；键盘焦点仍可唤出工具。 */
-.pin-shell:not(.controls-visible):not(:has(:focus-visible)) .pin-controls:not(.floating) { visibility: hidden; pointer-events: none; }
-.pin-row { display: flex; align-items: center; gap: 3px; height: 34px; overflow-x: auto; overflow-y: hidden; white-space: nowrap; }
-.pin-row > * { flex-shrink: 0; }
-.pin-controls button { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; gap: 4px; height: 32px; min-width: 32px; padding: 3px 5px; border-radius: 4px; }
-.pin-controls :deep(svg) { flex: 0 0 auto; }
-.pin-controls button:hover { background: #eff6ff; }
-.pin-controls button:disabled { opacity: .45; }
-.pin-controls button[aria-pressed=true] { color: #2563eb; background: #dbeafe; }
-.pin-controls button:focus-visible, .pin-controls select:focus-visible { outline: 2px solid #2563eb; outline-offset: -2px; }
-.pin-divider { height: 14px; width: 1px; background: #e4e4e7; margin: 0 3px; }
-.pin-options { gap: 8px; min-height: 36px; }
-.pin-options select { background: transparent; max-width: 100px; height: 26px; }
-.pin-opacity { display: flex; align-items: center; gap: 4px; }
-.pin-opacity input { flex: 0 0 64px; width: 64px; accent-color: #2563eb; }
-.pin-dimensions { color: #71717a; }
-.pin-status { line-height: 16px; margin: 0; font-size: 10px; color: #71717a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.pin-error { color: #b91c1c; }
-.collapsed { display: flex; align-items: center; gap: 8px; }
-.collapsed .pin-status { min-width: 0; }
-.pin-toggle { flex-shrink: 0; }
+.pin-badge { position: absolute; z-index: 6; margin: 0; padding: 3px 8px; border-radius: 6px; background: #1f2328e0; color: #fff; font: 12px 'Segoe UI', 'Microsoft YaHei', sans-serif; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
+.pin-toast.pin-error { background: #b42318f0; }
+
+/* 工具栏外观来自共用的 AnnotationToolbar 胶囊；这里只负责定位和贴图专属按钮。 */
+.pin-shell .pin-controls { position: absolute; z-index: 5; width: max-content; font: 13px 'Segoe UI', 'Microsoft YaHei', sans-serif; transition: opacity .12s; }
+.pin-shell.is-zooming .pin-controls { opacity: 0; pointer-events: none; }
+.pin-shell .pin-controls :deep(.annotation-tools) { align-items: flex-end; }
+.pin-shell.toolbar-above .pin-controls :deep(.annotation-tools) { flex-direction: column-reverse; }
+.pin-shell .pin-controls .pin-zoom { min-width: 46px; color: var(--tb-muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.pin-shell .pin-controls .pin-primary { margin-left: 4px; background: #2563eb; color: #fff; }
+.pin-shell .pin-controls .pin-primary:hover:enabled { background: #1d4ed8; }
+.pin-row { display: flex; align-items: center; gap: 6px; height: 40px; padding: 0 6px 0 12px; border: 1px solid var(--tb-border); border-radius: 10px; background: var(--tb-surface); box-shadow: var(--tb-shadow); white-space: nowrap; }
+.pin-row button { height: 30px; padding: 0 8px; border-radius: 6px; }
+.pin-row button:hover:enabled { background: var(--tb-hover); }
+
 .pin-context-menu { position: fixed; z-index: 20; width: 224px; max-width: calc(100vw - 8px); max-height: calc(100vh - 8px); overflow-y: auto; padding: 5px; border: 1px solid #e4e4e7; border-radius: 8px; background: #fff; box-shadow: 0 4px 18px #0003; font-size: 12px; }
 .pin-context-menu .menu-check { position: absolute; left: 8px; top: 50%; transform: translateY(-50%); color: #2563eb; }
 .pin-context-menu button { position: relative; display: flex; align-items: center; gap: 8px; width: 100%; min-height: 28px; padding: 4px 8px 4px 28px; border-radius: 4px; text-align: left; }
@@ -458,8 +450,6 @@ function closeOnResize() {
 .pin-context-menu button:disabled { opacity: .4; }
 .pin-context-menu button span { margin-left: auto; color: #a1a1aa; font-size: 10px; }
 .pin-context-menu [role=separator] { height: 1px; background: #e4e4e7; margin: 4px; }
-/* 透明窗口仅给工具区着色，保留图片周围的透明边距。 */
-:global([data-theme=dark]) .pin-controls, :global([data-theme=dark]) .pin-context-menu { background: #20252c; color: #e6edf3; border-color: #39424e; }
-:global([data-theme=dark]) .pin-controls button:hover:enabled, :global([data-theme=dark]) .pin-context-menu button:hover:enabled { background: #303f56; }
-:global([data-theme=dark]) .pin-controls button[aria-pressed=true] { background: #303f56; color: #93c5fd; }
+:global([data-theme=dark]) .pin-context-menu { background: #20252c; color: #e6edf3; border-color: #39424e; }
+:global([data-theme=dark]) .pin-context-menu button:hover:enabled { background: #303f56; }
 </style>

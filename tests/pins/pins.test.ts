@@ -1,20 +1,35 @@
 import { describe, expect, it } from 'vitest'
 import layout from '../../src/features/pins/pin-layout.json'
-import { defaultPinAppearance, pinAppearanceStyle, validatePinAppearance, canEditPin, minimumZoom, pinDisplaySize, pinImagePadding, stepZoom } from '../../src/features/pins/pins'
+import { defaultPinAppearance, pinAppearanceStyle, validatePinAppearance, canEditPin, minimumZoom, pinDisplaySize, pinImagePadding, pinStageOrigin, pinToolbarBand, stepZoom } from '../../src/features/pins/pins'
 
 describe('pin display controls', () => {
   it('matches the native image inset at fractional DPI without shifting the first image pixel', () => {
     for (const pixelRatio of [1, 1.25, 1.5, 1.75, 2]) {
       const inset = (pinImagePadding(pixelRatio) + layout.border) * pixelRatio
       expect(inset).toBeCloseTo(Math.round((layout.padding + layout.border) * pixelRatio))
-      const viewportWidth = (1233 + Math.round(inset) * 2) / pixelRatio
-      const viewportHeight = (626 + Math.round(inset) * 2) / pixelRatio + layout.gap + layout.expandedHeight
-      const size = pinDisplaySize(1233, 626, 1, viewportWidth, viewportHeight, true, pixelRatio)
-      expect(size.imageWidth * pixelRatio).toBeCloseTo(1233)
-      expect(size.imageHeight * pixelRatio).toBeCloseTo(626)
-      expect(size.stageWidth).toBeCloseTo(size.imageWidth + layout.border * 2)
-      expect(size.stageHeight).toBeCloseTo(size.imageHeight + layout.border * 2)
+      // 空闲窗口只包住图片；工具栏显示在下方时窗口多出一条。
+      for (const below of [false, true]) {
+        const viewportWidth = (1233 + Math.round(inset) * 2) / pixelRatio
+        const viewportHeight = (626 + Math.round(inset) * 2) / pixelRatio + (below ? pinToolbarBand : 0)
+        const size = pinDisplaySize(1233, 626, 1, viewportWidth, viewportHeight, below, pixelRatio)
+        expect(size.imageWidth * pixelRatio).toBeCloseTo(1233)
+        expect(size.imageHeight * pixelRatio).toBeCloseTo(626)
+        expect(size.stageWidth).toBeCloseTo(size.imageWidth + layout.border * 2)
+        expect(size.stageHeight).toBeCloseTo(size.imageHeight + layout.border * 2)
+      }
     }
+  })
+  it('places the stage at the native image offset when the toolbar sits above', () => {
+    for (const pixelRatio of [1, 1.5]) {
+      const inset = Math.round((layout.padding + layout.border) * pixelRatio)
+      const band = Math.ceil(pinToolbarBand * pixelRatio)
+      const origin = pinStageOrigin({ imageX: inset, imageY: inset + band }, pixelRatio)
+      expect(origin.left).toBeCloseTo(pinImagePadding(pixelRatio))
+      expect((origin.top + layout.border) * pixelRatio).toBeCloseTo(inset + band)
+      const size = pinDisplaySize(800, 400, 1, (800 + inset * 2) / pixelRatio, (400 + inset * 2 + band) / pixelRatio, false, pixelRatio, origin)
+      expect(size.stageHeight * pixelRatio).toBeCloseTo(400 + layout.border * 2 * pixelRatio)
+    }
+    expect(pinStageOrigin(undefined, 1)).toEqual({ left: pinImagePadding(1), top: pinImagePadding(1) })
   })
   it('100% maps selected image pixels to screen pixels at Windows display scales', () => {
     for (const pixelRatio of [1, 1.25, 1.5, 2]) {
@@ -28,11 +43,11 @@ describe('pin display controls', () => {
     }
   })
   it('keeps the complete image border inside a shrinking viewport before the zoom reply arrives', () => {
-    for (const expanded of [true, false]) {
+    for (const below of [true, false]) {
       for (const zoom of [1, 0.5, 0.1]) {
-        const size = pinDisplaySize(1116, 558, zoom, 266, 290, expanded)
+        const size = pinDisplaySize(1116, 558, zoom, 266, 290, below)
         expect(size.stageWidth).toBeLessThanOrEqual(242)
-        expect(size.stageHeight).toBeLessThanOrEqual(290 - layout.padding * 2 - layout.gap - (expanded ? layout.expandedHeight : layout.collapsedHeight))
+        expect(size.stageHeight).toBeLessThanOrEqual(290 - layout.padding * 2 - (below ? pinToolbarBand : 0))
         expect(size.stageWidth).toBeGreaterThanOrEqual(22)
         expect(size.stageHeight).toBeGreaterThanOrEqual(22)
       }

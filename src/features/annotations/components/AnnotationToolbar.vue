@@ -7,7 +7,8 @@ import AnnotationToolGroup from '@/features/annotations/components/AnnotationToo
 import { annotationTools, annotationToolGroups } from '@/features/annotations/annotation-tools'
 import { readToolOrder, moveTool, normalizeToolOrder, toolbarOrderKey } from '@/features/annotations/toolbar-order'
 import type { AnnotationToolbarEditor, AnnotationTool } from '@/features/annotations/use-annotations'
-const props = defineProps<{ editor: AnnotationToolbarEditor; disabled: boolean; active: boolean; collapsible?: boolean; defaultExpanded?: boolean; pointerLabel?: string; movable?: boolean }>()
+// grouped 始终按用途合并工具且不提供展开；compact 省去删除 / 清空按钮（仍可用 Delete 和菜单），供贴图单行工具栏使用。
+const props = defineProps<{ editor: AnnotationToolbarEditor; disabled: boolean; active: boolean; collapsible?: boolean; defaultExpanded?: boolean; pointerLabel?: string; movable?: boolean; grouped?: boolean; compact?: boolean }>()
 const emit = defineEmits<{ tool: [tool: AnnotationTool]; float: [event: PointerEvent]; resetPosition: [] }>()
 // 顺序在截图和贴图窗口之间共享；存储失败不阻断当前窗口的编辑。
 const order = ref(readToolOrder())
@@ -137,24 +138,23 @@ function value(event: Event) { return (event.target as HTMLInputElement).value }
     <div :id="toolsRowId" class="annotation-tool-row annotation-drawing-row" :inert="editor.pending || editor.interacting" role="toolbar" :aria-label="t('标注工具')">
       <button v-if="movable !== false" class="tool-grip" :disabled="disabled" :title="t('拖动工具栏；双击恢复位置')" :aria-label="t('拖动工具栏，双击或 Enter 恢复位置')" @pointerdown.stop="emit('float', $event)" @dblclick="emit('resetPosition')" @keydown.enter.stop.prevent="emit('resetPosition')"><GripVertical :size="16" /></button>
       <slot name="leading" />
-      <template v-if="collapsible && !expanded">
+      <template v-if="grouped || (collapsible && !expanded)">
         <AnnotationToolGroup v-for="group in annotationToolGroups" :key="group.name" :name="group.name" :label="group.tools.includes('edit') ? pointerLabel : undefined" :tools="group.tools" :selected="pointerLabel && group.tools.includes('edit') ? 'edit' : editor.tool" :active="pointerLabel && group.tools.includes('edit') ? !active : active" :disabled="disabled" @select="emit('tool', $event)" />
       </template>
       <template v-else>
         <button v-for="item in tools" :key="item.tool" :disabled="disabled" :class="{ 'sorting-source': sortingTool === item.tool, 'sorting-target': sortingTarget === item.tool && sortingTarget !== sortingTool }" :title="t('{0}（拖动排序，Alt+←/→调整顺序）', { 0: t(item.name) })" :data-annotation-tool="item.tool" @pointerdown="startOrder($event, item.tool)" @pointermove="moveOrder" @pointerup="finishOrder" @pointercancel="cancelOrder" @lostpointercapture="cancelOrder" @dragstart.prevent @keydown="orderKey($event, item.tool)" :aria-label="t(item.name)" :aria-pressed="pointerLabel && item.tool === 'edit' ? !active : active && editor.tool === item.tool" @click="choose($event, item.tool)"><component :is="item.icon" :size="18" /></button>
         <button :disabled="disabled" :title='t("恢复默认工具顺序")' :aria-label='t("恢复默认工具顺序")' @click="saveOrder(normalizeToolOrder(null))"><RotateCcw :size="16" /></button>
       </template>
-        <button v-if="collapsible" :disabled="disabled" :title="expanded ? t('折叠相似工具') : t('展开全部工具（可拖动排序）')" :aria-label="expanded ? t('折叠工具栏') : t('展开工具栏')" :aria-expanded="expanded" :aria-controls="toolsRowId" @click="toggleExpanded"><component :is="expanded ? ChevronUp : ChevronDown" :size="16" /></button>
+        <button v-if="collapsible && !grouped" :disabled="disabled" :title="expanded ? t('折叠相似工具') : t('展开全部工具（可拖动排序）')" :aria-label="expanded ? t('折叠工具栏') : t('展开工具栏')" :aria-expanded="expanded" :aria-controls="toolsRowId" @click="toggleExpanded"><component :is="expanded ? ChevronUp : ChevronDown" :size="16" /></button>
       <span class="tool-divider" />
         <button :disabled="disabled || !editor.canUndo" :title='t("撤销 Ctrl/⌘+Z")' :aria-label='t("撤销")' @click="editor.travel('undo')"><Undo2 :size="16" /></button>
         <button :disabled="disabled || !editor.canRedo" :title='t("重做 Ctrl/⌘+Shift+Z")' :aria-label='t("重做")' @click="editor.travel('redo')"><Redo2 :size="16" /></button>
-        <button :disabled="disabled || editor.selected < 0" :title='t("删除选中标注 Delete")' :aria-label='t("删除选中标注")' @click="editor.remove"><Trash2 :size="16" /></button>
+        <button v-if="!compact" :disabled="disabled || editor.selected < 0" :title='t("删除选中标注 Delete")' :aria-label='t("删除选中标注")' @click="editor.remove"><Trash2 :size="16" /></button>
 
-      <button :disabled="disabled || !editor.shapes.length" :title="t('清空标注，可撤销恢复')" :aria-label="t('清空标注')" @click="editor.clear"><Eraser :size="16" /><span>{{ t('清空') }}</span></button>
-    </div>
-    <div v-if="$slots.actions" class="annotation-tool-row annotation-action-row" :inert="editor.pending || editor.interacting" role="toolbar" :aria-label="t('标注操作')">
-
-      <slot name="actions" />
+      <button v-if="!compact" :disabled="disabled || !editor.shapes.length" :title="t('清空标注，可撤销恢复')" :aria-label="t('清空标注')" @click="editor.clear"><Eraser :size="16" /><span>{{ t('清空') }}</span></button>
+      <slot name="trailing" />
+      <!-- 宿主动作与标注工具同在一行，整条工具栏只有一个胶囊。 -->
+      <template v-if="$slots.actions"><span class="tool-divider" /><slot name="actions" /></template>
     </div>
     <div v-if="active && (editor.tool !== 'edit' || editor.selected >= 0)" class="annotation-tool-row annotation-options" :inert="editor.pending || (editor.interacting && !editor.textEditing)" :aria-label='t("标注样式")'>
       <label>{{ t("颜色") }} <input type="color" :value="editor.color" :disabled="disabled || filterMode" @change="editor.style({ color: value($event) })" /></label>
@@ -175,35 +175,41 @@ function value(event: Event) { return (event.target as HTMLInputElement).value }
 </template>
 
 <style scoped>
-.annotation-tools { min-width: 0; max-width: 100%; font: 13px 'Segoe UI', 'Microsoft YaHei', sans-serif; color:#24292f; background:#f6f7f8; border-radius:5px; }
-.annotation-tool-row { display: flex; align-items: center; gap: 3px; min-height: 36px; white-space: nowrap; overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; }
+/* 截图、贴图、录屏共用的单行胶囊：工具与动作一行，选中工具时样式条作为第二个胶囊。 */
+.annotation-tools { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; min-width: 0; max-width: 100%; font: 13px 'Segoe UI', 'Microsoft YaHei', sans-serif; color: var(--tb-text); }
+.annotation-tool-row { display: flex; align-items: center; gap: 2px; max-width: 100%; box-sizing: border-box; white-space: nowrap; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; border: 1px solid var(--tb-border); background: var(--tb-surface); box-shadow: var(--tb-shadow); }
+.annotation-tool-row::-webkit-scrollbar { display: none; }
+.annotation-drawing-row { height: 40px; min-height: 40px; padding: 0 5px; border-radius: 10px; }
 /* 工具使用 CSS 像素，图片缩放或宿主变窄只改变可见区域，不压缩按钮和控件。 */
 .annotation-tool-row > * { flex: 0 0 auto; }
-.annotation-tools :deep(svg) { flex: 0 0 auto; }
-.annotation-tools :deep(button), .annotation-tools select { display: inline-flex; align-items: center; justify-content: center; height: 32px; padding: 3px 6px; border-radius: 5px; color: inherit; background: transparent; }
-.annotation-tools :deep(button) { flex: 0 0 auto; border: 0; gap: 4px; font: 13px 'Segoe UI', 'Microsoft YaHei', sans-serif; min-width: 32px; position: relative; }
-.annotation-tools :deep(button:hover:not(:disabled)) { background: #eff6ff; }
-.annotation-tools :deep(button[aria-pressed=true]) { color: #2563eb; background: #dbeafe; }
+.annotation-tools :deep(svg) { flex: 0 0 auto; width: 17px; height: 17px; }
+.annotation-tools :deep(button), .annotation-tools select { display: inline-flex; align-items: center; justify-content: center; height: 30px; padding: 0 6px; border-radius: 6px; color: inherit; background: transparent; }
+.annotation-tools :deep(button) { flex: 0 0 auto; border: 0; gap: 4px; font: 13px 'Segoe UI', 'Microsoft YaHei', sans-serif; min-width: 30px; position: relative; cursor: pointer; }
+.annotation-tools :deep(button:hover:not(:disabled)) { background: var(--tb-hover); }
+.annotation-tools :deep(button[aria-pressed=true]) { color: var(--tb-active-fg); background: var(--tb-active-bg); }
 .annotation-tools :deep(:focus-visible) { outline: 2px solid #2563eb; outline-offset: -2px; }
+.annotation-tools :deep(.tool-group .group-trigger) { min-width: 14px; width: 14px; padding: 0; color: var(--tb-muted); }
+.annotation-tools :deep(.tool-group .group-trigger svg) { width: 12px; height: 12px; }
 [data-annotation-tool] { touch-action: none; user-select: none; }
 .sorting-source { opacity: .55; }
 .sorting-target { outline: 2px solid #2563eb; outline-offset: -2px; }
-.tool-grip { color: #71717a; cursor: grab; touch-action: none; }
+.tool-grip { color: var(--tb-muted); cursor: grab; touch-action: none; }
 .tool-grip:active { cursor: grabbing; }
-.tool-divider { width: 1px; height: 17px; background: #e4e4e7; margin: 0 4px; }
-.annotation-action-row { border-top:1px solid #e1e4e8; padding-top:3px; }
-.annotation-options { gap: 10px; border-top: 1px solid #f4f4f5; }
-.annotation-tools label { display: inline-flex; align-items: center; gap: 3px; }
+.annotation-tools :deep(.tool-divider) { flex: none; width: 1px; height: 18px; margin: 0 5px; background: var(--tb-divider); }
+.annotation-options { gap: 12px; min-height: 36px; padding: 0 10px; border-radius: 8px; font-size: 12px; }
+.annotation-tools label { display: inline-flex; align-items: center; gap: 6px; color: var(--tb-muted); }
 .annotation-tools label > * { flex: 0 0 auto; }
-.annotation-tools input { flex: 0 0 auto; font: 13px 'Segoe UI', 'Microsoft YaHei', sans-serif; color: #374151; background: white; border: 1px solid #d4d4d8; border-radius: 3px; height: 28px; }
-.annotation-tools input[type=color] { width: 28px; padding: 1px; }
-.annotation-tools input[type=number] { width: 44px; }
+.annotation-tools input { flex: 0 0 auto; font: 12px 'Segoe UI', 'Microsoft YaHei', sans-serif; color: var(--tb-text); background: var(--tb-surface); border: 1px solid var(--tb-border); border-radius: 5px; height: 26px; }
+.annotation-tools input[type=color] { width: 26px; padding: 2px; cursor: pointer; }
+.annotation-tools input[type=number] { width: 44px; padding: 0 4px; }
 .annotation-text { width: 190px; padding: 2px 6px; }
-.annotation-tools :deep(button:disabled), .annotation-tools input:disabled, .annotation-tools select:disabled { opacity: .45; }
-.annotation-hint { font-size: 12px; color: #57606a; }
+.annotation-tools :deep(button:disabled), .annotation-tools input:disabled, .annotation-tools select:disabled { opacity: .4; cursor: default; }
+.annotation-hint { font-size: 12px; color: var(--tb-muted); }
 .annotation-error { color: #e11d48; line-height: 16px; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-:global([data-theme=dark]) .annotation-tools { background:#20252c; color:#e6edf3; }
-:global([data-theme=dark]) .annotation-tools input, :global([data-theme=dark]) .annotation-tools select { background:#181b20; color:#e6edf3; border-color:#39424e; }
-:global([data-theme=dark]) .annotation-tools :deep(button:hover:enabled) { background: #303f56; }
-:global([data-theme=dark]) .annotation-tools :deep(button[aria-pressed=true]) { color: #93c5fd; background: #303f56; }
+</style>
+
+<!-- 工具栏配色变量：截图、贴图窗口共用，深色主题随 data-theme 切换。 -->
+<style>
+:root { --tb-surface: #ffffff; --tb-border: #dfe3e8; --tb-text: #24292f; --tb-muted: #6b7280; --tb-hover: #f1f3f5; --tb-active-bg: #e8f0fe; --tb-active-fg: #2563eb; --tb-divider: #e5e7eb; --tb-shadow: 0 4px 16px #0f172a1f, 0 1px 2px #0f172a14; }
+[data-theme=dark] { --tb-surface: #20252c; --tb-border: #39424e; --tb-text: #e6edf3; --tb-muted: #9aa7b4; --tb-hover: #2b323c; --tb-active-bg: #263a57; --tb-active-fg: #93c5fd; --tb-divider: #39424e; --tb-shadow: 0 4px 16px #00000066, 0 1px 2px #00000040; }
 </style>

@@ -1,12 +1,18 @@
 <script setup lang="ts">
-import SelectControl from '@/shared/ui/SelectControl.vue'
 import { computed } from 'vue'
+import { Keyboard, Settings2 } from 'lucide-vue-next'
 import { t } from '@/shared/i18n/i18n'
 import RecordingInputSettings from '@/features/recording/components/RecordingInputSettings.vue'
 import RecordingOptionMenu from '@/features/recording/components/RecordingOptionMenu.vue'
-import type { RecordingFormat, EncodingPreference, InputEffects, RecordingQuality } from '@/features/recording/recording'
+import type { RecordingFormat, RecordingFps, EncodingPreference, InputEffects, RecordingQuality } from '@/features/recording/recording'
 
-defineProps<{ busy: boolean; format: RecordingFormat }>()
+/**
+ * 录屏准备条只放图标：格式、帧率、画质、码率、编码、倒计时和收起主界面集中在“录屏设置”面板，
+ * 键鼠特效单独一个图标；当前取值写进悬浮提示，不在工具行铺文字。
+ */
+withDefaults(defineProps<{ busy: boolean; formats?: RecordingFormat[]; formatDisabled?: boolean }>(), { formats: () => [] })
+const format = defineModel<RecordingFormat>('format', { required: true })
+const fps = defineModel<RecordingFps>('fps', { default: 30 })
 const encoding = defineModel<EncodingPreference>('encoding', { required: true })
 const quality = defineModel<RecordingQuality>('quality', { required: true })
 const mbps = defineModel<string | number>('mbps', { required: true })
@@ -15,37 +21,69 @@ const effects = defineModel<InputEffects>('effects', { required: true })
 const hideMainWindow = defineModel<boolean>('hideMainWindow', { default: true })
 // 只统计监听开关，尺寸、颜色等偏好本身不代表开启了特效。
 const effectCount = computed(() => [effects.value.keyboard, effects.value.clicks, effects.value.movement, effects.value.drag, effects.value.wheel].filter(Boolean).length)
+const qualities = computed(() => [{ value: 'economy' as const, label: t('节省空间') }, { value: 'balanced' as const, label: t('均衡') }, { value: 'high' as const, label: t('高清') }])
+const encodings = computed(() => [{ value: 'auto' as const, label: t('自动编码') }, { value: 'software' as const, label: t('软件兼容') }])
+const countdowns = computed(() => ([0, 3, 5] as const).map(value => ({ value, label: value ? t('{0} 秒', { 0: value }) : t('无延时') })))
+const frameRates = computed<RecordingFps[]>(() => format.value === 'gif' ? [10, 20] : [30, 60])
+/** 设置图标的提示与读屏名称带上当前取值，不打开面板也能确认。 */
+const summary = computed(() => [format.value.toUpperCase(), `${fps.value} FPS`,
+  ...(format.value === 'mp4' ? [mbps.value === '' ? qualities.value.find(item => item.value === quality.value)?.label ?? '' : `${mbps.value} Mbps`] : []),
+  countdowns.value.find(item => item.value === countdown.value)?.label ?? ''].filter(Boolean).join(' · '))
 </script>
 
 <template>
-  <!-- 设置入口常驻；画质和编码按组排列，自定义值与特效在各自菜单中编辑。 -->
   <div class="recording-inline-options" role="group" :aria-label="t('录屏选项')" @pointerdown.stop @contextmenu.stop.prevent>
-    <template v-if="format === 'mp4'">
-      <SelectControl v-model="quality" :disabled="busy || mbps !== ''" :aria-label="t('画质')" :options="[{ value: 'economy', label: t('节省空间') }, { value: 'balanced', label: t('均衡') }, { value: 'high', label: t('高清') }]" />
-      <RecordingOptionMenu :label="mbps === '' ? t('自动码率') : `${mbps} Mbps`" :disabled="busy"><label>{{ t('码率（Mbps）') }}<input v-model="mbps" type="number" min="1" max="80" step="any" :placeholder="t('自动')" :disabled="busy" /></label><small>{{ t('1–80 Mbps；清空后恢复自动码率') }}</small></RecordingOptionMenu>
-      <SelectControl v-model="encoding" :disabled="busy" :aria-label="t('编码方式')" :options="[{ value: 'auto', label: t('自动编码') }, { value: 'software', label: t('软件兼容') }]" />
-    </template>
-    <SelectControl v-model="countdown" :disabled="busy" :aria-label="t('倒计时')" :options="[0, 3, 5].map(value => ({ value, label: value ? t('{0} 秒', { 0: value }) : t('无延时') }))" />
-    <button type="button" class="hide-main-switch" role="switch" :aria-checked="hideMainWindow" :disabled="busy" :title="t('录制时收起主界面')" @click="hideMainWindow = !hideMainWindow"><span class="switch-track" aria-hidden="true"><span /></span>{{ t('收起主界面') }}</button>
-    <RecordingOptionMenu :label="t('键鼠特效')" :status="effectCount ? t('{0} 项', { 0: effectCount }) : t('已关闭')" :active="effectCount > 0" wide :disabled="busy"><RecordingInputSettings v-model="effects" :disabled="busy" /></RecordingOptionMenu>
+    <RecordingOptionMenu :icon="Settings2" :label="t('录屏设置')" :status="summary" wide :disabled="busy">
+      <div class="setup-grid">
+        <template v-if="formats.length > 1">
+          <span>{{ t('录屏格式') }}</span>
+          <div class="segmented" role="radiogroup" :aria-label="t('录屏格式')">
+            <button v-for="value in formats" :key="value" type="button" role="radio" :aria-checked="format === value" :disabled="busy || formatDisabled" @click="format = value">{{ value.toUpperCase() }}</button>
+          </div>
+        </template>
+        <span>{{ t('帧率') }}</span>
+        <div class="segmented" role="radiogroup" :aria-label="t('录屏帧率')">
+          <button v-for="value in frameRates" :key="value" type="button" role="radio" :aria-checked="fps === value" :disabled="busy" @click="fps = value">{{ value }} FPS</button>
+        </div>
+        <template v-if="format === 'mp4'">
+          <span>{{ t('画质') }}</span>
+          <div class="segmented" role="radiogroup" :aria-label="t('画质')">
+            <button v-for="item in qualities" :key="item.value" type="button" role="radio" :aria-checked="quality === item.value" :disabled="busy || mbps !== ''" @click="quality = item.value">{{ item.label }}</button>
+          </div>
+          <span>{{ t('码率（Mbps）') }}</span>
+          <label class="bitrate"><input v-model="mbps" type="number" min="1" max="80" step="any" :placeholder="t('自动')" :aria-label="t('码率（Mbps）')" :disabled="busy" /><small>{{ t('1–80 Mbps；清空后恢复自动码率') }}</small></label>
+          <span>{{ t('编码方式') }}</span>
+          <div class="segmented" role="radiogroup" :aria-label="t('编码方式')">
+            <button v-for="item in encodings" :key="item.value" type="button" role="radio" :aria-checked="encoding === item.value" :disabled="busy" @click="encoding = item.value">{{ item.label }}</button>
+          </div>
+        </template>
+        <span>{{ t('倒计时') }}</span>
+        <div class="segmented" role="radiogroup" :aria-label="t('倒计时')">
+          <button v-for="item in countdowns" :key="item.value" type="button" role="radio" :aria-checked="countdown === item.value" :disabled="busy" @click="countdown = item.value">{{ item.label }}</button>
+        </div>
+        <span>{{ t('收起主界面') }}</span>
+        <button type="button" class="hide-main-switch" role="switch" :aria-checked="hideMainWindow" :aria-label="t('录制时收起主界面')" :disabled="busy" @click="hideMainWindow = !hideMainWindow"><span class="switch-track" aria-hidden="true"><span /></span></button>
+      </div>
+    </RecordingOptionMenu>
+    <RecordingOptionMenu :icon="Keyboard" :label="t('键鼠特效')" :status="effectCount ? t('{0} 项', { 0: effectCount }) : t('已关闭')" :active="effectCount > 0" wide :disabled="busy"><RecordingInputSettings v-model="effects" :disabled="busy" /></RecordingOptionMenu>
   </div>
 </template>
 
 <style scoped>
-.recording-inline-options { display:inline-flex; flex-wrap:wrap; align-items:center; gap:3px; max-width:100%; padding:2px; border:1px solid #e1e4e8; border-radius:5px; background:#f6f7f8; }
-.recording-inline-options > * { flex-shrink:0; }
-.hide-main-switch { display:inline-flex; align-items:center; gap:5px; height:28px; padding:3px 6px; border:0; border-radius:4px; background:transparent; color:inherit; font:inherit; cursor:pointer; }
-.switch-track { display:inline-flex; align-items:center; width:24px; height:14px; padding:2px; border-radius:8px; background:#6b7280; }
-.switch-track > span { width:10px; height:10px; border-radius:50%; background:#fff; }
+.recording-inline-options { display:inline-flex; align-items:center; gap:2px; }
+.setup-grid { display:grid; grid-template-columns:auto minmax(0, 1fr); align-items:center; gap:10px 14px; }
+.setup-grid > span { color:var(--tb-muted, #6b7280); font-size:12px; white-space:nowrap; }
+.segmented { display:inline-flex; justify-self:start; padding:2px; border-radius:7px; background:var(--tb-hover, #f1f3f5); }
+.segmented button { height:26px; padding:0 10px; border:0; border-radius:5px; background:transparent; color:var(--tb-muted, #6b7280); font:12px 'Segoe UI', 'Microsoft YaHei', sans-serif; white-space:nowrap; cursor:pointer; }
+.segmented button[aria-checked=true] { background:var(--tb-surface, #fff); color:var(--tb-text, #24292f); box-shadow:0 1px 2px #0f172a26; }
+.segmented button:disabled { opacity:.45; cursor:default; }
+.bitrate { display:flex; flex-direction:column; align-items:flex-start; gap:4px; margin:0 !important; }
+.bitrate input { width:88px; }
+.bitrate small { font-size:11px; }
+.hide-main-switch { justify-self:start; display:inline-flex; align-items:center; height:26px; padding:0; border:0; background:transparent; cursor:pointer; }
+.switch-track { display:inline-flex; align-items:center; width:30px; height:18px; padding:2px; border-radius:9px; background:#9ca3af; transition:background .12s; }
+.switch-track > span { width:14px; height:14px; border-radius:50%; background:#fff; box-shadow:0 1px 2px #0003; }
 .hide-main-switch[aria-checked=true] .switch-track { justify-content:flex-end; background:#2563eb; }
 .hide-main-switch:disabled { opacity:.45; cursor:default; }
-.recording-inline-options :deep(.recording-option-trigger) { padding:3px 6px; border-radius:4px; }
-label { display: inline-flex; align-items: center; gap: 4px; }
-select, input { height:28px; padding:2px 5px; border:0; border-radius:4px; background:transparent; color:inherit; font:inherit; }
-select { cursor:pointer; }
-select:hover:enabled { background:#e9edf2; }
-:global([data-theme=dark]) .recording-inline-options { background:#272e37; border-color:#444c56; }
-:global([data-theme=dark]) select:hover:enabled { background:#303f56; }
-input[type=number] { width: 70px; }
-:focus-visible { outline: 2px solid #2563eb; outline-offset: -2px; }
+:focus-visible { outline:2px solid #2563eb; outline-offset:1px; }
 </style>
