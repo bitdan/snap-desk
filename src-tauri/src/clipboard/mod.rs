@@ -8,6 +8,8 @@ mod platform;
 mod reader;
 mod repository;
 mod service;
+#[cfg(test)]
+mod transport_bench;
 mod window;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use model::*;
@@ -190,6 +192,18 @@ fn data_url(
     read_error: &'static str,
     size_error: &'static str,
 ) -> Result<String, String> {
+    let bytes = read_limited(file, limit, read_error, size_error)?;
+    let mut url = String::with_capacity(prefix.len() + bytes.len().div_ceil(3) * 4);
+    url.push_str(prefix);
+    STANDARD.encode_string(&bytes, &mut url);
+    Ok(url)
+}
+fn read_limited(
+    file: std::fs::File,
+    limit: u64,
+    read_error: &'static str,
+    size_error: &'static str,
+) -> Result<Vec<u8>, String> {
     use std::io::Read;
     let mut bytes = Vec::new();
     file.take(limit + 1)
@@ -198,39 +212,38 @@ fn data_url(
     if bytes.len() as u64 > limit {
         return Err(size_error.into());
     }
-    let mut url = String::with_capacity(prefix.len() + bytes.len().div_ceil(3) * 4);
-    url.push_str(prefix);
-    STANDARD.encode_string(&bytes, &mut url);
-    Ok(url)
+    Ok(bytes)
 }
-#[tauri::command]
-/// 双击预览按历史 ID 读取原始 PNG；不接受路径，也不改写系统剪贴板。
-pub async fn clipboard_get_image(
-    app: AppHandle,
-    window: WebviewWindow,
-    id: i64,
-) -> Result<String, String> {
-    work(app, window, move |_, s| {
-        let file = {
-            let d = s.data()?;
-            let _guard = d.operation.lock().map_err(|_| "历史存储忙碌。")?;
-            let stored = d.repo.get(id)?;
-            if stored.item.kind != Kind::Image {
-                return Err("此条目不是图片。".into());
-            }
-            let path = d.blobs.path(&stored.blob.ok_or("历史图片损坏。")?)?;
-            std::fs::File::open(path).map_err(|_| "历史图片不可用。")?
+
+/// 可经 `snap-image` 协议读取历史原图的窗口（含它们打开的预览子窗口）；暂存架不开放原图。
+pub(crate) const IMAGE_WINDOWS: [&str; 2] = service::UI_WINDOWS;
+
+/// 双击预览按历史 ID 读取原始 PNG 字节，由只读协议直接交给 WebView；不接受路径，不改写系统剪贴板。
+/// 条目不存在或不是图片时返回 None；锁内只定位并打开文件，读取在锁外完成。
+pub(crate) fn protocol_image(app: &AppHandle, id: i64) -> Result<Option<Vec<u8>>, String> {
+    let Some(s) = app.try_state::<Service>() else {
+        return Ok(None);
+    };
+    let file = {
+        let d = s.data()?;
+        let _guard = d.operation.lock().map_err(|_| "历史存储忙碌。")?;
+        let Ok(stored) = d.repo.get(id) else {
+            return Ok(None);
         };
-        // 1600 万像素的 PNG 允许编码开销，但损坏的文件不能无限读入 WebView。
-        data_url(
-            file,
-            72 * 1024 * 1024,
-            "data:image/png;base64,",
-            "历史图片读取失败。",
-            "历史图片大小异常。",
-        )
-    })
-    .await
+        if stored.item.kind != Kind::Image {
+            return Ok(None);
+        }
+        let path = d.blobs.path(&stored.blob.ok_or("历史图片损坏。")?)?;
+        std::fs::File::open(path).map_err(|_| "历史图片不可用。")?
+    };
+    // 1600 万像素的 PNG 允许编码开销，但损坏的文件不能无限读入 WebView。
+    read_limited(
+        file,
+        72 * 1024 * 1024,
+        "历史图片读取失败。",
+        "历史图片大小异常。",
+    )
+    .map(Some)
 }
 
 #[tauri::command]
@@ -372,7 +385,10 @@ pub async fn clipboard_configure(
     settings: ClipboardSettings,
 ) -> Result<Status, String> {
     settings.validate()?;
-    work(app, window, move |app, s| apply_settings(app, s, move |_| settings)).await
+    work(app, window, move |app, s| {
+        apply_settings(app, s, move |_| settings)
+    })
+    .await
 }
 /// 剪贴板窗口只切换记录启停；其余字段沿用已提交配置，窗口无需读取完整应用设置。
 #[tauri::command]

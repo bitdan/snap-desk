@@ -9,6 +9,7 @@ const api = vi.hoisted(() => ({
   transformPin: vi.fn(), dragPin: vi.fn(), dragPinContent: vi.fn(), setPinRegion: vi.fn(),
 }))
 vi.mock('../../src/services/api', () => ({ api, onPinVisibility: async () => () => {} }))
+vi.mock('../../src/shared/image-protocol', () => ({ pinImageUrl: (label: string, revision: number) => `snap-image://${label}/${revision}.png` }))
 vi.mock('../../src/features/pins/events', () => ({ onPinAppearance: async () => () => {}, onPinView: async () => () => {} }))
 vi.mock('../../src/shared/ui/SelectControl.vue', async () => ({ default: (await import('../helpers/select-control')).SelectControlStub }))
 vi.mock('../../src/features/recognition/components/PinRecognition.vue', () => ({ default: { render: () => null } }))
@@ -23,7 +24,7 @@ const Component = clientComponent(PinWindow, new URL('../../src/features/pins/co
 let root: MemoryNode
 function frame(expanded: boolean): PinFrame {
   return {
-    label: 'pin-1', revision: 1, width: 400, height: 300, dataUrl: 'data:image/png;base64,AA==',
+    label: 'pin-1', revision: 1, width: 400, height: 300,
     view: { zoom: 1, opacity: 1, locked: false, topmost: false, toolbarExpanded: expanded },
     appearance: defaultPinAppearance(), transparencySupported: false, annotations: [],
   }

@@ -9,7 +9,7 @@ export const pinsApi = {
   pin: (id: number, rect: Rect, annotations: Annotation[]) => invoke<void>('pin_capture', { id, rect, annotations }),
   pinClipboard: () => invoke<void>('pin_clipboard'),
   pinFile: () => invoke<boolean>('pin_file'),
-  currentPin: (knownRevision: number | null = null) => invoke<PinFrame>('current_pin', { knownRevision }),
+  currentPin: () => invoke<PinFrame>('current_pin'),
   setPinAnnotations: (annotations: Annotation[]) => invoke<void>('set_pin_annotations', { annotations }),
   setPinView: (view: PinView) => invoke<PinView>('set_pin_view', { view }),
   dragPin: () => invoke<void>('drag_pin'),

@@ -29,7 +29,7 @@ import OcrWorkspace from '../../src/features/recognition/components/OcrWorkspace
 import QrResultCard from '../../src/features/recognition/components/QrResultCard.vue'
 const components = { PinRecognition, TranslationPanel, OcrWorkspace, QrResultCard }
 const recognition = { provider: 'local-ppocr', fullText: 'hello', lines: [], imageWidth: 640, imageHeight: 480 }
-const frame = { label: 'pin-1', width: 640, height: 480, dataUrl: '', view: { zoom: 1, opacity: 1, locked: false, topmost: true, toolbarExpanded: true }, annotations: [], transparencySupported: true }
+const frame = { label: 'pin-1', width: 640, height: 480, src: '', view: { zoom: 1, opacity: 1, locked: false, topmost: true, toolbarExpanded: true }, annotations: [], transparencySupported: true }
 import InfoTip from '../../src/shared/ui/InfoTip.vue'
 clientComponent(InfoTip, new URL('../../src/shared/ui/InfoTip.vue', import.meta.url))
 const clients: Record<string, Component> = Object.fromEntries(Object.entries(components).map(([name, component]) => [name, clientComponent(component, new URL(`../../src/features/recognition/components/${name}.vue`, import.meta.url))]))

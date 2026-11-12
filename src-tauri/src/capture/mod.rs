@@ -1,8 +1,5 @@
 //! 截图会话：先等待可取消的延时，再冻结桌面画面，最后裁剪并导出。
-use image::{
-    codecs::png::{CompressionType, FilterType, PngEncoder},
-    ImageEncoder, RgbaImage,
-};
+use image::RgbaImage;
 use serde::{Deserialize, Serialize};
 use std::{
     sync::{
@@ -18,25 +15,15 @@ use tauri_plugin_clipboard_manager::ClipboardExt;
 pub mod recording;
 pub mod scroll;
 
+pub mod history;
 pub(crate) mod latency;
 pub mod preview;
-pub mod history;
 use latency::{elapsed_ms, Latency};
 pub(crate) mod desktop;
 
 /// PNG 原始字节留在会话中，由只读协议传输；元信息事件不再携带整屏 Base64。
 fn preview_png(image: &RgbaImage) -> Result<Arc<Vec<u8>>, String> {
-    let mut png = Vec::new();
-    // 预览仅在本机协议内传输，固定 Sub 避免对每行试算多种滤波；导出压缩策略不受影响。
-    PngEncoder::new_with_quality(&mut png, CompressionType::Fast, FilterType::Sub)
-        .write_image(
-            image.as_raw(),
-            image.width(),
-            image.height(),
-            image::ExtendedColorType::Rgba8,
-        )
-        .map_err(err)?;
-    Ok(Arc::new(png))
+    crate::shared::image_protocol::fast_png(image)
 }
 
 #[derive(Default)]
@@ -147,12 +134,15 @@ fn ensure_overlay(app: &AppHandle) -> Result<WebviewWindow, String> {
             .iter()
             .find(|config| config.label == "capture")
             .ok_or("截图窗口不可用，请重启应用。")?;
-        crate::shared::dialog_windows::attach(WebviewWindowBuilder::from_config(app, config)
-            .map_err(err)?, app, "capture")
-            .visible(false)
-            .focused(false)
-            .build()
-            .map_err(err)?
+        crate::shared::dialog_windows::attach(
+            WebviewWindowBuilder::from_config(app, config).map_err(err)?,
+            app,
+            "capture",
+        )
+        .visible(false)
+        .focused(false)
+        .build()
+        .map_err(err)?
     };
     #[cfg(windows)]
     if let Err(error) = disable_overlay_transitions(&window) {
@@ -384,7 +374,12 @@ fn hide_remaining(hidden: Option<Instant>, now: Instant) -> Duration {
         .unwrap_or_default()
 }
 
-fn prepare(app: &AppHandle, recording: bool, translation: bool, mut latency: Latency) -> Result<(), String> {
+fn prepare(
+    app: &AppHandle,
+    recording: bool,
+    translation: bool,
+    mut latency: Latency,
+) -> Result<(), String> {
     let started = latency.started;
     let hide_started = Instant::now();
     recording::live_annotations::remember_desktop_focus(app);
@@ -438,7 +433,11 @@ fn prepare(app: &AppHandle, recording: bool, translation: bool, mut latency: Lat
         (
             !recording && guard.value.screenshot_cursor,
             guard.value.screenshot_snap,
-            if recording || translation { "none".to_string() } else { guard.value.screenshot_after.clone() },
+            if recording || translation {
+                "none".to_string()
+            } else {
+                guard.value.screenshot_after.clone()
+            },
         )
     };
     let mut desktop = crate::capture::desktop::capture(false, include_cursor, recording || snap)?;
@@ -647,7 +646,9 @@ fn selected_region(app: &AppHandle, id: u64, rect: Rect) -> Result<(Rect, scroll
         .as_ref()
         .filter(|s| s.frame.id == id)
         .ok_or("截图已过期。")?;
-    if session.frame.replay.is_some() { return Err("请返回当前现场后再开始录屏或滚动截图。".into()); }
+    if session.frame.replay.is_some() {
+        return Err("请返回当前现场后再开始录屏或滚动截图。".into());
+    }
     rect.validate(session.image.width(), session.image.height())?;
     let display = session
         .frame
@@ -733,7 +734,9 @@ fn cleanup(app: &AppHandle) -> Result<(), String> {
     let scroll_id = state.scroll.lock().map_err(err)?.take().map(|s| s.id);
     let session = state.session.lock().map_err(err)?.take();
     let closed_id = session.as_ref().map(|session| session.frame.id);
-    let restore_translation = session.as_ref().is_some_and(|session| session.frame.translation);
+    let restore_translation = session
+        .as_ref()
+        .is_some_and(|session| session.frame.translation);
     // 先释放原生 RGBA/PNG，再通知常驻 WebView 清空图片和标注历史。
     // 关闭窗口/全局取消也会经过这里，不能只依赖前端按钮的成功回调。
     drop(session);
@@ -1108,7 +1111,9 @@ pub async fn pin_capture(
         // 选区是虚拟桌面截图内的物理坐标，加回桌面原点才能覆盖到原屏幕位置。
         let image_origin = {
             let session = state.session.lock().map_err(err)?;
-            let session = session.as_ref().filter(|s| s.frame.id == id)
+            let session = session
+                .as_ref()
+                .filter(|s| s.frame.id == id)
                 .ok_or("截图已过期，请重新截图。")?;
             tauri::PhysicalPosition::new(
                 i32::try_from(i64::from(session.frame.origin_x) + i64::from(rect.x))
