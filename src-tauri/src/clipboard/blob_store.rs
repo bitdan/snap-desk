@@ -400,7 +400,9 @@ impl BlobStore {
                 continue;
             }
             let path = entry.path();
-            if !path.canonicalize().map_err(err)?.starts_with(&self.root) {
+            // 只有目录可能经由联接点指向外部；非链接的普通文件必然位于已核对的父目录内，
+            // 不再为每个素材文件解析一次完整路径。
+            if ty.is_dir() && !path.canonicalize().map_err(err)?.starts_with(&self.root) {
                 continue;
             }
             if ty.is_dir() {

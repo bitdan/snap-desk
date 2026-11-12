@@ -86,7 +86,7 @@ impl Service {
                 .join("clipboard");
             let blobs = BlobStore::new(root.clone())?;
             let repo = Repository::open(&root.join("history.db"))?;
-            blobs.repair(&repo)?;
+            // 素材修复交给紧随其后的后台 maintain：这里位于 setup 线程，不逐个核对图片文件。
             Ok(Arc::new(Data {
                 repo,
                 blobs,
@@ -275,10 +275,12 @@ impl Service {
             .clone();
         let data = self.data()?;
         let _guard = data.operation.lock().map_err(|_| "历史存储忙碌。")?;
-        data.repo.prune(&settings, now())?;
+        // 收藏占满配额时淘汰会回滚并报错；素材修复与此无关，仍然执行，
+        // 否则启动时丢失文件的记录和孤儿素材要等配额问题解决后才会清理。
+        let pruned = data.repo.prune(&settings, now()).map(|_| ());
         data.blobs.repair(&data.repo)?;
         self.changed(app);
-        Ok(())
+        pruned
     }
     fn capture(&self, app: &AppHandle, stop: &AtomicBool) -> Result<(), String> {
         let settings = self

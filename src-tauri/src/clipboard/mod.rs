@@ -74,10 +74,18 @@ pub fn initialize(app: &AppHandle) {
         log::warn!("event=clipboard.initialize_failed module=clipboard code=CLIPBOARD_INIT_FAILED");
         app.state::<Service>().report(app, e);
     }
-    if let Err(e) = app.state::<Service>().maintain(app) {
-        log::warn!("event=clipboard.initialize_failed module=clipboard code=CLIPBOARD_INIT_FAILED");
-        app.state::<Service>().report(app, e);
-    }
+    // 过期淘汰和素材修复要逐个核对图片文件，历史越多越慢；放到后台线程，
+    // 不拖住 setup 线程上的托盘、快捷键与主窗口创建。素材操作锁保证它与新复制互斥。
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let service = app.state::<Service>();
+        if let Err(e) = service.maintain(&app) {
+            log::warn!(
+                "event=clipboard.initialize_failed module=clipboard code=CLIPBOARD_INIT_FAILED"
+            );
+            service.report(&app, e);
+        }
+    });
 }
 #[tauri::command]
 pub async fn clipboard_status(app: AppHandle, window: WebviewWindow) -> Result<Status, String> {
@@ -155,23 +163,45 @@ pub async fn clipboard_get_thumbnail(
     id: i64,
 ) -> Result<String, String> {
     item_work(app, window, move |_, s| {
-        let d = s.data()?;
-        let _guard = d.operation.lock().map_err(|_| "历史存储忙碌。")?;
-        let item = d.repo.get(id)?;
-        let path = d.blobs.path(&item.thumb.ok_or("此条目不是图片。")?)?;
-        use std::io::Read;
-        let mut bytes = Vec::new();
-        std::fs::File::open(path)
-            .map_err(|_| "缩略图不可用。")?
-            .take(256 * 1024 + 1)
-            .read_to_end(&mut bytes)
-            .map_err(|_| "缩略图读取失败。")?;
-        if bytes.len() > 256 * 1024 {
-            return Err("缩略图大小异常。".into());
-        }
-        Ok(format!("data:image/webp;base64,{}", STANDARD.encode(bytes)))
+        let file = {
+            let d = s.data()?;
+            let _guard = d.operation.lock().map_err(|_| "历史存储忙碌。")?;
+            let item = d.repo.get(id)?;
+            let path = d.blobs.path(&item.thumb.ok_or("此条目不是图片。")?)?;
+            std::fs::File::open(path).map_err(|_| "缩略图不可用。")?
+        };
+        data_url(
+            file,
+            256 * 1024,
+            "data:image/webp;base64,",
+            "缩略图读取失败。",
+            "缩略图大小异常。",
+        )
     })
     .await
+}
+/// 素材操作锁内只定位并打开文件，读取和 Base64 在锁外完成：新图片编码落盘也占这把锁，
+/// 否则复制大图期间整屏缩略图都要排队。已打开的句柄不受随后删除影响，读到的仍是完整内容。
+/// 直接写入最终字符串，避免 Base64 临时字符串与拼接结果同时驻留。
+fn data_url(
+    file: std::fs::File,
+    limit: u64,
+    prefix: &str,
+    read_error: &'static str,
+    size_error: &'static str,
+) -> Result<String, String> {
+    use std::io::Read;
+    let mut bytes = Vec::new();
+    file.take(limit + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| read_error)?;
+    if bytes.len() as u64 > limit {
+        return Err(size_error.into());
+    }
+    let mut url = String::with_capacity(prefix.len() + bytes.len().div_ceil(3) * 4);
+    url.push_str(prefix);
+    STANDARD.encode_string(&bytes, &mut url);
+    Ok(url)
 }
 #[tauri::command]
 /// 双击预览按历史 ID 读取原始 PNG；不接受路径，也不改写系统剪贴板。
@@ -181,26 +211,24 @@ pub async fn clipboard_get_image(
     id: i64,
 ) -> Result<String, String> {
     work(app, window, move |_, s| {
-        let d = s.data()?;
-        let _guard = d.operation.lock().map_err(|_| "历史存储忙碌。")?;
-        let stored = d.repo.get(id)?;
-        if stored.item.kind != Kind::Image {
-            return Err("此条目不是图片。".into());
-        }
-        let path = d.blobs.path(&stored.blob.ok_or("历史图片损坏。")?)?;
-        use std::io::Read;
+        let file = {
+            let d = s.data()?;
+            let _guard = d.operation.lock().map_err(|_| "历史存储忙碌。")?;
+            let stored = d.repo.get(id)?;
+            if stored.item.kind != Kind::Image {
+                return Err("此条目不是图片。".into());
+            }
+            let path = d.blobs.path(&stored.blob.ok_or("历史图片损坏。")?)?;
+            std::fs::File::open(path).map_err(|_| "历史图片不可用。")?
+        };
         // 1600 万像素的 PNG 允许编码开销，但损坏的文件不能无限读入 WebView。
-        const LIMIT: u64 = 72 * 1024 * 1024;
-        let mut bytes = Vec::new();
-        std::fs::File::open(path)
-            .map_err(|_| "历史图片不可用。")?
-            .take(LIMIT + 1)
-            .read_to_end(&mut bytes)
-            .map_err(|_| "历史图片读取失败。")?;
-        if bytes.len() as u64 > LIMIT {
-            return Err("历史图片大小异常。".into());
-        }
-        Ok(format!("data:image/png;base64,{}", STANDARD.encode(bytes)))
+        data_url(
+            file,
+            72 * 1024 * 1024,
+            "data:image/png;base64,",
+            "历史图片读取失败。",
+            "历史图片大小异常。",
+        )
     })
     .await
 }
