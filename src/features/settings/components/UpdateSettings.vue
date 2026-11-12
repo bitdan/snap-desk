@@ -20,6 +20,8 @@ const operating = computed(() => busy.value || ['checking', 'downloading', 'inst
 const enabled = computed(() => (desktop || updatePreview) && view.value?.supported && view.value.configured)
 const phaseLabel = computed(() => ({ idle: '尚未检查更新', checking: '正在检查更新…', available: '发现新版本', latest: '当前渠道暂无更新', downloading: '正在下载更新…', ready: '更新已下载并通过校验', installing: '正在退出并安装…', error: '更新失败，可重试' })[view.value?.phase ?? 'idle'])
 const hasUpdate = computed(() => !!view.value?.availableVersion)
+// 测试版构建由原生端固定接收测试版；开关显示为开启且不可改，避免界面与实际渠道不一致。
+const prereleaseBuild = computed(() => !!view.value?.currentVersion.includes('-'))
 
 async function refresh() {
   if ((!desktop && !updatePreview) || refreshing || disposed) return
@@ -40,7 +42,7 @@ async function run(action: () => Promise<AppUpdateView | void>) {
   finally { busy.value = false; await refresh() }
 }
 async function togglePreview() {
-  if (preview.value === null || saving.value || operating.value) return
+  if (prereleaseBuild.value || preview.value === null || saving.value || operating.value) return
   saving.value = true; error.value = ''
   try {
     const next = !preview.value
@@ -76,8 +78,8 @@ onUnmounted(() => { disposed = true; if (timer) clearInterval(timer); unsubscrib
   <section class="update-settings">
     <h2 class="section-heading">{{ t('应用更新') }}</h2>
     <p v-if="updatePreview" class="notice">{{ t('模拟更新，不会下载文件或退出应用。') }}</p>
-    <SettingRow :label="t('测试版更新')" for="receive-prerelease">
-      <SwitchControl id="receive-prerelease" :model-value="preview === true" :disabled="updatePreview || !desktop || preview === null || operating || saving" @update:model-value="togglePreview" />
+    <SettingRow :label="t('测试版更新')" for="receive-prerelease" :tip="prereleaseBuild ? t('当前为测试版，始终接收测试版更新；升级到正式版后按此开关决定。') : undefined">
+      <SwitchControl id="receive-prerelease" :model-value="prereleaseBuild || preview === true" :disabled="prereleaseBuild || updatePreview || !desktop || preview === null || operating || saving" @update:model-value="togglePreview" />
     </SettingRow>
     <div class="setting-row flex-wrap gap-3">
       <div class="update-version"><span>{{ view ? `v${view.currentVersion}` : t('版本待读取') }}</span><span v-if="view && !hasUpdate && ['checking', 'latest', 'error'].includes(view.phase)" role="status" :class="view.phase === 'latest' ? 'status-ok' : ''"><Check v-if="view.phase === 'latest'" :size="14" />{{ t(phaseLabel) }}</span></div>

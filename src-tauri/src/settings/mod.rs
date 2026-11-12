@@ -244,6 +244,7 @@ pub struct Appearance {
 #[serde(rename_all = "camelCase", try_from = "SettingsWire")]
 pub struct Settings {
     /// 默认只接收正式版；开启后也接收 alpha、beta 和 rc 应用更新。
+    /// 测试版构建不受此项限制，始终接收测试版（见 app::updater::preview）。
     pub receive_prerelease_updates: bool,
     pub appearance: Appearance,
     pub recognition_services: Vec<crate::recognition::services::RecognitionService>,

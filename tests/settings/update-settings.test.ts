@@ -22,7 +22,7 @@ async function mount() { memoryRenderer.render(h(Component), root); await flushC
 beforeEach(() => {
   vi.resetAllMocks()
   root = new MemoryNode('root')
-  native = { currentVersion: '0.2.0-beta.2', availableVersion: null, notes: null, packageKind: 'nsis', supported: true,
+  native = { currentVersion: '0.2.0', availableVersion: null, notes: null, packageKind: 'nsis', supported: true,
     configured: true, phase: 'idle', downloaded: 0, total: null, error: null }
   api.status.mockResolvedValue({ settings: defaultSettings() })
   api.appUpdateStatus.mockImplementation(async () => ({ ...native }))
@@ -48,6 +48,14 @@ describe('在线更新设置', () => {
     expect(api.saveSettings).toHaveBeenCalledWith({ ...settings, receivePrereleaseUpdates: true })
     expect(toggle().props['aria-checked']).toBe(true)
     expect(api.checkAppUpdate).toHaveBeenCalledOnce()
+  })
+  it('测试版构建固定接收测试版，开关显示开启且不可切换', async () => {
+    native.currentVersion = '0.2.0-beta.2'
+    await mount()
+    expect(toggle().props['aria-checked']).toBe(true)
+    expect(toggle().props.disabled).toBe(true)
+    await toggle().props.onClick?.(); await flushComponent()
+    expect(api.saveSettings).not.toHaveBeenCalled()
   })
   it('保存失败保留已生效渠道并显示重试原因', async () => {
     api.saveSettings.mockRejectedValueOnce(new Error('无法保存设置'))
