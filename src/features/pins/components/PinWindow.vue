@@ -141,7 +141,8 @@ watch(message, value => {
 const stage = ref<HTMLElement | null>(null)
 /** 工具栏下拉菜单绘制在工具栏外，打开期间保持完整窗口。 */
 const menuOpen = ref(false)
-const needsFullWindow = computed(() => !frame.value || !imageReady.value || busy.value || controls.value
+// 缩放期间不裁剪：带 SetWindowRgn 区域的透明无边框窗口在改尺寸时会闪出系统边框。
+const needsFullWindow = computed(() => !frame.value || !imageReady.value || busy.value || controls.value || zooming.value
   || (focusVisible.value && focused.value) || !!error.value || !!message.value
   || !!contextMenu.value || !!recognitionMode.value || menuOpen.value || !!frame.value.view.clickThrough)
 let regionKey = 'full'
@@ -153,6 +154,8 @@ function syncRegion() {
     const ratio = viewport.value.pixelRatio, margin = layout.padding
     const x = Math.max(0, Math.floor((box.left - margin) * ratio)), y = Math.max(0, Math.floor((box.top - margin) * ratio))
     region = { x, y, width: Math.ceil((box.left + box.width + margin) * ratio) - x, height: Math.ceil((box.top + box.height + margin) * ratio) - y }
+    // 区域已覆盖整个窗口时不设置区域，避免无谓地让窗口带着区域参与后续改尺寸。
+    if (x <= 0 && y <= 0 && region.width >= Math.floor(viewport.value.width * ratio) && region.height >= Math.floor(viewport.value.height * ratio)) region = null
   }
   const key = region ? `${region.x},${region.y},${region.width},${region.height}` : 'full'
   if (key === regionKey) return
@@ -161,6 +164,12 @@ function syncRegion() {
   regionQueue = regionQueue.then(() => api.setPinRegion(region)).catch(() => { if (regionKey === key) regionKey = '' })
 }
 watch([needsFullWindow, display, viewport], syncRegion, { flush: 'post' })
+/** 原生改尺寸前先排队撤销裁剪区域，保证 set_pin_region(null) 先于缩放生效。 */
+function releaseRegion() {
+  if (regionKey === 'full') return regionQueue
+  regionKey = 'full'
+  return regionQueue = regionQueue.then(() => api.setPinRegion(null)).catch(() => { if (regionKey === 'full') regionKey = '' })
+}
 const opacities = [1, 0.8, 0.6, 0.4]
 const transforms: { action: PinTransform; label: string }[] = [
   { action: 'rotateLeft', label: '左转' }, { action: 'rotateRight', label: '右转' },
@@ -280,7 +289,7 @@ function zoom(direction: number) {
   if (!editable.value || !frame.value) return
   const next = stepZoom(frame.value.view.zoom, direction, minZoom.value)
   // 到达边界后不再调用原生窗口缩放，连续滚动也保持当前窗口可见。
-  if (next !== frame.value.view.zoom) void setView({ zoom: next })
+  if (next !== frame.value.view.zoom) void releaseRegion().then(() => setView({ zoom: next }))
 }
 function wheel(event: WheelEvent) { if (event.deltaY !== 0) { flashZoom(); zoom(event.deltaY < 0 ? 1 : -1) } }
 const contentDrag = createPinDrag(

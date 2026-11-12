@@ -59,6 +59,8 @@ beforeEach(() => {
   vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} })
   Object.assign(MemoryNode.prototype, {
     getBoundingClientRect: () => ({ width: 120, height: 36, left: 0, top: 0 }),
+    // 工具栏显示后会测量各行宽度；内存节点没有子行时返回空列表。
+    querySelectorAll: () => [],
   })
   api.setPinView.mockImplementation(async view => view)
   api.pinAction.mockResolvedValue(false)
