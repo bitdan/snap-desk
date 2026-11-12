@@ -86,7 +86,30 @@ fn commit_removed(
     tx: rusqlite::Transaction<'_>,
     mut removed: Vec<String>,
 ) -> Result<Vec<String>, String> {
-    if !removed.is_empty() {
+    // 先去重：同一文件被多条已删记录引用时只需判断一次。
+    removed.sort_unstable();
+    removed.dedup();
+    if !removed.is_empty() && removed.len() <= 8 {
+        // 历史存满后每次复制只淘汰一两条：逐路径让 SQLite 判断是否仍被引用，
+        // 不把全部图片的相对路径读进 Rust 再建集合。分隔符两侧统一后再比较。
+        let mut referenced = tx
+            .prepare(
+                "SELECT EXISTS(SELECT 1 FROM clipboard_items WHERE kind='image' AND (replace(blob_rel_path,'\\','/')=replace(?1,'\\','/') OR replace(thumb_rel_path,'\\','/')=replace(?1,'\\','/')))",
+            )
+            .map_err(err)?;
+        let mut orphans = Vec::with_capacity(removed.len());
+        for path in removed {
+            if !referenced
+                .query_row([&path], |row| row.get::<_, bool>(0))
+                .map_err(err)?
+            {
+                orphans.push(path);
+            }
+        }
+        drop(referenced);
+        removed = orphans;
+    } else if !removed.is_empty() {
+        // 清空或批量删除：路径很多时一次读出全部引用，避免逐条重复扫表。
         let live = {
             let mut statement = tx
                 .prepare(
@@ -107,8 +130,6 @@ fn commit_removed(
                 .collect::<HashSet<_>>()
         };
         removed.retain(|path| !live.contains(&path.replace('\\', "/")));
-        removed.sort_unstable();
-        removed.dedup();
     }
     tx.commit().map_err(err)?;
     Ok(removed)
