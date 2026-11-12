@@ -45,10 +45,14 @@ struct PinLayout {
     min_image_height: f64,
 }
 impl PinLayout {
-    fn load() -> Self {
+    fn load() -> &'static Self {
         // 编译时嵌入仓库内常量，不读取用户文件；前端直接导入相同 JSON。
-        serde_json::from_str(include_str!("../../../src/features/pins/pin-layout.json"))
-            .expect("内置贴图布局配置无效")
+        // 内容在进程生命周期内不变，只解析一次；缩放、滚轮等高频命令直接复用。
+        static LAYOUT: std::sync::OnceLock<PinLayout> = std::sync::OnceLock::new();
+        LAYOUT.get_or_init(|| {
+            serde_json::from_str(include_str!("../../../src/features/pins/pin-layout.json"))
+                .expect("内置贴图布局配置无效")
+        })
     }
     /// 与前端使用相同短边下限，原生命令也不能把小图缩成不可见的小点。
     fn minimum_zoom(&self, width: u32, height: u32, scale: f64) -> f64 {
