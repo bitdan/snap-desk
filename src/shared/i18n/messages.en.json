@@ -1053,6 +1053,7 @@
   "检查更新": "Check for updates",
   "有更新": "Update available",
   "测试版更新": "Prerelease updates",
+  "当前为测试版，始终接收测试版更新；升级到正式版后按此开关决定。": "This is a prerelease build and always receives prerelease updates. After upgrading to a stable release, this switch applies.",
   "独立 EXE": "Standalone EXE",
   "尚未检查更新": "Updates not checked",
   "正在检查更新…": "Checking for updates…",

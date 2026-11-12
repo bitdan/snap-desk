@@ -19,6 +19,11 @@ use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
 use tauri_plugin_updater::{Update, UpdaterExt};
 
 const REPOSITORY: &str = "bitdan/snap-desk";
+/// 应用常驻托盘，可能连续运行数天；定时复查才能发现运行期间发布的新版本。
+/// 每次复查只请求一次发布列表，远低于 GitHub 匿名接口每小时 60 次的限额。
+const RECHECK_INTERVAL: Duration = Duration::from_secs(60 * 60);
+/// 断网、限流等失败后较快重试，不必等到下一个完整周期。
+const RETRY_INTERVAL: Duration = Duration::from_secs(10 * 60);
 const PUBLIC_KEY: &str = match option_env!("SNAP_DESK_UPDATER_PUBLIC_KEY") {
     Some(key) => key,
     None => "",
@@ -77,7 +82,12 @@ fn package_kind() -> &'static str {
     }
 }
 
+/// 是否把测试版纳入候选。当前运行的本身是测试版时始终纳入：
+/// 否则测试版用户在开关关闭（默认值）时收不到后续测试版，只能等到正式版发布。
 fn preview(app: &AppHandle) -> Result<bool, String> {
+    if !app.package_info().version.pre.is_empty() {
+        return Ok(true);
+    }
     Ok(app
         .state::<SettingsState>()
         .0
@@ -274,7 +284,8 @@ async fn discover(app: &AppHandle, include_preview: bool) -> Result<Option<Updat
     Ok(Some(update))
 }
 
-async fn check(app: &AppHandle) -> Result<AppUpdateView, String> {
+/// `background` 为定时复查：不打扰已有结果，只在查到新结论时才替换会话。
+async fn check(app: &AppHandle, background: bool) -> Result<AppUpdateView, String> {
     ready()?;
     let state = app.state::<AppUpdateState>();
     let _operation = state
@@ -282,23 +293,44 @@ async fn check(app: &AppHandle) -> Result<AppUpdateView, String> {
         .try_lock()
         .map_err(|_| "更新操作正在进行。")?;
     let include_preview = preview(app)?;
-    *state.session.lock().map_err(error)? = Session {
-        phase: "checking".into(),
-        preview: include_preview,
-        ..Default::default()
-    };
-    let result = async {
-        let update = discover(app, include_preview).await?;
+    let quiet = {
         let mut session = state.session.lock().map_err(error)?;
-        session.phase = if update.is_some() {
-            "available".into()
-        } else {
-            "latest".into()
-        };
-        session.update = update;
-        Ok(())
-    }
-    .await;
+        let settled = background && session.preview == include_preview;
+        if settled && session.phase == "ready" {
+            // 安装包已下载并校验，复查会清空它；等用户安装或手动重新检查。
+            drop(session);
+            return view(app);
+        }
+        // 已有同渠道结论时保留它，界面不会闪回“正在检查”，红点也不会中途消失。
+        let quiet = settled && (session.update.is_some() || session.phase == "latest");
+        if !quiet {
+            *session = Session {
+                phase: "checking".into(),
+                preview: include_preview,
+                ..Default::default()
+            };
+        }
+        quiet
+    };
+    let result = match discover(app, include_preview).await {
+        Ok(update) => {
+            let mut session = state.session.lock().map_err(error)?;
+            *session = Session {
+                phase: if update.is_some() {
+                    "available".into()
+                } else {
+                    "latest".into()
+                },
+                preview: include_preview,
+                update,
+                ..Default::default()
+            };
+            Ok(())
+        }
+        // 后台复查失败不覆盖上一次的有效结论，由调用方稍后重试。
+        Err(message) if quiet => return Err(message),
+        Err(message) => Err(message),
+    };
     failed(app, result)
 }
 
@@ -317,7 +349,7 @@ pub(super) async fn check_app_update(
     window: WebviewWindow,
 ) -> Result<AppUpdateView, String> {
     require_window(&window, "main")?;
-    check(&app).await
+    check(&app, false).await
 }
 
 #[tauri::command]
@@ -445,7 +477,7 @@ pub(super) async fn install_app_update(
     Ok(())
 }
 
-/// 应用启动后只检查一次，不自动下载；页面通过同一状态查询结果。
+/// 启动后检查一次，此后定时复查；始终不自动下载，页面通过同一状态查询结果。
 pub(super) fn initialize(app: &AppHandle) {
     if std::env::args().any(|arg| arg == "--update-failed") {
         if let Ok(mut session) = app.state::<AppUpdateState>().session.lock() {
@@ -460,7 +492,13 @@ pub(super) fn initialize(app: &AppHandle) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(Duration::from_secs(10)).await;
-        let _ = check(&app).await;
+        loop {
+            let delay = match check(&app, true).await {
+                Ok(_) => RECHECK_INTERVAL,
+                Err(_) => RETRY_INTERVAL,
+            };
+            tokio::time::sleep(delay).await;
+        }
     });
 }
 
