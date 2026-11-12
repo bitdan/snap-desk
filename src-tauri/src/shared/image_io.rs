@@ -1,6 +1,6 @@
 //! 截图和贴图共用原生导出；保存路径只能来自系统对话框。
 use crate::settings::{ExportFormat, ExportSettings, SettingsState};
-use image::{codecs::jpeg::JpegEncoder, ImageFormat, Rgb, RgbImage, RgbaImage};
+use image::{codecs::jpeg::JpegEncoder, ImageFormat, RgbImage, RgbaImage};
 use std::{
     fs,
     io::{Seek, Write},
@@ -111,12 +111,21 @@ fn filename(
 
 /// JPEG 没有 alpha：先与白底合成，不能直接丢掉 alpha，避免透明处变黑。
 pub(crate) fn white_background(image: &RgbaImage) -> RgbImage {
-    RgbImage::from_fn(image.width(), image.height(), |x, y| {
-        let pixel = image.get_pixel(x, y).0;
+    // 直接按 4 字节一组遍历原始缓冲，不逐像素做坐标换算和边界检查；
+    // 截图几乎全是不透明像素，这类像素原样拷贝 RGB。
+    let mut rgb = Vec::with_capacity(image.as_raw().len() / 4 * 3);
+    for pixel in image.as_raw().chunks_exact(4) {
         let alpha = u32::from(pixel[3]);
-        Rgb([0, 1, 2]
-            .map(|i| ((u32::from(pixel[i]) * alpha + 255 * (255 - alpha) + 127) / 255) as u8))
-    })
+        if alpha == 255 {
+            rgb.extend_from_slice(&pixel[..3]);
+        } else {
+            rgb.extend(pixel[..3].iter().map(|channel| {
+                ((u32::from(*channel) * alpha + 255 * (255 - alpha) + 127) / 255) as u8
+            }));
+        }
+    }
+    RgbImage::from_raw(image.width(), image.height(), rgb)
+        .expect("RGB 缓冲长度由同一张图片的像素数得出")
 }
 
 /// 直接编码到临时文件，PNG / WebP 保留 alpha；质量仅作用于 JPEG。
@@ -187,11 +196,11 @@ fn write_directory(record: &Path, preference: &DirectoryPreference) -> Result<()
 fn remember_directory(record: &Path, directory: &Path) -> Result<(), String> {
     let _guard = DIRECTORY_RECORD_LOCK.lock().map_err(|e| e.to_string())?;
     // 保存到临时的其他位置不能覆盖用户在设置页显式选定的默认目录。
-    if matches!(
-        read_preference(record),
-        Some(DirectoryPreference::Selected { .. })
-    ) {
-        return Ok(());
+    match read_preference(record) {
+        Some(DirectoryPreference::Selected { .. }) => return Ok(()),
+        // 连续保存到同一目录时记录没有变化，不再重写文件并等待落盘。
+        Some(DirectoryPreference::Remembered(current)) if current == directory => return Ok(()),
+        _ => {}
     }
     write_directory(
         record,
