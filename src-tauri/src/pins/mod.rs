@@ -313,7 +313,36 @@ fn set_visible(window: &WebviewWindow, visible: bool) -> Result<(), tauri::Error
 }
 
 pub(crate) fn require_pin(app: &AppHandle, window: &WebviewWindow) -> Result<(), String> {
-    own(app, window).map(|_| ())
+    peek(app, window, |_| ())
+}
+
+/// 在集合锁内只读出调用方需要的字段。`own` 会克隆两份标注，文字和滤镜标注带 Base64 像素
+/// （合计可达数 MB）；拖动、缩放、区域裁剪等高频命令只看视图或图片尺寸，不应为此复制它们。
+/// 闭包内不得调用窗口 API 或做耗时计算，锁只覆盖一次字段读取。
+fn peek<T>(
+    app: &AppHandle,
+    window: &WebviewWindow,
+    read: impl FnOnce(&Pin) -> T,
+) -> Result<T, String> {
+    app.state::<PinState>()
+        .images
+        .lock()
+        .map_err(err)?
+        .get(window.label())
+        .map(read)
+        .ok_or_else(|| "贴图已关闭或当前窗口无权访问。".into())
+}
+
+/// 视图状态与底图的轻量快照：图片只增加 Arc 引用计数，不复制像素。
+struct PinGlance {
+    view: PinView,
+    image: Arc<RgbaImage>,
+}
+fn glance(app: &AppHandle, window: &WebviewWindow) -> Result<PinGlance, String> {
+    peek(app, window, |pin| PinGlance {
+        view: pin.view.clone(),
+        image: Arc::clone(&pin.image),
+    })
 }
 
 fn own(app: &AppHandle, window: &WebviewWindow) -> Result<Pin, String> {
@@ -628,11 +657,10 @@ pub async fn recognize_pin_text(
     app: AppHandle,
     window: WebviewWindow,
 ) -> Result<crate::recognition::OcrResult, String> {
-    let image = own(&app, &window)?.image;
+    let image = glance(&app, &window)?.image;
     tauri::async_runtime::spawn_blocking(move || {
         let result = crate::recognition::recognize_selected(&app, &image)?;
-        let current = own(&app, &window)?;
-        if !Arc::ptr_eq(&current.image, &image) {
+        if !peek(&app, &window, |pin| Arc::ptr_eq(&pin.image, &image))? {
             return Err("图片已更新，请重新识别。".into());
         }
         Ok(result)
@@ -648,7 +676,7 @@ pub async fn recognize_pin_qr(
     window: WebviewWindow,
 ) -> Result<crate::recognition::qr::QrResult, String> {
     static NEXT_RESULT: AtomicU64 = AtomicU64::new(1);
-    let image = own(&app, &window)?.image;
+    let image = glance(&app, &window)?.image;
     tauri::async_runtime::spawn_blocking(move || {
         let result = crate::recognition::qr::QrResult::from_image(
             NEXT_RESULT.fetch_add(1, Ordering::Relaxed),
@@ -687,7 +715,7 @@ pub async fn pin_qr_action(
     index: usize,
     action: crate::recognition::qr::QrAction,
 ) -> Result<(), String> {
-    let result = own(&app, &window)?.qr_result.ok_or("请先识别二维码。")?;
+    let result = peek(&app, &window, |pin| pin.qr_result.clone())?.ok_or("请先识别二维码。")?;
     tauri::async_runtime::spawn_blocking(move || result.act(&app, id, index, action))
         .await
         .map_err(err)?
@@ -718,7 +746,7 @@ pub async fn set_pin_annotations(
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<PinState>();
         let _operation = Operation::acquire(&state)?;
-        let pin = own(&app, &window)?;
+        let pin = glance(&app, &window)?;
         if pin.view.locked {
             return Err("请先解锁贴图再编辑标注。".into());
         }
@@ -786,7 +814,7 @@ pub async fn set_pin_view(
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<PinState>();
         let _operation = Operation::acquire(&state)?;
-        let pin = own(&app, &window)?;
+        let pin = glance(&app, &window)?;
         if pin.view.locked && view.zoom != pin.view.zoom {
             return Err("请先解锁贴图再缩放。".into());
         }
@@ -888,7 +916,7 @@ pub async fn set_pin_region(
     window: WebviewWindow,
     region: Option<crate::capture::Rect>,
 ) -> Result<(), String> {
-    own(&app, &window)?;
+    require_pin(&app, &window)?;
     // SetWindowRgn 同步向窗口线程发消息，不能在 IPC 线程池以外的主线程回调里调用。
     tauri::async_runtime::spawn_blocking(move || apply_region(&window, region))
         .await
@@ -938,7 +966,8 @@ pub fn drag_pin(app: AppHandle, window: WebviewWindow) -> Result<(), String> {
     if app.state::<PinState>().operation.load(Ordering::SeqCst) {
         return Err("正在处理贴图，请稍候。".into());
     }
-    if own(&app, &window)?.view.locked {
+    // 同步命令在主线程执行，只读锁定标志，不克隆标注。
+    if peek(&app, &window, |pin| pin.view.locked)? {
         return Err("贴图已锁定。".into());
     }
     window.start_dragging().map_err(err)
@@ -1197,11 +1226,22 @@ pub async fn pin_action(
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<PinState>();
         let _operation = Operation::acquire(&state)?;
-        let pin = own(&app, &window)?;
         match action {
-            PinAction::Copy => crate::shared::image_io::copy(&app, &composed(&pin)?)?,
-            PinAction::Save => return save_with_hidden_pins(&app, Some(&window), &composed(&pin)?),
-            PinAction::Close => window.destroy().map_err(err)?,
+            PinAction::Copy => {
+                crate::shared::image_io::copy(&app, &composed(&own(&app, &window)?)?)?
+            }
+            PinAction::Save => {
+                return save_with_hidden_pins(
+                    &app,
+                    Some(&window),
+                    &composed(&own(&app, &window)?)?,
+                )
+            }
+            // 关闭只需确认贴图仍属于本窗口，不为此克隆图片和标注。
+            PinAction::Close => {
+                require_pin(&app, &window)?;
+                window.destroy().map_err(err)?
+            }
         }
         Ok(true)
     })
