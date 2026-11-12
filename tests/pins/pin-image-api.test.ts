@@ -6,11 +6,10 @@ vi.mock('@tauri-apps/api/webviewWindow', () => ({ getCurrentWebviewWindow: curre
 import { pinsApi } from '../../src/features/pins/api'
 import { onPinVisibility, onPinView } from '../../src/features/pins/events'
 
-it('读取携带已缓存版本，完整重读发送 null', async () => {
-  await pinsApi.currentPin(3)
-  expect(invoke).toHaveBeenLastCalledWith('current_pin', { knownRevision: 3 })
+it('读取贴图只取元信息，不携带图片缓存版本', async () => {
   await pinsApi.currentPin()
-  expect(invoke).toHaveBeenLastCalledWith('current_pin', { knownRevision: null })
+  expect(invoke.mock.lastCall?.[0]).toBe('current_pin')
+  expect(invoke.mock.lastCall?.[1]).toBeUndefined()
 })
 it('隐藏一张贴图只通知所属窗口，其他贴图不释放图片', async () => {
   const subscriptions: { target: string; callback: (event: { payload: boolean }) => void }[] = []

@@ -16,18 +16,7 @@ fn identity(path: &str) -> Option<(u64, u64)> {
     Some((id.parse().ok()?, revision.parse().ok()?))
 }
 
-/// 不缓存屏幕内容；CORS 允许前端画布读取像素，窗口权限仍由原生协议上下文校验。
-fn response(status: StatusCode, body: Vec<u8>, length: usize) -> Response<Vec<u8>> {
-    Response::builder()
-        .status(status)
-        .header("Content-Type", "image/png")
-        .header("Content-Length", length.to_string())
-        .header("Cache-Control", "no-store")
-        .header("Access-Control-Allow-Origin", "*")
-        .header("X-Content-Type-Options", "nosniff")
-        .body(body)
-        .expect("fixed preview headers")
-}
+use crate::shared::image_protocol::response;
 
 /// 先检查调用窗口、方法和会话版本；只在锁内取得 Arc，复制响应体时不阻塞取消/导出。
 pub fn serve(state: &CaptureState, allowed: bool, request: Request<Vec<u8>>) -> Response<Vec<u8>> {

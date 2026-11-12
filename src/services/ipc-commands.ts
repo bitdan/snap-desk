@@ -39,7 +39,6 @@ export const ipcCommands = [
   "clipboard_open_link",
   "clipboard_open_path",
   "clipboard_get_thumbnail",
-  "clipboard_get_image",
   "clipboard_list",
   "clipboard_pin_item",
   "clipboard_restore",

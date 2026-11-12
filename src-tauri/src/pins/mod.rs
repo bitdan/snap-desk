@@ -1,11 +1,11 @@
 //! 内存贴图与独立窗口。原图保留用于恢复，所有导出取当前处理后的像素。
 //! 窗口标签由 Rust 生成；贴图窗口只能操作自身，主窗口只能执行明确的管理动作。
 #[cfg(test)]
-mod benchmarks;
+pub(crate) mod benchmarks;
 pub(crate) mod content;
 pub(crate) mod drag;
-mod text;
 pub mod html;
+mod text;
 
 use base64::{engine::general_purpose::STANDARD, Engine};
 use image::RgbaImage;
@@ -19,8 +19,8 @@ use std::{
     },
 };
 use tauri::{
-    AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindow,
-    WebviewWindowBuilder,
+    AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, PhysicalSize, WebviewUrl,
+    WebviewWindow, WebviewWindowBuilder,
 };
 use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_dialog::DialogExt;
@@ -65,7 +65,12 @@ impl PinLayout {
 
     /// 原位贴图不按工作区裁小窗口，避免底栏挤占选区或将大图缩放、居中。
     fn source_bounds(
-        &self, origin: PhysicalPosition<i32>, width: u32, height: u32, scale: f64, zoom: f64,
+        &self,
+        origin: PhysicalPosition<i32>,
+        width: u32,
+        height: u32,
+        scale: f64,
+        zoom: f64,
     ) -> (PhysicalPosition<i32>, PhysicalSize<u32>) {
         let inset = self.image_inset(scale);
         let width = (f64::from(width) * zoom).max(self.toolbar_width * scale);
@@ -74,7 +79,8 @@ impl PinLayout {
             PhysicalPosition::new(origin.x - inset, origin.y - inset),
             PhysicalSize::new(
                 (width + f64::from(inset) * 2.0).ceil() as u32,
-                (height + f64::from(inset) * 2.0 + (self.gap + self.expanded_height) * scale).ceil() as u32,
+                (height + f64::from(inset) * 2.0 + (self.gap + self.expanded_height) * scale).ceil()
+                    as u32,
             ),
         )
     }
@@ -98,7 +104,11 @@ impl PinLayout {
         expanded: bool,
     ) -> (f64, f64) {
         // 展开时窗口不窄于完整工具栏；多出的透明区域在空闲时由 set_pin_region 裁掉。
-        let minimum = if expanded { self.toolbar_width } else { self.min_image_width };
+        let minimum = if expanded {
+            self.toolbar_width
+        } else {
+            self.min_image_width
+        };
         let width = (f64::from(width) * zoom).max(minimum) + (self.padding + self.border) * 2.0;
         let height =
             (f64::from(height) * zoom).max(self.min_image_height) + self.chrome_height(expanded);
@@ -121,6 +131,9 @@ struct Pin {
     qr_result: Option<crate::recognition::qr::QrResult>,
     /// 只在像素变化时递增；视图和标注更新不要求重新编码底图。
     revision: u64,
+    /// 当前 revision 的快速 PNG，供只读协议按需生成并在标注栅格化时复用；
+    /// 克隆共享同一缓存，像素变换必须换成新缓存，窗口隐藏时释放。
+    encoded: Arc<Mutex<Option<Arc<Vec<u8>>>>>,
     original: Arc<RgbaImage>,
     image: Arc<RgbaImage>,
     view: PinView,
@@ -176,10 +189,7 @@ fn validate_transform_budget(
             u64::from(pin.image.width()) * u64::from(pin.image.height())
         };
     if other_pixels.saturating_add(next) > MAX_TOTAL_PIXELS {
-        return Err(
-            "变换后原图与处理图将超过贴图像素缓存上限，请先关闭部分贴图。"
-                .into(),
-        );
+        return Err("变换后原图与处理图将超过贴图像素缓存上限，请先关闭部分贴图。".into());
     }
     Ok(())
 }
@@ -279,7 +289,6 @@ pub struct PinFrame {
     revision: u64,
     width: u32,
     height: u32,
-    data_url: String,
     view: PinView,
     appearance: PinAppearance,
     transparency_supported: bool,
@@ -310,6 +319,14 @@ fn set_visible(window: &WebviewWindow, visible: bool) -> Result<(), tauri::Error
         window.show()?;
     } else {
         window.hide()?;
+        // 前端隐藏五秒后才释放解码图；原生编码缓存立即释放，重新显示时按需再编码一次。
+        if let Ok(images) = window.app_handle().state::<PinState>().images.lock() {
+            if let Some(pin) = images.get(window.label()) {
+                if let Ok(mut encoded) = pin.encoded.lock() {
+                    *encoded = None;
+                }
+            }
+        }
     }
     window
         .app_handle()
@@ -358,34 +375,53 @@ fn own(app: &AppHandle, window: &WebviewWindow) -> Result<Pin, String> {
         .cloned()
         .ok_or_else(|| "贴图已关闭或当前窗口无权访问。".into())
 }
-fn frame(label: &str, pin: &Pin, known_revision: Option<u64>) -> Result<PinFrame, String> {
-    // 客户端仍持有此版本时仅更新元信息；不在 Rust 再常驻一份 Base64 缓存。
-    let data_url = if known_revision == Some(pin.revision) {
-        String::new()
-    } else {
-        let mut png = Cursor::new(Vec::new());
-        pin.image
-            .write_to(&mut png, image::ImageFormat::Png)
-            .map_err(err)?;
-        // 直接写入最终字符串，避免 base64 临时字符串与 format! 结果同时驻留。
-        let png = png.into_inner();
-        let prefix = "data:image/png;base64,";
-        let mut data_url = String::with_capacity(prefix.len() + png.len().div_ceil(3) * 4);
-        data_url.push_str(prefix);
-        STANDARD.encode_string(&png, &mut data_url);
-        data_url
-    };
-    Ok(PinFrame {
+/// 只返回元信息；底图由前端按 label 与 revision 经 `snap-image` 协议读取。
+fn frame(label: &str, pin: &Pin) -> PinFrame {
+    PinFrame {
         label: label.into(),
         revision: pin.revision,
         width: pin.image.width(),
         height: pin.image.height(),
-        data_url,
         view: pin.view.clone(),
         appearance: PinAppearance::default(),
         transparency_supported: !cfg!(target_os = "macos"),
         annotations: pin.annotations.clone(),
-    })
+    }
+}
+
+/// 协议读取当前版本底图：集合锁内只确认版本并取 Arc，编码在锁外进行；
+/// 同一贴图的并发请求在缓存锁上排队，只编码一次。过期版本返回 None。
+pub(crate) fn protocol_image(
+    app: &AppHandle,
+    label: &str,
+    revision: u64,
+) -> Result<Option<Arc<Vec<u8>>>, String> {
+    let Some(state) = app.try_state::<PinState>() else {
+        return Ok(None);
+    };
+    let found = state
+        .images
+        .lock()
+        .map_err(err)?
+        .get(label)
+        .filter(|pin| pin.revision == revision)
+        .map(|pin| (Arc::clone(&pin.image), Arc::clone(&pin.encoded)));
+    found
+        .map(|(image, encoded)| encoded_png(&image, &encoded))
+        .transpose()
+}
+
+fn encoded_png(
+    image: &RgbaImage,
+    cache: &Mutex<Option<Arc<Vec<u8>>>>,
+) -> Result<Arc<Vec<u8>>, String> {
+    let mut cache = cache.lock().map_err(err)?;
+    if let Some(png) = cache.as_ref() {
+        return Ok(Arc::clone(png));
+    }
+    let png = crate::shared::image_protocol::fast_png(image)?;
+    *cache = Some(Arc::clone(&png));
+    Ok(png)
 }
 
 /// 变换/编码期间用户可能关闭窗口；只替换仍存在的贴图，禁止重新插入无窗口的大图。
@@ -403,7 +439,9 @@ fn validate_capacity(width: u32, height: u32, count: usize, used: u64) -> Result
         return Err("图片为空或超过 1600 万像素限制。".into());
     }
     if count >= MAX_PINS || used.saturating_add(pixels) > MAX_TOTAL_PIXELS {
-        return Err("贴图最多 12 张，原图与处理图的独立缓存合计最多 3200 万像素；请先关闭部分贴图。".into());
+        return Err(
+            "贴图最多 12 张，原图与处理图的独立缓存合计最多 3200 万像素；请先关闭部分贴图。".into(),
+        );
     }
     Ok(())
 }
@@ -440,7 +478,9 @@ fn create_with_text(
     let monitor = match image_origin {
         Some(origin) => app.monitor_from_point(f64::from(origin.x), f64::from(origin.y)),
         None => app.primary_monitor(),
-    }.map_err(err)?.ok_or("无法获取显示器信息。")?;
+    }
+    .map_err(err)?
+    .ok_or("无法获取显示器信息。")?;
     let layout = PinLayout::load();
     // 不再额外裁掉 20% 工作区：能完整显示的选区不应被迫出现滚动条。
     let max_width = f64::from(monitor.work_area().size.width) / monitor.scale_factor();
@@ -468,6 +508,7 @@ fn create_with_text(
             drag_text,
             qr_result: None,
             revision: 0,
+            encoded: Default::default(),
             original: image.clone(),
             image,
             original_annotations: annotations.clone(),
@@ -503,7 +544,11 @@ fn create_with_text(
                     let images = state.images.lock().map_err(err)?;
                     let pin = images.get(&label).ok_or("贴图已关闭。")?;
                     let (position, size) = layout.source_bounds(
-                        origin, pin.image.width(), pin.image.height(), scale, pin.view.zoom,
+                        origin,
+                        pin.image.width(),
+                        pin.image.height(),
+                        scale,
+                        pin.view.zoom,
                     );
                     drop(images);
                     window.set_position(position).map_err(err)?;
@@ -726,13 +771,9 @@ pub async fn pin_qr_action(
 }
 
 #[tauri::command]
-pub async fn current_pin(
-    app: AppHandle,
-    window: WebviewWindow,
-    known_revision: Option<u64>,
-) -> Result<PinFrame, String> {
+pub async fn current_pin(app: AppHandle, window: WebviewWindow) -> Result<PinFrame, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let mut result = frame(window.label(), &own(&app, &window)?, known_revision)?;
+        let mut result = frame(window.label(), &own(&app, &window)?);
         result.appearance = appearance(&app)?;
         Ok(result)
     })
@@ -789,23 +830,38 @@ fn restore_one(app: &AppHandle, window: &WebviewWindow) -> Result<(), String> {
         pin.view.click_through = false;
         pin.view.clone()
     };
-    app.emit_to(window.label(), "pin-view-changed", view).map_err(err)
+    app.emit_to(window.label(), "pin-view-changed", view)
+        .map_err(err)
 }
 
 /// 全局贴图键优先作为穿透逃生键；即使禁用全局快捷键，托盘仍可恢复。
 pub fn restore_click_through(app: &AppHandle) -> Result<bool, String> {
     let state = app.state::<PinState>();
-    let labels: Vec<_> = state.images.lock().map_err(err)?.iter()
-        .filter(|(_, pin)| pin.view.click_through).map(|(label, _)| label.clone()).collect();
-    if labels.is_empty() { return Ok(false); }
+    let labels: Vec<_> = state
+        .images
+        .lock()
+        .map_err(err)?
+        .iter()
+        .filter(|(_, pin)| pin.view.click_through)
+        .map(|(label, _)| label.clone())
+        .collect();
+    if labels.is_empty() {
+        return Ok(false);
+    }
     let _operation = Operation::acquire(&state)?;
     let mut failures = Vec::new();
     for label in labels {
         if let Some(window) = app.get_webview_window(&label) {
-            if let Err(error) = restore_one(app, &window) { failures.push(error); }
+            if let Err(error) = restore_one(app, &window) {
+                failures.push(error);
+            }
         }
     }
-    if failures.is_empty() { Ok(true) } else { Err(failures.join("；")) }
+    if failures.is_empty() {
+        Ok(true)
+    } else {
+        Err(failures.join("；"))
+    }
 }
 
 #[tauri::command]
@@ -868,16 +924,24 @@ pub async fn set_pin_view(
         window.set_always_on_top(view.topmost).map_err(err)?;
         // 置顶、锁定和透明度不能顺带重排原位贴图；旋转改变图像宽高时仍需重新适配。
         let normal_size = LogicalSize::new(width, height).to_physical::<u32>(scale);
-        let source_size = layout.source_bounds(
-            PhysicalPosition::new(0, 0), pin.image.width(), pin.image.height(), scale, view.zoom,
-        ).1;
+        let source_size = layout
+            .source_bounds(
+                PhysicalPosition::new(0, 0),
+                pin.image.width(),
+                pin.image.height(),
+                scale,
+                view.zoom,
+            )
+            .1;
         let needs_resize = view.zoom != pin.view.zoom
             || view.toolbar_expanded != pin.view.toolbar_expanded
             || (old_size != normal_size && old_size != source_size);
         let resized = if needs_resize {
-            window.set_size(LogicalSize::new(width, height)).and_then(|_| {
-                window.set_position(PhysicalPosition::new(x.round() as i32, y.round() as i32))
-            })
+            window
+                .set_size(LogicalSize::new(width, height))
+                .and_then(|_| {
+                    window.set_position(PhysicalPosition::new(x.round() as i32, y.round() as i32))
+                })
         } else {
             Ok(())
         };
@@ -898,7 +962,9 @@ pub async fn set_pin_view(
                 format!("{error}；恢复窗口失败：{}", failures.join("；"))
             });
         }
-        window.set_ignore_cursor_events(view.click_through).map_err(err)?;
+        window
+            .set_ignore_cursor_events(view.click_through)
+            .map_err(err)?;
         state
             .images
             .lock()
@@ -928,7 +994,10 @@ pub async fn set_pin_region(
 }
 
 #[cfg(windows)]
-fn apply_region(window: &WebviewWindow, region: Option<crate::capture::Rect>) -> Result<(), String> {
+fn apply_region(
+    window: &WebviewWindow,
+    region: Option<crate::capture::Rect>,
+) -> Result<(), String> {
     use windows::Win32::{
         Foundation::HWND,
         Graphics::Gdi::{CreateRectRgn, DeleteObject, SetWindowRgn, HGDIOBJ},
@@ -1123,13 +1192,14 @@ pub async fn transform_pin(
         }
         pin.qr_result = None;
         pin.image = pin.transformed_image(action);
+        pin.encoded = Default::default();
         crate::shared::annotations::validate(
             &pin.annotations,
             pin.image.width(),
             pin.image.height(),
         )?;
         pin.revision = pin.revision.checked_add(1).ok_or("贴图版本超出限制。")?;
-        let mut result = frame(window.label(), &pin, None)?;
+        let mut result = frame(window.label(), &pin);
         result.appearance = appearance(&app)?;
         commit_transformed_pin(&mut *state.images.lock().map_err(err)?, window.label(), pin)?;
         if let Ok(images) = state.images.lock() {
@@ -1235,11 +1305,7 @@ pub async fn pin_action(
                 crate::shared::image_io::copy(&app, &composed(&own(&app, &window)?)?)?
             }
             PinAction::Save => {
-                return save_with_hidden_pins(
-                    &app,
-                    Some(&window),
-                    &composed(&own(&app, &window)?)?,
-                )
+                return save_with_hidden_pins(&app, Some(&window), &composed(&own(&app, &window)?)?)
             }
             // 关闭只需确认贴图仍属于本窗口，不为此克隆图片和标注。
             PinAction::Close => {
@@ -1272,8 +1338,12 @@ mod tests {
                 // 窗口不窄于完整工具栏；图片仍从左上角开始。
                 let content = 1233.0_f64.max(layout.toolbar_width * scale);
                 assert_eq!(size.width, (content + f64::from(inset) * 2.0).ceil() as u32);
-                assert!(f64::from(size.height) >= 626.0 + f64::from(inset) * 2.0
-                    + (layout.gap + layout.expanded_height) * scale);
+                assert!(
+                    f64::from(size.height)
+                        >= 626.0
+                            + f64::from(inset) * 2.0
+                            + (layout.gap + layout.expanded_height) * scale
+                );
             }
         }
         // 小图在最小窗口内也从左上角开始，不因原生最小尺寸额外居中。
@@ -1283,17 +1353,23 @@ mod tests {
         assert_eq!(position.y + layout.image_inset(1.5), origin.y);
     }
     #[test]
-    fn known_pixel_revision_skips_image_payload_and_new_revision_refreshes_it() {
-        let mut pin = sample_pin();
-        let initial = frame("pin-1", &pin, None).unwrap();
-        assert!(initial.data_url.starts_with("data:image/png;base64,"));
-        assert!(frame("pin-1", &pin, Some(0)).unwrap().data_url.is_empty());
-        pin.view.zoom = 2.0;
-        let metadata = frame("pin-1", &pin, Some(0)).unwrap();
-        assert_eq!(metadata.view.zoom, 2.0);
-        assert!(metadata.data_url.is_empty());
-        pin.revision += 1;
-        assert!(!frame("pin-1", &pin, Some(0)).unwrap().data_url.is_empty());
+    fn frame_carries_metadata_only_and_encoding_is_cached_per_revision() {
+        let pin = sample_pin();
+        let json = serde_json::to_value(frame("pin-1", &pin)).unwrap();
+        assert!(json.get("dataUrl").is_none());
+        assert_eq!(json["revision"], 0);
+        let first = encoded_png(&pin.image, &pin.encoded).unwrap();
+        assert!(first.starts_with(b"\x89PNG"));
+        assert!(Arc::ptr_eq(
+            &first,
+            &encoded_png(&pin.image, &pin.encoded).unwrap()
+        ));
+        // 克隆共享缓存；变换换成新缓存后不会读到旧像素。
+        let mut transformed = pin.clone();
+        assert!(transformed.encoded.lock().unwrap().is_some());
+        transformed.encoded = Default::default();
+        assert!(transformed.encoded.lock().unwrap().is_none());
+        assert!(pin.encoded.lock().unwrap().is_some());
     }
     #[test]
     fn qr_results_stay_with_the_unchanged_live_pin() {
@@ -1391,6 +1467,7 @@ mod tests {
             drag_text: None,
             qr_result: None,
             revision: 0,
+            encoded: Default::default(),
             original: image.clone(),
             image,
             view: PinView::default(),
@@ -1469,6 +1546,7 @@ mod tests {
             drag_text: None,
             qr_result: None,
             revision: 0,
+            encoded: Default::default(),
             original: image.clone(),
             image,
             view: PinView::default(),

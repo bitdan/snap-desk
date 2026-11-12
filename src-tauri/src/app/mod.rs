@@ -3,12 +3,12 @@ mod actions;
 mod commands;
 mod updater;
 
-use actions::{trigger, trigger_pin, trigger_recording};
-use crate::{shelf, capture, clipboard, diagnostics, pins, resources, settings, recognition};
-use crate::recognition::{ocr, qr, translation, local_translation, translation_models};
-use crate::settings::{autostart, shortcut_probe, storage};
+use crate::recognition::{local_translation, ocr, qr, translation, translation_models};
 use crate::resources::lifecycle as resource_lifecycle;
+use crate::settings::{autostart, shortcut_probe, storage};
 use crate::shared::{auxiliary_windows, native_i18n};
+use crate::{capture, clipboard, diagnostics, pins, recognition, resources, settings, shelf};
+use actions::{trigger, trigger_pin, trigger_recording};
 use capture::{show_main, CaptureState};
 use std::sync::atomic::Ordering;
 use tauri::{
@@ -55,11 +55,28 @@ pub fn run() {
         .manage(capture::recording::ExitState::default())
         .manage(pins::PinState::default())
         // 截图图片仅允许截图 WebView 读取；异步协议避免大响应复制占用 UI 线程。
-        .register_asynchronous_uri_scheme_protocol("capture-image", |context, request, responder| {
+        .register_asynchronous_uri_scheme_protocol(
+            "capture-image",
+            |context, request, responder| {
+                let app = context.app_handle().clone();
+                let allowed = context.webview_label() == "capture";
+                tauri::async_runtime::spawn_blocking(move || {
+                    responder.respond(capture::preview::serve(
+                        &app.state::<CaptureState>(),
+                        allowed,
+                        request,
+                    ));
+                });
+            },
+        )
+        // 贴图底图与历史原图走只读协议，权限按发起请求的窗口及其识别/预览子窗口校验。
+        .register_asynchronous_uri_scheme_protocol("snap-image", |context, request, responder| {
             let app = context.app_handle().clone();
-            let allowed = context.webview_label() == "capture";
+            let webview = context.webview_label().to_owned();
             tauri::async_runtime::spawn_blocking(move || {
-                responder.respond(capture::preview::serve(&app.state::<CaptureState>(), allowed, request));
+                responder.respond(crate::shared::image_protocol::serve(
+                    &app, &webview, request,
+                ));
             });
         })
         // IPC 日志入口照常注册，原生 logger 在 setup 中安装故障隔离层。
@@ -105,7 +122,9 @@ pub fn run() {
                         Some(settings::ShortcutAction::Record) => trigger_recording(app),
                         Some(settings::ShortcutAction::History) => clipboard::open_history(app),
                         Some(settings::ShortcutAction::Shelf) => shelf::toggle(app),
-                        Some(settings::ShortcutAction::Translate) => recognition::text_input::open(app),
+                        Some(settings::ShortcutAction::Translate) => {
+                            recognition::text_input::open(app)
+                        }
                         None => {}
                     }
                 })
@@ -114,7 +133,11 @@ pub fn run() {
         .setup(|app| {
             diagnostics::logger::initialize(app.handle());
             diagnostics::runtime::initialize(app.handle());
-            log::info!("event=app.starting module=app version={} platform={}", app.package_info().version, std::env::consts::OS);
+            log::info!(
+                "event=app.starting module=app version={} platform={}",
+                app.package_info().version,
+                std::env::consts::OS
+            );
             settings::initialize(app.handle()).map_err(|error| {
                 log::error!("event=app.initialize_failed module=app code=SETTINGS_INIT_FAILED");
                 error
@@ -197,7 +220,14 @@ pub fn run() {
             let menu = Menu::with_items(
                 app,
                 &[
-                    &capture, &pin, &recording, &history, &translation_menu, &open, &shortcuts, &restart,
+                    &capture,
+                    &pin,
+                    &recording,
+                    &history,
+                    &translation_menu,
+                    &open,
+                    &shortcuts,
+                    &restart,
                     &quit,
                 ],
             )?;
@@ -215,7 +245,8 @@ pub fn run() {
                         button: MouseButton::Left,
                         button_state: MouseButtonState::Up,
                         ..
-                    } = event {
+                    } = event
+                    {
                         let app = tray.app_handle().clone();
                         tauri::async_runtime::spawn(async move {
                             if let Err(error) = capture::begin(app.clone()).await {
@@ -291,17 +322,26 @@ pub fn run() {
             // 首次加载也保持隐藏，收到前端就绪通知后再显示，避免冷启动白屏。
             let automatic = autostart::is_autostart(std::env::args_os().skip(1));
             app.state::<capture::MainWindowState>()
-                .show_requested.store(!automatic, Ordering::SeqCst);
-            crate::shared::dialog_windows::attach(WebviewWindowBuilder::from_config(app.handle(), main_config)?, app.handle(), "main")
-                .visible(false)
-                .focused(false)
-                .build()?;
+                .show_requested
+                .store(!automatic, Ordering::SeqCst);
+            crate::shared::dialog_windows::attach(
+                WebviewWindowBuilder::from_config(app.handle(), main_config)?,
+                app.handle(),
+                "main",
+            )
+            .visible(false)
+            .focused(false)
+            .build()?;
             Ok(())
         })
         .on_window_event(|window, event| {
             // 关闭截图/贴图时仅取消本窗口的文字任务；退出应用仍由统一出口取消全部任务。
-            if (matches!(window.label(), "capture" | "translation") || window.label().starts_with("pin-"))
-                && matches!(event, tauri::WindowEvent::Destroyed | tauri::WindowEvent::CloseRequested { .. })
+            if (matches!(window.label(), "capture" | "translation")
+                || window.label().starts_with("pin-"))
+                && matches!(
+                    event,
+                    tauri::WindowEvent::Destroyed | tauri::WindowEvent::CloseRequested { .. }
+                )
             {
                 translation::cancel_window(window.app_handle(), window.label());
             }
@@ -320,7 +360,8 @@ pub fn run() {
                     }
                 });
             }
-            if window.label() == "clipboard" && matches!(event, tauri::WindowEvent::Focused(false)) {
+            if window.label() == "clipboard" && matches!(event, tauri::WindowEvent::Focused(false))
+            {
                 clipboard::window_blurred(window.app_handle());
             }
             if matches!(event, tauri::WindowEvent::Resized(_)) && window.label().contains("-edge-")
@@ -328,7 +369,9 @@ pub fn run() {
                 if let Some(webview) = window.app_handle().get_webview_window(window.label()) {
                     if let Err(_error) = capture::scroll::chrome::restore_edge(&webview) {
                         let _ = webview.hide();
-                        log::error!("event=app.edge_restore_failed module=app code=EDGE_RESTORE_FAILED");
+                        log::error!(
+                            "event=app.edge_restore_failed module=app code=EDGE_RESTORE_FAILED"
+                        );
                     }
                 }
             }
@@ -413,7 +456,6 @@ pub fn run() {
             clipboard::clipboard_open_link,
             clipboard::clipboard_open_path,
             clipboard::clipboard_get_thumbnail,
-            clipboard::clipboard_get_image,
             clipboard::clipboard_restore,
             clipboard::clipboard_paste,
             clipboard::clipboard_pin_item,

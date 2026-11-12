@@ -20,13 +20,13 @@ import layout from '@/features/pins/pin-layout.json'
 
 const toolbar = ref<HTMLElement | null>(null)
 const { style: floatingToolbarStyle, start: floatToolbar, reset: resetToolbarPosition } = useFloatingToolbar(toolbar)
-const imageSession = usePinImage(knownRevision => api.currentPin(knownRevision))
+const imageSession = usePinImage(() => api.currentPin())
 const { frame } = imageSession
 // 首次 IPC 和图片解码完成前不绘制 20px 占位边框，避免贴图看起来先缩小再展开。
 const imageReady = ref(false)
-watch(() => frame.value?.dataUrl, () => { imageReady.value = false }, { flush: 'sync' })
+watch(() => frame.value?.src, () => { imageReady.value = false }, { flush: 'sync' })
 function imageLoaded(event: Event) {
-  imageReady.value = !!frame.value?.dataUrl && (event.currentTarget as HTMLImageElement).src === frame.value.dataUrl
+  imageReady.value = !!frame.value?.src && (event.currentTarget as HTMLImageElement).src === frame.value.src
 }
 const appearance = ref(defaultPinAppearance())
 let appearanceRevision = 0
@@ -104,7 +104,7 @@ useEscapeLayer(() => contextMenu.value !== null, () => closeMenu(true))
 const menuElement = ref<HTMLElement | null>(null)
 let menuTrigger: HTMLElement | null = null
 const bounds = computed(() => ({ x: 0, y: 0, width: frame.value?.width ?? 0, height: frame.value?.height ?? 0 }))
-const editor = useAnnotations(() => bounds.value, () => frame.value?.dataUrl ?? '', () => busy.value || !!frame.value?.view.locked, async shapes => {
+const editor = useAnnotations(() => bounds.value, () => frame.value?.src ?? '', () => busy.value || !!frame.value?.view.locked, async shapes => {
   await api.setPinAnnotations(shapes)
   if (frame.value) frame.value.annotations = shapes
 })
@@ -357,7 +357,8 @@ function closeOnResize() {
     <div v-show="imageReady" ref="stage" class="pin-stage" :inert="!!recognitionMode" tabindex="0" :aria-label='t("贴图，按 Tab 进入工具栏，右键打开菜单")' :title="t('Ctrl＋左键拖出内容；拖入微信前可松开 Ctrl')" :style="[stageStyle, pinAppearanceStyle(appearance, display.stageWidth, display.stageHeight, frame?.view.opacity ?? 1, focused)]" @pointerenter="keepControlsVisible" @pointerleave="scheduleControlsHide" @pointerdown="drag" @pointermove="contentDrag.move" @pointerup="contentDrag.cancel" @pointercancel="contentDrag.cancel" @lostpointercapture="contentDrag.cancel" @wheel.prevent="wheel" @contextmenu.capture="openMenu">
       <div v-if="frame" class="pin-canvas">
         <div class="pin-image-content" :style="{ width: `${display.imageWidth}px`, height: `${display.imageHeight}px`, opacity: frame.view.opacity }">
-          <img v-if="frame.dataUrl" :src="frame.dataUrl" :alt='t("桌面贴图")' draggable="false" @load="imageLoaded" @error="error = '贴图预览加载失败，可关闭后重新贴图。'" />
+          <!-- 与标注栅格化同用 CORS 模式，同一文档内复用已解码底图，不再重复请求协议。 -->
+          <img v-if="frame.src" :src="frame.src" crossorigin="anonymous" :alt='t("桌面贴图")' draggable="false" @load="imageLoaded" @error="error = '贴图预览加载失败，可关闭后重新贴图。'" />
           <AnnotationSurface :editor="editor" :width="frame.width" :height="frame.height" :bounds="bounds" :enabled="annotating && !busy && !frame.view.locked" />
         </div>
       </div>

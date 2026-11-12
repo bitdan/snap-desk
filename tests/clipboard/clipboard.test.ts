@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { defaultSettings, validateShortcuts } from '../../src/features/settings/settings'
 import { defaultClipboardSettings, parseExcludedApps, validateExcludedApps, reorderSelection, toggleSelection, selectClipboardItems } from '../../src/features/clipboard/clipboard'
 const mocks = vi.hoisted(() => ({ invoke: vi.fn(), listen: vi.fn() }))
-vi.mock('@tauri-apps/api/core', () => ({ invoke: mocks.invoke, isTauri: () => true }))
+vi.mock('@tauri-apps/api/core', () => ({ invoke: mocks.invoke, isTauri: () => true, convertFileSrc: (path: string, scheme: string) => `http://${scheme}.localhost/${path}` }))
 vi.mock('@tauri-apps/api/event', () => ({ listen: mocks.listen }))
 import { api, onClipboardChanged, onClipboardError, onClipboardState, onClipboardOpen } from '../../src/services/api'
 
@@ -40,8 +40,10 @@ describe('历史配置及选择顺序', () => {
 })
 describe('历史 IPC 契约', () => {
   it('查询、操作与导出只提交类型化参数和 ID', async () => {
-    await api.clipboardImage(9)
-    expect(mocks.invoke).toHaveBeenLastCalledWith('clipboard_get_image', { id: 9 })
+    mocks.invoke.mockClear()
+    // 原图只按 ID 走只读协议，不经过 IPC 传输 Base64。
+    expect(await api.clipboardImage(9)).toBe('http://snap-image.localhost/clip/9.png')
+    expect(mocks.invoke).not.toHaveBeenCalled()
     await api.clipboardOpenLink(9)
     expect(mocks.invoke).toHaveBeenLastCalledWith('clipboard_open_link', { id: 9 })
     await api.clipboardOpenPath(9)

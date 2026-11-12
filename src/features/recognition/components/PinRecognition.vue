@@ -9,11 +9,11 @@ import { Copy, ExternalLink, LoaderCircle, QrCode, RotateCcw, ScanText } from 'l
 import OcrWorkspace from '@/features/recognition/components/OcrWorkspace.vue'
 import { initialOcrText, ocrWindowSize } from '@/features/recognition/ocr-workspace'
 import { api } from '@/services/api'
-import type { PinFrame } from '@/features/pins/types'
+import type { PinImage } from '@/features/pins/types'
 import type { QrResult } from '@/features/recognition/types'
 import type { OcrResult } from '@/features/recognition/ai'
 
-const props = defineProps<{ frame: PinFrame; mode: 'ocr' | 'qr' | 'translate' }>()
+const props = defineProps<{ frame: PinImage; mode: 'ocr' | 'qr' | 'translate' }>()
 const emit = defineEmits<{ close: [] }>()
 const panel = ref<HTMLElement | null>(null)
 const busy = ref(false), error = ref(''), message = ref('')
@@ -22,7 +22,7 @@ const ocr = ref<OcrResult | null>(null), qr = ref<QrResult | null>(null)
 // 与截图一致：识别结果是可编辑草稿，识别与翻译视图来回切换不会丢失修正。
 const draft = ref('')
 // 识别工作区左侧显示贴图原图；旋转等变换后宽高比不符时由工作区自动不画识别框。
-const image = computed(() => ({ url: props.frame.dataUrl, width: props.frame.width, height: props.frame.height }))
+const image = computed(() => ({ url: props.frame.src, width: props.frame.width, height: props.frame.height }))
 const ocrWindow = computed(() => ocrWindowSize(image.value, globalThis.devicePixelRatio ?? 1, { width: globalThis.screen?.availWidth ?? 1280, height: globalThis.screen?.availHeight ?? 800 }))
 const title = computed(() => props.mode === 'qr' ? t('图片二维码识别') : props.mode === 'translate' ? t('图片翻译') : t('文字识别结果'))
 const pendingLink = ref<number | null>(null)

@@ -1,12 +1,36 @@
 //! 将固定的同源空白页开窗请求转换为系统窗口，供 Vue Teleport 保留原有状态和命令归属。
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::{
+    collections::BTreeMap,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Mutex,
+    },
+};
 use tauri::{
-    webview::NewWindowResponse, AppHandle, Manager, WebviewUrl, WebviewWindowBuilder, Wry,
+    webview::NewWindowResponse, AppHandle, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent,
+    Wry,
 };
 
 const URL: &str = "about:blank#snap-desk-dialog";
 const CLOSE_URL: &str = "about:blank?snap-desk-dialog-close";
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
+/// 子窗口标签 → 打开它的窗口；只读协议据此把识别/预览子窗口的请求归属到其所有者。
+static OWNERS: Mutex<BTreeMap<String, String>> = Mutex::new(BTreeMap::new());
+
+/// 沿子窗口链找到最初的应用窗口；非子窗口返回自身。层数受限，防止异常数据成环。
+pub(crate) fn root_owner(label: &str) -> String {
+    let mut current = label.to_owned();
+    let Ok(owners) = OWNERS.lock() else {
+        return current;
+    };
+    for _ in 0..8 {
+        match owners.get(&current) {
+            Some(owner) => current = owner.clone(),
+            None => break,
+        }
+    }
+    current
+}
 
 /// 不允许任意链接进入应用 WebView；空白子窗口也不授予原生命令或事件权限。
 pub(crate) fn attach<'a, M: Manager<Wry>>(
@@ -55,7 +79,19 @@ pub(crate) fn attach<'a, M: Manager<Wry>>(
             return NewWindowResponse::Deny;
         };
         match attach(builder, &app, &label).build() {
-            Ok(window) => NewWindowResponse::Create { window },
+            Ok(window) => {
+                if let Ok(mut owners) = OWNERS.lock() {
+                    owners.insert(label.clone(), owner.clone());
+                }
+                window.on_window_event(move |event| {
+                    if matches!(event, WindowEvent::Destroyed) {
+                        if let Ok(mut owners) = OWNERS.lock() {
+                            owners.remove(&label);
+                        }
+                    }
+                });
+                NewWindowResponse::Create { window }
+            }
             Err(_) => {
                 log::warn!("event=app.dialog_window_failed module=app code=DIALOG_WINDOW_FAILED");
                 NewWindowResponse::Deny
