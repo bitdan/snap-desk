@@ -19,8 +19,8 @@ use std::{
     },
 };
 use tauri::{
-    AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, PhysicalSize, WebviewUrl,
-    WebviewWindow, WebviewWindowBuilder,
+    AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindow,
+    WebviewWindowBuilder,
 };
 use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_dialog::DialogExt;
@@ -29,21 +29,53 @@ const MAX_PINS: usize = 12;
 const MAX_IMAGE_PIXELS: u64 = 16_000_000;
 const MAX_TOTAL_PIXELS: u64 = 32_000_000;
 
-/// 与 Vue 共用同一份布局尺寸，单位均为逻辑像素，避免 DPI 下底栏挤占图片。
+/// 与 Vue 共用同一份布局尺寸，单位均为逻辑像素。
+/// 窗口只包住图片；工具栏显示时才在图片上方或下方扩出一条，图片不让位、不被裁。
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PinLayout {
     padding: f64,
     gap: f64,
     border: f64,
-    expanded_height: f64,
-    collapsed_height: f64,
     min_visible_side: f64,
-    min_image_width: f64,
-    /// 展开工具栏完整显示所需宽度；窗口至少这么宽，工具栏不再随图片缩放被截断。
+    /// 工具栏单行加样式行的高度；显示时整体放在图片外侧。
+    toolbar_height: f64,
+    /// 工具栏完整显示所需宽度；仅在工具栏显示时撑宽窗口。
     toolbar_width: f64,
-    min_image_height: f64,
+    /// 空闲窗口的透明下限，供右键菜单展开；多出的透明部分由 set_pin_region 裁掉。
+    min_window_width: f64,
+    min_window_height: f64,
 }
+
+/// 一次布局结果：窗口外框（物理像素）、图片首像素相对窗口的偏移、工具栏是否在图片上方。
+#[derive(Debug, PartialEq)]
+struct Placement {
+    position: PhysicalPosition<i32>,
+    size: PhysicalSize<u32>,
+    image: PhysicalPosition<i32>,
+    toolbar_above: bool,
+}
+
+/// 显示器工作区，物理像素。
+#[derive(Clone, Copy)]
+struct WorkArea {
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+}
+impl From<&tauri::Monitor> for WorkArea {
+    fn from(monitor: &tauri::Monitor) -> Self {
+        let area = monitor.work_area();
+        Self {
+            x: area.position.x,
+            y: area.position.y,
+            width: area.size.width as i32,
+            height: area.size.height as i32,
+        }
+    }
+}
+
 impl PinLayout {
     fn load() -> &'static Self {
         // 编译时嵌入仓库内常量，不读取用户文件；前端直接导入相同 JSON。
@@ -62,8 +94,38 @@ impl PinLayout {
     fn image_inset(&self, scale: f64) -> i32 {
         ((self.padding + self.border) * scale).round() as i32
     }
+    /// 已测得的工具栏宽度优先；未测量时按布局常量预留。
+    fn toolbar_width_for(&self, measured: f64) -> f64 {
+        if measured > 0.0 {
+            measured
+        } else {
+            self.toolbar_width
+        }
+    }
+    /// 工具栏占用的高度（含与图片的间隙），物理像素。
+    fn toolbar_band(&self, scale: f64) -> i32 {
+        ((self.gap + self.toolbar_height) * scale).ceil() as i32
+    }
+    /// 新贴图默认原尺寸；放不进工作区（含为工具栏预留的一条）时等比缩小到能完整显示。
+    fn fit_zoom(&self, width: u32, height: u32, scale: f64, work: WorkArea) -> f64 {
+        let inset = f64::from(self.image_inset(scale) * 2);
+        let room_width = f64::from(work.width) - inset;
+        let room_height = f64::from(work.height - self.toolbar_band(scale)) - inset;
+        let fit = (room_width / f64::from(width.max(1)))
+            .min(room_height / f64::from(height.max(1)))
+            .min(1.0);
+        // 保留两位小数，滚轮按 10% 步进时仍从可读的比例出发。
+        ((fit * 100.0).floor() / 100.0).max(self.minimum_zoom(width, height, scale))
+    }
+    /// 图片按缩放比例显示的物理尺寸。
+    fn displayed(&self, width: u32, height: u32, zoom: f64) -> (i32, i32) {
+        (
+            (f64::from(width) * zoom).round().max(1.0) as i32,
+            (f64::from(height) * zoom).round().max(1.0) as i32,
+        )
+    }
 
-    /// 原位贴图不按工作区裁小窗口，避免底栏挤占选区或将大图缩放、居中。
+    /// 原位贴图：图片首像素对准选区，不按工作区裁小窗口。
     fn source_bounds(
         &self,
         origin: PhysicalPosition<i32>,
@@ -73,46 +135,87 @@ impl PinLayout {
         zoom: f64,
     ) -> (PhysicalPosition<i32>, PhysicalSize<u32>) {
         let inset = self.image_inset(scale);
-        let width = (f64::from(width) * zoom).max(self.toolbar_width * scale);
-        let height = (f64::from(height) * zoom).max(self.min_image_height * scale);
+        let (width, height) = self.displayed(width, height, zoom);
         (
             PhysicalPosition::new(origin.x - inset, origin.y - inset),
-            PhysicalSize::new(
-                (width + f64::from(inset) * 2.0).ceil() as u32,
-                (height + f64::from(inset) * 2.0 + (self.gap + self.expanded_height) * scale).ceil()
-                    as u32,
-            ),
+            self.window_size(width, height, scale, None),
         )
     }
-    fn chrome_height(&self, expanded: bool) -> f64 {
-        self.padding * 2.0
-            + self.gap
-            + self.border * 2.0
-            + if expanded {
-                self.expanded_height
-            } else {
-                self.collapsed_height
-            }
-    }
+
+    /// `toolbar` 为显示中的工具栏宽度（逻辑像素），`None` 表示工具栏隐藏。
     fn window_size(
         &self,
-        width: u32,
-        height: u32,
-        zoom: f64,
-        max_width: f64,
-        max_height: f64,
-        expanded: bool,
-    ) -> (f64, f64) {
-        // 展开时窗口不窄于完整工具栏；多出的透明区域在空闲时由 set_pin_region 裁掉。
-        let minimum = if expanded {
-            self.toolbar_width
+        width: i32,
+        height: i32,
+        scale: f64,
+        toolbar: Option<f64>,
+    ) -> PhysicalSize<u32> {
+        let inset = self.image_inset(scale);
+        let content = if let Some(toolbar) = toolbar {
+            width.max((toolbar * scale).ceil() as i32)
         } else {
-            self.min_image_width
+            width
         };
-        let width = (f64::from(width) * zoom).max(minimum) + (self.padding + self.border) * 2.0;
-        let height =
-            (f64::from(height) * zoom).max(self.min_image_height) + self.chrome_height(expanded);
-        (width.min(max_width), height.min(max_height))
+        let band = if toolbar.is_some() {
+            self.toolbar_band(scale)
+        } else {
+            0
+        };
+        PhysicalSize::new(
+            (content + inset * 2).max((self.min_window_width * scale).ceil() as i32) as u32,
+            (height + inset * 2 + band).max((self.min_window_height * scale).ceil() as i32) as u32,
+        )
+    }
+
+    /// 以图片当前屏幕位置为锚点重新布局：图片保持在工作区内，工具栏优先放下方，
+    /// 下方放不下放上方，两侧都放不下时才把图片上移；横向超出右缘时窗口向左展开。
+    /// `image` 为图片首像素的屏幕坐标，`width`/`height` 为图片显示尺寸。
+    fn place(
+        &self,
+        image: PhysicalPosition<i32>,
+        width: i32,
+        height: i32,
+        scale: f64,
+        work: WorkArea,
+        toolbar: Option<f64>,
+    ) -> Placement {
+        let inset = self.image_inset(scale);
+        let band = if toolbar.is_some() {
+            self.toolbar_band(scale)
+        } else {
+            0
+        };
+        let (left, top) = (work.x, work.y);
+        let (right, bottom) = (work.x + work.width, work.y + work.height);
+        // 超出工作区的大图由前端在边框内滚动，显示区域按工作区收窄。
+        let width = width.min(work.width - inset * 2).max(1);
+        let height = height.min(work.height - inset * 2 - band).max(1);
+        let x = image.x.clamp(left, left.max(right - width));
+        let mut y = image.y.clamp(top, top.max(bottom - height));
+        let size = self.window_size(width, height, scale, toolbar);
+        let mut toolbar_above = false;
+        if toolbar.is_some() && y + height + inset + band > bottom {
+            if y - inset - band >= top {
+                toolbar_above = true;
+            } else {
+                y = top.max(bottom - inset - band - height);
+            }
+        }
+        let window_y = if toolbar_above {
+            y - inset - band
+        } else {
+            y - inset
+        };
+        let mut window_x = x - inset;
+        if window_x + size.width as i32 > right {
+            window_x = window_x.min((left - inset).max(right - size.width as i32));
+        }
+        Placement {
+            position: PhysicalPosition::new(window_x, window_y),
+            size,
+            image: PhysicalPosition::new(x - window_x, y - window_y),
+            toolbar_above,
+        }
     }
 }
 
@@ -250,8 +353,19 @@ pub struct PinView {
     opacity: f64,
     locked: bool,
     topmost: bool,
-    /// 展开/收起底栏同时调整原生窗口高度，不改变图片缩放比例。
+    /// 工具栏显示时窗口在图片外侧扩出一条，不改变图片缩放比例和屏幕位置。
     toolbar_expanded: bool,
+    /// 以下为原生布局结果，前端只读；回传的值会被忽略并重新计算。
+    /// 图片首像素相对窗口左上角的物理像素偏移；0 表示尚未布局，按默认内边距处理。
+    #[serde(default)]
+    image_x: i32,
+    #[serde(default)]
+    image_y: i32,
+    #[serde(default)]
+    toolbar_above: bool,
+    /// 前端实测的工具栏宽度（逻辑像素）；0 表示尚未测量，按布局常量预留。
+    #[serde(default)]
+    toolbar_width: f64,
 }
 impl Default for PinView {
     fn default() -> Self {
@@ -261,7 +375,11 @@ impl Default for PinView {
             opacity: 1.0,
             locked: false,
             topmost: true,
-            toolbar_expanded: true,
+            toolbar_expanded: false,
+            image_x: 0,
+            image_y: 0,
+            toolbar_above: false,
+            toolbar_width: 0.0,
         }
     }
 }
@@ -272,6 +390,8 @@ impl PinView {
             || self.zoom < 0.1
             || !self.opacity.is_finite()
             || !(0.2..=1.0).contains(&self.opacity)
+            || !self.toolbar_width.is_finite()
+            || !(0.0..=4000.0).contains(&self.toolbar_width)
         {
             return Err("缩放比例无效，透明度应为 20%～100%。".into());
         }
@@ -482,23 +602,29 @@ fn create_with_text(
     .map_err(err)?
     .ok_or("无法获取显示器信息。")?;
     let layout = PinLayout::load();
-    // 不再额外裁掉 20% 工作区：能完整显示的选区不应被迫出现滚动条。
-    let max_width = f64::from(monitor.work_area().size.width) / monitor.scale_factor();
-    let max_height = f64::from(monitor.work_area().size.height) / monitor.scale_factor();
-    // 默认原尺寸；极小图片等比放大到短边 20px，超出屏幕的部分滚动查看。
-    let zoom = PinView::default().zoom.max(layout.minimum_zoom(
-        image.width(),
-        image.height(),
-        monitor.scale_factor(),
-    ));
-    let (width, height) = layout.window_size(
-        image.width(),
-        image.height(),
-        // window_size 使用逻辑尺寸，zoom 本身始终表示物理像素的查看比例。
-        zoom / monitor.scale_factor(),
-        max_width,
-        max_height,
-        true,
+    let scale = monitor.scale_factor();
+    let work = WorkArea::from(&monitor);
+    // 原位贴图保持选区原尺寸；其他来源默认原尺寸，放不下工作区时等比缩小到完整可见。
+    let zoom = match image_origin {
+        Some(_) => 1.0_f64.max(layout.minimum_zoom(image.width(), image.height(), scale)),
+        None => layout.fit_zoom(image.width(), image.height(), scale, work),
+    };
+    let (shown_width, shown_height) = layout.displayed(image.width(), image.height(), zoom);
+    // 非原位贴图在工作区居中；原位贴图建窗后按实际 DPI 重新对齐选区。
+    let centered = layout.place(
+        PhysicalPosition::new(
+            work.x + (work.width - shown_width) / 2,
+            work.y + (work.height - shown_height) / 2,
+        ),
+        shown_width,
+        shown_height,
+        scale,
+        work,
+        None,
+    );
+    let (width, height) = (
+        f64::from(centered.size.width) / scale,
+        f64::from(centered.size.height) / scale,
     );
     let label = format!("pin-{}", state.next_id.fetch_add(1, Ordering::SeqCst) + 1);
     let image = Arc::new(image);
@@ -515,6 +641,8 @@ fn create_with_text(
             annotations,
             view: PinView {
                 zoom,
+                image_x: centered.image.x,
+                image_y: centered.image.y,
                 ..PinView::default()
             },
         },
@@ -552,12 +680,28 @@ fn create_with_text(
                     );
                     drop(images);
                     window.set_position(position).map_err(err)?;
-                    window.set_size(size).map_err(err)
+                    window.set_size(size).map_err(err)?;
+                    let inset = layout.image_inset(scale);
+                    let mut images = state.images.lock().map_err(err)?;
+                    let view = &mut images.get_mut(&label).ok_or("贴图已关闭。")?.view;
+                    (view.image_x, view.image_y) = (inset, inset);
+                    Ok(())
                 })();
                 if let Err(error) = placed {
                     let _ = window.destroy();
                     state.images.lock().map_err(err)?.remove(&label);
                     return Err(error);
+                }
+            }
+            if image_origin.is_none() {
+                // 物理像素定位，避免逻辑尺寸取整后图片偏离预先计算的偏移。
+                let placed = window
+                    .set_size(centered.size)
+                    .and_then(|_| window.set_position(centered.position));
+                if let Err(error) = placed {
+                    let _ = window.destroy();
+                    state.images.lock().map_err(err)?.remove(&label);
+                    return Err(err(error));
                 }
             }
             if let Ok(images) = state.images.lock() {
@@ -883,47 +1027,32 @@ pub async fn set_pin_view(
             .map_err(err)?
             .ok_or("无法获取显示器信息。")?;
         let scale = monitor.scale_factor();
-        let work_area = monitor.work_area();
         let layout = PinLayout::load();
         let minimum = layout.minimum_zoom(pin.image.width(), pin.image.height(), scale);
         // 通常最多 400%；仅极细图片允许超过此值，以满足 20px 的可见下限。
         view.zoom = view.zoom.clamp(minimum, 4.0_f64.max(minimum));
-        let (width, height) = layout.window_size(
-            pin.image.width(),
-            pin.image.height(),
-            view.zoom / scale,
-            f64::from(work_area.size.width) / scale,
-            f64::from(work_area.size.height) / scale,
-            view.toolbar_expanded,
-        );
         let old_size = window.inner_size().map_err(err)?;
         let old_position = window.outer_position().map_err(err)?;
-        // 底栏展开或放大时，将窗口限制在显示器工作区内，避免按钮掉到任务栏下方。
-        // 水平方向只保证图片本身留在工作区：为工具栏加宽的透明部分允许越过屏幕右缘，
-        // 否则靠右的小贴图会在缩放时被整体推向左侧；前端按可见宽度限制工具栏。
-        let image_width = layout
-            .window_size(
-                pin.image.width(),
-                pin.image.height(),
-                view.zoom / scale,
-                f64::from(work_area.size.width) / scale,
-                f64::from(work_area.size.height) / scale,
-                false,
-            )
-            .0;
-        let left = f64::from(work_area.position.x);
-        let x = f64::from(old_position.x).clamp(
-            left,
-            left.max(left + f64::from(work_area.size.width) - (image_width * scale).ceil()),
+        let inset = layout.image_inset(scale);
+        let offset = |value: i32| if value > 0 { value } else { inset };
+        // 以图片当前的屏幕位置为锚点，显示/隐藏工具栏和缩放都不挪动图片。
+        let anchor = PhysicalPosition::new(
+            old_position.x + offset(pin.view.image_x),
+            old_position.y + offset(pin.view.image_y),
         );
-        let y = f64::from(old_position.y).clamp(
-            f64::from(work_area.position.y),
-            f64::from(work_area.position.y) + f64::from(work_area.size.height)
-                - (height * scale).ceil(),
+        let (shown_width, shown_height) =
+            layout.displayed(pin.image.width(), pin.image.height(), view.zoom);
+        let placement = layout.place(
+            anchor,
+            shown_width,
+            shown_height,
+            scale,
+            WorkArea::from(&monitor),
+            view.toolbar_expanded
+                .then(|| layout.toolbar_width_for(view.toolbar_width)),
         );
         window.set_always_on_top(view.topmost).map_err(err)?;
         // 置顶、锁定和透明度不能顺带重排原位贴图；旋转改变图像宽高时仍需重新适配。
-        let normal_size = LogicalSize::new(width, height).to_physical::<u32>(scale);
         let source_size = layout
             .source_bounds(
                 PhysicalPosition::new(0, 0),
@@ -935,13 +1064,19 @@ pub async fn set_pin_view(
             .1;
         let needs_resize = view.zoom != pin.view.zoom
             || view.toolbar_expanded != pin.view.toolbar_expanded
-            || (old_size != normal_size && old_size != source_size);
+            || (view.toolbar_expanded && view.toolbar_width != pin.view.toolbar_width)
+            || (old_size != placement.size && old_size != source_size);
+        (view.image_x, view.image_y, view.toolbar_above) =
+            (pin.view.image_x, pin.view.image_y, pin.view.toolbar_above);
         let resized = if needs_resize {
+            (view.image_x, view.image_y, view.toolbar_above) = (
+                placement.image.x,
+                placement.image.y,
+                placement.toolbar_above,
+            );
             window
-                .set_size(LogicalSize::new(width, height))
-                .and_then(|_| {
-                    window.set_position(PhysicalPosition::new(x.round() as i32, y.round() as i32))
-                })
+                .set_size(placement.size)
+                .and_then(|_| window.set_position(placement.position))
         } else {
             Ok(())
         };
@@ -1335,15 +1470,9 @@ mod tests {
                 let (position, size) = layout.source_bounds(origin, 1233, 626, scale, 1.0);
                 assert_eq!(position.x + inset, origin.x);
                 assert_eq!(position.y + inset, origin.y);
-                // 窗口不窄于完整工具栏；图片仍从左上角开始。
-                let content = 1233.0_f64.max(layout.toolbar_width * scale);
-                assert_eq!(size.width, (content + f64::from(inset) * 2.0).ceil() as u32);
-                assert!(
-                    f64::from(size.height)
-                        >= 626.0
-                            + f64::from(inset) * 2.0
-                            + (layout.gap + layout.expanded_height) * scale
-                );
+                // 空闲窗口只包住图片，不为工具栏预留宽度或高度。
+                assert_eq!(size.width as i32, 1233 + inset * 2);
+                assert_eq!(size.height as i32, 626 + inset * 2);
             }
         }
         // 小图在最小窗口内也从左上角开始，不因原生最小尺寸额外居中。
@@ -1558,48 +1687,73 @@ mod tests {
         assert_eq!(pin.image.get_pixel(10, 10)[3], 0);
         assert_eq!(pin.annotations.len(), 1);
     }
+    const WORK: WorkArea = WorkArea {
+        x: 0,
+        y: 0,
+        width: 1920,
+        height: 1040,
+    };
     #[test]
-    fn bottom_toolbar_does_not_consume_image_height() {
+    fn toolbar_sits_outside_the_image_and_never_moves_it() {
         let layout = PinLayout::load();
-        let (width, height) = layout.window_size(800, 600, 1.0, 1920.0, 1080.0, true);
+        let inset = layout.image_inset(1.0);
+        let band = layout.toolbar_band(1.0);
+        let image = PhysicalPosition::new(300, 200);
+        let hidden = layout.place(image, 800, 400, 1.0, WORK, None);
+        assert_eq!(hidden.image, PhysicalPosition::new(inset, inset));
         assert_eq!(
-            width - (layout.padding + layout.border) * 2.0,
-            layout.toolbar_width.max(800.0)
+            hidden.size,
+            PhysicalSize::new(800 + inset as u32 * 2, 400 + inset as u32 * 2)
         );
-        let (wide, _) = layout.window_size(1600, 600, 1.0, 1920.0, 1080.0, true);
-        assert_eq!(wide - (layout.padding + layout.border) * 2.0, 1600.0);
-        assert_eq!(height - layout.chrome_height(true), 600.0);
-        let (_, collapsed) = layout.window_size(800, 600, 1.0, 1920.0, 1080.0, false);
-        assert_eq!(collapsed - layout.chrome_height(false), 600.0);
-        assert_eq!(
-            height - collapsed,
-            layout.expanded_height - layout.collapsed_height
-        );
+        // 下方放得下：窗口向下扩出一条，图片屏幕位置不变。
+        let below = layout.place(image, 800, 400, 1.0, WORK, Some(layout.toolbar_width));
+        assert!(!below.toolbar_above);
+        assert_eq!(below.position.x + below.image.x, 300);
+        assert_eq!(below.position.y + below.image.y, 200);
+        assert_eq!(below.size.height as i32, 400 + inset * 2 + band);
+        // 贴近底部：工具栏翻到上方，图片仍不动。
+        let low = PhysicalPosition::new(300, 1040 - 400 - 4);
+        let above = layout.place(low, 800, 400, 1.0, WORK, Some(layout.toolbar_width));
+        assert!(above.toolbar_above);
+        assert_eq!(above.position.y + above.image.y, low.y);
+        assert_eq!(above.image.y, inset + band);
+        // 小图靠右：窗口为工具栏向左展开，不越过工作区右缘。
+        let right = PhysicalPosition::new(1800, 200);
+        let narrow = layout.place(right, 100, 80, 1.0, WORK, Some(layout.toolbar_width));
+        assert_eq!(narrow.position.x + narrow.image.x, 1800);
+        assert!(narrow.position.x + narrow.size.width as i32 <= WORK.width);
+        assert!(narrow.size.width as i32 >= layout.toolbar_width as i32);
     }
     #[test]
-    fn layout_handles_small_images_large_images_and_scaled_work_areas() {
+    fn tall_images_fit_the_work_area_with_room_for_the_toolbar() {
         let layout = PinLayout::load();
-        let (width, height) = layout.window_size(1, 1, 1.0, 1200.0, 800.0, true);
+        for scale in [1.0, 1.25, 1.5] {
+            let zoom = layout.fit_zoom(640, 1340, scale, WORK);
+            assert!(zoom < 1.0);
+            let (width, height) = layout.displayed(640, 1340, zoom);
+            let inset = layout.image_inset(scale);
+            assert!(height + inset * 2 + layout.toolbar_band(scale) <= WORK.height);
+            // 显示工具栏时整张图仍完整可见，只把图片上移让出一条。
+            let top = PhysicalPosition::new(100, 0);
+            let shown = layout.place(top, width, height, scale, WORK, Some(layout.toolbar_width));
+            // 透明内边距允许越过屏幕边缘，图片和工具栏本身留在工作区内。
+            let image_top = shown.position.y + shown.image.y;
+            assert!(image_top >= 0);
+            assert!(image_top + height + layout.toolbar_band(scale) <= WORK.height);
+        }
+        assert_eq!(layout.fit_zoom(800, 600, 1.0, WORK), 1.0);
+        // 极细图片仍满足 20px 的可见下限。
+        assert!(layout.fit_zoom(2, 100_000, 1.0, WORK) >= layout.minimum_zoom(2, 100_000, 1.0));
+    }
+    #[test]
+    fn idle_window_keeps_room_for_the_context_menu() {
+        let layout = PinLayout::load();
+        let tiny = layout.place(PhysicalPosition::new(50, 50), 20, 20, 1.0, WORK, None);
+        assert_eq!(tiny.size.width, layout.min_window_width as u32);
+        assert_eq!(tiny.size.height, layout.min_window_height as u32);
         assert_eq!(
-            width,
-            layout.toolbar_width + (layout.padding + layout.border) * 2.0
-        );
-        assert_eq!(
-            layout.window_size(1, 1, 1.0, 1200.0, 800.0, false).0,
-            layout.min_image_width + (layout.padding + layout.border) * 2.0
-        );
-        assert_eq!(height, layout.min_image_height + layout.chrome_height(true));
-        // 物理 1920×1080、150% DPI 的工作区换算为逻辑像素后再限制窗口。
-        assert_eq!(
-            layout.window_size(3000, 2000, 4.0, 1920.0 / 1.5, 1080.0 / 1.5, true),
-            (1280.0, 720.0)
-        );
-        assert_eq!(
-            layout.window_size(600, 800, 0.5, 1200.0, 800.0, false),
-            (
-                300.0 + (layout.padding + layout.border) * 2.0,
-                400.0 + layout.chrome_height(false)
-            )
+            tiny.image,
+            PhysicalPosition::new(layout.image_inset(1.0), layout.image_inset(1.0))
         );
     }
     #[test]

@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import SelectControl from '@/shared/ui/SelectControl.vue'
 import DetachedWindow from '@/shared/ui/DetachedWindow.vue'
 import { handleWindowEscape as handleEscape } from '@/shared/ui/escape'
 import { t, te } from '@/shared/i18n/i18n'
@@ -406,8 +405,6 @@ onUnmounted(() => { releaseFrame(); disposed = true; offClosed?.(); off?.(); off
         <button :disabled="busy" :title='t("返回截图")' :aria-label='t("返回截图")' @click="leaveRecordingMode"><ArrowLeft :size="16" /></button>
         <div class="recording-control-group" role="group" :aria-label="t('录制范围')">
         <RecordingSourceSelect :value="recordingSource" :disabled="busy || marked || editor.interacting" @select="chooseRecordingSource" />
-        <SelectControl v-model="recordingFormat" :disabled="busy || !recordingCapabilities?.available" :aria-label="t('录屏格式')" :options="(recordingCapabilities?.formats ?? []).map(value => ({ value, label: value.toUpperCase() }))" />
-        <SelectControl v-model="recordingFps" :disabled="busy" :aria-label="t('录屏帧率')" :options="(recordingFormat === 'gif' ? [10, 20] : [30, 60]).map(value => ({ value, label: `${value} FPS` }))" />
         </div>
         <div class="recording-control-group recording-toggles" role="group" :aria-label="t('录屏选项')">
         <button :disabled="busy" :aria-pressed="captureCursor" :title="`${t('录制鼠标指针')} · ${t(captureCursor ? '已启用' : '已关闭')}`" :aria-label='t("录制鼠标指针")' @click="captureCursor = !captureCursor"><MousePointer2 :size="16" /></button>
@@ -416,10 +413,10 @@ onUnmounted(() => { releaseFrame(); disposed = true; offClosed?.(); off?.(); off
           <button :disabled="busy || !recordingCapabilities?.microphone" :aria-pressed="recordingMicrophone" :title="recordingCapabilities?.microphone ? `${t('录制麦克风')} · ${t(recordingMicrophone ? '已启用' : '已关闭')}` : t('麦克风录制不可用')" :aria-label='t("录制麦克风")' @click="recordingMicrophone = !recordingMicrophone"><component :is="recordingMicrophone ? Mic : MicOff" :size="16" /></button>
         </template>
         </div>
-        <RecordingSetupMenu id="recording-inline-options" :format="recordingFormat" v-model:encoding="recordingEncoding" v-model:quality="recordingQuality" v-model:mbps="recordingMbps" v-model:countdown="recordingCountdown" v-model:effects="recordingEffects" v-model:hide-main-window="hideMainWindow" :busy="busy" />
+        <RecordingSetupMenu id="recording-inline-options" v-model:format="recordingFormat" v-model:fps="recordingFps" :formats="recordingCapabilities?.formats ?? []" :format-disabled="!recordingCapabilities?.available" v-model:encoding="recordingEncoding" v-model:quality="recordingQuality" v-model:mbps="recordingMbps" v-model:countdown="recordingCountdown" v-model:effects="recordingEffects" v-model:hide-main-window="hideMainWindow" :busy="busy" />
         <div class="recording-final-actions">
         <button :disabled="busy" :title='t("重新选择录屏范围")' :aria-label='t("重新选择录屏范围")' @click="reselect"><RotateCcw :size="16" /></button>
-        <button ref="recordingConfirmTrigger" class="recording-confirm" :disabled="!valid || busy || editor.pending || editor.interacting || !recordingCapabilities?.available" :title="recordingCapabilities?.reason ?? (recordingCapabilityError || (recordingCapabilities ? t('确认范围，进入录制控制条') : t('正在检查录屏能力…')))" @click="startRecording"><Check :size="15" />{{ busy ? t("准备中…") : t("确认范围") }}</button>
+        <button ref="recordingConfirmTrigger" class="recording-confirm" :disabled="!valid || busy || editor.pending || editor.interacting || !recordingCapabilities?.available" :aria-label="busy ? t('准备中…') : t('确认范围')" :aria-busy="busy" :title="recordingCapabilities?.reason ?? (recordingCapabilityError || (busy ? t('准备中…') : recordingCapabilities ? t('确认范围，进入录制控制条') : t('正在检查录屏能力…')))" @click="startRecording"><Check :size="17" /></button>
         <button :disabled="busy" :title='t("取消录屏")' :aria-label='t("取消录屏")' @click="cancel"><X :size="16" /></button>
         </div>
       </div>
@@ -450,29 +447,25 @@ onUnmounted(() => { releaseFrame(); disposed = true; offClosed?.(); off?.(); off
 .selection-drag-edge.left { left:-4px; }
 .selection-drag-edge.right { right:-4px; }
 
-.capture-overlay .recording-mode-trigger[aria-pressed=true] { color:#2563eb; background:#dbeafe; }
-/* 常用操作按用途分组；窄屏按组换行，确认和取消保持在同一组。 */
-.recording-ready-row { border-top:1px solid #e1e4e8; padding-top:6px; display:flex; flex-wrap:wrap; align-items:center; gap:6px; min-height:38px; max-width:100%; font-size:13px; }
-.recording-control-group { display:inline-flex; flex:none; align-items:center; gap:3px; padding:2px; border:1px solid #e1e4e8; border-radius:5px; background:#f6f7f8; }
-.recording-ready-row select { height:28px; padding:2px 5px; min-width:0; background:transparent; color:inherit; border:0; border-radius:4px; font:inherit; cursor:pointer; }
-.recording-ready-row select:hover:enabled { background:#e9edf2; }
-.recording-ready-row :deep(.recording-source-trigger) { padding:3px 6px; }
-.recording-toggles button[aria-pressed=true] { color:#2563eb; background:#dbeafe; box-shadow:inset 0 0 0 1px #bfdbfe; }
-.recording-toggles button[aria-pressed=false] { color:#57606a; }
-.recording-final-actions { display:inline-flex; align-items:center; gap:4px; margin-left:auto; }
-.recording-ready-row .recording-confirm { min-width:88px; padding:3px 10px; background:#2563eb; color:white; font-weight:600; }
+/* 录屏准备条：与标注工具栏同款胶囊，分组之间用细竖线分隔，窄屏按组换行。 */
+.recording-ready-row { display:flex; flex-wrap:wrap; align-items:center; gap:2px; min-height:40px; max-width:100%; box-sizing:border-box; padding:4px 5px; border:1px solid var(--tb-border); border-radius:10px; background:var(--tb-surface); box-shadow:var(--tb-shadow); font-size:13px; }
+.recording-control-group { display:inline-flex; flex:none; align-items:center; gap:2px; padding:0 6px; border-left:1px solid var(--tb-divider); }
+.recording-ready-row select { height:30px; padding:0 6px; min-width:0; background:transparent; color:inherit; border:0; border-radius:6px; font:inherit; cursor:pointer; }
+.recording-ready-row select:hover:enabled { background:var(--tb-hover); }
+.recording-ready-row :deep(.recording-source-trigger) { padding:0 6px; }
+.recording-toggles button[aria-pressed=false] { color:var(--tb-muted); }
+.recording-final-actions { display:inline-flex; align-items:center; gap:2px; margin-left:auto; padding-left:6px; border-left:1px solid var(--tb-divider); }
+.recording-ready-row .recording-confirm { margin-left:2px; background:#2563eb; color:white; }
 .recording-ready-row .recording-confirm:hover:enabled { background:#1d4ed8; }
-.recording-grip { cursor:grab; touch-action:none; }
+.recording-grip { color:var(--tb-muted); cursor:grab; touch-action:none; }
 .recording-ready-row :focus-visible { outline:2px solid #2563eb; outline-offset:-2px; }
-:global([data-theme=dark]) .recording-control-group { background:#272e37; border-color:#444c56; }
-:global([data-theme=dark]) .recording-ready-row { border-color:#444c56; }
-:global([data-theme=dark]) .recording-toggles button[aria-pressed=true] { color:#bfdbfe; background:#263f60; box-shadow:inset 0 0 0 1px #45658b; }
-:global([data-theme=dark]) .recording-toggles button[aria-pressed=false] { color:#a8b3c2; }
-:global([data-theme=dark]) .recording-ready-row select:hover:enabled { background:#303f56; }
-.qr-dialog { width: 100%; height: 100%; overflow-y: auto; color: #20232b; }
+.qr-dialog { width: 100%; height: 100%; overflow: hidden; }
 
-.capture-modebar { position: absolute; top: 8px; left: 8px; z-index: 4; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; max-width: calc(100vw - 16px); border-radius: 6px; padding: 6px 8px; background: #242330ed; color: white; font-size: 12px; cursor: default; }
-.capture-modebar button { display: flex; align-items: center; gap: 5px; padding: 3px; }
-.capture-modebar button:disabled { opacity: .5; }
+/* 模式栏与工具栏同一套浅色胶囊，不再单独使用深色底。 */
+.capture-modebar { position: absolute; top: 8px; left: 8px; z-index: 4; display: flex; flex-wrap: wrap; align-items: center; gap: 2px; max-width: calc(100vw - 16px); box-sizing: border-box; min-height: 40px; padding: 4px 6px; border: 1px solid var(--tb-border); border-radius: 10px; background: var(--tb-surface); box-shadow: var(--tb-shadow); color: var(--tb-text); font: 12px 'Segoe UI', 'Microsoft YaHei', sans-serif; cursor: default; }
+.capture-modebar > span { padding: 0 6px; color: var(--tb-muted); font-variant-numeric: tabular-nums; }
+.capture-modebar button { display: inline-flex; align-items: center; gap: 5px; height: 30px; padding: 0 8px; border-radius: 6px; color: inherit; }
+.capture-modebar button:hover:enabled { background: var(--tb-hover); }
+.capture-modebar button:disabled { opacity: .4; }
 .snap-target { position: absolute; outline: 2px solid #60a5fa; pointer-events: none; }
 </style>

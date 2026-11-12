@@ -11,15 +11,32 @@ export function minimumZoom(width: number, height: number, pixelRatio = 1): numb
   return Math.max(0.1, layout.minVisibleSide * pixelRatio / Math.max(1, Math.min(width, height)))
 }
 
-/** 原生窗口缩放和 IPC 回包不同步，按当前视口计算边框，不能让百分比尺寸参与网格固有尺寸计算。 */
-export function pinDisplaySize(width: number, height: number, zoom: number, viewportWidth: number, viewportHeight: number, expanded: boolean, pixelRatio = 1) {
+/** 工具栏占用的高度（含与图片的间隙），与原生布局一致。 */
+export const pinToolbarBand = layout.gap + layout.toolbarHeight
+
+/**
+ * 图片边框外框在窗口内的逻辑位置。原生布局给出图片首像素的物理偏移；
+ * 尚未布局（0）时按默认内边距处理。
+ */
+export function pinStageOrigin(view: Pick<PinView, 'imageX' | 'imageY'> | undefined, pixelRatio = 1) {
+  const fallback = pinImagePadding(pixelRatio)
+  const at = (value: number | undefined) => value && value > 0 ? value / pixelRatio - layout.border : fallback
+  return { left: at(view?.imageX), top: at(view?.imageY) }
+}
+
+/**
+ * 原生窗口缩放和 IPC 回包不同步，按当前视口计算边框，大图在边框内滚动。
+ * 工具栏在图片外侧：显示在下方时占用图片下方的一条，在上方时已计入图片的起点。
+ */
+export function pinDisplaySize(width: number, height: number, zoom: number, viewportWidth: number, viewportHeight: number,
+  toolbarBelow: boolean, pixelRatio = 1, origin = pinStageOrigin(undefined, pixelRatio)) {
   // 图片尺寸为物理像素，DOM 为逻辑像素；100% 时一个图片像素对应一个屏幕像素。
   const scale = Math.max(zoom, minimumZoom(width, height, pixelRatio)) / pixelRatio
   const imageWidth = width * scale, imageHeight = height * scale
   const border = layout.border * 2
   const padding = pinImagePadding(pixelRatio)
-  const availableWidth = viewportWidth - padding * 2
-  const availableHeight = viewportHeight - padding * 2 - layout.gap - (expanded ? layout.expandedHeight : layout.collapsedHeight)
+  const availableWidth = viewportWidth - origin.left - padding
+  const availableHeight = viewportHeight - origin.top - padding - (toolbarBelow ? pinToolbarBand : 0)
   return {
     imageWidth, imageHeight,
     stageWidth: Math.max(layout.minVisibleSide + border, Math.min(imageWidth + border, availableWidth)),

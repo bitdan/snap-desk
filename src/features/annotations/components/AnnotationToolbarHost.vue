@@ -35,14 +35,16 @@ function activate(event: Event) {
 </template>
 
 <style scoped>
-.capture-toolbar.annotation-workspace-toolbar { position: absolute; z-index: 5; display: flex; flex-direction: column; gap: 4px; width: max-content; max-width: calc(100vw - 16px); padding: 5px; border: 1px solid #d4d4d8; border-radius: 6px; background: #f6f7f8; color: #24292f; box-shadow: 0 4px 16px #0003; cursor: default; font: 13px 'Segoe UI', 'Microsoft YaHei', sans-serif; }
-.capture-toolbar.annotation-workspace-toolbar.embedded { position: relative; width: 100%; max-width: 100%; box-sizing: border-box; box-shadow: none; }
+/* 宿主只负责定位；外观由 AnnotationToolbar 的胶囊行和 footer 自带的胶囊提供。 */
+.capture-toolbar.annotation-workspace-toolbar { position: absolute; z-index: 5; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; width: max-content; max-width: calc(100vw - 16px); color: var(--tb-text); cursor: default; font: 13px 'Segoe UI', 'Microsoft YaHei', sans-serif; }
+.capture-toolbar.annotation-workspace-toolbar.embedded { position: relative; width: 100%; max-width: 100%; box-sizing: border-box; }
 .annotation-workspace-toolbar :deep(.annotation-tools) { width: max-content; max-width: 100%; }
-.annotation-workspace-toolbar :deep(button) { display: inline-flex; flex: none; align-items: center; justify-content: center; gap: 4px; height: 32px; min-width: 32px; padding: 3px 6px; border: 0; border-radius: 5px; background: transparent; color: inherit; font: inherit; cursor: pointer; }
-.annotation-workspace-toolbar :deep(button:hover:enabled) { background: #eff6ff; }
-.annotation-workspace-toolbar :deep(button:disabled) { opacity: .45; cursor: default; }
+.annotation-workspace-toolbar :deep(button) { display: inline-flex; flex: none; align-items: center; justify-content: center; gap: 4px; height: 30px; min-width: 30px; padding: 0 6px; border: 0; border-radius: 6px; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+.annotation-workspace-toolbar :deep(button:hover:enabled) { background: var(--tb-hover); }
+.annotation-workspace-toolbar :deep(button[aria-pressed=true]) { color: var(--tb-active-fg); background: var(--tb-active-bg); }
+.annotation-workspace-toolbar :deep(button:disabled) { opacity: .4; cursor: default; }
 .annotation-workspace-toolbar :deep(button:focus-visible) { outline: 2px solid #2563eb; outline-offset: -2px; }
-.annotation-workspace-toolbar :deep(.copy-button) { color: #fff; background: #2563eb; }
-:global([data-theme=dark]) .annotation-workspace-toolbar { background: #20252c; color: #e6edf3; border-color: #444c56; }
-:global([data-theme=dark]) .annotation-workspace-toolbar :deep(button:hover:enabled) { background: #303f56; }
+/* 一条工具栏只有一个实色主按钮。 */
+.annotation-workspace-toolbar :deep(.copy-button) { margin-left: 4px; color: #fff; background: #2563eb; }
+.annotation-workspace-toolbar :deep(.copy-button:hover:enabled) { background: #1d4ed8; }
 </style>
