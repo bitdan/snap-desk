@@ -1,16 +1,19 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { parse } from '@vue/compiler-sfc'
 import { baseParse, type TemplateChildNode, type RootNode } from '@vue/compiler-dom'
 import ts from 'typescript'
 import { appearance } from '../../src/shared/ui/appearance'
-import { english, localizedDate, t, te } from '../../src/shared/i18n/i18n'
+import { loadEnglish, localizedDate, t, te } from '../../src/shared/i18n/i18n'
 import { annotationTools, annotationToolGroups } from '../../src/features/annotations/annotation-tools'
 import { targetLanguages } from '../../src/features/recognition/ai'
 import { exportFilenamePreview, shortcutActions } from '../../src/features/settings/settings'
 import { encoderLabels, recordingAudioStatus, recordingLabels } from '../../src/features/recording/recording'
 
+// 英文词典按需加载；先取到它，下面的同步断言才能直接读到英文。
+let english: Record<string, string> = {}
+beforeAll(async () => { english = await loadEnglish() })
 afterEach(() => { appearance.value.language = 'zh-CN' })
 const han = (value: string) => /\p{Script=Han}/u.test(value)
 function files(directory: string): string[] {

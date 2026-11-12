@@ -1,39 +1,66 @@
+import { shallowRef } from 'vue'
 import { appearance } from '@/shared/ui/appearance'
-import messages from '@/shared/i18n/messages.en.json'
-import nativeMessages from '@/shared/i18n/messages.native.en.json'
-import errorSlots from '@/shared/i18n/message-error-slots.json'
 
-/** 中文消息键只用于界面；业务数据不送入词典。前后端共享原生消息表。 */
-export const english: Record<string, string> = { ...nativeMessages, ...messages }
+/**
+ * 中文消息键只用于界面；业务数据不送入词典。
+ * 词典约 160 KB，只在英文界面按需加载。用 shallowRef 保存：加载完成后，
+ * 读取过它的组件会自动重新渲染，切换语言时无需各处手动刷新。
+ */
+const dictionary = shallowRef<Record<string, string> | null>(null)
+let errorSlots: Record<string, number[]> = {}
+let loading: Promise<Record<string, string>> | null = null
 
+/**
+ * 加载英文词典并返回；重复调用共用同一次请求，失败后允许重试。
+ * 启动入口在挂载前等待它，避免英文界面先闪出中文；运行中切换语言由 translate 触发。
+ */
+export function loadEnglish(): Promise<Record<string, string>> {
+  return loading ??= import('@/shared/i18n/english').then(module => {
+    errorSlots = module.errorSlots
+    dictionary.value = module.english
+    return module.english
+  }).catch(error => { loading = null; throw error })
+}
+
+interface Template { pattern: RegExp; names: string[]; value: string; errors: number[] }
+let templates: Template[] | null = null
 // 模板消息兼容原生/纯逻辑层返回的中文状态；只在明确的界面消息位置调用。
 // 参数当作原始内容插入，不递归翻译，避免改写文件路径、识别文字和服务错误详情。
-const templates = Object.entries(english).filter(([key]) => /\{\d+\}/.test(key)).map(([key, value]) => {
-  const names: string[] = []
-  const escaped = key.split(/(\{\d+\})/).map(part => {
-    if (/^\{\d+\}$/.test(part)) { names.push(part.slice(1, -1)); return '([\\s\\S]*?)' }
-    return part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  }).join('')
-  return { pattern: new RegExp(`^${escaped}$`), names, value, errors: (errorSlots as Record<string, number[]>)[key] ?? [] }
-})
+// 一百多个正则只在首次出现“词典未直接命中”的消息时构建，多数窗口从不需要它们。
+function messageTemplates(english: Record<string, string>): Template[] {
+  return templates ??= Object.entries(english).filter(([key]) => /\{\d+\}/.test(key)).map(([key, value]) => {
+    const names: string[] = []
+    const escaped = key.split(/(\{\d+\})/).map(part => {
+      if (/^\{\d+\}$/.test(part)) { names.push(part.slice(1, -1)); return '([\\s\\S]*?)' }
+      return part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    }).join('')
+    return { pattern: new RegExp(`^${escaped}$`), names, value, errors: errorSlots[key] ?? [] }
+  })
+}
 
 /** 中文是稳定消息键；切换语言只影响显示，不改变内部状态和业务数据。 */
 function translate(message: string | null | undefined, values?: Record<string, string | number | null | undefined>, errorDepth?: number): string {
   const source = message ?? ''
   let translated = source
   if (appearance.value.language === 'en') {
-    translated = Object.hasOwn(english, source) ? english[source] : source
-    if (translated === source && !Object.hasOwn(english, source) && source.length <= 8192) {
-      for (const template of templates) {
-        const match = template.pattern.exec(source)
-        if (!match) continue
-        const captures = Object.fromEntries(template.names.map((name, index) => {
-          const value = match[index + 1]
-          // 只有明确标记的应用错误字段才递归翻译；路径、OCR 内容等参数始终原样插入。
-          return [name, errorDepth !== undefined && errorDepth < 4 && template.errors.includes(Number(name))
-            ? translateError(value, errorDepth + 1) : value]
-        }))
-        return template.value.replace(/\{(\d+)\}/g, (token, name: string) => captures[name] ?? token)
+    const english = dictionary.value
+    if (!english) {
+      // 词典尚未到达时先显示中文原文；读取 dictionary 已登记依赖，加载完成后界面自动重绘。
+      void loadEnglish().catch(() => {})
+    } else {
+      translated = Object.hasOwn(english, source) ? english[source] : source
+      if (translated === source && !Object.hasOwn(english, source) && source.length <= 8192) {
+        for (const template of messageTemplates(english)) {
+          const match = template.pattern.exec(source)
+          if (!match) continue
+          const captures = Object.fromEntries(template.names.map((name, index) => {
+            const value = match[index + 1]
+            // 只有明确标记的应用错误字段才递归翻译；路径、OCR 内容等参数始终原样插入。
+            return [name, errorDepth !== undefined && errorDepth < 4 && template.errors.includes(Number(name))
+              ? translateError(value, errorDepth + 1) : value]
+          }))
+          return template.value.replace(/\{(\d+)\}/g, (token, name: string) => captures[name] ?? token)
+        }
       }
     }
   }

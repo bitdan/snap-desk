@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { appearance, applyAppearance, initializeAppearance, parseAppearance } from '../../src/shared/ui/appearance'
-import { t } from '../../src/shared/i18n/i18n'
+import { loadEnglish, t } from '../../src/shared/i18n/i18n'
 import { defaultSettings } from '../../src/features/settings/settings'
 
 afterEach(() => { appearance.value = { theme: 'system', language: 'zh-CN' }; vi.unstubAllGlobals() })
@@ -42,9 +42,12 @@ describe('appearance preferences', () => {
     expect(root.dataset.theme).toBe('dark')
     expect(root.lang).toBe('zh-CN')
   })
-  it('switches known messages and preserves user or native error text', () => {
+  it('switches known messages and preserves user or native error text', async () => {
     expect(t('截图')).toBe('截图')
     appearance.value.language = 'en'
+    // 词典到达前先回退为中文原文，到达后同一调用返回英文。
+    expect(t('截图')).toBe('截图')
+    await loadEnglish()
     expect(t('截图')).toBe('Capture')
     expect(t('unknown OS error')).toBe('unknown OS error')
   })

@@ -33,6 +33,7 @@ pub const EVENTS: &[&str] = &[
     "diagnostics.level_load_failed",
     "diagnostics.exported",
     "frontend.appearance_listener_failed",
+    "frontend.dictionary_failed",
     "frontend.mount_failed",
     "frontend.uncaught_error",
     "frontend.unhandled_rejection",
