@@ -46,7 +46,13 @@ fn parse(bytes: &[u8]) -> Result<Backup, String> {
     if let Some(settings) = json.get_mut("settings").and_then(|value| value.as_object_mut()) {
         settings.entry("receivePrereleaseUpdates").or_insert(false.into());
         settings.entry("recognitionServices").or_insert(serde_json::json!([]));
-        for (field, additions) in [("ai", serde_json::json!({"serviceId": ""})), ("ocr", serde_json::json!({"serviceId": ""}))] {
+        // 后续版本新增的行为开关同样补默认值：旧备份导入后保持原有行为（不自动复制、不直接执行，剪贴板默认直接粘贴）。
+        settings.entry("screenshotAfter").or_insert("none".into());
+        for (field, additions) in [
+            ("ai", serde_json::json!({"serviceId": "", "autoCopy": false})),
+            ("ocr", serde_json::json!({"serviceId": "", "autoCopy": false, "mergeLines": false})),
+            ("clipboard", serde_json::json!({"pasteOnActivate": true, "excludedApps": []})),
+        ] {
             if let Some(object) = settings.get_mut(field).and_then(|value| value.as_object_mut()) {
                 for (key, value) in additions.as_object().unwrap() { object.entry(key.clone()).or_insert(value.clone()); }
             }
@@ -413,6 +419,23 @@ mod tests {
         assert_eq!(restored.settings.ocr.language, "en-US");
         value["settings"]["ocr"].as_object_mut().unwrap().remove("language");
         assert!(parse(&serde_json::to_vec(&value).unwrap()).is_err());
+    }
+    #[test]
+    fn backups_from_before_behavior_switches_import_with_defaults() {
+        let mut value = serde_json::to_value(backup()).unwrap();
+        let settings = value["settings"].as_object_mut().unwrap();
+        settings.remove("screenshotAfter");
+        settings["ai"].as_object_mut().unwrap().remove("autoCopy");
+        for key in ["autoCopy", "mergeLines"] {
+            settings["ocr"].as_object_mut().unwrap().remove(key);
+        }
+        for key in ["pasteOnActivate", "excludedApps"] {
+            settings["clipboard"].as_object_mut().unwrap().remove(key);
+        }
+        let restored = parse(&serde_json::to_vec(&value).unwrap()).unwrap().settings;
+        assert_eq!(restored.screenshot_after, "none");
+        assert!(!restored.ai.auto_copy && !restored.ocr.auto_copy && !restored.ocr.merge_lines);
+        assert!(restored.clipboard.paste_on_activate && restored.clipboard.excluded_apps.is_empty());
     }
     #[test]
     fn rollback_restores_existing_preferences_and_removes_only_new_records() {
