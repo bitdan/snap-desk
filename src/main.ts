@@ -1,6 +1,6 @@
-import { initializeAppearance, applyAppearance, parseAppearance } from '@/shared/ui/appearance'
+import { initializeAppearance, applyAppearance, appearance, parseAppearance } from '@/shared/ui/appearance'
 import '@/shared/ui/control-theme.css'
-import { t } from '@/shared/i18n/i18n'
+import { loadEnglish, t } from '@/shared/i18n/i18n'
 import { listen } from '@tauri-apps/api/event'
 import { createApp, defineComponent, h, nextTick } from 'vue'
 import { isTauri } from '@tauri-apps/api/core'
@@ -28,6 +28,11 @@ async function mount() {
     const value = parseAppearance(event.payload)
     if (value) applyAppearance(value)
   }).catch(error => logFrontendFailure('frontend.appearance_listener_failed', error))
+  // 英文词典按需加载；挂载前等它到位，英文界面首帧不会先闪出中文。
+  // 加载失败只影响文案语言，界面仍以中文挂载，之后的翻译调用会自动重试。
+  if (appearance.value.language === 'en') {
+    try { await loadEnglish() } catch (error) { logFrontendFailure('frontend.dictionary_failed', error) }
+  }
   document.documentElement.classList.toggle('capture-window', kind === 'capture')
   document.documentElement.classList.toggle('pin-window', kind === 'pin')
   document.documentElement.classList.toggle('shelf-window-root', kind === 'shelf')

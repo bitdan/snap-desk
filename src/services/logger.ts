@@ -11,11 +11,12 @@ type EventMeta = {
   'frontend.unhandled_rejection': ErrorMeta | undefined
   'frontend.appearance_listener_failed': ErrorMeta | undefined
   'frontend.html_renderer_failed': ErrorMeta | undefined
+  'frontend.dictionary_failed': ErrorMeta | undefined
   'frontend.mount_failed': ErrorMeta | undefined
   'frontend.subscription_failed': ErrorMeta | undefined
   'vue.component_error': ErrorMeta | undefined
 }
-const events = new Set(['ipc.failed', 'frontend.uncaught_error', 'frontend.unhandled_rejection', 'frontend.mount_failed', 'frontend.appearance_listener_failed', 'frontend.html_renderer_failed', 'frontend.subscription_failed', 'vue.component_error'])
+const events = new Set(['ipc.failed', 'frontend.uncaught_error', 'frontend.unhandled_rejection', 'frontend.mount_failed', 'frontend.appearance_listener_failed', 'frontend.html_renderer_failed', 'frontend.dictionary_failed', 'frontend.subscription_failed', 'vue.component_error'])
 const commands = new Set<string>(ipcCommands)
 const writers = { debug, error, info, warn }
 const errorKinds = new Set(['Error', 'TypeError', 'ReferenceError', 'SyntaxError', 'RangeError', 'URIError', 'EvalError', 'AggregateError', 'DOMException', 'ResourceError', 'ResizeObserverLoop', 'non_error', 'unknown'])

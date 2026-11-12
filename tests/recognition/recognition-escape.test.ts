@@ -8,6 +8,7 @@ import { parse } from '@vue/compiler-sfc'
 import ts from 'typescript'
 import { webcrypto } from 'node:crypto'
 import { appearance } from '../../src/shared/ui/appearance'
+import { loadEnglish } from '../../src/shared/i18n/i18n'
 import { handleEscape } from '../../src/shared/ui/escape'
 import { defaultAiSettings } from '../../src/features/recognition/ai'
 import { clientComponent, MemoryNode, memoryRenderer, findNode, flushComponent } from '../helpers/component-host'
@@ -67,7 +68,8 @@ describe('识别与翻译面板真实交互', () => {
     await flushComponent()
     const description = () => findNode(root, node => node.props.class === 'confirm-dialog-description')!
     expect(content(description())).toBe(`将在浏览器打开：\n${url}`)
-    appearance.value.language = 'en'; await flushComponent()
+    // 切到英文时词典才开始加载；到位后已渲染的确认框应自动重绘为英文。
+    appearance.value.language = 'en'; await flushComponent(); await loadEnglish(); await flushComponent()
     expect(content(description())).toBe(`Open in your browser: \n${url}`)
     expect(api.pinQrAction).not.toHaveBeenCalled()
     appearance.value.language = 'zh-CN'; await flushComponent()
