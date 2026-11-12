@@ -59,6 +59,8 @@ onMounted(load)
 </template>
 <style scoped>
 fieldset { padding: 0; margin: 0; border: 0; min-width: 0; }
+/* 开关与其下的“停留展开”是同一组设置，中间不画分隔线。 */
+fieldset > .setting-row:first-child { border-bottom: 0; }
 .shelf-option { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; }
 .shelf-category-options { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px 16px; }
 </style>
