@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { Pin, PinOff, PanelsTopLeft, X, Copy, File, Type } from 'lucide-vue-next'
-import { api } from '@/services/api'
 import { t } from '@/shared/i18n/i18n'
 import type { ClipboardItem } from '@/features/clipboard/clipboard'
+import { clipboardThumbnails } from '@/features/clipboard/clipboard-thumbnails'
 import { createShelfGesture } from '../shelf-gesture'
 import { shelfPhotoSize } from '../shelf-layout'
 
@@ -16,15 +16,17 @@ const frameStyle = computed(() => props.item.kind === 'image'
   : { width: '154px', height: '110px' })
 const tilt = computed(() => `${[-1.2, 0.8, -0.6, 1.4, -0.9][props.item.id % 5]}deg`)
 let disposed = false
+// 翻页或刷新会让卡片重新挂载；条目 ID 对应的缩略图不变，复用缓存不必再向原生层读文件。
+const request = new AbortController()
 async function load() {
   if (props.item.kind !== 'image') return
-  try { const value = await api.clipboardThumbnail(props.item.id); if (!disposed) thumbnail.value = value }
+  try { const value = await clipboardThumbnails.get(props.item.id, request.signal); if (!disposed) thumbnail.value = value }
   catch (e) { if (!disposed) emit('error', String(e)) }
 }
 const gesture = createShelfGesture(() => { if (!props.busy) emit('copy') }, () => { if (!props.busy) emit('drag') })
 watch(() => props.busy, value => { if (value) gesture.cancel() })
 onMounted(load)
-onUnmounted(() => { disposed = true; gesture.cancel() })
+onUnmounted(() => { disposed = true; request.abort(); gesture.cancel() })
 </script>
 <template>
   <article class="shelf-card" :class="{ kept }" :style="{ '--rest-tilt': tilt }">
