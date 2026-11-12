@@ -351,6 +351,10 @@ fn render_layer(
     live_source: Option<&RgbaImage>,
 ) -> Result<(), String> {
     let mut spotlight_drawn = false;
+    // 笔画覆盖掩码整图大小（4K 约 8 MB）：全部笔画共用一份，首次用到时才分配，
+    // 每个笔画混色后只把自己触碰过的位置归零，不再逐笔画重新分配并清零整图。
+    let mut mask: Vec<u8> = Vec::new();
+    let mut touched = Vec::new();
     for s in shapes {
         if matches!(s.kind, Kind::Spotlight) {
             if spotlight_drawn {
@@ -426,8 +430,9 @@ fn render_layer(
         }
         let rgb = color(&s.color)?;
         // 同一笔画先取最大覆盖率再混色，荧光笔拐角不会因重复线段叠加而变深。
-        let mut mask = vec![0u8; image.width() as usize * image.height() as usize];
-        let mut touched = Vec::new();
+        if mask.is_empty() {
+            mask = vec![0u8; image.width() as usize * image.height() as usize];
+        }
         for (a, b) in segments(s) {
             line(
                 image,
@@ -444,8 +449,9 @@ fn render_layer(
                 &mut touched,
             );
         }
-        for index in touched {
-            let coverage = f64::from(mask[index]) / 255.0 * s.opacity;
+        for index in touched.drain(..) {
+            // 取值同时归零，下一个笔画拿到的仍是全零掩码。
+            let coverage = f64::from(std::mem::take(&mut mask[index])) / 255.0 * s.opacity;
             if matches!(s.kind, Kind::Erase) {
                 let pixel =
                     image.get_pixel_mut(index as u32 % image.width(), index as u32 / image.width());
