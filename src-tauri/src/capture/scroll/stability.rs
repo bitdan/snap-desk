@@ -1,37 +1,72 @@
-//! 按区域判断静止：少量局部动画不阻塞采集，大范围滚动仍须等待稳定。
+//! 按区域判断静止：少量局部动画或实时读数不阻塞采集，大范围滚动仍须等待稳定。
 use image::RgbaImage;
 
+/// 8×8 分格；只统计非纯色或发生变化的格子，空白格不能为运动“凑票”。
+/// 原地刷新的读数只影响少数格子；滚动会让几乎所有有纹理的格子同时变化。
 pub fn stable(a: &RgbaImage, b: &RgbaImage) -> bool {
     if a.dimensions() != b.dimensions() || a.width() < 4 || a.height() < 4 {
         return false;
     }
-    let mut quiet = 0;
-    let mut quiet_rows = [0; 4];
-    let mut quiet_columns = [0; 4];
-    for row in 0..4 {
-        for column in 0..4 {
-            let mut changed = 0;
-            let mut total = 0;
-            let mut samples = 0;
-            for y in (row * a.height() / 4..(row + 1) * a.height() / 4).step_by(2) {
-                for x in (column * a.width() / 4..(column + 1) * a.width() / 4).step_by(2) {
+    let grid = if a.width() >= 64 && a.height() >= 64 {
+        8
+    } else {
+        4
+    };
+    let mut active = 0u32;
+    let mut noisy = 0u32;
+    let mut changed_samples = 0u64;
+    let mut all_samples = 0u64;
+    let mut noisy_rows = [0u32; 8];
+    let mut active_rows = [0u32; 8];
+    let mut noisy_columns = [0u32; 8];
+    let mut active_columns = [0u32; 8];
+    for row in 0..grid {
+        for column in 0..grid {
+            let mut changed = 0u32;
+            let mut total = 0u64;
+            let mut samples = 0u32;
+            // 格内亮度范围；纯色背景格不算有效格，渐变和文字都算。
+            let (mut low, mut high) = (u32::MAX, 0u32);
+            for y in (row * a.height() / grid..(row + 1) * a.height() / grid).step_by(2) {
+                for x in (column * a.width() / grid..(column + 1) * a.width() / grid).step_by(2) {
                     let diff: u32 = (0..3)
                         .map(|c| u32::from(a.get_pixel(x, y)[c].abs_diff(b.get_pixel(x, y)[c])))
                         .sum();
                     total += u64::from(diff);
                     changed += u32::from(diff > 36);
                     samples += 1;
+                    let p = a.get_pixel(x, y);
+                    let level = u32::from(p[0]) + u32::from(p[1]) + u32::from(p[2]);
+                    low = low.min(level);
+                    high = high.max(level);
                 }
             }
-            if changed * 100 <= samples && total as f64 <= f64::from(samples) * 3.0 {
-                quiet += 1;
-                quiet_rows[row as usize] += 1;
-                quiet_columns[column as usize] += 1;
+            changed_samples += u64::from(changed);
+            all_samples += u64::from(samples);
+            let quiet = changed * 100 <= samples && total as f64 <= f64::from(samples) * 3.0;
+            if !quiet || high.saturating_sub(low) > 24 {
+                active += 1;
+                active_rows[row as usize] += 1;
+                active_columns[column as usize] += 1;
+            }
+            if !quiet {
+                noisy += 1;
+                noisy_rows[row as usize] += 1;
+                noisy_columns[column as usize] += 1;
             }
         }
     }
-    // 至少 14/16 格静止，并覆盖每一行/列；不允许固定侧栏掩盖主体滚动。
-    quiet >= 14 && quiet_rows.iter().all(|n| *n >= 2) && quiet_columns.iter().all(|n| *n >= 2)
+    if noisy == 0 {
+        return true;
+    }
+    // 局部变化：变化格不超过有效格的 1/5，且整体变化像素不超过 6%。
+    // 任一行或列的有效格过半变化时，可能是固定侧栏或表头掩盖下的正文滚动，仍视为运动。
+    let local = noisy * 5 <= active && changed_samples * 100 <= all_samples * 6;
+    let banded = (0..grid as usize).any(|i| {
+        (active_rows[i] >= 2 && noisy_rows[i] * 2 > active_rows[i])
+            || (active_columns[i] >= 2 && noisy_columns[i] * 2 > active_columns[i])
+    });
+    local && !banded
 }
 
 #[cfg(test)]

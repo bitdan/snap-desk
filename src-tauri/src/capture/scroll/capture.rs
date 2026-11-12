@@ -169,14 +169,17 @@ fn region_or_full(
 }
 
 /// 连续取样并等待区域稳定；结束前允许最后一次取样，取消仍立即生效。
+/// 等待期间每张与前一张不同的运动帧交给 `transit`，供快速滚动时桥接缺口；
+/// 回调只能写入桥接副本，不得据此修改可信画布。
 pub(super) fn sample_pair(
     state: &CaptureState,
     rect: Rect,
     source_size: (u32, u32),
     screen: &super::Screen,
     finishing: bool,
+    transit: &mut dyn FnMut(Arc<RgbaImage>),
 ) -> SampleOutcome {
-    let result = sample_pair_impl(state, rect, source_size, screen, finishing);
+    let result = sample_pair_impl(state, rect, source_size, screen, finishing, transit);
     let outcome = result.unwrap_or_else(SampleOutcome::CaptureFailure);
     log::debug!(
         "event=scroll.sample_result module=scroll result={}",
@@ -207,6 +210,7 @@ fn sample_pair_impl(
     source_size: (u32, u32),
     screen: &super::Screen,
     finishing: bool,
+    transit: &mut dyn FnMut(Arc<RgbaImage>),
 ) -> Result<SampleOutcome, String> {
     if let Some(outcome) = interrupted(state, finishing) {
         return Ok(outcome);
@@ -228,7 +232,7 @@ fn sample_pair_impl(
     // Windows 已进入物理 DPI 上下文，优先直接采选区；区域失败时回退整屏校验。
     // 不再每轮先抓整屏，再做一次区域性能/像素对照，避免重复采集和分配。
     let mut native_region = cfg!(windows);
-    let mut reference = if native_region {
+    let mut reference = Arc::new(if native_region {
         region_or_full(
             &mut native_region,
             (rect.width, rect.height),
@@ -237,7 +241,9 @@ fn sample_pair_impl(
         )?
     } else {
         sample(&monitor, rect, source_size)?
-    };
+    });
+    // 首帧可能正处于滚动中；未变化的画面在桥接副本中只做相等比较。
+    transit(reference.clone());
     let started = Instant::now();
     let mut capture_started = started;
     let mut quiet_samples = 0;
@@ -280,7 +286,9 @@ fn sample_pair_impl(
                 return Ok(SampleOutcome::Stable(candidate));
             }
         } else {
-            reference = candidate;
+            // 运动帧不丢弃：快速滚动时它们是两张静止帧之间仅有的重叠证据。
+            reference = Arc::new(candidate);
+            transit(reference.clone());
             quiet_samples = 0;
         }
     }

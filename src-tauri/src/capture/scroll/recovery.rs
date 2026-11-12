@@ -13,9 +13,46 @@ pub struct Recovery {
     failed_revision: Option<u64>,
     rejection: &'static str,
     recoveries: u32,
+    // 快速滚动时的中间帧桥接副本；只在下一张静止帧于副本上通过全部检查后整体提交。
+    bridge: Option<Box<Bridge>>,
+    bridged: u32,
+}
+
+/// 中间帧可能尚在重绘，不能直接写入可信画布。副本与可信画布共享图块 Arc，
+/// 只在新增区写时复制；可信画布版本变化后整份作废，避免基于旧状态提交。
+#[derive(Clone)]
+struct Bridge {
+    stitch: Stitch,
+    base_revision: u64,
+    linked: bool,
 }
 
 impl Recovery {
+    /// 记录一张运动中的中间帧。只修改桥接副本，可信画布、恢复缓存和失败计数均不变。
+    pub fn observe_transit(&mut self, stitch: &Stitch, image: impl Into<Arc<RgbaImage>>) {
+        let revision = stitch.match_revision();
+        if !self
+            .bridge
+            .as_ref()
+            .is_some_and(|bridge| bridge.base_revision == revision)
+        {
+            self.bridge = Some(Box::new(Bridge {
+                stitch: stitch.clone(),
+                base_revision: revision,
+                linked: false,
+            }));
+        }
+        let Some(bridge) = self.bridge.as_mut() else {
+            return;
+        };
+        match bridge.stitch.consider_recoverable(image) {
+            Ok((Match::Aligned(_), _)) => bridge.linked = true,
+            Ok(_) => {}
+            // 容量或尺寸错误只放弃桥接，静止帧仍按原流程处理并报告错误。
+            Err(_) => self.bridge = None,
+        }
+    }
+
     pub fn consider(
         &mut self,
         stitch: &mut Stitch,
@@ -40,11 +77,33 @@ impl Recovery {
         // 图像、可信画布版本和五秒有效期都不变时，不再反复搜索同一失败帧。
         let cache_hit = self.failed_revision == Some(stitch.match_revision())
             && self.recent.latest_matches(&image);
-        let (result, cacheable) = if cache_hit {
+        let (mut result, cacheable) = if cache_hit {
             (Match::Uncertain, true)
         } else {
             stitch.consider_recoverable(image.clone())?
         };
+        // 静止帧与可信端点缺少重叠时，尝试由中间帧链接上的桥接副本定位。
+        // 静止帧须在副本上再次通过定位、固定栏、遮挡、接缝和画布一致性检查，
+        // 中间帧写入的像素因此至少在重叠区得到静止帧复核；失败则整份丢弃。
+        let bridge = self.bridge.take();
+        if result == Match::Uncertain {
+            if let Some(bridge) =
+                bridge.filter(|b| b.linked && b.base_revision == stitch.match_revision())
+            {
+                let mut bridged = bridge.stitch;
+                if let Ok((aligned @ Match::Aligned(_), _)) =
+                    bridged.consider_recoverable(image.clone())
+                {
+                    log::debug!(
+                        "event=scroll.bridged module=scroll growth_pixels={}",
+                        bridged.covered_pixels().saturating_sub(before)
+                    );
+                    *stitch = bridged;
+                    result = aligned;
+                    self.bridged = self.bridged.saturating_add(1);
+                }
+            }
+        }
         match result {
             Match::Uncertain => {
                 if !cache_hit {
@@ -97,10 +156,10 @@ impl Recovery {
             Match::Aligned(a) => (a.dx, a.dy, a.confidence),
             _ => (0, 0, if result == Match::Unchanged { 1.0 } else { 0.0 }),
         };
-        log::debug!("event=scroll.match module=scroll result={:?} reason={} dx={} dy={} confidence={:.4} growth_pixels={} viewport_changed={} failures={} recoveries={} cache_frames={} duration_ms={:.2}",
+        log::debug!("event=scroll.match module=scroll result={:?} reason={} dx={} dy={} confidence={:.4} growth_pixels={} viewport_changed={} failures={} recoveries={} bridged={} cache_frames={} duration_ms={:.2}",
             result, self.rejection, dx, dy, confidence,
             stitch.covered_pixels().saturating_sub(before), stitch.viewport() != viewport,
-            self.failures, self.recoveries, self.recent.len(), started.elapsed().as_secs_f64() * 1000.0);
+            self.failures, self.recoveries, self.bridged, self.recent.len(), started.elapsed().as_secs_f64() * 1000.0);
         Ok(result)
     }
 

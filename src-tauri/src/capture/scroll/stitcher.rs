@@ -1,12 +1,14 @@
 //! 单轴滚动的分块画布：256² 图块、覆盖位、负坐标和有界历史锚点。
 //! 快照共享 Arc，只有新增像素所在图块执行写时复制；预览直接取样图块。
+#[cfg(test)]
+use super::matcher::stationary_overlay_conflict;
 use super::matcher::{
-    alignment_in, stationary_overlay_conflict, verify_at, Alignment, Bounds, Content, Match,
+    alignment_in, stationary_overlay_conflict_masked, verify_at, Alignment, Bounds, Content, Match,
     ScrollMode,
 };
 use image::{Rgba, RgbaImage};
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     sync::Arc,
 };
 
@@ -16,6 +18,9 @@ const TILE: i64 = 256;
 const TILE_PIXELS: usize = 256 * 256;
 const MAX_TILES: usize = 512;
 const ANCHOR_PIXELS: u64 = 8_000_000;
+// 易变区以 8×8 文档单元记录；上限约对应 400 万像素，超过后不再扩充。
+const VOLATILE_CELL: i64 = 8;
+const MAX_VOLATILE_CELLS: usize = 65_536;
 
 #[cfg(test)]
 #[path = "benchmarks.rs"]
@@ -65,6 +70,9 @@ pub struct Stitch {
     covered: u64,
     // 可信位置或画布变化时递增，用于使失败帧匹配缓存失效。
     match_revision: u64,
+    // 已确认位移下仍发生变化的文档单元（实时读数、计数器）；只放宽局部反证，
+    // 不参与定位，也不允许改写已提交像素。
+    volatile: Arc<HashSet<(i64, i64)>>,
     pub bounds: Bounds,
     pub width: u32,
     pub height: u32,
@@ -113,6 +121,7 @@ impl Stitch {
             frames: 1,
             covered: 0,
             match_revision: 0,
+            volatile: Arc::default(),
             bounds: Bounds {
                 x: 0,
                 y: 0,
@@ -344,7 +353,14 @@ impl Stitch {
         }
         // 最终位移必须同时满足最新视口的屏幕固定纹理检查。放在统一提交入口，
         // 避免历史锚点搜索或已知位移快速复核绕过它；拒绝时尚未修改任何状态。
-        if stationary_overlay_conflict(self.last(), &image, result.content, result.dx, result.dy) {
+        if stationary_overlay_conflict_masked(
+            self.last(),
+            &image,
+            result.content,
+            result.dx,
+            result.dy,
+            |sx, sy| self.is_volatile(x + i64::from(sx), y + i64::from(sy)),
+        ) {
             *cacheable = false;
             reject!("stationary_overlay");
         }
@@ -377,6 +393,8 @@ impl Stitch {
         if self.covered > before {
             self.frames += 1;
         }
+        let previous = self.latest.clone();
+        self.mark_volatile(&previous, &next);
         self.remember_latest();
         self.latest = next;
         if result.dx != 0 || result.dy != 0 {
@@ -433,6 +451,79 @@ impl Stitch {
         }
     }
 
+    fn is_volatile(&self, x: i64, y: i64) -> bool {
+        !self.volatile.is_empty()
+            && self
+                .volatile
+                .contains(&(x.div_euclid(VOLATILE_CELL), y.div_euclid(VOLATILE_CELL)))
+    }
+
+    /// 新帧已通过定位与全部冲突检查后，同一文档坐标上的残余差异只能来自内容自身刷新。
+    /// 记录这些单元（外扩一格覆盖抗锯齿边缘），供后续局部反证跳过。
+    /// 变化单元超过重叠区一成时视为大范围动画或不可信，不记录，避免掩码掏空检查。
+    fn mark_volatile(&mut self, previous: &Anchor, next: &Anchor) {
+        let content = self.content;
+        let mut changed = HashSet::new();
+        let mut samples = 0u32;
+        for y in (content.top..content.bottom).step_by(2) {
+            for x in (content.left..content.right).step_by(2) {
+                let gx = next.x + i64::from(x);
+                let gy = next.y + i64::from(y);
+                let (px, py) = (gx - previous.x, gy - previous.y);
+                if px < i64::from(content.left)
+                    || py < i64::from(content.top)
+                    || px >= i64::from(content.right)
+                    || py >= i64::from(content.bottom)
+                {
+                    continue;
+                }
+                samples += 1;
+                let a = previous.image.get_pixel(px as u32, py as u32);
+                let b = next.image.get_pixel(x, y);
+                let diff: u32 = (0..3).map(|c| u32::from(a[c].abs_diff(b[c]))).sum();
+                if diff > 36 {
+                    changed.insert((gx.div_euclid(VOLATILE_CELL), gy.div_euclid(VOLATILE_CELL)));
+                }
+            }
+        }
+        // 每个 8×8 单元约 16 个采样点。
+        if changed.is_empty() || changed.len() as u32 * 16 * 10 > samples {
+            return;
+        }
+        // 一次刷新只改变读数中的部分笔画；按相距不超过两格聚类，取外接矩形再外扩一格，
+        // 覆盖整个读数框，后续其他笔画变化也不会被当作悬浮控件或接缝冲突。
+        let mut pending: Vec<_> = changed.iter().copied().collect();
+        let volatile = Arc::make_mut(&mut self.volatile);
+        while let Some(seed) = pending.pop() {
+            if !changed.remove(&seed) {
+                continue;
+            }
+            let (mut left, mut top, mut right, mut bottom) = (seed.0, seed.1, seed.0, seed.1);
+            let mut stack = vec![seed];
+            while let Some((cx, cy)) = stack.pop() {
+                left = left.min(cx);
+                right = right.max(cx);
+                top = top.min(cy);
+                bottom = bottom.max(cy);
+                for ny in cy - 2..=cy + 2 {
+                    for nx in cx - 2..=cx + 2 {
+                        if changed.remove(&(nx, ny)) {
+                            stack.push((nx, ny));
+                        }
+                    }
+                }
+            }
+            for ny in top - 1..=bottom + 1 {
+                for nx in left - 1..=right + 1 {
+                    if volatile.len() >= MAX_VOLATILE_CELLS {
+                        return;
+                    }
+                    volatile.insert((nx, ny));
+                }
+            }
+        }
+    }
+
     /// 在覆盖区与新增区交界处复核局部一致性，同时适用于负坐标和二维空洞。
     /// 16×16 窗口每 8 像素滑动、内部每 4 像素取样；窗口相互重叠，
     /// 避免接缝恰好落在窗口边界而完全不被检查。只拒绝有多个旧像素
@@ -454,6 +545,10 @@ impl Stitch {
                                 && gy >= first.y
                                 && gx < first.x + i64::from(first.width)
                                 && gy < first.y + i64::from(first.height));
+                        // 易变区的旧像素只代表某一时刻，不作为接缝反证，也不计为新增。
+                        if self.is_volatile(gx, gy) {
+                            continue;
+                        }
                         let (key, index) = Self::address(gx, gy);
                         if let Some(tile) =
                             self.tiles.get(&key).filter(|t| retained && t.has(index))
@@ -497,6 +592,9 @@ impl Stitch {
                     {
                         continue;
                     }
+                }
+                if self.is_volatile(gx, gy) {
+                    continue;
                 }
                 let (key, index) = Self::address(gx, gy);
                 if let Some(tile) = self.tiles.get(&key).filter(|t| t.has(index)) {

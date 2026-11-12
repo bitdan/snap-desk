@@ -129,12 +129,26 @@ fn texture(image: &RgbaImage, x: u32, y: u32) -> bool {
 /// 只在真实重叠区检查反证：新增条带没有旧文档像素可比较，不能仅凭屏幕同位置
 /// 恰好出现相同小块，就把 IDEA 中重复的括号、缩进或关键字认作悬浮控件。
 /// 这不是控件识别器；不尝试猜测遮挡下的正文，也不放宽动画的匹配阈值。
+#[cfg(test)]
 pub(super) fn stationary_overlay_conflict(
     a: &RgbaImage,
     b: &RgbaImage,
     roi: Content,
     dx: i32,
     dy: i32,
+) -> bool {
+    stationary_overlay_conflict_masked(a, b, roi, dx, dy, |_, _| false)
+}
+
+/// `volatile` 以新帧屏幕坐标报告已观察到会自行变化的文档区域（实时读数等）。
+/// 这些区域在文档坐标上的差异来自内容刷新而非悬浮控件，偶然同屏相同时不能作为反证。
+pub(super) fn stationary_overlay_conflict_masked(
+    a: &RgbaImage,
+    b: &RgbaImage,
+    roi: Content,
+    dx: i32,
+    dy: i32,
+    volatile: impl Fn(u32, u32) -> bool,
 ) -> bool {
     if dx == 0 && dy == 0 {
         return false;
@@ -148,7 +162,7 @@ pub(super) fn stationary_overlay_conflict(
                     .step_by(2)
                     .all(|ox| difference(a, b, x + ox, y + oy, x + ox, y + oy) <= 6)
             });
-            if !stationary || !texture(b, x, y) {
+            if !stationary || !texture(b, x, y) || volatile(x + 2, y + 2) {
                 continue;
             }
             let mut conflicts = 0;
@@ -250,7 +264,9 @@ fn reconcile_bounds(a: &RgbaImage, b: &RgbaImage, known: Content, result: Alignm
     verify(a, b, known, result.dx, result.dy).unwrap_or(result)
 }
 
-/// 每个交集分成 4×4 块，按多数纹理提名位移；少量差异仍可能通过。
+/// 每个交集分成 8×8 块，按多数纹理提名位移；少量差异仍可能通过。
+/// 细分块让原地刷新的读数、计数器等小区域只占少数分块：允许至多两成有纹理分块
+/// 不一致，但全部纹理采样仍须 88% 一致，错误位移在纹理上通常远低于此。
 /// 这里只负责定位，实际写入前还须由 Stitch 复核画布与接缝冲突。
 fn verify(a: &RgbaImage, b: &RgbaImage, roi: Content, dx: i32, dy: i32) -> Option<Alignment> {
     let left = (roi.left as i32).max(roi.left as i32 - dx);
@@ -264,18 +280,20 @@ fn verify(a: &RgbaImage, b: &RgbaImage, roi: Content, dx: i32, dy: i32) -> Optio
     let mut active = 0;
     let mut good_total = 0;
     let mut total = 0;
-    for row in 0..4 {
-        for col in 0..4 {
-            let x0 = left + (right - left) * col / 4;
-            let x1 = left + (right - left) * (col + 1) / 4;
-            let y0 = top + (bottom - top) * row / 4;
-            let y1 = top + (bottom - top) * (row + 1) / 4;
+    let mut edges_total = 0;
+    let mut good_edges_total = 0;
+    for row in 0..8 {
+        for col in 0..8 {
+            let x0 = left + (right - left) * col / 8;
+            let x1 = left + (right - left) * (col + 1) / 8;
+            let y0 = top + (bottom - top) * row / 8;
+            let y1 = top + (bottom - top) * (row + 1) / 8;
             let mut edges = 0;
             let mut good_edges = 0;
-            for sy in 0..8 {
-                for sx in 0..8 {
-                    let x = x0 + (x1 - x0 - 1) * sx / 7;
-                    let y = y0 + (y1 - y0 - 1) * sy / 7;
+            for sy in 0..6 {
+                for sx in 0..6 {
+                    let x = x0 + (x1 - x0 - 1) * sx / 5;
+                    let y = y0 + (y1 - y0 - 1) * sy / 5;
                     let good =
                         difference(a, b, (x + dx) as u32, (y + dy) as u32, x as u32, y as u32)
                             <= 36;
@@ -287,13 +305,19 @@ fn verify(a: &RgbaImage, b: &RgbaImage, roi: Content, dx: i32, dy: i32) -> Optio
                     }
                 }
             }
+            edges_total += edges;
+            good_edges_total += good_edges;
             if edges >= 4 {
                 active += 1;
                 votes += u32::from(good_edges * 100 >= edges * 90);
             }
         }
     }
-    if votes < 2 || votes * 100 < active * 85 || good_total * 100 < total * 90 {
+    if votes < 2
+        || votes * 100 < active * 80
+        || good_edges_total * 100 < edges_total * 88
+        || good_total * 100 < total * 90
+    {
         return None;
     }
     Some(Alignment {
@@ -329,15 +353,21 @@ pub(super) fn alignment_in(
     if a == b {
         return Match::Unchanged;
     }
-    let roi = content(a, b).intersect(known);
+    // 返回原位置后可能发生少量文字重绘或实时读数刷新；原位置也必须作为候选参加
+    // 歧义检查，不能把一次全局稳定判断直接当作 Unchanged，更不能覆盖已知重复纹理歧义。
+    // 画面整体静止时，读数以外的区域都“未变化”，此时同屏比较无法区分固定栏与正文，
+    // 只沿用已确认的正文区，避免把静态面板四周误判为新固定栏。
+    let stationary = super::stability::stable(a, b);
+    let roi = if stationary {
+        known
+    } else {
+        content(a, b).intersect(known)
+    };
     if roi.right.saturating_sub(roi.left) < MIN_OVERLAP
         || roi.bottom.saturating_sub(roi.top) < MIN_OVERLAP
     {
         return Match::Uncertain;
     }
-    // 返回原位置后可能发生少量文字重绘；原位置也必须作为候选参加歧义检查，
-    // 不能把一次全局稳定判断直接当作 Unchanged，更不能覆盖已知重复纹理歧义。
-    let stationary = roi == known && super::stability::stable(a, b);
     let result = match mode {
         ScrollMode::Vertical => align_axis(a, b, roi, true, stationary),
         ScrollMode::Horizontal => align_axis(a, b, roi, false, stationary),

@@ -329,6 +329,7 @@ fn sample_pair(
         snapshot.source_size,
         &snapshot.screen,
         finishing,
+        &mut |frame| snapshot.recovery.observe_transit(&snapshot.stitch, frame),
     );
     if screen_at(app, snapshot.screen.x, snapshot.screen.y)? != snapshot.screen {
         return Err("显示器布局已变化，仅输出变化前已确认的部分。".into());
