@@ -14,7 +14,7 @@
 | --- | --- | --- |
 | Windows x64 | `-setup.exe` 安装包 / `-standalone.exe` 独立 EXE | 功能完整，支持在线更新 |
 | macOS Apple 芯片（预览） | `-macos-arm64.dmg` | 需 macOS 13.3 及以上；未经 Apple 公证，首次打开需在“系统设置 → 隐私与安全性”中放行，并授予屏幕录制权限 |
-| Linux x64（预览） | `-linux-x64.AppImage` / `-linux-x64.deb` | 截图需要 X11 会话；AppImage 支持在线更新，deb 需下载新版本覆盖安装 |
+| Linux x64（预览） | `-linux-x64.AppImage` / `-linux-x64.deb` | 需 Ubuntu 24.04 或同期发行版（glibc 2.39+）；截图需要 X11 会话；AppImage 支持在线更新，deb 需下载新版本覆盖安装 |
 
 macOS 与 Linux 预览版目前提供主屏截图、标注、贴图、识别与翻译；录屏、滚动截图、剪贴板历史、Windows OCR 及本地翻译引擎暂未适配，进度见 [TODO](Snap_Desk_TODO.md)。
 
