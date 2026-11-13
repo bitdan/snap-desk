@@ -101,6 +101,14 @@ Linux 另需截图库的系统依赖，Debian / Ubuntu 可执行 `bash scripts/c
 - macOS 默认使用临时签名（ad-hoc），未经公证；在流水线中配置 `APPLE_SIGNING_IDENTITY` 及 Tauri 的 Apple 证书变量后改用开发者证书。ONNX Runtime 不提供 Intel Mac 预编译库，因此不构建 macOS x64。
 - Linux 在 Ubuntu 24.04 上构建（截图库的 PipeWire 绑定要求 0.3.65 以上），生成的程序需要 glibc 2.39 及以上的发行版；截图依赖 X11，Wayland 会话会给出提示。
 
+- AppImage 把 WebKitGTK、GTK 及依赖的系统库一并打包，体积约 100 MB；deb、Windows 与 macOS 的包使用系统自带的界面引擎，因此小得多。
+
+### 持续集成
+
+- 推送到 `master` 和 PR 触发前端检查 / 测试，以及 Windows、macOS、Linux 三个平台的原生库测试；非 Windows 的平台分支只在这里被编译。
+- 只改 `*.md`、`docs/` 或 `LICENSE` 的提交不触发 CI；测试与构建不读取这些文件，同时改了代码的提交照常运行。`legal/` 下的许可文本由校验脚本按字节审核，不在跳过范围内。
+- 提交信息以 `chore(release):` 开头的发版准备提交跳过测试，随后推送的标签会在发布流水线里运行同一套测试。
+
 发布以 `package.json` 为版本来源，修改后运行 `npm run version:sync`。使用同版本附注标签 `v<version>`，标签注释填写中文更新内容；流水线同步到 Releases 和更新清单，缺少内容时停止发布。
 
 ## 代码组织

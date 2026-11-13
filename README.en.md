@@ -1,10 +1,10 @@
-# Snap Desk — Free Open-Source Windows Screenshot & Screen Recorder
+# Snap Desk — Free Open-Source Cross-Platform Screenshot & Screen Recorder
 
 [简体中文](README.md) · English
 
-**Snap Desk** is a free, open-source screen capture and screen recording app for Windows. Take region screenshots and scrolling screenshots, annotate or pin images, record MP4/GIF videos, recognize text with OCR, translate text, and manage clipboard history. Capture and recording work locally; OCR and translation offer optional offline engines and user-configured online APIs.
+**Snap Desk** is a free, open-source cross-platform screen capture and screen recording app for Windows, macOS, and Linux. Take region screenshots and scrolling screenshots, annotate or pin images, record MP4/GIF videos, recognize text with OCR, translate text, and manage clipboard history. Capture and recording work locally; OCR and translation offer optional offline engines and user-configured online APIs.
 
-[Website](https://bitdan.github.io/snap-desk/en/) · [Download for Windows](https://github.com/bitdan/snap-desk/releases) · [Quick Start](#quick-start) · [Technical Guide (Chinese)](TECHNICAL.md) · [Roadmap (Chinese)](Snap_Desk_TODO.md)
+[Website](https://bitdan.github.io/snap-desk/en/) · [Download](https://github.com/bitdan/snap-desk/releases) · [Quick Start](#quick-start) · [Technical Guide (Chinese)](TECHNICAL.md) · [Roadmap (Chinese)](Snap_Desk_TODO.md)
 
 ## Download
 
@@ -14,7 +14,7 @@ Download from [Snap Desk releases](https://github.com/bitdan/snap-desk/releases)
 | --- | --- | --- |
 | Windows x64 | `-setup.exe` installer / `-standalone.exe` standalone EXE | Full feature set, with online updates |
 | macOS Apple silicon (preview) | `-macos-arm64.dmg` | Requires macOS 13.3 or later. Not notarized by Apple: allow it in System Settings → Privacy & Security on first launch, and grant Screen Recording permission |
-| Linux x64 (preview) | `-linux-x64.AppImage` / `-linux-x64.deb` | Requires Ubuntu 24.04 or a comparable distribution (glibc 2.39+). Capture requires an X11 session. The AppImage updates online; reinstall the deb to upgrade |
+| Linux x64 (preview) | `-linux-x64.AppImage` / `-linux-x64.deb` | Requires Ubuntu 24.04 or a comparable distribution (glibc 2.39+). Capture requires an X11 session. The AppImage bundles the web engine and system libraries (about 100 MB), runs across distributions, and updates online. The deb is small (about 20 MB), gets its dependencies from the package manager, and is upgraded by installing the new package |
 
 The macOS and Linux previews currently provide primary-screen capture, annotation, pinning, OCR, and translation. Screen recording, scrolling capture, clipboard history, Windows OCR, and the local translation engine are not yet available there; see the [roadmap](Snap_Desk_TODO.md).
 

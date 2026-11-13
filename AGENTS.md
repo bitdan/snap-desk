@@ -36,7 +36,7 @@
 
 ## 发版与更新说明
 
-- 发布版本以 `package.json` 为唯一来源，修改后运行 `npm run version:sync`，同步提交 `package-lock.json`、`src-tauri/Cargo.toml` 和 `src-tauri/Cargo.lock`。发布标签必须为 `v<version>`，与应用版本完全一致。
+- 发布版本以 `package.json` 为唯一来源，修改后运行 `npm run version:sync`，同步提交 `package-lock.json`、`src-tauri/Cargo.toml` 和 `src-tauri/Cargo.lock`。发版准备提交只改版本号，提交信息使用 `chore(release): prepare <version>`；CI 按此前缀跳过测试，由标签触发的发布流水线统一验证，因此不要在这类提交里夹带代码改动。发布标签必须为 `v<version>`，与应用版本完全一致。
 - 发布必须使用附注标签（`git tag -a`），在标签注释中填写面向用户的中文更新内容，概括相对上一已发布版本的功能变化、问题修复及必要的升级注意事项；不能只写版本号、提交哈希或固定资源说明。
 - 标签注释是更新内容的统一来源，由 `scripts/release-notes.mjs` 生成 Releases 正文，再同步进入 `updater.json` 的应用内更新说明。发布时核对三处内容一致，不能只在聊天回复中说明变动。
 - Releases 正文先展示“更新内容”，再展示下载与资源说明；自动生成的提交比较链接作为补充，不能替代人工整理的变动内容。缺少更新内容时应在构建前停止发布。
