@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 下载与更新 / Downloads and updates
+    url: https://github.com/bitdan/snap-desk/releases
+    about: 查看当前测试版和平台安装包 / Find current beta releases and platform packages.
+  - name: 使用说明 / Documentation
+    url: https://github.com/bitdan/snap-desk#readme
+    about: 查看支持的平台、功能与开始使用 / Supported platforms, features and quick start.

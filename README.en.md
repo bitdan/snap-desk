@@ -114,10 +114,11 @@ See the [translation technical guide (Chinese)](TECHNICAL.md#翻译接入) for d
 
 ## Quick Start
 
-1. Select an engine in OCR settings. Install resources for offline engines, or enter your own API key/token and save an online service.
-2. Select a local or online translation service and set the default target language. Configure additional accounts or models in service management.
-3. Check the current OCR/translation summary and the current-use indicator in the menu to confirm which configuration is active.
-4. Use the screenshot toolbar, pinned-image menu, or translation window. View and customize shortcuts in shortcut settings.
+1. Launch the app and press `F1` to capture. Drag to select a region, then annotate, copy or save from the toolbar. Screenshots do not require an OCR or translation service.
+2. When you need text recognition, select an engine in OCR settings. Install resources for offline engines, or enter your own API key/token and save an online service.
+3. Select a local or online translation service and set the default target language. Configure additional accounts or models in service management.
+4. Check the current OCR/translation summary and the current-use indicator in the menu to confirm which configuration is active.
+5. Use the screenshot toolbar, pinned-image menu, or translation window. View and customize shortcuts in shortcut settings.
 
 Paddle offers an official asynchronous endpoint (recommended) and a synchronous endpoint with a custom address. Use the official asynchronous option unless your console provides a synchronous endpoint. Online services may incur charges; quotas and usage rights depend on your provider's account terms.
 
@@ -136,6 +137,10 @@ Yes. PaddleOCR and Windows OCR recognize text locally. CTranslate2 supports offl
 ### Is Snap Desk free?
 
 Snap Desk is free and open source under GPL-3.0-only. Third-party OCR and translation APIs may charge for usage; free quotas depend on the provider.
+
+## Feedback
+
+Use the [issue forms](https://github.com/bitdan/snap-desk/issues/new/choose) to report a bug, suggest a feature or ask for help. Chinese and English are welcome. For bugs, include the app version, OS, installation method and steps to reproduce. Remove secrets and personal data before sharing screenshots, logs or diagnostic bundles.
 
 ## Acknowledgements
 
