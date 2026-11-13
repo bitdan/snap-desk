@@ -8,7 +8,7 @@ export interface Annotation {
   color: string
   width: number
   opacity?: number
-  /** 仅放大镜使用，表示原图中心采样区域的放大倍数（2～4）。 */
+  /** 仅放大镜使用：镜框（start/end）内显示其中心采样区域放大后的画面，倍数为 2～4。 */
   magnification?: number
   points?: Point[]
   text?: string
@@ -140,6 +140,19 @@ export function magnifierSource(shape: Annotation): Rect {
   if (!Number.isFinite(zoom) || zoom < 2 || zoom > 4) throw new Error('放大倍数须为 2～4。')
   const width = b.width / zoom, height = b.height / zoom
   return { x: b.x + (b.width - width) / 2, y: b.y + (b.height - height) / 2, width, height }
+}
+
+/**
+ * 由框选区域生成镜框：用户框出的是想看清的内容，镜框以它为中心按倍数展开，松手后整块内容都被放大。
+ * 镜框不能越出截图选区：放不下时先等比缩小，再平移回选区内；此时采样区域随镜框中心移动，
+ * 贴近选区边缘的内容可能无法完整居中显示。
+ */
+export function magnifierLens(source: Rect, zoom: number, crop: Rect): Rect {
+  if (!Number.isFinite(zoom) || zoom < 2 || zoom > 4) throw new Error('放大倍数须为 2～4。')
+  const fit = Math.min(1, crop.width / (source.width * zoom), crop.height / (source.height * zoom))
+  const width = source.width * zoom * fit, height = source.height * zoom * fit
+  return { x: clamp(source.x + (source.width - width) / 2, crop.x, crop.x + crop.width - width),
+    y: clamp(source.y + (source.height - height) / 2, crop.y, crop.y + crop.height - height), width, height }
 }
 
 /** 序号由当前历史推导：撤销/删除末项后可复用，删除中间项不重排已有标注。 */

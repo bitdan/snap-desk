@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { hitTest, magnifierSource, shapeBounds, spotlightPath, type Annotation } from '../../src/features/annotations/annotations'
+import { hitTest, magnifierLens, magnifierSource, shapeBounds, spotlightPath, type Annotation } from '../../src/features/annotations/annotations'
 import { useAnnotations } from '../../src/features/annotations/use-annotations'
 import { prepareRaster } from '../../src/features/annotations/annotation-raster'
 
@@ -24,6 +24,15 @@ describe('spotlight and magnifier geometry', () => {
     expect(magnifierSource(lens)).toEqual({ x: 60, y: 65, width: 40, height: 30 })
     expect(magnifierSource({ ...lens, start: lens.end, end: lens.start, magnification: 4 })).toEqual({ x: 70, y: 72.5, width: 20, height: 15 })
     for (const magnification of [NaN, Infinity, 0, 1, 5]) expect(() => magnifierSource({ ...lens, magnification })).toThrow()
+  })
+  it('expands the lens around the dragged region and keeps it inside the crop', () => {
+    const crop = bounds()
+    expect(magnifierLens({ x: 100, y: 80, width: 40, height: 20 }, 2, crop)).toEqual({ x: 80, y: 70, width: 80, height: 40 })
+    // 贴近左上角：镜框平移回选区内，尺寸不变。
+    expect(magnifierLens({ x: 20, y: 30, width: 40, height: 20 }, 3, crop)).toEqual({ x: 20, y: 30, width: 120, height: 60 })
+    // 展开后比选区还大：等比缩到刚好放下。
+    expect(magnifierLens({ x: 60, y: 50, width: 100, height: 60 }, 4, crop)).toEqual({ x: 20, y: 30, width: 200, height: 120 })
+    for (const zoom of [NaN, 1, 5]) expect(() => magnifierLens({ x: 0, y: 0, width: 10, height: 10 }, zoom, crop)).toThrow()
   })
   it('limits the spotlight path to the crop and selects its bright region, not the entire shade', () => {
     const shape = { ...lens, kind: 'spotlight' as const, start: lens.end, end: lens.start }
@@ -57,15 +66,21 @@ describe('shared effect editor', () => {
     await editor.travel('undo'); expect(editor.history.present[0].opacity).toBe(.7)
     await editor.travel('redo'); expect(editor.history.present[0].opacity).toBe(.35)
   })
-  it('resamples magnifier after moving, resizing and changing magnification', async () => {
-    const editor = editorFor('magnify'); await draw(editor)
-    expect(editor.history.present[0]).toMatchObject({ ...lens, color: '#ef4444', opacity: 1, raster: 'effect' })
-    editor.setTool('edit'); editor.begin({ x: 80, y: 80 }, 2); editor.drag({ x: 90, y: 90 }); await editor.finish()
-    expect(editor.history.present[0].start).toEqual({ x: 50, y: 60 })
-    editor.begin({ x: 130, y: 120 }, 2, 'se'); editor.drag({ x: 150, y: 140 }); await editor.finish()
-    expect(editor.history.present[0].end).toEqual({ x: 150, y: 140 })
+  it('magnifies the whole dragged region and keeps it when the magnification changes', async () => {
+    // 框出 40×20 的内容：2 倍镜框围绕它展开为 80×40，采样区域正是框出的那一块。
+    const editor = editorFor('magnify')
+    editor.begin({ x: 140, y: 100 }, 2); editor.drag({ x: 100, y: 80 }); await editor.finish()
+    const drawn = editor.history.present[0]
+    expect(drawn).toMatchObject({ kind: 'magnify', start: { x: 80, y: 70 }, end: { x: 160, y: 110 }, magnification: 2, raster: 'effect' })
+    expect(magnifierSource(drawn)).toEqual({ x: 100, y: 80, width: 40, height: 20 })
+    // 之后移动、缩放的是镜框本身。
+    editor.setTool('edit'); editor.begin({ x: 120, y: 90 }, 2); editor.drag({ x: 130, y: 100 }); await editor.finish()
+    expect(editor.history.present[0].start).toEqual({ x: 90, y: 80 })
+    editor.begin({ x: 170, y: 120 }, 2, 'se'); editor.drag({ x: 190, y: 140 }); await editor.finish()
+    expect(editor.history.present[0].end).toEqual({ x: 190, y: 140 })
+    // 改倍率：被放大的内容（115,95 起 50×30）不变，镜框重新展开并收回截图选区内。
     await editor.style({ magnification: 4 })
-    expect(editor.history.present[0].magnification).toBe(4)
+    expect(editor.history.present[0]).toMatchObject({ magnification: 4, start: { x: 20, y: 30 }, end: { x: 220, y: 150 } })
     expect(prepareRaster).toHaveBeenCalledTimes(4)
     await editor.style({ magnification: NaN })
     expect(editor.history.present[0].magnification).toBe(4)
