@@ -87,9 +87,9 @@ jobs:
           - name: macOS arm64
             os: macos-15
             artifact: release-macos-arm64
-          # 使用较旧的发行版构建，生成的程序可在 glibc 更新的系统上运行。
+          # 截图库的 PipeWire 绑定要求 0.3.65 以上，Ubuntu 22.04 自带的版本过旧，无法编译。
           - name: Linux x64
-            os: ubuntu-22.04
+            os: ubuntu-24.04
             artifact: release-linux-x64
     defaults:
       run:

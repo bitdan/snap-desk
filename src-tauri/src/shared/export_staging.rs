@@ -321,9 +321,18 @@ mod tests {
     use super::*;
     use std::io::Write;
 
+    /// macOS 的系统临时目录经 /var → /private/var 符号链接到达，会被祖先链接检查拒绝；
+    /// 测试根目录建在解析后的真实路径下。Windows 的规范化路径带 \\?\ 前缀，保持原样。
+    fn real_tempdir() -> tempfile::TempDir {
+        let base = std::env::temp_dir();
+        #[cfg(unix)]
+        let base = base.canonicalize().unwrap();
+        tempfile::tempdir_in(base).unwrap()
+    }
+
     #[test]
     fn incomplete_normal_failure_cleans_but_encoded_failure_survives_restart() {
-        let root = tempfile::tempdir().unwrap();
+        let root = real_tempdir();
         let registry = root.path().join("registry");
         let mut incomplete =
             TrackedFile::new_in(&registry, root.path(), "png", "测试图片").unwrap();
@@ -350,7 +359,7 @@ mod tests {
 
     #[test]
     fn failed_publish_preserves_unique_source_and_existing_destination() {
-        let root = tempfile::tempdir().unwrap();
+        let root = real_tempdir();
         let destination = root.path().join("existing.png");
         fs::write(&destination, b"old-output").unwrap();
         let mut output = TrackedFile::new_in(
@@ -374,7 +383,7 @@ mod tests {
 
     #[test]
     fn successful_publish_does_not_leave_final_output_in_cleanup_catalog() {
-        let root = tempfile::tempdir().unwrap();
+        let root = real_tempdir();
         let destination = root.path().join("saved.png");
         let mut output = TrackedFile::new_in(
             &root.path().join("registry"),
@@ -393,7 +402,7 @@ mod tests {
 
     #[test]
     fn directory_cleanup_refuses_unknown_files_before_removing_anything() {
-        let root = tempfile::tempdir().unwrap();
+        let root = real_tempdir();
         let directory = root.path().join("snapdesk-work-fixture123");
         fs::create_dir(&directory).unwrap();
         let value = artifact(&directory, None, "快照", vec!["0.png".into()]).unwrap();
@@ -411,7 +420,7 @@ mod tests {
 
     #[test]
     fn published_batch_and_missing_source_never_delete_final_files() {
-        let root = tempfile::tempdir().unwrap();
+        let root = real_tempdir();
         let directory = root.path().join("snapdesk-work-fixture123");
         fs::create_dir(&directory).unwrap();
         fs::write(directory.join("001.txt"), b"delivered").unwrap();
@@ -431,7 +440,7 @@ mod tests {
 
     #[test]
     fn traversal_and_mismatched_ids_are_rejected_without_touching_files() {
-        let root = tempfile::tempdir().unwrap();
+        let root = real_tempdir();
         let path = root.path().join("snapdesk-pending-fixture123");
         fs::write(&path, b"keep").unwrap();
         let mut value = artifact(&path, Some("png".into()), "图片", vec![]).unwrap();
@@ -444,8 +453,8 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn ancestor_symlink_cannot_redirect_cleanup() {
-        let root = tempfile::tempdir().unwrap();
-        let outside = tempfile::tempdir().unwrap();
+        let root = real_tempdir();
+        let outside = real_tempdir();
         let name = "snapdesk-pending-fixture123";
         fs::write(outside.path().join(name), b"keep").unwrap();
         std::os::unix::fs::symlink(outside.path(), root.path().join("redirect")).unwrap();

@@ -99,7 +99,7 @@ Linux 另需截图库的系统依赖，Debian / Ubuntu 可执行 `bash scripts/c
 - 附件清单集中在 `scripts/release-assets.mjs`：打包目标、统一文件名、签名范围和更新清单都由它派生；增删平台或分发形式时同步 `src-tauri/src/app/updater.rs` 的平台、分发形式与文件后缀。
 - 发布流水线分三段：校验标签 / 更新说明 / 签名配置 → 三个平台各自测试、打包并上传附件 → 汇总签名、生成 `updater.json` 并公开。任一平台失败都不会创建 Release。
 - macOS 默认使用临时签名（ad-hoc），未经公证；在流水线中配置 `APPLE_SIGNING_IDENTITY` 及 Tauri 的 Apple 证书变量后改用开发者证书。ONNX Runtime 不提供 Intel Mac 预编译库，因此不构建 macOS x64。
-- Linux 在 Ubuntu 22.04 上构建以兼容较旧的 glibc；截图依赖 X11，Wayland 会话会给出提示。
+- Linux 在 Ubuntu 24.04 上构建（截图库的 PipeWire 绑定要求 0.3.65 以上），生成的程序需要 glibc 2.39 及以上的发行版；截图依赖 X11，Wayland 会话会给出提示。
 
 发布以 `package.json` 为版本来源，修改后运行 `npm run version:sync`。使用同版本附注标签 `v<version>`，标签注释填写中文更新内容；流水线同步到 Releases 和更新清单，缺少内容时停止发布。
 
