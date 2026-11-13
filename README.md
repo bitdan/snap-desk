@@ -1,10 +1,10 @@
-# Snap Desk — 免费开源的 Windows 截图、滚动截图与录屏工具
+# Snap Desk — 免费开源的跨平台截图、滚动截图与录屏工具
 
 简体中文 · [English](README.en.md)
 
-**Snap Desk** 是一款免费开源的 Windows 截图与屏幕录制软件，支持区域截图、长截图（滚动截图）、图片标注、桌面贴图、MP4/GIF 录屏、OCR 文字识别、文本翻译和剪贴板历史管理。截图及录屏可在本机完成，OCR 和翻译可根据需要选择离线引擎或自配置的在线 API。
+**Snap Desk** 是一款免费开源的跨平台截图与屏幕录制软件，可在 Windows、macOS 和 Linux 上使用，支持区域截图、长截图（滚动截图）、图片标注、桌面贴图、MP4/GIF 录屏、OCR 文字识别、文本翻译和剪贴板历史管理。截图及录屏可在本机完成，OCR 和翻译可根据需要选择离线引擎或自配置的在线 API。
 
-[项目官网](https://bitdan.github.io/snap-desk/) · [下载 Windows 版本](https://github.com/bitdan/snap-desk/releases) · [开始使用](#开始使用) · [技术说明](TECHNICAL.md) · [开发进度](Snap_Desk_TODO.md)
+[项目官网](https://bitdan.github.io/snap-desk/) · [下载](https://github.com/bitdan/snap-desk/releases) · [开始使用](#开始使用) · [技术说明](TECHNICAL.md) · [开发进度](Snap_Desk_TODO.md)
 
 ## 下载
 
@@ -14,7 +14,7 @@
 | --- | --- | --- |
 | Windows x64 | `-setup.exe` 安装包 / `-standalone.exe` 独立 EXE | 功能完整，支持在线更新 |
 | macOS Apple 芯片（预览） | `-macos-arm64.dmg` | 需 macOS 13.3 及以上；未经 Apple 公证，首次打开需在“系统设置 → 隐私与安全性”中放行，并授予屏幕录制权限 |
-| Linux x64（预览） | `-linux-x64.AppImage` / `-linux-x64.deb` | 需 Ubuntu 24.04 或同期发行版（glibc 2.39+）；截图需要 X11 会话；AppImage 支持在线更新，deb 需下载新版本覆盖安装 |
+| Linux x64（预览） | `-linux-x64.AppImage` / `-linux-x64.deb` | 需 Ubuntu 24.04 或同期发行版（glibc 2.39+）；截图需要 X11 会话；AppImage 自带界面引擎和系统库（约 100 MB），不挑发行版并支持在线更新；deb 体积小（约 20 MB），依赖由包管理器安装，升级需下载新版本覆盖安装 |
 
 macOS 与 Linux 预览版目前提供主屏截图、标注、贴图、识别与翻译；录屏、滚动截图、剪贴板历史、Windows OCR 及本地翻译引擎暂未适配，进度见 [TODO](Snap_Desk_TODO.md)。
 

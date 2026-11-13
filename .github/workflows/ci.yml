@@ -1,10 +1,20 @@
 name: CI
 
 # 分支推送与 PR 跑检查；标签推送交给发布流水线，避免同一标签重复执行。
+# 只改文档、官网页面或许可文本的提交不影响构建和测试，整条流水线不触发；
+# 测试与构建都不读取这些文件，同时改了代码的提交仍会照常运行。
 on:
   push:
     branches: [master]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'LICENSE'
   pull_request:
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'LICENSE'
 
 permissions:
   contents: read
@@ -20,6 +30,9 @@ env:
 jobs:
   frontend:
     name: Frontend checks and tests
+    # 发版准备提交只改版本号，随后推送的标签会在发布流水线里跑同一套测试，这里不重复。
+    # PR 事件没有 head_commit，条件恒为真，照常运行。
+    if: ${{ !startsWith(github.event.head_commit.message, 'chore(release):') }}
     runs-on: windows-2022
     timeout-minutes: 20
     defaults:
@@ -46,6 +59,9 @@ jobs:
   # 三个发布平台都编译并跑单元测试；非 Windows 的平台分支只有在这里才会被编译到。
   native:
     name: Native library tests (${{ matrix.name }})
+    # 发版准备提交只改版本号，随后推送的标签会在发布流水线里跑同一套测试，这里不重复。
+    # PR 事件没有 head_commit，条件恒为真，照常运行。
+    if: ${{ !startsWith(github.event.head_commit.message, 'chore(release):') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     strategy:
