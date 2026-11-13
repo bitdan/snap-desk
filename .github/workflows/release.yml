@@ -1,4 +1,4 @@
-name: Release Windows
+name: Release
 run-name: ${{ contains(github.ref_name, '-') && '测试版' || '正式版' }} · ${{ github.ref_name }}
 
 on:
@@ -19,12 +19,11 @@ env:
   PYTHONIOENCODING: utf-8
 
 jobs:
-  release:
-    name: Windows x64 executable and installers
+  # 各平台开始十几分钟的原生构建前，先确认标签、更新说明、签名配置和前端测试都没问题。
+  verify:
+    name: Verify tag, notes and signing
     runs-on: windows-2022
-    timeout-minutes: 60
-    permissions:
-      contents: write
+    timeout-minutes: 20
     defaults:
       run:
         shell: pwsh
@@ -50,26 +49,12 @@ jobs:
           node-version: '22'
           cache: npm
 
-      # 先从 package.json 同步版本，再执行 npm ci 和 Cargo --locked。
       - name: Check tag and sync version
         run: node scripts/check-release-version.mjs
 
       # 标签注释是更新内容的唯一来源，缺失时在构建前停止；正文同时用于应用内更新清单。
       - name: Prepare release notes from tag
         run: node scripts/release-notes.mjs $env:GITHUB_REF_NAME "$env:RUNNER_TEMP/snap-desk-release-notes.md"
-
-      # Windows runner 已安装 rustup 和 MSVC；显式选择 x64 MSVC stable 工具链。
-      - name: Setup Rust
-        run: |
-          rustup toolchain install stable-x86_64-pc-windows-msvc --profile minimal
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          rustup default stable-x86_64-pc-windows-msvc
-
-      # target 相对 src-tauri 解析，与本地构建脚本固定的缓存目录一致。
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: "./src-tauri -> target"
 
       - name: Install frontend dependencies
         run: npm ci
@@ -82,26 +67,139 @@ jobs:
           SNAP_DESK_UPDATER_PUBLIC_KEY: ${{ vars.SNAP_DESK_UPDATER_PUBLIC_KEY }}
         run: node scripts/release-signing.mjs
 
-      # 测试失败时停止发布；Rust 默认跳过需要实机桌面或模型资源的 ignored 测试。
       - name: Test frontend
         run: npm test
 
+  build:
+    name: Build ${{ matrix.name }}
+    needs: verify
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      # 任一平台失败即整体失败；发布任务要求全部平台的附件齐全。
+      fail-fast: true
+      matrix:
+        include:
+          - name: Windows x64
+            os: windows-2022
+            artifact: release-windows-x64
+          # macos-15 为 Apple 芯片 runner；ONNX Runtime 不再提供 Intel Mac 预编译库，暂不构建 x64。
+          - name: macOS arm64
+            os: macos-15
+            artifact: release-macos-arm64
+          # 使用较旧的发行版构建，生成的程序可在 glibc 更新的系统上运行。
+          - name: Linux x64
+            os: ubuntu-22.04
+            artifact: release-linux-x64
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout tagged source
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+
+      # 先从 package.json 同步版本，再执行 npm ci 和 Cargo --locked。
+      - name: Check tag and sync version
+        run: node scripts/check-release-version.mjs
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: bash scripts/ci/install-linux-deps.sh
+
+      # runner 已安装 rustup；stable 默认使用本机架构的工具链。
+      - name: Setup Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      # target 相对 src-tauri 解析，与本地构建脚本固定的缓存目录一致。
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      # 测试失败时停止发布；Rust 默认跳过需要实机桌面或模型资源的 ignored 测试。
       - name: Test native library
         working-directory: src-tauri
         run: cargo test --locked --lib
 
       # 复用本地脚本的 --ci、--locked 和 src-tauri/target 输出目录。
-      - name: Build executable and installers
+      - name: Build application and installers
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           SNAP_DESK_UPDATER_PUBLIC_KEY: ${{ vars.SNAP_DESK_UPDATER_PUBLIC_KEY }}
         run: |
-          if (-not $env:TAURI_SIGNING_PRIVATE_KEY -or -not $env:SNAP_DESK_UPDATER_PUBLIC_KEY) {
-            throw '请配置 TAURI_SIGNING_PRIVATE_KEY Secret 和 SNAP_DESK_UPDATER_PUBLIC_KEY Variable。'
-          }
+          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ] || [ -z "$SNAP_DESK_UPDATER_PUBLIC_KEY" ]; then
+            echo '请配置 TAURI_SIGNING_PRIVATE_KEY Secret 和 SNAP_DESK_UPDATER_PUBLIC_KEY Variable。' >&2
+            exit 1
+          fi
           npm run desktop:package
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      # 统一文件名后交给发布任务；此处不签名，签名私钥只在构建和最终发布步骤使用。
+      - name: Collect release assets
+        run: node scripts/release-assets.mjs collect release-assets
+
+      - name: Upload release assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: release-assets/
+          if-no-files-found: error
+          retention-days: 7
+          # 安装包已压缩，再次压缩只增加耗时。
+          compression-level: 0
+
+  # 全部平台构建成功后才创建草稿：先上传全部产物与更新清单，再公开 Release。
+  publish:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: windows-2022
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Checkout tagged source
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Check tag and sync version
+        run: node scripts/check-release-version.mjs
+
+      - name: Install signing tools
+        run: npm ci
+
+      - name: Download release assets
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Prepare release notes from tag
+        run: node scripts/release-notes.mjs $env:GITHUB_REF_NAME "$env:RUNNER_TEMP/snap-desk-release-notes.md"
 
       - name: Publish GitHub Release
         env:

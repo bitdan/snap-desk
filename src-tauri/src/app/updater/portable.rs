@@ -76,5 +76,5 @@ pub(super) fn install(
     _: &tauri_plugin_updater::Update,
     _: &[u8],
 ) -> Result<(), String> {
-    Err("在线更新仅支持 Windows x64 发布版本。".into())
+    Err("独立 EXE 更新仅适用于 Windows。".into())
 }

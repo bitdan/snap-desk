@@ -39,13 +39,16 @@ pub(super) fn show(app: &AppHandle) -> Result<(), String> {
     let window = if let Some(window) = app.get_webview_window("shelf") {
         window
     } else {
-        WebviewWindowBuilder::new(
+        let builder = WebviewWindowBuilder::new(
             app,
             "shelf",
             WebviewUrl::App("index.html?window=shelf".into()),
         )
-        .title("Snap Desk Shelf")
-        .transparent(true)
+        .title("Snap Desk Shelf");
+        // 与贴图窗口一致：macOS 的透明 WebView 依赖私有 API，未启用时该方法不存在，保持普通背景。
+        #[cfg(not(target_os = "macos"))]
+        let builder = builder.transparent(true);
+        builder
         .decorations(false)
         .resizable(false)
         .always_on_top(true)

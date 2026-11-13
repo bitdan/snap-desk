@@ -1,2 +1,4 @@
 # 许可摘要按文件字节审核，Windows checkout 不得自动转换换行符。
 legal/translation/*-LICENSE.txt -text
+# Shell 脚本在 Linux runner 上执行，Windows checkout 也必须保持 LF。
+*.sh text eol=lf

@@ -9,6 +9,7 @@ scripts/ci/__pycache__/
 .ai/
 .friday/
 out/
+release-assets/
 src-tauri/gen/schemas/
 *.log
 # Extra icon variants produced by `tauri icon`; this project targets desktop only.

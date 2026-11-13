@@ -24,7 +24,7 @@
    ```
 
    生成器同时校验本地模型与线上附件，写入 `src-tauri/assets/translation-models.json`，不会提交代码。通过代码审查更新清单，不手工编造 URL、大小或摘要。
-7. 推送与应用版本一致的 `v*` 标签。主程序流水线校验引擎锁、模型清单与远程附件后构建；Windows 测试版使用 NSIS，正式版生成 NSIS + MSI，并提供 standalone EXE。引擎和模型仍需在应用内安装。
+7. 推送与应用版本一致的 `v*` 标签。主程序流水线校验引擎锁、模型清单与远程附件后，分别构建 Windows x64（NSIS + 独立 EXE）、macOS Apple 芯片（DMG）和 Linux x64（AppImage + deb），全部成功后统一发布。引擎和模型仍需在应用内安装。
 
 ## 本地校验
 

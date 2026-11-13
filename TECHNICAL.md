@@ -8,7 +8,7 @@
 
 - Tauri 2 + Rust：桌面窗口、截图 / 录屏、系统集成与后台服务调用。
 - Vue 3 + TypeScript：功能界面、配置表单与 IPC 调用。
-- Windows x64 为当前分发平台；其他平台适配进度见 [TODO](Snap_Desk_TODO.md)。
+- 分发平台：Windows x64（功能完整）、macOS Apple 芯片与 Linux x64（预览，平台专属能力以回退实现或“暂不支持”提示占位）；适配进度见 [TODO](Snap_Desk_TODO.md)。
 
 ## OCR 接入
 
@@ -83,8 +83,23 @@ npm run desktop:dev
 - `npm run dev:update`：启动浏览器模拟更新，演示下载进度与安装完成，不下载文件或退出应用。
 - `npm run check`：目录边界、IPC 契约和 TypeScript 静态检查。
 - `npm test`：前端与脚本测试。
-- `npm run desktop:build:fast`：生成调试程序 `src-tauri/target/debug/snap-desk.exe`。
+- `npm run desktop:build:fast`：生成调试程序 `src-tauri/target/debug/snap-desk`（Windows 为 `snap-desk.exe`）。
 - `npm run desktop:build` / `npm run desktop:package`：生成发布程序 / 安装包；构建前从托盘退出旧程序。
+
+Linux 另需截图库的系统依赖，Debian / Ubuntu 可执行 `bash scripts/ci/install-linux-deps.sh`。
+
+### 发布与分发
+
+| 平台 | 打包产物 | 在线更新目标 |
+| --- | --- | --- |
+| Windows x64 | NSIS 安装包、独立 EXE | `windows-x86_64-nsis`、`windows-x86_64-standalone` |
+| macOS Apple 芯片 | DMG、`.app.tar.gz` 更新包 | `darwin-aarch64-app` |
+| Linux x64 | AppImage、deb | `linux-x86_64-appimage`（deb 不在应用内更新） |
+
+- 附件清单集中在 `scripts/release-assets.mjs`：打包目标、统一文件名、签名范围和更新清单都由它派生；增删平台或分发形式时同步 `src-tauri/src/app/updater.rs` 的平台、分发形式与文件后缀。
+- 发布流水线分三段：校验标签 / 更新说明 / 签名配置 → 三个平台各自测试、打包并上传附件 → 汇总签名、生成 `updater.json` 并公开。任一平台失败都不会创建 Release。
+- macOS 默认使用临时签名（ad-hoc），未经公证；在流水线中配置 `APPLE_SIGNING_IDENTITY` 及 Tauri 的 Apple 证书变量后改用开发者证书。ONNX Runtime 不提供 Intel Mac 预编译库，因此不构建 macOS x64。
+- Linux 在 Ubuntu 22.04 上构建以兼容较旧的 glibc；截图依赖 X11，Wayland 会话会给出提示。
 
 发布以 `package.json` 为版本来源，修改后运行 `npm run version:sync`。使用同版本附注标签 `v<version>`，标签注释填写中文更新内容；流水线同步到 Releases 和更新清单，缺少内容时停止发布。
 

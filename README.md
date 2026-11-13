@@ -8,7 +8,15 @@
 
 ## 下载
 
-前往 [Releases](https://github.com/bitdan/snap-desk/releases) 下载 Windows x64 安装包或独立 EXE。OCR 模型、本地翻译引擎及语言包可在应用内按需安装。
+前往 [Releases](https://github.com/bitdan/snap-desk/releases) 下载。OCR 模型、本地翻译引擎及语言包可在应用内按需安装。
+
+| 平台 | 文件 | 说明 |
+| --- | --- | --- |
+| Windows x64 | `-setup.exe` 安装包 / `-standalone.exe` 独立 EXE | 功能完整，支持在线更新 |
+| macOS Apple 芯片（预览） | `-macos-arm64.dmg` | 需 macOS 13.3 及以上；未经 Apple 公证，首次打开需在“系统设置 → 隐私与安全性”中放行，并授予屏幕录制权限 |
+| Linux x64（预览） | `-linux-x64.AppImage` / `-linux-x64.deb` | 截图需要 X11 会话；AppImage 支持在线更新，deb 需下载新版本覆盖安装 |
+
+macOS 与 Linux 预览版目前提供主屏截图、标注、贴图、识别与翻译；录屏、滚动截图、剪贴板历史、Windows OCR 及本地翻译引擎暂未适配，进度见 [TODO](Snap_Desk_TODO.md)。
 
 ## 功能
 
@@ -104,7 +112,7 @@
 
 - [x] **离线** · 自定义快捷键、冲突校验、全局启停和界面点击引导。
 - [x] **离线** · 中英文、浅色 / 深色主题、配置导入 / 导出与日志诊断。
-- [x] **联网** · 正式版 / 测试版在线更新，安装包与独立 EXE 两种形式。
+- [x] **联网** · 正式版 / 测试版在线更新：Windows 安装包与独立 EXE、macOS 应用、Linux AppImage。
 
 ## 开始使用
 
@@ -121,7 +129,7 @@ Paddle 的地址选项包括“官方异步接口（推荐）”和“同步接�
 
 ### Snap Desk 支持哪些系统？
 
-目前提供 Windows x64 安装包和独立 EXE。截图、录屏、文字识别、翻译和剪贴板管理都在同一款桌面应用内使用。
+Windows x64 功能完整，提供安装包和独立 EXE；截图、录屏、文字识别、翻译和剪贴板管理都在同一款桌面应用内使用。macOS（Apple 芯片）与 Linux x64 提供预览版，可用功能见[下载](#下载)。
 
 ### OCR 和翻译能离线使用吗？
 

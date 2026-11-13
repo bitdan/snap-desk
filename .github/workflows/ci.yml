@@ -43,22 +43,35 @@ jobs:
       - name: Frontend tests
         run: npm test
 
+  # 三个发布平台都编译并跑单元测试；非 Windows 的平台分支只有在这里才会被编译到。
   native:
-    name: Native library tests
-    runs-on: windows-2022
+    name: Native library tests (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows x64
+            os: windows-2022
+          - name: macOS arm64
+            os: macos-15
+          - name: Linux x64
+            os: ubuntu-22.04
     defaults:
       run:
-        shell: pwsh
+        shell: bash
     steps:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: bash scripts/ci/install-linux-deps.sh
       - name: Setup Rust
         run: |
-          rustup toolchain install stable-x86_64-pc-windows-msvc --profile minimal
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          rustup default stable-x86_64-pc-windows-msvc
+          rustup toolchain install stable --profile minimal
+          rustup default stable
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
         with:
