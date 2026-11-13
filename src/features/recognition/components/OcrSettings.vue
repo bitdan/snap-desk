@@ -119,10 +119,10 @@ onUnmounted(() => { disposed = true })
     <ServiceSettings v-if="configuringPreset || editingServiceId" :key="editingServiceId || configuringPreset" embedded :preset-id="configuringPreset || undefined" :service-id="editingServiceId || undefined" @saved="serviceSaved" @close="configuringPreset = ''; editingServiceId = ''" @busy-change="configuringBusy = $event" />
     <template v-else-if="windows">
       <label class="ocr-field">{{ t('识别语言') }}<SelectControl v-model="draft.language" :aria-label="t('识别语言')" :options="languageOptions" :disabled="!ready || checking || autosave.saving.value || !system?.supported || !!system?.error" @update:model-value="autosave.commit" /></label>
-      <div class="system-status"><span role="status">{{ checking ? t('正在检查系统语言包…') : !system ? t('状态未读取') : !system.supported ? t('Windows 系统 OCR 仅支持 Windows。') : system.error ? te(system.error) : system.languages.length ? t('已安装 {0} 个 OCR 语言包', { 0: system.languages.length }) : t('未安装 Windows OCR 语言包，请在 Windows 语言设置中安装。') }}</span><Button variant="outline" :disabled="checking" @click="refreshSystem">{{ t('刷新语言包') }}</Button></div>
+      <div class="system-status"><span class="text-xs text-zinc-500" role="status">{{ checking ? t('正在检查系统语言包…') : !system ? t('状态未读取') : !system.supported ? t('Windows 系统 OCR 仅支持 Windows。') : system.error ? te(system.error) : system.languages.length ? t('已安装 {0} 个 OCR 语言包', { 0: system.languages.length }) : t('未安装 Windows OCR 语言包，请在 Windows 语言设置中安装。') }}</span><Button variant="outline" :disabled="checking" @click="refreshSystem">{{ t('刷新语言包') }}</Button></div>
     </template>
     <div v-else-if="draft.provider === 'wechat-ocr'" class="system-status">
-      <span role="status">{{ checkingWechat ? t('正在检测 WeChat OCR…') : wechatError ? te(wechatError) : !wechat ? t('状态未读取') : wechat.error ? te(wechat.error) : wechat.detected ? t('已找到 WeChat OCR 组件') : t('未找到 WeChat OCR 组件') }}</span>
+      <span class="text-xs text-zinc-500" role="status">{{ checkingWechat ? t('正在检测 WeChat OCR…') : wechatError ? te(wechatError) : !wechat ? t('状态未读取') : wechat.error ? te(wechat.error) : wechat.detected ? t('已找到 WeChat OCR 组件') : t('未找到 WeChat OCR 组件') }}</span>
       <Button variant="outline" :disabled="checkingWechat" @click="refreshWechat">{{ t('重新检测') }}</Button>
     </div>
     <ResourceSettings v-else-if="ready && draft.provider === 'local-ppocr'" kind="ocr" />

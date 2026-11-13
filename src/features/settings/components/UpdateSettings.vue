@@ -82,8 +82,8 @@ onUnmounted(() => { disposed = true; if (timer) clearInterval(timer); unsubscrib
     <SettingRow :label="t('测试版更新')" for="receive-prerelease" :tip="prereleaseBuild ? t('当前为测试版，始终接收测试版更新；升级到正式版后按此开关决定。') : undefined">
       <SwitchControl id="receive-prerelease" :model-value="prereleaseBuild || preview === true" :disabled="prereleaseBuild || updatePreview || !desktop || preview === null || operating || saving" @update:model-value="togglePreview" />
     </SettingRow>
-    <div class="setting-row flex-wrap gap-3">
-      <div class="update-version"><span>{{ view ? `v${view.currentVersion}` : t('版本待读取') }}</span><span v-if="view && !hasUpdate && ['checking', 'latest', 'error'].includes(view.phase)" role="status" :class="view.phase === 'latest' ? 'status-ok' : ''"><Check v-if="view.phase === 'latest'" :size="14" />{{ t(phaseLabel) }}</span></div>
+    <div class="setting-row">
+      <div class="update-version"><span>{{ view ? `v${view.currentVersion}` : t('版本待读取') }}</span><span v-if="view && !hasUpdate && ['checking', 'latest', 'error'].includes(view.phase)" role="status" :class="view.phase === 'latest' ? 'status-ok' : 'text-xs text-zinc-500'"><Check v-if="view.phase === 'latest'" :size="14" />{{ t(phaseLabel) }}</span></div>
       <Button variant="outline" :disabled="!enabled || (!hasUpdate && operating) || saving" @click="hasUpdate ? requestUpdateWindow() : run(api.checkAppUpdate)"><span v-if="hasUpdate" class="update-dot" aria-hidden="true" />{{ t(hasUpdate ? '有更新' : '检查更新') }}</Button>
     </div>
     </div>
