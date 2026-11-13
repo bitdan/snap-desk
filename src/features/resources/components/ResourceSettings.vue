@@ -9,7 +9,7 @@ import { t, te } from '@/shared/i18n/i18n'
 import { onMounted, onUnmounted, ref } from 'vue'
 import { Check } from 'lucide-vue-next'
 import Button from '@/shared/ui/button/Button.vue'
-import InfoTip from '@/shared/ui/InfoTip.vue'
+import SettingRow from '@/shared/ui/SettingRow'
 import { api, desktop, onResourceProgress } from '@/services/api'
 import type { ResourceProgress, ResourceStatus } from '@/features/resources/types'
 
@@ -64,17 +64,15 @@ onUnmounted(() => { disposed = true; unlisten?.() })
 
 <template>
   <section :aria-label="kind === 'ocr' ? t('文字识别资源') : t('导出字体')" :aria-busy="busy || checking">
-    <div v-if="kind === 'ocr'" class="setting-row flex-wrap gap-3">
-      <div class="min-w-0 flex-1"><strong>{{ t("识别资源") }}</strong><InfoTip :text="t('离线识别，图片不上传。')" /></div>
-      <span :class="{ 'status-ok': status?.ocrReady }" role="status"><Check v-if="status?.ocrReady" :size="14" />{{ status ? status.ocrReady ? t("已就绪") : t("引擎{0} · 模型{1}", { 0: status.runtimeReady ? t("就绪") : t("未就绪"), 1: status.modelsReady ? t("就绪") : t("未就绪") }) : checking ? t("正在检查…") : t("状态未读取") }}</span>
+    <SettingRow v-if="kind === 'ocr'" :label="t('识别资源')" :tip="t('离线识别，图片不上传。')">
+      <span :class="status?.ocrReady ? 'status-ok' : 'text-xs text-zinc-500'" role="status"><Check v-if="status?.ocrReady" :size="14" />{{ status ? status.ocrReady ? t("已就绪") : t("引擎{0} · 模型{1}", { 0: status.runtimeReady ? t("就绪") : t("未就绪"), 1: status.modelsReady ? t("就绪") : t("未就绪") }) : checking ? t("正在检查…") : t("状态未读取") }}</span>
       <Button variant="outline" :disabled="!desktop || busy || checking" @click="run(() => api.downloadResources('ocr'))">{{ status?.ocrReady ? t("检查识别资源") : t("下载识别资源") }}</Button>
-    </div>
-    <div v-else class="setting-row flex-wrap gap-3">
-      <div class="min-w-0 flex-1"><strong>{{ t("PDF / 长图导出字体") }}</strong><InfoTip :text="t('选择有嵌入授权的 TTF，或下载霞鹜文楷（24 MiB）。')" /></div>
-      <span :class="{ 'status-ok': status?.fontReady }" role="status"><Check v-if="status?.fontReady" :size="14" />{{ status ? status.fontReady ? t("已就绪") : t("未设置") : checking ? t("正在检查…") : t("状态未读取") }}</span>
+    </SettingRow>
+    <SettingRow v-else :label="t('PDF / 长图导出字体')" :tip="t('选择有嵌入授权的 TTF，或下载霞鹜文楷（24 MiB）。')">
+      <span :class="status?.fontReady ? 'status-ok' : 'text-xs text-zinc-500'" role="status"><Check v-if="status?.fontReady" :size="14" />{{ status ? status.fontReady ? t("已就绪") : t("未设置") : checking ? t("正在检查…") : t("状态未读取") }}</span>
       <Button variant="outline" :disabled="!desktop || busy || checking" @click="run(api.chooseExportFont)">{{ t("选择字体") }}</Button>
       <Button variant="ghost" :disabled="!desktop || busy || checking" @click="run(() => api.downloadResources('font'))">{{ t("使用下载字体") }}</Button>
-    </div>
+    </SettingRow>
     <p v-if="busy" class="py-2 text-xs" role="status">{{ progress ? `${progress.name} · ${Math.floor(progress.received / progress.total * 100)}%` : t("正在处理资源…") }}</p>
     <p v-if="error" class="notice error" role="alert">{{ te(error) }}</p>
   </section>

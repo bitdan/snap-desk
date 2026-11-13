@@ -208,7 +208,7 @@ async function modelAction(modelId: string, action: 'download' | 'import' | 'del
       <div class="recognition-detail">
       <div v-if="local" class="local-resources">
         <div class="model-row runtime-row">
-          <span class="runtime-status" :class="{ 'status-ok': localStatus?.runtimeReady }" role="status"><Check v-if="localStatus?.runtimeReady" :size="14" />{{ !localStatus ? checking ? t("正在检查…") : t("引擎状态未读取") : localStatus.runtimeReady ? t("本地引擎已安装") : t("翻译引擎未安装或校验失败") }}</span>
+          <span class="runtime-status" :class="localStatus?.runtimeReady ? 'status-ok' : 'text-xs text-zinc-500'" role="status"><Check v-if="localStatus?.runtimeReady" :size="14" />{{ !localStatus ? checking ? t("正在检查…") : t("引擎状态未读取") : localStatus.runtimeReady ? t("本地引擎已安装") : t("翻译引擎未安装或校验失败") }}</span>
           <div class="model-actions">
             <Button variant="outline" :disabled="checking || !localStatus?.runtimeSupported" @click="modelAction('runtime', 'download')">{{ t("下载引擎") }}</Button>
             <Button variant="outline" :disabled="checking || !localStatus?.runtimeSupported" @click="modelAction('runtime', 'import')">{{ t("导入引擎 ZIP") }}</Button>
@@ -217,7 +217,7 @@ async function modelAction(modelId: string, action: 'download' | 'import' | 'del
         <p v-if="localStatus && !localStatus.runtimeSupported" class="hint">{{ t("翻译引擎下载和导入目前仅支持 Windows x64。") }}</p>
         <div v-for="pack in localStatus?.models" :key="pack.modelId" class="model-row">
           <span class="model-name">{{ pack.modelId.includes('en-zh') ? t("英语 → 简体中文") : t("中文 → 英语") }}</span>
-          <span :class="{ 'status-ok': pack.ready }" role="status"><Check v-if="pack.ready" :size="14" />{{ pack.ready ? t("已校验") : t("未安装或校验失败") }}</span>
+          <span :class="pack.ready ? 'status-ok' : 'text-xs text-zinc-500'" role="status"><Check v-if="pack.ready" :size="14" />{{ pack.ready ? t("已校验") : t("未安装或校验失败") }}</span>
           <div class="model-actions">
             <Button variant="outline" :disabled="checking || !pack.downloadable" @click="modelAction(pack.modelId, 'download')">{{ t("下载") }}{{ pack.downloadBytes ? `（${Math.ceil(pack.downloadBytes / 1048576)} MiB）` : '' }}</Button>
             <Button variant="outline" :disabled="checking" @click="modelAction(pack.modelId, 'import')">{{ t("导入语言包") }}</Button>
@@ -286,7 +286,7 @@ input:focus-visible, select:focus-visible { outline:2px solid var(--desk-accent,
 .connection-summary dt { color:var(--desk-muted,#57606a); }
 .connection-summary dd { margin:0; overflow-wrap:anywhere; }
 .actions { display:flex; align-items:center; flex-wrap:wrap; gap:8px; margin-top:10px; }
-.hint { font-size:12px; line-height:1.6; }
+.hint { margin:6px 4px 0; color:var(--desk-muted,#5f6670); font-size:12px; line-height:1.6; }
 .error { color:#b91c1c; }
 .ai-settings :deep(.setting-row) { min-height:48px; padding-top:0; }
 [data-theme=dark] .recognition-section, [data-theme=dark] .model-row { border-color:#39424e; }
