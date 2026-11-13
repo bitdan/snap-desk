@@ -1,9 +1,13 @@
 import { reactive } from 'vue'
-import { commit, emptyHistory, hitTest, moveShape, resizeShape, shapeBounds, undo, redo, nextNumber, type Annotation, type History } from '@/features/annotations/annotations'
+import { commit, emptyHistory, hitTest, moveShape, resizeShape, shapeBounds, magnifierLens, magnifierSource, undo, redo, nextNumber, type Annotation, type History } from '@/features/annotations/annotations'
 import { prepareRaster } from '@/features/annotations/annotation-raster'
 import { clamp, type Point, type Rect, type Handle } from '@/shared/geometry/selection'
 
 export type AnnotationTool = 'edit' | 'eraser' | 'arrow-text' | Annotation['kind']
+
+/** 用新的外接矩形替换起止点，其余样式不变。 */
+const withBounds = (shape: Annotation, box: Rect): Annotation =>
+  ({ ...shape, start: { x: box.x, y: box.y }, end: { x: box.x + box.width, y: box.y + box.height } })
 
 /** 比较标注的可见内容；显式跳过 raster，避免把 base64 PNG 序列化后逐字符比较。 */
 function sameShape(a: Annotation, b: Annotation | undefined): boolean {
@@ -184,6 +188,8 @@ export function useAnnotations(bounds: () => Rect, imageUrl: () => string, disab
       state.textEditing = true; gesture = null
       return
     }
+    // 新画的放大镜：拖出的矩形是要放大的内容，镜框围绕它展开；之后移动、缩放镜框则按镜框本身处理。
+    if (!editing && shape.kind === 'magnify') shape = withBounds(shape, magnifierLens(shapeBounds(shape), shape.magnification ?? 2, bounds()))
     const version = generation
     state.pending = true
     try {
@@ -236,6 +242,10 @@ export function useAnnotations(bounds: () => Rect, imageUrl: () => string, disab
     }
     const version = generation
     let shape = { ...original, ...patch }
+    // 改倍率时保持被放大的内容不变，由它重新展开镜框，而不是在原镜框里换一块更小的区域。
+    if (original.kind === 'magnify' && patch.magnification !== undefined && patch.magnification !== (original.magnification ?? 2)) {
+      shape = withBounds(shape, magnifierLens(magnifierSource(original), patch.magnification, bounds()))
+    }
     state.pending = true
     try {
       if (shape.kind === 'text' || (shape.kind === 'number' && 'color' in patch) || shape.kind === 'mosaic' || shape.kind === 'blur' || shape.kind === 'magnify') shape = await rasterizer(shape, imageUrl(), bounds(), !('text' in patch || 'fontSize' in patch || 'fontFamily' in patch))
