@@ -1,0 +1,94 @@
+name: 问题反馈 / Bug report
+description: 报告崩溃、功能异常或显示问题 / Report a crash or incorrect behavior
+title: "[Bug] "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        请先搜索已有 [Issues](https://github.com/bitdan/snap-desk/issues)，每个问题单独提交。支持中文和 English。
+        Search existing issues first and report one problem per issue. Chinese and English are welcome.
+        **不要上传 API Key、Token、私人截图或完整剪贴板内容。日志与诊断包请先脱敏。**
+        **Remove secrets and personal data from screenshots, logs and diagnostic bundles before sharing.**
+  - type: input
+    id: version
+    attributes:
+      label: 应用版本 / App version
+      description: 在设置的更新页面查看 / Find it on the Updates settings page.
+      placeholder: "例如 / e.g. 0.2.4-beta.1"
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: 操作系统与版本 / OS and version
+      placeholder: "Windows 11 24H2 x64 / macOS 15 arm64 / Ubuntu 24.04 x64, X11"
+    validations:
+      required: true
+  - type: dropdown
+    id: installation
+    attributes:
+      label: 安装方式 / Installation
+      options:
+        - Windows 安装包 / Installer
+        - Windows 独立 EXE / Standalone EXE
+        - macOS DMG
+        - Linux AppImage
+        - Linux deb
+        - 源码运行 / From source
+        - 其他或不确定 / Other or unsure
+    validations:
+      required: true
+  - type: dropdown
+    id: feature
+    attributes:
+      label: 相关功能 / Feature
+      multiple: true
+      options:
+        - 截图与标注 / Capture and annotation
+        - 滚动截图 / Scrolling capture
+        - 桌面贴图 / Image pinning
+        - 录屏与声音 / Recording and audio
+        - 文字识别与二维码 / OCR and QR codes
+        - 翻译与服务连接 / Translation and services
+        - 剪贴板与暂存架 / Clipboard and shelf
+        - 快捷键 / Shortcuts
+        - 启动、设置与更新 / Startup, settings and updates
+        - 其他 / Other
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤 / Steps to reproduce
+      placeholder: |
+        1. 打开… / Open…
+        2. 点击… / Click…
+        3. 出现… / Observe…
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际表现 / Actual behavior
+      description: 可附脱敏截图或短录屏 / Attach a redacted screenshot or short recording if useful.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 预期表现 / Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: 补充环境 / Additional environment
+      description: 显示问题请提供屏幕数量、分辨率与缩放比例；OCR / 翻译问题请提供引擎、服务与模型名称，不要填写密钥。录屏问题可补充显卡与声音来源。
+      placeholder: "Displays, resolution and scaling; OCR/translation engine and model (no keys); GPU and audio source for recording."
+  - type: textarea
+    id: logs
+    attributes:
+      label: 日志 / Logs
+      description: 可从日志与诊断页面获取；仅粘贴相关且已脱敏的片段。相关日志缺失也可以提交。 / Paste relevant, redacted excerpts from Logs and Diagnostics if available.
+      render: text

@@ -1,0 +1,29 @@
+name: 使用求助 / Usage question
+description: 安装、配置与使用方面的问题 / Get help with installation, configuration or usage
+title: "[Question] "
+labels: [question]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        请先查看 [README](https://github.com/bitdan/snap-desk#readme) 和已有 [Issues](https://github.com/bitdan/snap-desk/issues)。支持中文和 English。
+        Check the README and existing issues first. Do not include API keys, tokens or personal data.
+        不要附带 API Key、Token 或私人数据；截图、日志和配置片段请先脱敏。
+  - type: input
+    id: environment
+    attributes:
+      label: 应用版本、系统与安装方式 / App version, OS and installation
+      placeholder: "0.2.4-beta.1 / Windows 11 x64 / standalone EXE"
+    validations:
+      required: true
+  - type: textarea
+    id: question
+    attributes:
+      label: 遇到了什么困难？ / What do you need help with?
+      description: 说明想完成的操作与卡住的位置。 / Describe your goal and where you got stuck.
+    validations:
+      required: true
+  - type: textarea
+    id: attempts
+    attributes:
+      label: 已尝试的办法与错误信息 / What you tried and any errors

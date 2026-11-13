@@ -1,0 +1,32 @@
+name: 功能建议 / Feature request
+description: 提出新功能或改进现有体验 / Suggest a feature or improvement
+title: "[Feature] "
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        请先查看 [Issues](https://github.com/bitdan/snap-desk/issues) 和 [开发计划](https://github.com/bitdan/snap-desk/blob/master/Snap_Desk_TODO.md)，相同建议可在原帖补充。支持中文和 English。
+        Search existing issues and the roadmap first; add your use case to an existing request when possible.
+  - type: textarea
+    id: problem
+    attributes:
+      label: 使用场景与遇到的问题 / Use case and problem
+      description: 你在做什么，当前哪里不方便？ / What are you trying to do, and what gets in the way?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 希望如何改进 / Proposed improvement
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 当前替代办法 / Current workaround
+  - type: textarea
+    id: references
+    attributes:
+      label: 参考与适用平台 / References and platforms
+      description: 可附类似项目链接、示意图，以及需要支持的平台。 / Links, mockups and target platforms are welcome.
