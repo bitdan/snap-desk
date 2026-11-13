@@ -3,66 +3,131 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Snap Desk（SnapDesk）是免费开源的 Windows 截图与录屏工具，支持滚动截图、图片标注、桌面贴图、MP4/GIF 录屏、OCR 文字识别、翻译及剪贴板历史。">
-  <meta name="theme-color" content="#162235">
-  <title>Snap Desk — 免费开源 Windows 截图、滚动截图、录屏与 OCR 软件</title>
+  <meta name="description" content="Snap Desk（SnapDesk）是免费开源的跨平台截图与录屏工具，可在 Windows、macOS 和 Linux 上使用，支持滚动截图、图片标注、桌面贴图、MP4/GIF 录屏、OCR 文字识别、翻译及剪贴板历史。">
+  <meta name="theme-color" content="#f8f7f2" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#171714" media="(prefers-color-scheme: dark)">
+  <title>Snap Desk — 免费开源的跨平台截图、滚动截图、录屏与 OCR 软件</title>
   <link rel="canonical" href="https://bitdan.github.io/snap-desk/">
   <link rel="alternate" hreflang="zh-CN" href="https://bitdan.github.io/snap-desk/">
   <link rel="alternate" hreflang="en" href="https://bitdan.github.io/snap-desk/en/">
   <link rel="alternate" hreflang="x-default" href="https://bitdan.github.io/snap-desk/">
   <link rel="icon" type="image/png" href="https://raw.githubusercontent.com/bitdan/snap-desk/master/src-tauri/icons/32x32.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Hedvig+Letters+Serif:opsz@12..24&family=IBM+Plex+Mono:wght@400;500&family=Noto+Serif+SC:wght@500&display=swap">
   <link rel="stylesheet" href="assets/site.css">
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="Snap Desk">
-  <meta property="og:title" content="Snap Desk — 免费开源 Windows 截图、滚动截图、录屏与 OCR 软件">
-  <meta property="og:description" content="Snap Desk（SnapDesk）是免费开源的 Windows 截图与录屏工具，支持滚动截图、图片标注、桌面贴图、MP4/GIF 录屏、OCR 文字识别、翻译及剪贴板历史。">
+  <meta property="og:title" content="Snap Desk — 免费开源的跨平台截图、滚动截图、录屏与 OCR 软件">
+  <meta property="og:description" content="Snap Desk（SnapDesk）是免费开源的跨平台截图与录屏工具，可在 Windows、macOS 和 Linux 上使用，支持滚动截图、图片标注、桌面贴图、MP4/GIF 录屏、OCR 文字识别、翻译及剪贴板历史。">
   <meta property="og:url" content="https://bitdan.github.io/snap-desk/">
   <meta property="og:image" content="https://raw.githubusercontent.com/bitdan/snap-desk/master/src-tauri/icons/128x128@2x.png">
   <meta name="twitter:card" content="summary">
-  <script type="application/ld+json">{"@context":"https://schema.org","@type":"SoftwareApplication","name":"Snap Desk","alternateName":["SnapDesk","snap-desk"],"url":"https://bitdan.github.io/snap-desk/","description":"Snap Desk（SnapDesk）是免费开源的 Windows 截图与录屏工具，支持滚动截图、图片标注、桌面贴图、MP4/GIF 录屏、OCR 文字识别、翻译及剪贴板历史。","applicationCategory":"UtilitiesApplication","operatingSystem":"Windows (x64)","license":"https://www.gnu.org/licenses/gpl-3.0.html","downloadUrl":"https://github.com/bitdan/snap-desk/releases","isAccessibleForFree":true,"offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+  <script type="application/ld+json">{"@context":"https://schema.org","@type":"SoftwareApplication","name":"Snap Desk","alternateName":["SnapDesk","snap-desk"],"url":"https://bitdan.github.io/snap-desk/","description":"Snap Desk（SnapDesk）是免费开源的跨平台截图与录屏工具，可在 Windows、macOS 和 Linux 上使用，支持滚动截图、图片标注、桌面贴图、MP4/GIF 录屏、OCR 文字识别、翻译及剪贴板历史。","applicationCategory":"UtilitiesApplication","operatingSystem":"Windows (x64), macOS (Apple silicon), Linux (x64)","license":"https://www.gnu.org/licenses/gpl-3.0.html","downloadUrl":"https://github.com/bitdan/snap-desk/releases","isAccessibleForFree":true,"offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
 </head>
 <body>
-  <header class="site-header">
-    <div class="container nav">
-      <a class="brand" href="https://bitdan.github.io/snap-desk/" aria-label="Snap Desk"><img src="https://raw.githubusercontent.com/bitdan/snap-desk/master/src-tauri/icons/128x128@2x.png" width="38" height="38" alt="">Snap Desk</a>
-      <nav class="links" aria-label="主导航">
-        <a href="#features">功能</a>
-        <a href="#download">下载</a>
-        <a href="https://github.com/bitdan/snap-desk">GitHub 源码</a>
-        <a href="https://bitdan.github.io/snap-desk/en/" lang="en">English</a>
+  <svg class="defs" width="0" height="0" aria-hidden="true" focusable="false">
+    <defs>
+      <filter id="wobble" x="-5%" y="-5%" width="110%" height="110%">
+        <feTurbulence type="fractalNoise" baseFrequency="0.022" numOctaves="2" seed="7" result="n"/>
+        <feDisplacementMap in="SourceGraphic" in2="n" scale="4.5"/>
+      </filter>
+      <pattern id="h-blue" patternUnits="userSpaceOnUse" width="8" height="8" patternTransform="rotate(-38)"><path d="M0 4.0 H8" stroke="var(--blue)" stroke-width="2.2" stroke-linecap="round" opacity="0.42"/></pattern>
+      <pattern id="h-green" patternUnits="userSpaceOnUse" width="8" height="8" patternTransform="rotate(32)"><path d="M0 4.0 H8" stroke="var(--green)" stroke-width="2.2" stroke-linecap="round" opacity="0.42"/></pattern>
+      <pattern id="h-yellow" patternUnits="userSpaceOnUse" width="6" height="6" patternTransform="rotate(-24)"><path d="M0 3.0 H6" stroke="var(--yellow)" stroke-width="3" stroke-linecap="round" opacity="0.8"/></pattern>
+      <pattern id="h-red" patternUnits="userSpaceOnUse" width="6" height="6" patternTransform="rotate(40)"><path d="M0 3.0 H6" stroke="var(--red)" stroke-width="2.6" stroke-linecap="round" opacity="0.75"/></pattern>
+      <pattern id="h-ink" patternUnits="userSpaceOnUse" width="6" height="6" patternTransform="rotate(-45)"><path d="M0 3.0 H6" stroke="var(--ink)" stroke-width="1.6" stroke-linecap="round" opacity="0.5"/></pattern>
+    </defs>
+  </svg>
+  <header class="bar">
+    <div class="container bar-inner">
+      <a class="wordmark" href="https://bitdan.github.io/snap-desk/">Snap Desk</a>
+      <nav aria-label="主导航">
+        <a class="mlink plain wide" href="#features">功能</a>
+        <a class="mlink plain wide" href="#download">平台</a>
+        <a class="mlink plain wide" href="https://github.com/bitdan/snap-desk">源码</a>
+        <a class="mlink plain" href="https://bitdan.github.io/snap-desk/en/" lang="en">English</a>
+        <a class="mlink " href="https://github.com/bitdan/snap-desk/releases">下载<span class="arrow" aria-hidden="true">→</span></a>
       </nav>
     </div>
   </header>
   <main>
-    <section class="hero container">
-      <p class="eyebrow">Windows x64 · GPL-3.0-only · 开源</p>
-      <h1>截图、滚动截图、录屏与 OCR，集中在 Snap Desk</h1>
-      <p class="lead">Snap Desk（也写作 SnapDesk）是一款免费开源的 Windows 桌面工具：区域截图、滚动截图、图片标注、桌面贴图、MP4/GIF 录屏、OCR 文字识别、文本翻译与剪贴板历史管理。</p>
-      <div class="actions">
-        <a class="button" href="https://github.com/bitdan/snap-desk/releases">下载 Windows 版本</a>
-        <a class="button secondary" href="https://github.com/bitdan/snap-desk">查看 GitHub 源码</a>
+    <section class="opening container">
+      <div>
+        <h1>截下来，<br>标出来，<br>用起来。</h1>
+        <p class="lead">Snap Desk（也写作 SnapDesk）是一款免费开源的跨平台桌面工具：区域截图、滚动截图、图片标注、桌面贴图、MP4/GIF 录屏、OCR 文字识别、文本翻译与剪贴板历史管理。</p>
+        <div class="links">
+          <a class="mlink " href="https://github.com/bitdan/snap-desk/releases">前往下载<span class="arrow" aria-hidden="true">→</span></a>
+          <a class="mlink " href="https://github.com/bitdan/snap-desk">GitHub 源码</a>
+        </div>
+        <p class="meta">Windows · macOS · Linux　/　GPL-3.0　/　截图与录屏在本机完成</p>
       </div>
-      <p class="meta">提供 Windows x64 安装包和独立 EXE · 当前发布版本以 GitHub Releases 为准</p>
+      <svg class="sketch hero-art" viewBox="0 0 620 470" aria-hidden="true" focusable="false"><g filter="url(#wobble)"><rect pathLength="1" class="ln f" style="--i:1" fill="url(#h-blue)" x="40" y="64" width="350" height="246" rx="12"/><path pathLength="1" class="ln " style="--i:2" d="M40 100 H390"/><circle pathLength="1" class="ln " style="--i:3" cx="62" cy="82" r="5"/><circle pathLength="1" class="ln " style="--i:4" cx="80" cy="82" r="5"/><circle pathLength="1" class="ln " style="--i:5" cx="98" cy="82" r="5"/><path pathLength="1" class="ln soft" style="--i:6" d="M70 130 H250"/><path pathLength="1" class="ln soft" style="--i:7" d="M70 152 H300"/><path pathLength="1" class="ln soft" style="--i:8" d="M70 174 H220"/><path pathLength="1" class="ln soft" style="--i:9" d="M70 262 H180"/><path pathLength="1" class="ln soft" style="--i:10" d="M70 284 H240"/><rect pathLength="1" class="ln f" style="--i:11" fill="url(#h-green)" x="310" y="250" width="270" height="190" rx="12"/><path pathLength="1" class="ln " style="--i:12" d="M310 284 H580"/><path pathLength="1" class="ln soft" style="--i:13" d="M336 388 H520"/><path pathLength="1" class="ln soft" style="--i:14" d="M336 410 H470"/><rect style="--i:15" class="pop marquee" x="150" y="150" width="320" height="200"/><rect style="--i:16" class="pop handle" x="145" y="145" width="10" height="10"/><rect style="--i:17" class="pop handle" x="465" y="145" width="10" height="10"/><rect style="--i:18" class="pop handle" x="145" y="345" width="10" height="10"/><rect style="--i:19" class="pop handle" x="465" y="345" width="10" height="10"/><g style="--i:20" class="pop"><rect class="tag" x="150" y="114" width="108" height="26" rx="5"/><text class="tag-text" x="204" y="132" text-anchor="middle">1280 × 720</text></g><circle style="--i:21" class="pop" cx="198" cy="194" r="15" fill="var(--paper)" stroke="none"/><circle pathLength="1" class="ln f" style="--i:22" fill="url(#h-red)" cx="198" cy="194" r="15" stroke="var(--red)"/><text style="--i:23" class="pop step-text" x="198" y="199" text-anchor="middle">1</text><path pathLength="1" class="ln crayon" style="--i:24" d="M214 318 C 262 296, 318 262, 372 222"/><path pathLength="1" class="ln crayon" style="--i:25" d="M350 221 L376 219 L366 243"/><g style="--i:26" class="pop" transform="rotate(6 482 150)"><rect x="420" y="100" width="124" height="96" fill="var(--paper)"/><rect x="420" y="100" width="124" height="96" fill="url(#h-yellow)" stroke="var(--ink)"/><text class="note-text" x="482" y="156" text-anchor="middle">标注</text><circle cx="482" cy="100" r="8" fill="var(--red)" stroke="var(--ink)"/></g><rect style="--i:27" class="pop" x="205" y="372" width="214" height="46" rx="23" fill="var(--paper)" stroke="var(--ink)"/><rect pathLength="1" class="ln " style="--i:28" x="224" y="386" width="18" height="18" rx="3"/><circle pathLength="1" class="ln f" style="--i:29" fill="url(#h-blue)" cx="268" cy="395" r="15" stroke="var(--blue)"/><path pathLength="1" class="ln " style="--i:30" d="M261 402 L275 388 M267 388 H275 V396"/><path pathLength="1" class="ln " style="--i:31" d="M294 388 H310 M302 388 V403"/><path pathLength="1" class="ln " style="--i:32" d="M326 402 L329 393 L340 386 L344 390 L335 399 Z"/><path pathLength="1" class="ln soft" style="--i:33" d="M358 384 V406"/><path pathLength="1" class="ln " style="--i:34" d="M376 386 V399 M370 394 L376 400 L382 394 M369 405 H383"/><path pathLength="1" class="ln " style="--i:35" d="M394 396 L400 402 L410 388"/><path pathLength="1" class="ln " style="--i:36" d="M470 336 V364 M456 350 H484" stroke="var(--blue)"/></g></svg>
     </section>
+
     <section class="container" id="features">
-      <h2>主要功能</h2>
-      <div class="grid"><article class="feature"><h3>截图与图片标注</h3><p>区域、全屏与窗口截图；箭头、文字、马赛克、模糊、序号等标注工具，支持 PNG、JPEG、WebP 导出。</p></article>
-<article class="feature"><h3>滚动截图</h3><p>手动纵向或横向滚动、自动拼接与实时预览，可导出长 PNG 图片。</p></article>
-<article class="feature"><h3>桌面贴图</h3><p>将截图、图片或剪贴板内容固定在桌面，支持置顶、透明度、缩放与继续标注。</p></article>
-<article class="feature"><h3>录屏 MP4 / GIF</h3><p>录制区域或显示器，支持暂停恢复、实时标注和键鼠显示；MP4 可录制系统音频及麦克风。</p></article>
-<article class="feature"><h3>OCR 文字识别与翻译</h3><p>可选择 PaddleOCR、Windows OCR 等离线引擎，或自行配置在线识别及翻译 API。</p></article>
-<article class="feature"><h3>剪贴板历史管理</h3><p>保存文本、图片与文件路径历史，提供分类、搜索、收藏、预览与导出。</p></article></div>
+      <div class="plaque"><h2>主要功能</h2><p>从截下一张图到把它用出去，中间的每一步都在同一个应用里。</p></div>
+      <div class="exhibits">
+        <article class="exhibit"><svg class="sketch " viewBox="0 0 160 120" aria-hidden="true" focusable="false"><g filter="url(#wobble)"><rect pathLength="1" class="ln f" style="--i:1" fill="url(#h-blue)" x="18" y="16" width="124" height="88" rx="8"/><path pathLength="1" class="ln " style="--i:2" d="M18 34 H142"/><rect style="--i:3" class="pop marquee" x="46" y="44" width="80" height="46"/><path pathLength="1" class="ln crayon" style="--i:4" d="M60 80 C 74 72, 86 66, 100 58"/><path pathLength="1" class="ln crayon" style="--i:5" d="M90 57 L102 56 L98 67"/></g></svg><h3>截图与标注</h3><p>区域、全屏与窗口截图；箭头、文字、马赛克、模糊、序号等标注工具，支持 PNG、JPEG、WebP 导出。</p></article>
+        <article class="exhibit"><svg class="sketch " viewBox="0 0 160 120" aria-hidden="true" focusable="false"><g filter="url(#wobble)"><rect pathLength="1" class="ln " style="--i:1" x="52" y="6" width="56" height="108" rx="6"/><rect pathLength="1" class="ln f" style="--i:2" fill="url(#h-green)" x="60" y="14" width="40" height="22" stroke="none"/><rect pathLength="1" class="ln f" style="--i:3" fill="url(#h-yellow)" x="60" y="50" width="40" height="22" stroke="none"/><rect pathLength="1" class="ln f" style="--i:4" fill="url(#h-blue)" x="60" y="86" width="40" height="20" stroke="none"/><path style="--i:5" class="pop fold" d="M44 43 H116 M44 79 H116"/><path pathLength="1" class="ln crayon" style="--i:6" d="M132 30 V86 M124 78 L132 88 L140 78"/></g></svg><h3>滚动截图</h3><p>手动纵向或横向滚动、自动拼接与实时预览，可导出长 PNG 图片。</p></article>
+        <article class="exhibit"><svg class="sketch " viewBox="0 0 160 120" aria-hidden="true" focusable="false"><g filter="url(#wobble)"><g style="--i:1" class="pop" transform="rotate(-5 80 62)"><rect x="38" y="30" width="84" height="66" fill="var(--paper)"/><rect x="38" y="30" width="84" height="66" fill="url(#h-yellow)" stroke="var(--ink)"/></g><path pathLength="1" class="ln soft" style="--i:2" d="M52 62 H104"/><path pathLength="1" class="ln soft" style="--i:3" d="M52 76 H90"/><circle pathLength="1" class="ln f" style="--i:4" fill="url(#h-red)" cx="80" cy="26" r="9" stroke="var(--red)"/><path pathLength="1" class="ln " style="--i:5" d="M80 35 V48"/></g></svg><h3>桌面贴图</h3><p>将截图、图片或剪贴板内容固定在桌面，支持置顶、透明度、缩放与继续标注。</p></article>
+        <article class="exhibit"><svg class="sketch " viewBox="0 0 160 120" aria-hidden="true" focusable="false"><g filter="url(#wobble)"><rect pathLength="1" class="ln " style="--i:1" x="22" y="18" width="116" height="72" rx="8"/><circle pathLength="1" class="ln f" style="--i:2" fill="url(#h-red)" cx="80" cy="54" r="16" stroke="var(--red)"/><path pathLength="1" class="ln " style="--i:3" d="M68 104 H92 M80 90 V104"/><path pathLength="1" class="ln soft" style="--i:4" d="M34 78 H60"/><path pathLength="1" class="ln soft" style="--i:5" d="M100 78 H126"/></g></svg><h3>录屏</h3><p>录制区域或显示器为 MP4 / GIF，支持暂停恢复、实时标注和键鼠显示；MP4 可录制系统音频及麦克风。</p></article>
+        <article class="exhibit"><svg class="sketch " viewBox="0 0 160 120" aria-hidden="true" focusable="false"><g filter="url(#wobble)"><path pathLength="1" class="ln " style="--i:1" d="M24 36 V20 H40 M120 20 H136 V36 M24 84 V100 H40 M120 100 H136 V84" stroke="var(--blue)"/><rect pathLength="1" class="ln f" style="--i:2" fill="url(#h-yellow)" x="44" y="38" width="72" height="16" stroke="none"/><path pathLength="1" class="ln " style="--i:3" d="M46 46 H114"/><path pathLength="1" class="ln soft" style="--i:4" d="M46 66 H104"/><path pathLength="1" class="ln soft" style="--i:5" d="M46 82 H92"/></g></svg><h3>识别与翻译</h3><p>可选择 PaddleOCR、Windows OCR 等离线引擎，或自行配置在线识别及翻译 API。</p></article>
+        <article class="exhibit"><svg class="sketch " viewBox="0 0 160 120" aria-hidden="true" focusable="false"><g filter="url(#wobble)"><rect pathLength="1" class="ln " style="--i:1" x="44" y="20" width="72" height="90" rx="7"/><rect pathLength="1" class="ln f" style="--i:2" fill="url(#h-ink)" x="64" y="12" width="32" height="16" rx="4"/><path pathLength="1" class="ln soft" style="--i:3" d="M58 46 H102"/><path pathLength="1" class="ln soft" style="--i:4" d="M58 60 H96"/><rect pathLength="1" class="ln f" style="--i:5" fill="url(#h-red)" x="58" y="74" width="22" height="22" stroke="var(--red)"/><path pathLength="1" class="ln soft" style="--i:6" d="M88 80 H102 M88 90 H98"/></g></svg><h3>剪贴板历史</h3><p>保存文本、图片与文件路径历史，提供分类、搜索、收藏、预览与导出。</p></article>
+      </div>
     </section>
+
     <section class="container" id="download">
-      <h2>下载与开始使用</h2>
-      <div class="prose"><p>从 GitHub Releases 下载安装包或独立 EXE。截图、标注与录屏可在本机运行；离线 OCR 或翻译引擎需要在应用内按需安装相关资源。可选在线服务需由用户配置 API Key。</p></div>
-      <p class="note">隐私提示：选择在线 OCR 时会向所选服务上传图片，在线翻译会发送待翻译文字；费用及额度由对应服务商决定。</p>
-      <div class="actions">
-        <a class="button" href="https://github.com/bitdan/snap-desk/releases">下载 Windows 版本</a>
-        <a class="button secondary" href="https://github.com/bitdan/snap-desk/blob/master/README.md">阅读完整说明</a>
+      <div class="plaque"><h2>下载与平台</h2><p>Windows 版功能完整；macOS 与 Linux 为预览版，功能正在逐步适配。</p></div>
+      <div class="platforms">
+        <article class="platform">
+          <span class="status full">功能完整</span>
+          <h3>Windows</h3>
+          <p class="arch">x64</p>
+          <ul><li><code>-setup.exe</code> 安装包</li><li><code>-standalone.exe</code> 独立 EXE，免安装</li><li>两种形式都支持在线更新</li></ul>
+          <a class="mlink " href="https://github.com/bitdan/snap-desk/releases">下载<span class="arrow" aria-hidden="true">→</span></a>
+        </article>
+        <article class="platform">
+          <span class="status preview">预览版</span>
+          <h3>macOS</h3>
+          <p class="arch">Apple 芯片 · macOS 13.3+</p>
+          <ul><li><code>.dmg</code> 磁盘映像</li><li>未经 Apple 公证，首次打开需在“隐私与安全性”中放行</li><li>截图前需授予屏幕录制权限</li></ul>
+          <a class="mlink " href="https://github.com/bitdan/snap-desk/releases">下载<span class="arrow" aria-hidden="true">→</span></a>
+        </article>
+        <article class="platform">
+          <span class="status preview">预览版</span>
+          <h3>Linux</h3>
+          <p class="arch">x64 · Ubuntu 24.04 或同期发行版</p>
+          <ul><li><code>.AppImage</code> 下载即用，支持在线更新</li><li><code>.deb</code> 体积更小，依赖由包管理器安装</li><li>截图需要 X11 会话</li></ul>
+          <a class="mlink " href="https://github.com/bitdan/snap-desk/releases">下载<span class="arrow" aria-hidden="true">→</span></a>
+        </article>
+      </div>
+      <div class="matrix-wrap">
+        <table class="matrix">
+          <thead><tr><th scope="col">功能</th><th scope="col">Windows</th><th scope="col">macOS</th><th scope="col">Linux</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">截图与标注</th><td class="yes" aria-label="支持">✓</td><td class="yes">✓<small>主屏</small></td><td class="yes">✓<small>主屏</small></td></tr>
+            <tr><th scope="row">桌面贴图</th><td class="yes" aria-label="支持">✓</td><td class="yes" aria-label="支持">✓</td><td class="yes" aria-label="支持">✓</td></tr>
+            <tr><th scope="row">识别与翻译</th><td class="yes" aria-label="支持">✓</td><td class="yes" aria-label="支持">✓</td><td class="yes" aria-label="支持">✓</td></tr>
+            <tr><th scope="row">滚动截图</th><td class="yes" aria-label="支持">✓</td><td class="no" aria-label="暂未适配">—</td><td class="no" aria-label="暂未适配">—</td></tr>
+            <tr><th scope="row">录屏</th><td class="yes" aria-label="支持">✓</td><td class="no" aria-label="暂未适配">—</td><td class="no" aria-label="暂未适配">—</td></tr>
+            <tr><th scope="row">剪贴板历史</th><td class="yes" aria-label="支持">✓</td><td class="no" aria-label="暂未适配">—</td><td class="no" aria-label="暂未适配">—</td></tr>
+            <tr><th scope="row">在线更新</th><td class="yes" aria-label="支持">✓</td><td class="yes" aria-label="支持">✓</td><td class="yes">✓<small>AppImage</small></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="fineprint">隐私提示：选择在线 OCR 时会向所选服务上传图片，在线翻译会发送待翻译文字；费用及额度由对应服务商决定。离线 OCR 或翻译引擎需要在应用内按需安装相关资源。当前发布版本以 GitHub Releases 为准。</p>
+    </section>
+
+    <section class="container closing">
+      <h2>免费、开源，<br>没有账号和订阅。</h2>
+      <div class="links">
+        <a class="mlink " href="https://github.com/bitdan/snap-desk/releases">前往下载<span class="arrow" aria-hidden="true">→</span></a>
+        <a class="mlink " href="https://github.com/bitdan/snap-desk/blob/master/README.md">完整说明</a>
       </div>
     </section>
   </main>
-  <footer><div class="container footer-inner"><span>© Snap Desk · 免费开源 · GPL-3.0-only</span><a href="https://github.com/bitdan/snap-desk">github.com/bitdan/snap-desk</a></div></footer>
+  <footer><div class="container footer-inner"><span>© Snap Desk · GPL-3.0-only</span><nav aria-label="页脚链接"><a class="mlink plain" href="https://github.com/bitdan/snap-desk">GitHub</a><a class="mlink plain" href="https://github.com/bitdan/snap-desk/releases">下载</a><a class="mlink plain" href="https://bitdan.github.io/">作者主页</a></nav></div></footer>
+  <script>document.documentElement.classList.add("js");addEventListener("DOMContentLoaded",function(){var s=document.querySelectorAll(".sketch");if(!("IntersectionObserver" in window)){s.forEach(function(e){e.classList.add("in")});return}var o=new IntersectionObserver(function(l){l.forEach(function(e){if(e.isIntersecting){e.target.classList.add("in");o.unobserve(e.target)}})},{threshold:.25});s.forEach(function(e){o.observe(e)})});</script>
 </body>
 </html>
