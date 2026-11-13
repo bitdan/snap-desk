@@ -111,6 +111,16 @@
   "bundle": {
     "active": true,
     "targets": ["nsis"],
+    "category": "Utility",
+    "shortDescription": "Screenshot, pin, OCR and translation tool",
+    "macOS": {
+      "minimumSystemVersion": "13.3"
+    },
+    "linux": {
+      "deb": {
+        "depends": ["libpipewire-0.3-0", "libxcb1", "libxrandr2", "libdbus-1-3"]
+      }
+    },
     "resources": {
       "../LICENSE": "LICENSE",
       "licenses/LXGW-OFL.txt": "licenses/LXGW-OFL.txt"

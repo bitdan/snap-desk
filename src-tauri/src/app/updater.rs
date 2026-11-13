@@ -67,18 +67,44 @@ pub(super) struct AppUpdateState {
 fn error(e: impl std::fmt::Display) -> String {
     e.to_string()
 }
+/// 发布流水线实际产出的系统与架构；清单目标 `{PLATFORM}-{分发形式}` 必须与
+/// `scripts/release-assets.mjs` 的附件表一致。其他组合没有对应附件，不提供在线更新。
+const PLATFORM: Option<&str> = if cfg!(all(target_os = "windows", target_arch = "x86_64")) {
+    Some("windows-x86_64")
+} else if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+    Some("darwin-aarch64")
+} else if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
+    Some("linux-x86_64")
+} else {
+    None
+};
+
 fn supported() -> bool {
-    cfg!(all(target_os = "windows", target_arch = "x86_64"))
-        && !cfg!(debug_assertions)
-        && package_kind() != "unsupported"
+    PLATFORM.is_some() && !cfg!(debug_assertions) && package_kind() != "unsupported"
 }
 
+/// 当前进程的分发形式，同时决定清单目标和安装方式。
+/// deb 升级需要管理员授权并交给系统包管理器，不在应用内替换，归为不支持。
 fn package_kind() -> &'static str {
     use tauri::utils::{config::BundleType, platform::bundle_type};
     match bundle_type() {
         Some(BundleType::Nsis) => "nsis",
-        None => "standalone",
+        // macOS 的 .app 与 DMG 内的应用都报告为 App，更新时整体替换 .app 目录。
+        Some(BundleType::App) if cfg!(target_os = "macos") => "app",
+        Some(BundleType::AppImage) => "appimage",
+        // 未被打包器标记的 Windows 主程序即独立 EXE；其他平台的裸程序没有可替换的安装目标。
+        None if cfg!(windows) => "standalone",
         _ => "unsupported",
+    }
+}
+
+/// 更新包文件名后缀；清单不能把另一种分发形式的包指给当前安装。
+fn package_suffix() -> &'static str {
+    match package_kind() {
+        "nsis" => "-setup.exe",
+        "app" => ".app.tar.gz",
+        "appimage" => ".AppImage",
+        _ => "-standalone.exe",
     }
 }
 
@@ -131,10 +157,10 @@ fn view(app: &AppHandle) -> Result<AppUpdateView, String> {
 
 fn ready() -> Result<(), String> {
     if package_kind() == "unsupported" {
-        return Err("当前安装方式不支持在线更新，请使用 NSIS 安装包重新安装。".into());
+        return Err("当前安装方式不支持在线更新，请从发布页下载新版本。".into());
     }
     if !supported() {
-        return Err("在线更新仅支持 Windows x64 发布版本。".into());
+        return Err("在线更新仅支持已发布平台的正式构建。".into());
     }
     if PUBLIC_KEY.trim().is_empty() {
         return Err("此版本未配置更新签名公钥。".into());
@@ -241,7 +267,8 @@ async fn discover(app: &AppHandle, include_preview: bool) -> Result<Option<Updat
     let Some((version, endpoint)) = newest else {
         return Ok(None);
     };
-    let target = format!("windows-x86_64-{}", package_kind());
+    let platform = PLATFORM.ok_or("在线更新仅支持已发布平台的正式构建。")?;
+    let target = format!("{platform}-{}", package_kind());
     let updater = app
         .updater_builder()
         .pubkey(PUBLIC_KEY.trim())
@@ -268,10 +295,7 @@ async fn discover(app: &AppHandle, include_preview: bool) -> Result<Option<Updat
     // 插件的检查超时不自动传递给下载，单独为安装包设置总下载时限。
     update.timeout = Some(Duration::from_secs(300));
     // 清单不能借另一个 tag 发布不同版本，也不能切换包类型或仓库。
-    let expected_suffix = match package_kind() {
-        "nsis" => "-setup.exe",
-        _ => "-standalone.exe",
-    };
+    let expected_suffix = package_suffix();
     let prefix = format!("https://github.com/{REPOSITORY}/releases/download/v{version}/");
     if update.version != version.to_string()
         || !update.download_url.as_str().starts_with(&prefix)
@@ -440,6 +464,12 @@ pub(super) async fn install_app_update(
                 update.install(bytes.as_slice()).map_err(error)
             }
         });
+        // NSIS 由安装器结束并重启进程，不会执行到这里；macOS 的 .app 与 Linux 的 AppImage
+        // 是原地替换文件，需要应用自行重启，退出时的资源收尾由 RunEvent::Exit 统一完成。
+        #[cfg(not(windows))]
+        if result.is_ok() {
+            handle.restart();
+        }
         if result.is_err() {
             exit.cancel_update();
             capture.active.store(false, Ordering::SeqCst);

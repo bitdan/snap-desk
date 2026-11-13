@@ -8,7 +8,15 @@
 
 ## Download
 
-Download the Windows x64 installer or standalone EXE from [Snap Desk releases](https://github.com/bitdan/snap-desk/releases). Install offline OCR models, the local translation engine, and language packs in the app as needed.
+Download from [Snap Desk releases](https://github.com/bitdan/snap-desk/releases). Install offline OCR models, the local translation engine, and language packs in the app as needed.
+
+| Platform | File | Notes |
+| --- | --- | --- |
+| Windows x64 | `-setup.exe` installer / `-standalone.exe` standalone EXE | Full feature set, with online updates |
+| macOS Apple silicon (preview) | `-macos-arm64.dmg` | Requires macOS 13.3 or later. Not notarized by Apple: allow it in System Settings → Privacy & Security on first launch, and grant Screen Recording permission |
+| Linux x64 (preview) | `-linux-x64.AppImage` / `-linux-x64.deb` | Capture requires an X11 session. The AppImage updates online; reinstall the deb to upgrade |
+
+The macOS and Linux previews currently provide primary-screen capture, annotation, pinning, OCR, and translation. Screen recording, scrolling capture, clipboard history, Windows OCR, and the local translation engine are not yet available there; see the [roadmap](Snap_Desk_TODO.md).
 
 ## Features
 
@@ -102,7 +110,7 @@ See the [translation technical guide (Chinese)](TECHNICAL.md#翻译接入) for d
 
 - [x] **Offline** · Custom shortcuts, conflict checks, global shortcut enable/disable, and an interactive interface guide.
 - [x] **Offline** · Chinese/English interface, light/dark themes, configuration import/export, and diagnostic logs.
-- [x] **Online** · Stable/beta updates for both installer and standalone EXE distributions.
+- [x] **Online** · Stable/beta updates for the Windows installer and standalone EXE, the macOS app, and the Linux AppImage.
 
 ## Quick Start
 
@@ -119,7 +127,7 @@ For development, builds, and additional service integrations, see the [technical
 
 ### Which platforms are supported?
 
-Snap Desk is available for Windows x64 as an installer or standalone EXE. Screenshot capture, screen recording, OCR, translation, and clipboard history are available in one desktop app.
+Windows x64 has the full feature set, as an installer or standalone EXE: screenshot capture, screen recording, OCR, translation, and clipboard history in one desktop app. macOS (Apple silicon) and Linux x64 are available as previews; see [Download](#download) for what they include.
 
 ### Can OCR and translation work offline?
 

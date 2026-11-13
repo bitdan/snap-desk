@@ -87,7 +87,7 @@ onUnmounted(() => { disposed = true; if (timer) clearInterval(timer); unsubscrib
       <Button variant="outline" :disabled="!enabled || (!hasUpdate && operating) || saving" @click="hasUpdate ? requestUpdateWindow() : run(api.checkAppUpdate)"><span v-if="hasUpdate" class="update-dot" aria-hidden="true" />{{ t(hasUpdate ? '有更新' : '检查更新') }}</Button>
     </div>
     </div>
-    <p v-if="view?.packageKind === 'unsupported'" class="notice">{{ t('当前安装方式不支持在线更新，请使用 NSIS 安装包重新安装。') }}</p>
+    <p v-if="view?.packageKind === 'unsupported'" class="notice">{{ t('当前安装方式不支持在线更新，请从发布页下载新版本。') }}</p>
     <p v-else-if="view?.supported && !view.configured" class="notice">{{ t('此版本未配置更新签名公钥。') }}</p>
     <p v-if="error || view?.error" class="notice error" role="alert">{{ te(error || view?.error) }}</p>
   </section>

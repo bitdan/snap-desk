@@ -93,7 +93,7 @@ describe('在线更新设置', () => {
     native.supported = false
     await vi.advanceTimersByTimeAsync(1000); await flushComponent()
     expect(action('检查更新').props.disabled).toBe(true)
-    expect(text(root)).not.toContain('Windows x64 发布版本')
+    expect(text(root)).not.toContain('已发布平台的正式构建')
     expect(text(root)).not.toContain('此版本未配置更新签名公钥。')
   })
 })
