@@ -58,6 +58,10 @@ vi.mock('../../src/app/components/OnboardingGuide.vue', async () => {
 })
 import InfoTip from '../../src/shared/ui/InfoTip.vue'
 clientComponent(InfoTip, new URL('../../src/shared/ui/InfoTip.vue', import.meta.url))
+import ToolHeroStub from '../../src/shared/ui/ToolHero.vue'
+import SegmentedControlStub from '../../src/shared/ui/SegmentedControl.vue'
+clientComponent(ToolHeroStub, new URL('../../src/shared/ui/ToolHero.vue', import.meta.url))
+clientComponent(SegmentedControlStub, new URL('../../src/shared/ui/SegmentedControl.vue', import.meta.url))
 clientComponent(Compatibility, new URL('../../src/features/settings/components/ShortcutCompatibility.vue', import.meta.url))
 import SupportPages from '../../src/app/components/SupportPages.vue'
 clientComponent(SupportPages, new URL('../../src/app/components/SupportPages.vue', import.meta.url))
@@ -85,7 +89,7 @@ afterEach(() => { memoryRenderer.render(null, root); vi.clearAllTimers(); vi.res
 describe('截图设置自动生效', () => {
   it('帮助页可重开引导，完成保存失败保留引导，重试成功后关闭', async () => {
     await flush()
-    const help = () => findNode(root, node => node.type === 'button' && text(node) === '帮助')!
+    const help = () => findNode(root, node => node.type === 'button' && text(node) === '关于与帮助')!
     help().props.onClick(); await flush()
     const restart = () => findNode(root, node => node.type === 'button' && text(node) === '重新打开新手引导')!
     restart().props.onClick(); await flush()
@@ -104,7 +108,7 @@ describe('截图设置自动生效', () => {
   })
   it('有更新时显示简洁下载提示和关于导航红点，更新消失后清除', async () => {
     await flush()
-    const about = findNode(root, node => node.type === 'button' && text(node) === '关于')!
+    const about = findNode(root, node => node.type === 'button' && text(node) === '关于与帮助')!
     const dot = () => findNode(about, node => String(node.props.class).includes('nav-update-dot'))
     expect(dot()).toBeUndefined()
     const view: AppUpdateView = { currentVersion: '0.1.9', availableVersion: '0.2.0', notes: '不展示的日志', packageKind: 'nsis',
@@ -134,7 +138,7 @@ describe('截图设置自动生效', () => {
   })
   it('格式选择后自动写入配置，页面没有保存按钮', async () => {
     await flush()
-    findNode(root, node => node.props.id === 'export-format')!.props['onUpdate:modelValue']('webp')
+    findNode(root, node => node.type === 'button' && text(node) === 'WebP')!.props.onClick()
     await vi.advanceTimersByTimeAsync(350)
     expect(api.saveSettings).toHaveBeenCalledWith(expect.objectContaining({ export: expect.objectContaining({ format: 'webp' }) }))
     expect(findNode(root, node => node.type === 'button' && text(node) === '保存设置')).toBeUndefined()
@@ -151,7 +155,7 @@ describe('截图设置自动生效', () => {
 
 it('导入成功替换截图页草稿和快捷键状态，返回原页面不显示旧配置', async () => {
   await flush()
-  findNode(root, node => node.type === 'button' && text(node) === '导入/导出')!.props.onClick()
+  findNode(root, node => node.type === 'button' && text(node) === '通用')!.props.onClick()
   await vi.dynamicImportSettled(); await flush()
   const importedSettings = defaultSettings(); importedSettings.export.filenamePrefix = 'Imported'; importedSettings.shortcutsEnabled = false; importedSettings.onboardingVersion = 1
   api.status.mockResolvedValue({ settings: importedSettings, version: 'test', platform: 'windows', delayRemaining: 0 })
@@ -160,5 +164,5 @@ it('导入成功替换截图页草稿和快捷键状态，返回原页面不显�
   findNode(root, node => node.type === 'button' && text(node) === '截图')!.props.onClick()
   await flush()
   expect(findNode(root, node => node.props.id === 'filename-prefix')!.value).toBe('Imported')
-  expect(findNode(root, node => node.type === 'button' && text(node).includes('快捷键') && text(node).includes('已禁用'))).toBeDefined()
+  expect(findNode(root, node => node.props.id === 'shortcuts-enabled')!.props['aria-checked']).toBe(false)
 })

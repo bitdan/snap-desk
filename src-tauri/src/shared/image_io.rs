@@ -5,7 +5,6 @@ use std::{
     fs,
     io::{Seek, Write},
     path::{Path, PathBuf},
-    time::{SystemTime, UNIX_EPOCH},
 };
 use tauri::{AppHandle, Manager};
 #[cfg(not(target_os = "windows"))]
@@ -89,10 +88,11 @@ fn validate_extension(path: &Path, format: ExportFormat) -> Result<(), String> {
     }
 }
 
-/// 文件名只由已验证的前缀、毫秒时间戳和可选像素尺寸组成，不接收任意路径模板。
+/// 文件名只由已验证的前缀、本地日期时间（YYYYMMDD-HHMMSS）和可选像素尺寸组成，不接收任意路径模板。
+/// 同一秒内重名由保存对话框提示覆盖或改名。
 fn filename(
     settings: &ExportSettings,
-    timestamp: u128,
+    stamp: &str,
     width: u32,
     height: u32,
 ) -> Result<String, String> {
@@ -103,7 +103,7 @@ fn filename(
         String::new()
     };
     Ok(format!(
-        "{}-{timestamp}{dimensions}.{}",
+        "{}-{stamp}{dimensions}.{}",
         settings.filename_prefix,
         settings.format.extension()
     ))
@@ -257,10 +257,7 @@ pub fn save(app: &AppHandle, image: &RgbaImage) -> Result<bool, String> {
         .value
         .export
         .clone();
-    let timestamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|e| e.to_string())?
-        .as_millis();
+    let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S").to_string();
     let (label, extensions) = settings.format.filter();
     let mut dialog = app
         .dialog()
@@ -269,7 +266,7 @@ pub fn save(app: &AppHandle, image: &RgbaImage) -> Result<bool, String> {
         .add_filter(crate::shared::native_i18n::text(app, label), extensions)
         .set_file_name(filename(
             &settings,
-            timestamp,
+            &stamp,
             image.width(),
             image.height(),
         )?);
@@ -380,18 +377,18 @@ mod tests {
     fn names_use_prefix_timestamp_dimensions_and_correct_extension() {
         let mut settings = ExportSettings::default();
         assert_eq!(
-            filename(&settings, 1234, 640, 480).unwrap(),
-            "SnapDesk-1234.png"
+            filename(&settings, "20261113-143005", 640, 480).unwrap(),
+            "SnapDesk-20261113-143005.png"
         );
         settings.filename_prefix = "截图".into();
         settings.include_dimensions = true;
         settings.format = ExportFormat::Jpeg;
         assert_eq!(
-            filename(&settings, 1234, 640, 480).unwrap(),
-            "截图-1234-640x480.jpg"
+            filename(&settings, "20261113-143005", 640, 480).unwrap(),
+            "截图-20261113-143005-640x480.jpg"
         );
         settings.filename_prefix = "../escape".into();
-        assert!(filename(&settings, 1234, 640, 480).is_err());
+        assert!(filename(&settings, "20261113-143005", 640, 480).is_err());
     }
 
     #[test]

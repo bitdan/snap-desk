@@ -69,11 +69,26 @@ onBeforeUnmount(() => { window.removeEventListener('blur', cancel); disposed = t
 </script>
 
 <template>
-  <div class="max-w-72 text-right">
-    <button ref="button" type="button" :disabled="disabled && !editing && !busy" :aria-label="t('{0}快捷键，点击修改', { 0: t(label) })" :aria-pressed="editing" class="min-w-40 rounded-lg border px-3 py-2 text-sm focus:outline-blue-500" :class="editing ? 'border-blue-500 bg-blue-50' : 'border-zinc-200 bg-white'" @click="begin" @keydown="keydown" @keyup="keyup" @blur="finish()">
-      {{ busy ? t("正在切换…") : editing ? preview : modelValue || t("已禁用 · 点击设置") }}
+  <div class="shortcut-input">
+    <button ref="button" type="button" class="shortcut-field" :class="{ editing }" :disabled="disabled && !editing && !busy" :aria-label="t('{0}快捷键，点击修改', { 0: t(label) })" :aria-pressed="editing" @click="begin" @keydown="keydown" @keyup="keyup" @blur="finish()">
+      <span v-if="busy" class="shortcut-placeholder">{{ t("正在切换…") }}</span>
+      <span v-else-if="editing" class="shortcut-placeholder">{{ t(preview) }}</span>
+      <template v-else-if="modelValue"><kbd v-for="key in modelValue.split('+')" :key="key">{{ key }}</kbd></template>
+      <span v-else class="shortcut-placeholder">{{ t("未设置") }}</span>
     </button>
-    <p v-if="editing" class="mt-1 text-xs text-zinc-500">{{ t("单按 Esc 取消 · 单按 Backspace / Delete 禁用") }}</p>
-    <p v-if="error" class="mt-1 text-xs text-red-600" role="alert">{{ te(error) }}</p>
+    <p v-if="editing" class="shortcut-help">{{ t("单按 Esc 取消 · 单按 Backspace / Delete 禁用") }}</p>
+    <p v-if="error" class="shortcut-help shortcut-error" role="alert">{{ te(error) }}</p>
   </div>
 </template>
+
+<style scoped>
+.shortcut-input { display:flex; flex-direction:column; align-items:flex-end; }
+.shortcut-field { display:inline-flex; align-items:center; gap:3px; min-width:120px; height:26px; padding:0 4px; border:1px solid var(--desk-line,#d3d8de); border-radius:6px; background:var(--desk-surface,#fff); cursor:pointer; }
+.shortcut-field:hover:enabled { border-color:var(--desk-muted,#5f6670); }
+.shortcut-field.editing { border-color:var(--desk-accent,#3b5bdb); background:var(--desk-soft,#eef1fc); }
+.shortcut-field:disabled { opacity:.45; cursor:default; }
+.shortcut-field kbd { height:18px; min-width:18px; padding:0 5px; }
+.shortcut-placeholder { padding:0 4px; font-size:12px; color:var(--desk-muted,#5f6670); white-space:nowrap; }
+.shortcut-help { margin:4px 0 0; font-size:11px; color:var(--desk-muted,#5f6670); }
+.shortcut-error { color:var(--desk-danger,#cf222e); }
+</style>

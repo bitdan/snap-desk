@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import InfoTip from '@/shared/ui/InfoTip.vue'
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { t } from '@/shared/i18n/i18n'
-import SelectControl from '@/shared/ui/SelectControl.vue'
+import SegmentedControl from '@/shared/ui/SegmentedControl.vue'
+import SettingRow from '@/shared/ui/SettingRow'
+import SwitchControl from '@/shared/ui/SwitchControl'
 import RecordingFileSettings from './RecordingFileSettings.vue'
 import RecordingInputSettings from './RecordingInputSettings.vue'
 import { RECORDING_PREFERENCES_KEY } from '../preferences'
@@ -37,20 +38,24 @@ defineExpose({ save })
 <template>
   <section class="recording-preferences" @input="message = ''" @change="message = ''">
     <fieldset :disabled="disabled">
-      <legend class="section-heading">{{ t('视频与导出') }}</legend>
-      <div class="setting-row"><div class="flex items-center gap-1"><label for="record-format">{{ t('保存格式') }}</label><InfoTip :text="t('MP4 支持声音，GIF 适合短动画')" /></div><SelectControl id="record-format" v-model="recordingFormat" :options="[{ value: 'mp4', label: 'MP4', disabled: !!capabilities?.formats && !capabilities.formats.includes('mp4') }, { value: 'gif', label: 'GIF', disabled: !!capabilities?.formats && !capabilities.formats.includes('gif') }]" /></div>
-      <div class="setting-row"><label for="record-fps">{{ t('帧率') }}</label><SelectControl id="record-fps" v-model="recordingFps" :options="(recordingFormat === 'gif' ? [10, 20] : [30, 60]).map(fps => ({ value: fps, label: `${fps} FPS`, disabled: !!capabilities?.frameRates && !capabilities.frameRates.includes(fps) }))" /></div>
-      <template v-if="recordingFormat === 'mp4'">
-        <div class="setting-row"><label for="record-quality">{{ t('画质') }}</label><SelectControl id="record-quality" v-model="recordingQuality" :disabled="recordingMbps !== ''" :options="[{ value: 'economy', label: t('节省空间') }, { value: 'balanced', label: t('均衡') }, { value: 'high', label: t('高清') }]" /></div>
-        <div class="setting-row"><div class="flex items-center gap-1"><label for="record-bitrate">{{ t('码率（Mbps）') }}</label><InfoTip :text="t('1–80 Mbps；清空后恢复自动码率')" /></div><input id="record-bitrate" v-model="recordingMbps" type="number" min="1" max="80" step="any" :placeholder="t('自动')" :aria-invalid="!!invalid" aria-describedby="record-preference-error" /></div>
-        <div class="setting-row"><label for="record-encoding">{{ t('编码方式') }}</label><SelectControl id="record-encoding" v-model="recordingEncoding" :options="[{ value: 'auto', label: t('自动编码') }, { value: 'software', label: t('软件兼容') }]" /></div>
-      </template>
-      <div class="flex items-center gap-1"><h2 class="section-heading">{{ t('录制行为') }}</h2><InfoTip :text="t('声音在选择范围后开启，每次录制单独确认。')" /></div>
-      <div class="setting-row"><label for="record-countdown">{{ t('倒计时') }}</label><SelectControl id="record-countdown" v-model="recordingCountdown" :options="[0, 3, 5].map(value => ({ value, label: value ? t('{0} 秒', { 0: value }) : t('无延时') }))" /></div>
-      <div class="setting-row"><label for="record-cursor">{{ t('录制光标') }}</label><input id="record-cursor" v-model="captureCursor" type="checkbox" :disabled="capabilities?.captureCursor === false" /></div>
-      <div class="setting-row"><label for="record-hide">{{ t('录制时收起主界面') }}</label><input id="record-hide" v-model="hideMainWindow" type="checkbox" /></div>
-      <div class="recording-effects-settings"><RecordingInputSettings v-model="recordingEffects" :disabled="disabled" /></div>
-      <RecordingFileSettings ref="fileSettings" :disabled="disabled" :format="recordingFormat" @changed="emit('directoryChanged')" />
+      <h2 class="section-heading">{{ t('视频与导出') }}</h2>
+      <div class="settings-card">
+        <SettingRow :label="t('保存格式')"><SegmentedControl v-model="recordingFormat" :label="t('保存格式')" :options="[{ value: 'mp4', label: 'MP4', disabled: !!capabilities?.formats && !capabilities.formats.includes('mp4') }, { value: 'gif', label: 'GIF', disabled: !!capabilities?.formats && !capabilities.formats.includes('gif') }]" /></SettingRow>
+        <SettingRow :label="t('帧率')"><SegmentedControl v-model="recordingFps" :label="t('帧率')" :options="(recordingFormat === 'gif' ? [10, 20] : [30, 60]).map(fps => ({ value: fps, label: `${fps} FPS`, disabled: !!capabilities?.frameRates && !capabilities.frameRates.includes(fps) }))" /></SettingRow>
+        <template v-if="recordingFormat === 'mp4'">
+          <SettingRow :label="t('画质')"><SegmentedControl v-model="recordingQuality" :label="t('画质')" :disabled="recordingMbps !== ''" :options="[{ value: 'economy', label: t('节省空间') }, { value: 'balanced', label: t('均衡') }, { value: 'high', label: t('高清') }]" /></SettingRow>
+          <SettingRow :label="t('码率（Mbps）')" for="record-bitrate"><input id="record-bitrate" v-model="recordingMbps" class="w-20 text-right" type="number" min="1" max="80" step="any" :placeholder="t('自动')" :aria-invalid="!!invalid" aria-describedby="record-preference-error" /></SettingRow>
+          <SettingRow :label="t('编码方式')"><SegmentedControl v-model="recordingEncoding" :label="t('编码方式')" :options="[{ value: 'auto', label: t('自动编码') }, { value: 'software', label: t('软件兼容') }]" /></SettingRow>
+        </template>
+      </div>
+      <h2 class="section-heading">{{ t('录制行为') }}</h2>
+      <div class="settings-card">
+        <SettingRow :label="t('倒计时')"><SegmentedControl v-model="recordingCountdown" :label="t('倒计时')" :options="[0, 3, 5].map(value => ({ value, label: value ? t('{0} 秒', { 0: value }) : t('无延时') }))" /></SettingRow>
+        <SettingRow :label="t('录制光标')" for="record-cursor"><SwitchControl id="record-cursor" v-model="captureCursor" :disabled="disabled || capabilities?.captureCursor === false" /></SettingRow>
+        <SettingRow :label="t('录制时收起主界面')" for="record-hide"><SwitchControl id="record-hide" v-model="hideMainWindow" :disabled="disabled" /></SettingRow>
+      </div>
+      <RecordingInputSettings v-model="recordingEffects" :disabled="disabled" rows />
+      <RecordingFileSettings ref="fileSettings" :disabled="disabled" :format="recordingFormat" @changed="emit('directoryChanged')"><slot name="directory" /></RecordingFileSettings>
     </fieldset>
     <p v-if="invalid" id="record-preference-error" class="notice error" role="alert">{{ t(invalid) }}</p>
     <p v-if="message" class="notice" role="status">{{ t(message) }}</p>
@@ -59,10 +64,4 @@ defineExpose({ save })
 
 <style scoped>
 fieldset { margin:0; padding:0; border:0; min-width:0; }
-legend { float:left; width:100%; }
-legend + div { clear:both; }
-.setting-row :deep(.select-trigger), .setting-row input[type=number] { width:180px; }
-.settings-note { color:var(--desk-muted); font-size:12px; line-height:1.7; margin:10px 0; }
-.recording-effects-settings { margin-top:20px; }
-.settings-actions { display:flex; flex-wrap:wrap; align-items:center; gap:12px; padding:16px 0; }
 </style>

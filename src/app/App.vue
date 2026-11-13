@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import InfoTip from '@/shared/ui/InfoTip.vue'
 import { handleWindowEscape as handleEscape } from '@/shared/ui/escape'
 import { useAutoSave } from '@/shared/ui/use-auto-save'
 import SelectControl from '@/shared/ui/SelectControl.vue'
@@ -7,7 +6,10 @@ import SettingRow from '@/shared/ui/SettingRow'
 import { updateSettings } from '@/features/settings/settings-write'
 import { t, te } from '@/shared/i18n/i18n'
 import { computed, defineAsyncComponent, onMounted, onUnmounted, ref, watch } from 'vue'
-import { Camera, Timer, Keyboard, Info, Scan, Languages, KeyRound, PanelLeftClose, Pin, Video, ClipboardList, ArrowLeftRight, CircleHelp, Settings as SettingsIcon, FileText, Check } from 'lucide-vue-next'
+import { Camera, Keyboard, Info, Scan, Languages, Pin, Video, ClipboardList, Settings as SettingsIcon, FileText, Search, X } from 'lucide-vue-next'
+import SwitchControl from '@/shared/ui/SwitchControl'
+import SegmentedControl from '@/shared/ui/SegmentedControl.vue'
+import ToolHero from '@/shared/ui/ToolHero.vue'
 const DiagnosticsSettings = defineAsyncComponent(() => import('@/features/diagnostics/components/DiagnosticsSettings.vue'))
 const ConfigTransferSettings = defineAsyncComponent(() => import('@/features/settings/components/ConfigTransferSettings.vue'))
 const GeneralSettings = defineAsyncComponent(() => import('@/features/settings/components/GeneralSettings.vue'))
@@ -42,13 +44,43 @@ const page = ref('截图')
 function prefetchPage(name: string) {
   if (name === '录屏') void loadRecordingPanel().catch(() => {})
 }
-// 导航按操作、配置与支持分组，日志拥有独立页面。
+// 导航按操作、配置与支持分组；关键词让搜索也能命中页面内的设置项。
 const groups = [
-  { name: '工具', items: [{ name: '截图', icon: Camera }, { name: '录屏', icon: Video }, { name: '贴图', icon: Pin }, { name: '剪贴板', icon: ClipboardList }] },
-  { name: '设置', items: [{ name: '通用', icon: SettingsIcon }, { name: '快捷键', icon: Keyboard }, { name: '导入/导出', icon: ArrowLeftRight }, { name: '文字识别', icon: Scan }, { name: '翻译', icon: Languages }, { name: '服务管理', icon: KeyRound }] },
-  { name: '支持', items: [{ name: '日志', icon: FileText }, { name: '帮助', icon: CircleHelp }, { name: '关于', icon: Info }] },
+  { name: '工具', items: [
+    { name: '截图', icon: Camera, keywords: '区域 延时 光标 吸附 保存 格式 文件名 capture screenshot delay format' },
+    { name: '录屏', icon: Video, keywords: 'mp4 gif 帧率 画质 码率 编码 倒计时 键鼠 特效 record video fps' },
+    { name: '贴图', icon: Pin, keywords: '阴影 边框 圆角 外观 pin shadow border' },
+    { name: '剪贴板', icon: ClipboardList, keywords: '历史 记录 清理 粘贴 排除 暂存架 clipboard history shelf' },
+  ] },
+  { name: '设置', items: [
+    { name: '通用', icon: SettingsIcon, keywords: '外观 主题 深色 语言 开机 自启 字体 目录 导入 导出 配置 备份 theme language startup font directory import export' },
+    { name: '快捷键', icon: Keyboard, keywords: '按键 冲突 检测 shortcut hotkey' },
+    { name: '识别与翻译', icon: Languages, keywords: 'ocr 文字识别 翻译 服务 模型 语言包 密钥 deepl openai deepseek groq paddle translate service' },
+  ] },
+  { name: '支持', items: [
+    { name: '日志', icon: FileText, keywords: '记录级别 诊断 排错 logs diagnostics' },
+    { name: '关于与帮助', icon: Info, keywords: '版本 更新 测试版 引导 帮助 许可 about help update version' },
+  ] },
 ]
-const pageGroup = computed(() => groups.find(group => group.items.some(item => item.name === page.value))?.name ?? '')
+type RecognitionTab = 'ocr' | 'translation' | 'services'
+const recognitionTab = ref<RecognitionTab>('ocr')
+const recognitionTabs: { value: RecognitionTab; label: string }[] = [{ value: 'ocr', label: '文字识别' }, { value: 'translation', label: '翻译' }, { value: 'services', label: '服务管理' }]
+// 旧页面名（引导、帮助链接、外部入口）映射到合并后的页面。
+const pageAliases: Record<string, { page: string; tab?: RecognitionTab }> = {
+  '文字识别': { page: '识别与翻译', tab: 'ocr' }, '翻译': { page: '识别与翻译', tab: 'translation' }, '服务管理': { page: '识别与翻译', tab: 'services' },
+  '帮助': { page: '关于与帮助' }, '关于': { page: '关于与帮助' }, '导入/导出': { page: '通用' },
+}
+function navigate(name: string) {
+  const alias = pageAliases[name]
+  if (alias?.tab) recognitionTab.value = alias.tab
+  page.value = alias?.page ?? name
+}
+const query = ref('')
+const visibleGroups = computed(() => {
+  const value = query.value.trim().toLowerCase()
+  if (!value) return groups
+  return groups.map(group => ({ ...group, items: group.items.filter(item => `${item.name} ${t(item.name)} ${item.keywords}`.toLowerCase().includes(value)) })).filter(group => group.items.length)
+})
 const status = ref<AppStatus | null>(null)
 const pending = ref(false)
 const saving = ref(false)
@@ -218,45 +250,52 @@ onUnmounted(() => { disposed = true; window.removeEventListener('keydown', key);
 <template>
   <div class="app-shell">
     <aside class="sidebar">
-      <div class="brand"><span class="brand-icon"><Scan :size="23" /></span><div>Snap Desk</div></div>
-      <nav v-for="group in groups" :key="group.name" :aria-label="t(group.name)"><div class="nav-caption">{{ t(group.name) }}</div><button v-for="item in group.items" :key="item.name" :class="['nav-item', { active: page === item.name }]" :aria-current="page === item.name ? 'page' : undefined" :data-onboarding="`nav-${item.name}`" @pointerenter="prefetchPage(item.name)" @focus="prefetchPage(item.name)" @click="page = item.name"><component :is="item.icon" :size="18" />{{ t(item.name) }}<span v-if="item.name === '关于' && availableUpdate" class="nav-update-dot" role="status" :aria-label="t('发现新版本')" :title="t('发现新版本')" /></button></nav>
-      <div class="sidebar-bottom"><span v-if="status" class="version-dot" /> {{ status ? `v${status.version}` : t('版本待读取') }}</div>
+      <div class="brand"><span class="brand-icon"><Scan :size="14" :stroke-width="2.4" /></span>Snap Desk</div>
+      <label class="nav-search"><Search :size="14" aria-hidden="true" /><input v-model="query" type="search" :placeholder="t('搜索')" :aria-label="t('搜索设置')" /></label>
+      <nav v-for="group in visibleGroups" :key="group.name" :aria-label="t(group.name)"><div class="nav-caption">{{ t(group.name) }}</div><button v-for="item in group.items" :key="item.name" :class="['nav-item', { active: page === item.name }]" :aria-current="page === item.name ? 'page' : undefined" :data-onboarding="`nav-${item.name}`" @pointerenter="prefetchPage(item.name)" @focus="prefetchPage(item.name)" @click="navigate(item.name)"><component :is="item.icon" />{{ t(item.name) }}<span v-if="item.name === '关于与帮助' && availableUpdate" class="nav-update-dot" role="status" :aria-label="t('发现新版本')" :title="t('发现新版本')" /></button></nav>
+      <p v-if="!visibleGroups.length" class="nav-empty">{{ t('没有匹配的页面') }}</p>
+      <div class="sidebar-bottom"><span v-if="status" class="version-dot" />{{ status ? `v${status.version}` : t('版本待读取') }}</div>
     </aside>
     <main class="workspace">
-      <header class="topbar"><div class="page-breadcrumb"><span>{{ t(pageGroup) }}</span><span aria-hidden="true">/</span><h1>{{ t(page) }}</h1></div><div class="flex items-center gap-2"><Button variant="ghost" :disabled="locked" :aria-pressed="status?.settings.shortcutsEnabled" :title="t(status?.settings.shortcutsEnabled ? '禁用全部全局快捷键' : '启用全部全局快捷键')" @click="toggleShortcuts"><Check v-if="status?.settings.shortcutsEnabled && !status.shortcutError" :size="15" class="status-check" /><Keyboard v-else :size="15" />{{ t('快捷键') }} {{ !status ? t('未读取') : status.shortcutError ? t('注册异常') : status.settings.shortcutsEnabled ? t('已启用') : t('已禁用') }}</Button><Button variant="ghost" :title="t('隐藏主窗口，保留托盘运行')" :disabled="!desktop" @click="hide"><PanelLeftClose :size="15" />{{ t('收起') }}</Button></div></header>
+      <header class="topbar">
+        <h1>{{ t(page) }}</h1>
+        <div class="topbar-status">
+          <span v-if="status?.shortcutError" class="status-error" role="status">{{ t('注册异常') }}</span>
+          <label for="shortcuts-enabled">{{ t('全局快捷键') }}</label>
+          <SwitchControl id="shortcuts-enabled" class="switch-small" :model-value="status?.settings.shortcutsEnabled === true" :disabled="locked" :title="t(status?.settings.shortcutsEnabled ? '禁用全部全局快捷键' : '启用全部全局快捷键')" @update:model-value="toggleShortcuts" />
+        </div>
+      </header>
       <div class="page-content" :data-page="page" :class="{ 'logs-page': page === '日志' }">
-        <UpdateNotice :show-trigger="page !== '关于'" @version="availableUpdate = $event" />
+        <UpdateNotice :show-trigger="page !== '关于与帮助'" @version="availableUpdate = $event" />
         <div v-if="initializing" class="notice" role="status">{{ t("正在读取应用设置…") }}</div>
         <div v-if="!desktop" class="notice">{{ t('请在桌面应用中使用截图和快捷键。') }}</div>
         <div v-if="error || status?.shortcutError" class="notice error" role="alert">{{ te(error || status?.shortcutError) }}<Button v-if="initializationFailed" variant="outline" :disabled="initializing" @click="initialize">{{ t('重新连接') }}</Button></div>
         <div v-if="status?.configWarning" class="notice" role="alert">{{ te(status.configWarning) }}</div>
         <div v-if="remaining > 0" class="notice flex items-center justify-between" role="status"><span>{{ remaining }} {{ t('秒后截图，可切换到目标窗口；再次按截图快捷键可取消。') }}</span><Button variant="outline" @click="cancelPending">{{ t('取消截图') }}</Button></div>
 
-        <OnboardingGuide v-if="onboarding && status" :busy="completingOnboarding" :error="onboardingError" @complete="completeOnboarding" @navigate="page = $event" />
+        <OnboardingGuide v-if="onboarding && status" :busy="completingOnboarding" :error="onboardingError" @complete="completeOnboarding" @navigate="navigate" />
         <template v-if="page === '截图'">
-          <section class="capture-panel" :aria-label='t("截图操作")'>
-            <div class="capture-controls" data-onboarding="capture-controls">
-              <div class="capture-delay">
-                <label for="quick-delay"><Timer :size="16" aria-hidden="true" />{{ t('延时') }}</label>
-                <!-- 主页使用同一设置保存接口，确保按钮、托盘和快捷键的延时一致。 -->
-                <SelectControl id="quick-delay" :model-value="status?.settings.delaySeconds ?? 0" :options="[{ value: 0, label: t('无延时') }, { value: 3, label: t('3 秒') }, { value: 5, label: t('5 秒') }]" :disabled="locked" @update:model-value="changeDelay" />
-              </div>
-              <Button class="capture-start" :disabled="locked" @click="start"><Camera :size="16" aria-hidden="true" />{{ remaining > 0 ? `${remaining} ${t('秒后截图')}` : pending ? t('正在准备…') : t('开始截图') }}</Button>
+          <ToolHero :icon="Camera" :title="t('区域截图')" :shortcut="status?.settings.shortcutsEnabled ? status.settings.shortcuts.capture : ''" data-onboarding="capture-controls">
+            <Button :disabled="locked" @click="start">{{ remaining > 0 ? `${remaining} ${t('秒后截图')}` : pending ? t('正在准备…') : t('开始截图') }}</Button>
+          </ToolHero>
+          <form @submit.prevent @input="captureAutoSave.schedule" @change="captureAutoSave.commit" @focusout="captureAutoSave.flush">
+            <h2 class="section-heading">{{ t('截图') }}<button type="button" :disabled="locked" @click="resetCapture">{{ t('恢复默认') }}</button></h2>
+            <div class="settings-card">
+              <!-- 主页使用同一设置保存接口，确保按钮、托盘和快捷键的延时一致。 -->
+              <SettingRow :label="t('延时')"><SegmentedControl :model-value="status?.settings.delaySeconds ?? 0" :label="t('延时')" :options="[{ value: 0, label: t('无延时') }, { value: 3, label: t('3 秒') }, { value: 5, label: t('5 秒') }]" :disabled="locked" @update:model-value="changeDelay" /></SettingRow>
+              <SettingRow :label="t('截图包含光标')" for="screenshot-cursor"><SwitchControl id="screenshot-cursor" v-model="draft.screenshotCursor" :disabled="locked || status?.platform !== 'windows'" @change="captureAutoSave.commit" /></SettingRow>
+              <SettingRow :label="t('窗口 / 元素吸附')" for="screenshot-snap"><SwitchControl id="screenshot-snap" v-model="draft.screenshotSnap" :disabled="locked || status?.platform !== 'windows'" @change="captureAutoSave.commit" /></SettingRow>
+              <SettingRow :label="t('框选完成后')" for="screenshot-after" :hint="draft.screenshotAfter === 'none' ? '' : t('按住 Ctrl 框选可保留工具栏')"><SelectControl id="screenshot-after" v-model="draft.screenshotAfter" :disabled="locked" :options="[{ value: 'none', label: t('显示工具栏') }, { value: 'copy', label: t('直接复制') }, { value: 'pin', label: t('直接贴图') }, { value: 'save', label: t('直接保存') }]" @update:model-value="captureAutoSave.commit" /></SettingRow>
             </div>
-          </section>
-
-          <h2 class="section-heading">{{ t('截图设置') }}</h2>
-          <form class="settings-card mb-5" @submit.prevent @input="captureAutoSave.schedule" @change="captureAutoSave.commit" @focusout="captureAutoSave.flush">
-            <div class="setting-row"><label for="screenshot-cursor">{{ t('截图包含光标') }}</label><input id="screenshot-cursor" v-model="draft.screenshotCursor" type="checkbox" :disabled="locked || status?.platform !== 'windows'" /></div>
-            <div class="setting-row"><label for="screenshot-snap">{{ t('窗口 / 元素吸附') }}</label><input id="screenshot-snap" v-model="draft.screenshotSnap" type="checkbox" :disabled="locked || status?.platform !== 'windows'" /></div>
-            <SettingRow :label="t('框选完成后')" for="screenshot-after" :tip="t('直接执行时不显示工具栏；按住 Ctrl 框选可临时保留工具栏。录屏和截图翻译不受影响。')"><SelectControl id="screenshot-after" v-model="draft.screenshotAfter" :disabled="locked" :options="[{ value: 'none', label: t('显示工具栏') }, { value: 'copy', label: t('直接复制') }, { value: 'pin', label: t('直接贴图') }, { value: 'save', label: t('直接保存') }]" @update:model-value="captureAutoSave.commit" /></SettingRow>
             <h2 class="section-heading">{{ t("文件与导出") }}</h2>
-            <div class="setting-row"><label for="export-format">{{ t('保存格式') }}</label><SelectControl id="export-format" v-model="draft.export.format" :disabled="locked" :options="[{ value: 'png', label: t('PNG · 无损透明') }, { value: 'jpeg', label: t('JPEG · 白底') }, { value: 'webp', label: t('WebP · 无损透明') }]" @update:model-value="captureAutoSave.commit" /></div>
-            <div v-if="draft.export.format === 'jpeg'" class="setting-row"><label for="jpeg-quality">{{ t('JPEG 质量') }}</label><input id="jpeg-quality" v-model.number="draft.export.jpegQuality" type="number" min="1" max="100" step="1" required :disabled="locked" class="w-24 rounded-lg border border-zinc-200 px-3 py-2" /></div>
-            <div class="setting-row"><label for="filename-prefix">{{ t('文件名前缀') }}</label><input id="filename-prefix" v-model="draft.export.filenamePrefix" required :disabled="locked" class="w-48 rounded-lg border border-zinc-200 px-3 py-2 text-sm" /></div>
-            <div class="setting-row"><div class="flex items-center gap-1"><label for="filename-dimensions">{{ t('文件名包含图片尺寸') }}</label><InfoTip :text="t('示例：') + exportFilenamePreview(draft.export)" /></div><input id="filename-dimensions" v-model="draft.export.includeDimensions" type="checkbox" :disabled="locked" /></div>
-            <div class="setting-row"><label for="remember-directory">{{ t('记住上次保存目录') }}</label><input id="remember-directory" v-model="draft.export.rememberDirectory" type="checkbox" :disabled="locked" /></div>
-            <div class="flex flex-wrap items-center gap-2 py-3"><Button type="button" variant="outline" :disabled="locked" @click="resetCapture">{{ t('恢复默认') }}</Button><span class="settings-save-status" role="status" v-if="captureAutoSave.saving.value || captureAutoSave.saved.value" :class="{ 'status-ok': !captureAutoSave.saving.value }"><Check v-if="!captureAutoSave.saving.value" :size="14" class="status-check" />{{ captureAutoSave.saving.value ? t('正在保存…') : t('已自动保存') }}</span></div>
+            <div class="settings-card">
+              <SettingRow :label="t('保存格式')"><SegmentedControl v-model="draft.export.format" :label="t('保存格式')" :disabled="locked" :options="[{ value: 'png', label: 'PNG' }, { value: 'jpeg', label: 'JPEG' }, { value: 'webp', label: 'WebP' }]" @update:model-value="captureAutoSave.commit" /></SettingRow>
+              <SettingRow v-if="draft.export.format === 'jpeg'" :label="t('JPEG 质量')" for="jpeg-quality"><input id="jpeg-quality" v-model.number="draft.export.jpegQuality" type="number" min="1" max="100" step="1" required :disabled="locked" class="w-20 text-right" /></SettingRow>
+              <SettingRow :label="t('文件名前缀')" for="filename-prefix" :hint="t('示例：') + exportFilenamePreview(draft.export)"><input id="filename-prefix" v-model="draft.export.filenamePrefix" required :disabled="locked" class="w-44" /></SettingRow>
+              <SettingRow :label="t('文件名包含图片尺寸')" for="filename-dimensions"><SwitchControl id="filename-dimensions" v-model="draft.export.includeDimensions" :disabled="locked" @change="captureAutoSave.commit" /></SettingRow>
+              <SettingRow :label="t('记住上次保存目录')" for="remember-directory"><SwitchControl id="remember-directory" v-model="draft.export.rememberDirectory" :disabled="locked" @change="captureAutoSave.commit" /></SettingRow>
+            </div>
+            <p v-if="captureAutoSave.saving.value || captureAutoSave.saved.value" class="settings-save-status" role="status" :class="{ 'status-ok': !captureAutoSave.saving.value }">{{ captureAutoSave.saving.value ? t('正在保存…') : t('已自动保存') }}</p>
             <p v-if="captureAutoSave.error.value" class="notice error" role="alert">{{ te(captureAutoSave.error.value) }} <Button type="button" variant="ghost" @click="captureAutoSave.retry">{{ t('重试') }}</Button></p>
           </form>
         </template>
@@ -267,33 +306,41 @@ onUnmounted(() => { disposed = true; window.removeEventListener('keydown', key);
           <ShelfSettings />
         </section>
         <DiagnosticsSettings v-else-if="page === '日志'" />
-        <GeneralSettings v-else-if="page === '通用'">
-          <AppearanceSettings :busy="locked" :saved="savedSection === '通用'" @save="saveAppearance" />
-        </GeneralSettings>
-        <ConfigTransferSettings v-else-if="page === '导入/导出'" :prepare-transfer="prepareConfigTransfer" />
-        <OcrSettings v-else-if="page === '文字识别'" />
-        <AiProviderSettings v-else-if="page === '翻译'" />
-        <ServiceSettings v-else-if="page === '服务管理'" />
-        <SupportPages v-else-if="page === '帮助' || page === '关于'" :page="page" :version="status?.version" :shortcuts="status?.settings.shortcuts" :busy="!status || completingOnboarding" @navigate="page = $event" @onboarding="onboardingError = ''; onboarding = true" @project="openProject" />
-        <RecordingPanel v-else-if="page === '录屏'" />
-        <PinManager v-else-if="page === '贴图'" />
+        <template v-else-if="page === '通用'">
+          <GeneralSettings>
+            <AppearanceSettings :busy="locked" :saved="savedSection === '通用'" @save="saveAppearance" />
+          </GeneralSettings>
+          <ConfigTransferSettings :prepare-transfer="prepareConfigTransfer" />
+        </template>
+        <template v-else-if="page === '识别与翻译'">
+          <div class="page-tabs"><div class="segmented-control" role="tablist" :aria-label="t('识别与翻译')"><button v-for="tab in recognitionTabs" :key="tab.value" type="button" role="tab" :aria-selected="recognitionTab === tab.value" @click="recognitionTab = tab.value">{{ t(tab.label) }}</button></div></div>
+          <OcrSettings v-if="recognitionTab === 'ocr'" />
+          <AiProviderSettings v-else-if="recognitionTab === 'translation'" />
+          <ServiceSettings v-else @open-tab="recognitionTab = $event" />
+        </template>
+        <SupportPages v-else-if="page === '关于与帮助'" :version="status?.version" :busy="!status || completingOnboarding" @navigate="navigate" @onboarding="onboardingError = ''; onboarding = true" @project="openProject" />
+        <RecordingPanel v-else-if="page === '录屏'" :shortcut="status?.settings.shortcutsEnabled ? status.settings.shortcuts.record : ''" />
+        <PinManager v-else-if="page === '贴图'" :shortcut="status?.settings.shortcutsEnabled ? status.settings.shortcuts.pin : ''" />
         <template v-else-if="page === '快捷键'">
-          <form class="settings-card" @submit.prevent>
-            <div v-for="action in shortcutActions" :key="action.key" class="setting-row flex-wrap gap-3" :data-onboarding="action.key === 'capture' ? 'shortcut-settings' : undefined">
-              <span>{{ t(action.label) }}</span>
-              <div class="flex flex-wrap items-center gap-2">
-                <ShortcutInput v-model="draft.shortcuts[action.key]" :label="action.label" :title="t(action.description)" :disabled="locked" :validate="value => validateShortcuts({ ...draft.shortcuts, [action.key]: value })" @editing="editingShortcut = $event; if (!$event) shortcutAutoSave.flush()" @error="error = $event" @update:model-value="shortcutAutoSave.schedule" />
-                <Button type="button" variant="ghost" :disabled="locked || !draft.shortcuts[action.key]" @click="draft.shortcuts[action.key] = ''; shortcutAutoSave.commit()">{{ t('禁用') }}</Button>
-                <Button type="button" variant="ghost" :disabled="locked" @click="draft.shortcuts[action.key] = defaultSettings().shortcuts[action.key]; shortcutAutoSave.commit()">{{ t('默认') }}</Button>
+          <form @submit.prevent>
+            <h2 class="section-heading">{{ t('全局快捷键') }}<button type="button" :disabled="locked" @click="resetShortcuts">{{ t('恢复默认') }}</button></h2>
+            <div class="settings-card">
+              <div v-for="action in shortcutActions" :key="action.key" class="setting-row" :data-onboarding="action.key === 'capture' ? 'shortcut-settings' : undefined">
+                <span>{{ t(action.label) }}</span>
+                <div class="flex items-center gap-2">
+                  <ShortcutInput v-model="draft.shortcuts[action.key]" :label="action.label" :title="t(action.description)" :disabled="locked" :validate="value => validateShortcuts({ ...draft.shortcuts, [action.key]: value })" @editing="editingShortcut = $event; if (!$event) shortcutAutoSave.flush()" @error="error = $event" @update:model-value="shortcutAutoSave.schedule" />
+                  <button v-if="draft.shortcuts[action.key]" type="button" class="shortcut-clear" :disabled="locked" :title="t('禁用')" :aria-label="t('禁用{0}快捷键', { 0: t(action.label) })" @click="draft.shortcuts[action.key] = ''; shortcutAutoSave.commit()"><X :size="10" :stroke-width="3" /></button>
+                </div>
               </div>
             </div>
-            <div class="flex justify-end"><InfoTip :text="t('按键录入快捷键，清空可禁用；修改后自动生效。')" /></div>
-            <div class="flex flex-wrap items-center gap-2 py-3"><Button type="button" variant="outline" :disabled="locked" @click="resetShortcuts">{{ t('恢复默认') }}</Button><Button type="button" variant="ghost" :disabled="locked" @click="copyShortcutExample">{{ shortcutExampleCopied ? t('示例已复制') : t('复制示例配置') }}</Button><span class="settings-save-status" role="status" v-if="shortcutAutoSave.saving.value || shortcutAutoSave.saved.value" :class="{ 'status-ok': !shortcutAutoSave.saving.value }"><Check v-if="!shortcutAutoSave.saving.value" :size="14" class="status-check" />{{ shortcutAutoSave.saving.value ? t('正在保存…') : t('已自动保存') }}</span></div>
+            <p v-if="shortcutAutoSave.saving.value || shortcutAutoSave.saved.value" class="settings-save-status" role="status" :class="{ 'status-ok': !shortcutAutoSave.saving.value }">{{ shortcutAutoSave.saving.value ? t('正在保存…') : t('已自动保存') }}</p>
             <p v-if="shortcutAutoSave.error.value" class="notice error" role="alert">{{ te(shortcutAutoSave.error.value) }} <Button type="button" variant="ghost" @click="shortcutAutoSave.retry">{{ t('重试') }}</Button></p>
           </form>
         </template>
 
-        <ShortcutCompatibility v-show="page === '快捷键'" :disabled="locked" @testing="testingShortcuts = $event" />
+        <ShortcutCompatibility v-show="page === '快捷键'" :disabled="locked" @testing="testingShortcuts = $event">
+          <div class="setting-row"><span>{{ t('示例配置') }}</span><Button type="button" variant="outline" :disabled="locked" @click="copyShortcutExample">{{ shortcutExampleCopied ? t('已复制') : t('复制') }}</Button></div>
+        </ShortcutCompatibility>
       </div>
     </main>
   </div>

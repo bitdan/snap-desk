@@ -127,7 +127,8 @@ pub async fn probe_shortcuts(app: AppHandle, window: WebviewWindow) -> Result<Pr
             return Ok(report);
         }
         let state = app.state::<ProbeState>();
-        let deadline = Instant::now() + Duration::from_secs(8);
+        // 最长等待五秒；在外部窗口收到第一次按键后立即结束，不必等满时长。
+        let deadline = Instant::now() + Duration::from_secs(5);
         {
             let mut probe = state.0.lock().map_err(|e| e.to_string())?;
             if probe.active(Instant::now()) {
@@ -151,6 +152,14 @@ pub async fn probe_shortcuts(app: AppHandle, window: WebviewWindow) -> Result<Pr
                 if target.pid != std::process::id() {
                     report.target = Some(target);
                 }
+            }
+            let received_external = state
+                .0
+                .lock()
+                .map(|probe| probe.received.iter().any(|receipt| receipt.foreground_pid != std::process::id()))
+                .unwrap_or(false);
+            if received_external {
+                break;
             }
             std::thread::sleep(Duration::from_millis(250));
         }

@@ -1,7 +1,6 @@
 import type { RecognitionService } from '@/features/recognition/services'
 import { defaultPinAppearance } from '@/features/pins/pins'
 import type { PinAppearance } from '@/features/pins/types'
-import { t } from '@/shared/i18n/i18n'
 import type { Appearance } from '@/shared/ui/appearance'
 import { defaultOcrSettings, type OcrSettings } from '@/features/recognition/ocr'
 import { defaultAiSettings, type AiSettings } from '@/features/recognition/ai'
@@ -44,9 +43,19 @@ export function defaultSettings(): Settings {
   } }
 }
 
-export function exportFilenamePreview(value: ExportSettings): string {
+/** 与原生端一致的本地日期时间片段：YYYYMMDD-HHMMSS，可选毫秒。 */
+export function filenameStamp(now = new Date(), millis = false): string {
+  const pad = (value: number, size = 2) => String(value).padStart(size, '0')
+  const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`
+  return millis ? `${stamp}-${pad(now.getMilliseconds(), 3)}` : stamp
+}
+export function exportFilenamePreview(value: ExportSettings, now = new Date()): string {
   const dimensions = value.includeDimensions ? '-1920x1080' : ''
-  return t('{0}-时间戳{1}.{2}', { 0: value.filenamePrefix, 1: dimensions, 2: value.format === 'jpeg' ? 'jpg' : value.format })
+  return `${value.filenamePrefix}-${filenameStamp(now)}${dimensions}.${value.format === 'jpeg' ? 'jpg' : value.format}`
+}
+/** 录屏文件名另带毫秒与随机标识，避免同一秒内的多段录制重名。 */
+export function recordingFilenamePreview(prefix: string, includeDimensions: boolean, format: string, now = new Date()): string {
+  return `${prefix}-Recording-${filenameStamp(now, true)}-a1b2${includeDimensions ? '-1920x1080' : ''}.${format}`
 }
 
 /** 与 Rust 同时校验；number 输入清空后可能为字符串，不能把无效值传给 IPC。 */

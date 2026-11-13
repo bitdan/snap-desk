@@ -14,11 +14,11 @@ describe('导出设置', () => {
   })
   it('预览对齐格式扩展名与可选尺寸', () => {
     const settings = defaultSettings().export
-    expect(exportFilenamePreview(settings)).toBe('SnapDesk-时间戳.png')
+    expect(exportFilenamePreview(settings, new Date(2026, 10, 13, 14, 30, 5))).toBe('SnapDesk-20261113-143005.png')
     settings.format = 'jpeg'; settings.includeDimensions = true
-    expect(exportFilenamePreview(settings)).toBe('SnapDesk-时间戳-1920x1080.jpg')
+    expect(exportFilenamePreview(settings, new Date(2026, 10, 13, 14, 30, 5))).toBe('SnapDesk-20261113-143005-1920x1080.jpg')
     settings.format = 'webp'
-    expect(exportFilenamePreview(settings)).toBe('SnapDesk-时间戳-1920x1080.webp')
+    expect(exportFilenamePreview(settings, new Date(2026, 10, 13, 14, 30, 5))).toBe('SnapDesk-20261113-143005-1920x1080.webp')
   })
   it('拒绝路径、控制字符、空白或过长前缀', () => {
     for (const filenamePrefix of ['', '../escape', 'a\\b', 'a:b', ' a', 'a ', '.', '..', 'a\n', 'a\u0085b', '字'.repeat(49)]) {

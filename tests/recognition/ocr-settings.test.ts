@@ -1,3 +1,4 @@
+vi.mock('../../src/shared/ui/DetachedWindow.vue', async () => ({ default: (await import('../helpers/detached-window')).DetachedWindowStub }))
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { h } from 'vue'
 import { webcrypto } from 'node:crypto'
@@ -126,7 +127,8 @@ it('在线引擎只绑定支持图片的连接，不改变翻译配置，也不�
   expect(settings.ocr).toMatchObject({ provider: 'service', serviceId: 'vision' })
   expect(settings.ai.provider).toBe('local-ctranslate2')
   expect(findNode(root, node => node.type === 'paddle-resources')).toBeUndefined()
-  expect(findNode(root, node => node.type === 'button' && node.props.title === 'OCR 会将选区图片发送到此服务，可能产生费用。')?.props['aria-label']).toBe('OCR 会将选区图片发送到此服务，可能产生费用。')
+  // 费用提示直接显示在配置弹窗里，不只放在 tooltip 中。
+  expect(text(root)).toContain('OCR 会将选区图片发送到此服务，可能产生费用。')
 })
 
 
@@ -141,9 +143,7 @@ it('未配置时也显示在线 OCR，当前页保存密钥后启用服务，不
   expect(text(engine('preset:ocr-space'))).not.toContain('当前使用')
   expect(api.saveSettings).not.toHaveBeenCalled()
   expect(text(root)).not.toContain('1 MB/文件')
-  const info = findNode(root, node => node.type === 'button' && node.props.title === 'OCR 会将选区图片发送到此服务，可能产生费用。')!
-  expect(info.props.type).toBe('button')
-  expect(info.props['aria-label']).toBe(info.props.title)
+  expect(text(root)).toContain('OCR 会将选区图片发送到此服务，可能产生费用。')
   expect(findNode(root, node => node.props['aria-label'] === '服务预设')).toBeUndefined()
   const key = findNode(root, node => node.type === 'input' && node.props.type === 'password')!
   key.props['onUpdate:modelValue']('test-ocr-key')

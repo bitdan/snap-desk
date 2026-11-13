@@ -90,53 +90,70 @@ onMounted(() => {
   }, 2000)
 })
 onUnmounted(() => { disposed = true; if (timer) clearInterval(timer) })
+async function copyLogPath() { await api.copyAppDirectory('logs'); message.value = '日志路径已复制。' }
 </script>
 
 <template>
   <section class="diagnostics" aria-labelledby="diagnostics-heading">
-    <div class="diagnostics-toolbar">
-      <label id="diagnostics-heading">{{ t('记录级别') }} <SelectControl v-if="status" :model-value="status.level" :disabled="!desktop || busy || !status" :aria-label="t('记录级别')" :options="recordingLevels" @update:model-value="changeRecordingLevel" /></label>
-      <span role="status" :class="status && !status.error ? 'status-ok' : 'text-xs text-zinc-500'"><Check v-if="status && !status.error" :size="14" />{{ status?.error ? t("日志不可用") : status ? t('已就绪') : t("状态未读取") }}</span>
-      <Button variant="ghost" :disabled="!desktop || busy" @click="run(refresh)">{{ busy ? t("处理中…") : t("刷新") }}</Button>
-      <label class="diagnostics-live"><input :checked="live" :aria-label="t('自动刷新')" @change="changeLive" type="checkbox" :disabled="!desktop || !status || !!status.error" />{{ t('自动刷新') }}</label>
+    <h2 id="diagnostics-heading" class="section-heading">{{ t('记录') }}</h2>
+    <div class="settings-card">
+      <div class="setting-row">
+        <span>{{ t('记录级别') }}<small v-if="status?.level === 'DEBUG'">{{ t('会一直记录调试信息，问题解决后建议改回 INFO') }}</small></span>
+        <div class="flex items-center gap-3">
+          <span role="status" :class="status && !status.error ? 'status-ok' : 'text-xs text-zinc-500'"><Check v-if="status && !status.error" :size="14" />{{ status?.error ? t("日志不可用") : status ? t('已就绪') : t("状态未读取") }}</span>
+          <SelectControl v-if="status" :model-value="status.level" :disabled="!desktop || busy || !status" :aria-label="t('记录级别')" :options="recordingLevels" @update:model-value="changeRecordingLevel" />
+        </div>
+      </div>
     </div>
     <p v-if="status?.error || error" class="notice error" role="alert">{{ te(error || status?.error) }}</p>
     <p v-if="message" class="notice" role="status">{{ t(message) }}</p>
-    <div class="diagnostics-toolbar mt-3">
-      <label>{{ t("显示级别") }} <SelectControl v-model="level" :disabled="!desktop || busy" :aria-label="t('显示级别')" @update:model-value="run(() => readLogs())" :options="[{ value: '', label: 'ALL' }, ...['DEBUG', 'INFO', 'WARN', 'ERROR'].map(value => ({ value, label: value }))]" /></label>
-      <label>{{ t("模块") }} <SelectControl v-model="module" :disabled="!desktop || busy" :aria-label="t('模块')" @update:model-value="run(() => readLogs())" :options="[{ value: '', label: t('全部') }, ...modules.map(item => ({ value: item.value, label: t(item.label) }))]" /></label>
-      <input v-model="search" class="diagnostics-search" type="search" :aria-label='t("搜索已读取日志")' :placeholder='t("搜索事件名、错误码")' />
-    </div>
-    <div class="diagnostics-list" role="region" :aria-label='t("最近日志（最新在前）")' :aria-busy="busy" tabindex="0">
-      <p v-if="!visible.length" class="p-3 text-xs text-zinc-500">{{ busy ? t("正在读取…") : recent ? t("当前条件下没有日志。") : t("尚未读取日志。") }}</p>
-      <div v-for="(entry, index) in visible" :key="index" class="diagnostics-entry">
-        <span class="text-zinc-500">{{ entry.timestamp }}</span>
-        <strong :class="{ 'text-red-700': entry.level === 'ERROR', 'text-amber-700': entry.level === 'WARN' }">{{ entry.level }}</strong>
-        <span>{{ entry.module }}</span><code>{{ entry.message }}</code>
+    <h2 class="section-heading">{{ t('最近日志') }}<span class="diagnostics-heading-actions"><button type="button" :disabled="!desktop || busy" @click="run(refresh)">{{ busy ? t("处理中…") : t("刷新") }}</button><label class="diagnostics-live">{{ t('自动刷新') }}<input class="mini-switch" :checked="live" :aria-label="t('自动刷新')" type="checkbox" role="switch" :disabled="!desktop || !status || !!status.error" @change="changeLive" /></label></span></h2>
+    <div class="diagnostics-viewer">
+      <div class="diagnostics-filters">
+        <SelectControl v-model="level" :disabled="!desktop || busy" :aria-label="t('显示级别')" :options="[{ value: '', label: t('全部级别') }, ...['DEBUG', 'INFO', 'WARN', 'ERROR'].map(value => ({ value, label: value }))]" @update:model-value="run(() => readLogs())" />
+        <SelectControl v-model="module" :disabled="!desktop || busy" :aria-label="t('模块')" :options="[{ value: '', label: t('全部模块') }, ...modules.map(item => ({ value: item.value, label: t(item.label) }))]" @update:model-value="run(() => readLogs())" />
+        <input v-model="search" class="diagnostics-search" type="search" :aria-label='t("搜索已读取日志")' :placeholder='t("搜索事件名、错误码")' />
       </div>
+      <div class="diagnostics-list" role="region" :aria-label='t("最近日志（最新在前）")' :aria-busy="busy" tabindex="0">
+        <p v-if="!visible.length" class="diagnostics-empty">{{ busy ? t("正在读取…") : recent ? t("当前条件下没有日志。") : t("尚未读取日志。") }}</p>
+        <div v-for="(entry, index) in visible" :key="index" class="diagnostics-entry" :title="[entry.timestamp, entry.level, entry.module, entry.message].join(' ')">
+          <span class="entry-time">{{ entry.timestamp.slice(11, 19) || entry.timestamp }}</span>
+          <strong :class="'level-' + entry.level.toLowerCase()">{{ entry.level }}</strong>
+          <span class="entry-module">{{ entry.module }}</span><code>{{ entry.message }}</code>
+        </div>
+      </div>
+      <p v-if="recent" class="diagnostics-footer">{{ t("显示") }} {{ visible.length }} / {{ recent.entries.length }} {{ t("条 · 扫描") }} {{ (recent.scannedBytes / 1024).toFixed(0) }} {{ t("KB · 省略") }} {{ recent.omittedLines }} {{ t("条非白名单记录") }}{{ recent.truncated ? t(" · 已达读取或条数上限，非完整历史") : '' }}</p>
     </div>
-    <p v-if="recent" class="mt-2 text-xs text-zinc-500">{{ t("显示") }} {{ visible.length }} / {{ recent.entries.length }} {{ t("条 · 扫描") }} {{ (recent.scannedBytes / 1024).toFixed(0) }} {{ t("KB · 省略") }} {{ recent.omittedLines }} {{ t("条非白名单记录") }}{{ recent.truncated ? t(" · 已达读取或条数上限，非完整历史") : '' }}</p>
-    <div class="diagnostics-toolbar mt-3">
-      <Button variant="outline" :disabled="!desktop || busy" @click="run(() => api.openAppDirectory('logs'))">{{ t("打开日志目录") }}</Button>
-      <Button variant="ghost" :disabled="!desktop || busy || !status?.directory" @click="run(async () => { await api.copyAppDirectory('logs'); message = '日志路径已复制。' })">{{ t("复制路径") }}</Button>
-      <Button variant="outline" :disabled="!desktop || busy || !status?.exportSupported || !!status.error" @click="run(exportLogs)">{{ t("导出诊断包") }}</Button>
-      <Button variant="outline" :disabled="!desktop || busy || !status || !!status.error || !status.archives" @click="run(clearArchives)">{{ t("清理历史归档") }}</Button>
-
+    <h2 class="section-heading">{{ t('文件') }}</h2>
+    <div class="settings-card">
+      <div class="setting-row"><span>{{ t('日志目录') }}</span><div class="flex gap-2"><Button variant="outline" :disabled="!desktop || busy" @click="run(() => api.openAppDirectory('logs'))">{{ t("打开") }}</Button><Button variant="outline" :disabled="!desktop || busy || !status?.directory" @click="run(copyLogPath)">{{ t("复制路径") }}</Button></div></div>
+      <div class="setting-row"><span>{{ t('诊断包') }}</span><Button variant="outline" :disabled="!desktop || busy || !status?.exportSupported || !!status.error" @click="run(exportLogs)">{{ t("导出…") }}</Button></div>
+      <div class="setting-row"><span>{{ t('历史归档') }}</span><Button variant="outline" :disabled="!desktop || busy || !status || !!status.error || !status.archives" @click="run(clearArchives)">{{ t("清理") }}</Button></div>
     </div>
-    <p v-if="status && !status.exportSupported" class="mt-2 text-xs text-zinc-500">{{ t("此平台不支持导出，请打开日志目录。") }}</p>
   </section>
 </template>
 
 <style scoped>
-.diagnostics { display: flex; flex-direction: column; gap: 8px; min-height: 0; flex: 1; }
-.diagnostics h2 { font-size: 14px; font-weight: 600; margin: 0; }
-.diagnostics-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
-.diagnostics-toolbar label { display: flex; align-items: center; gap: 4px; font-size: 12px; }
-.diagnostics select, .diagnostics input { height: 32px; border: 1px solid #e1e4e8; border-radius: 4px; padding: 4px 8px; background: white; font-size: 13px; }
-.diagnostics .diagnostics-live input { width:14px; height:14px; padding:0; accent-color:#2563eb; }
-.diagnostics-search { flex: 1; min-width: 160px; }
-.diagnostics-list { flex: 1; min-height: 160px; overflow: auto; border: 1px solid #e1e4e8; border-radius: 4px; }
-.diagnostics-entry { display: flex; flex-wrap: wrap; gap: 4px 8px; padding: 8px; border-bottom: 1px solid #eee; font-size: 12px; }
-.diagnostics-entry code { flex:1; min-width:240px; overflow-wrap: anywhere; white-space: pre-wrap; }
-.diagnostics :is(select, input, .diagnostics-list):focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
+.diagnostics { display:flex; flex-direction:column; min-height:0; flex:1; }
+.diagnostics-heading-actions { display:flex; align-items:center; gap:12px; font-weight:400; }
+.diagnostics-heading-actions button { padding:0; border:0; background:transparent; font-size:12px; color:var(--desk-accent-fg,#3b5bdb); cursor:pointer; }
+.diagnostics-heading-actions button:disabled { opacity:.45; cursor:default; }
+.diagnostics-live { display:flex; align-items:center; gap:6px; font-size:12px; color:var(--desk-muted,#5f6670); }
+.diagnostics-viewer { display:flex; flex-direction:column; flex:1; min-height:240px; border:1px solid var(--desk-border,#e3e6ea); border-radius:8px; background:var(--desk-surface,#fff); overflow:hidden; }
+.diagnostics-filters { display:flex; align-items:center; gap:8px; padding:8px 10px; border-bottom:1px solid var(--desk-sep,#eceef1); }
+.diagnostics-filters :deep(.select-trigger) { min-width:0; font-size:12px; }
+.diagnostics-search { flex:1; min-width:120px; font-size:12px !important; }
+.diagnostics-list { flex:1; min-height:160px; overflow:auto; font:12px/1.5 ui-monospace,'SF Mono',Consolas,monospace; }
+.diagnostics-empty { margin:0; padding:12px; font-family:inherit; color:var(--desk-muted,#5f6670); }
+.diagnostics-entry { display:grid; grid-template-columns:58px 46px 84px minmax(0,1fr); gap:8px; padding:4px 12px; border-top:1px solid var(--desk-sep,#eceef1); }
+.diagnostics-entry:first-of-type { border-top:0; }
+.entry-time, .entry-module { color:var(--desk-muted,#5f6670); }
+.diagnostics-entry strong { font-weight:600; }
+.level-error { color:var(--desk-danger,#cf222e); }
+.level-warn { color:#9a6700; }
+.level-debug { color:var(--desk-muted,#5f6670); }
+.diagnostics-entry code { font:inherit; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.diagnostics-footer { margin:0; padding:6px 12px; border-top:1px solid var(--desk-sep,#eceef1); font-size:11px; color:var(--desk-muted,#5f6670); }
+.diagnostics-list:focus-visible { outline:2px solid var(--desk-accent,#3b5bdb); outline-offset:-2px; }
+:global([data-theme=dark]) .level-warn { color:#d29922; }
 </style>

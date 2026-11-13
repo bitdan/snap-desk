@@ -1,12 +1,16 @@
 <script setup lang="ts">
 import InfoTip from '@/shared/ui/InfoTip.vue'
+import SettingRow from '@/shared/ui/SettingRow'
+import SwitchControl from '@/shared/ui/SwitchControl'
+import SegmentedControl from '@/shared/ui/SegmentedControl.vue'
 import { computed } from 'vue'
 import { Keyboard, MousePointer2, Mouse, Route, MoveVertical, RotateCcw } from 'lucide-vue-next'
 import { t } from '@/shared/i18n/i18n'
 import { defaultInputEffects, type InputEffects } from '@/features/recording/recording'
 
 const model = defineModel<InputEffects>({ required: true })
-const props = defineProps<{ disabled: boolean }>()
+// rows：主窗口设置页的分组行布局；默认是录屏工具条菜单里的紧凑布局。
+const props = defineProps<{ disabled: boolean; rows?: boolean }>()
 const mouseToggles = [
   { field: 'clicks', label: '点击光圈', icon: Mouse },
   { field: 'movement', label: '鼠标移动尾迹', icon: MousePointer2 },
@@ -36,7 +40,20 @@ function reset() {
 </script>
 
 <template>
-  <section class="input-effects" :aria-label="t('键鼠特效')">
+  <section v-if="rows" class="input-effects-rows" :aria-label="t('键鼠特效')">
+    <h2 class="section-heading">{{ t('键鼠特效') }}<button type="button" :disabled="disabled" @click="reset">{{ t('恢复默认') }}</button></h2>
+    <div class="settings-card">
+      <SettingRow v-for="{ field, label } in mouseToggles" :key="field" :label="t(label)" :for="`effect-${field}`"><SwitchControl :id="`effect-${field}`" v-model="model[field]" :disabled="disabled" /></SettingRow>
+      <SettingRow :label="t('按键提示')" for="effect-keyboard" :hint="t('不记录普通文字输入')"><SwitchControl id="effect-keyboard" v-model="model.keyboard" :disabled="disabled" /></SettingRow>
+      <SettingRow v-if="model.keyboard" :label="t('按键位置')"><SegmentedControl v-model="model.position" :label="t('按键位置')" :disabled="disabled" :options="positions.map(([value, label]) => ({ value, label: t(label) }))" /></SettingRow>
+      <template v-if="anyEnabled">
+        <SettingRow :label="t('效果尺寸')" for="effect-size"><span class="effect-range"><input id="effect-size" v-model.number="model.size" type="range" min="12" max="64" :disabled="disabled" /><output>{{ model.size }} px</output></span></SettingRow>
+        <SettingRow :label="t('持续时间')" for="effect-duration"><span class="effect-range"><input id="effect-duration" v-model.number="model.durationMs" type="range" min="200" max="2000" step="100" :disabled="disabled" /><output>{{ model.durationMs }} ms</output></span></SettingRow>
+        <SettingRow v-for="{ field, label, enabled } in colors" v-show="enabled()" :key="field" :label="t(label)" :for="`effect-${field}`"><span class="effect-range"><input :id="`effect-${field}`" :value="hex(model[field])" type="color" :disabled="disabled" @input="changeColor(field, $event)" /><output>{{ hex(model[field]).toUpperCase() }}</output></span></SettingRow>
+      </template>
+    </div>
+  </section>
+  <section v-else class="input-effects" :aria-label="t('键鼠特效')">
     <header class="effects-header">
       <strong>{{ t('键鼠特效') }}</strong>
       <button type="button" class="effects-reset" :disabled="disabled" @click="reset"><RotateCcw :size="13" />{{ t('恢复默认') }}</button>
@@ -71,6 +88,10 @@ function reset() {
 </template>
 
 <style scoped>
+.effect-range { display:flex; align-items:center; gap:10px; }
+.effect-range input[type=range] { width:140px; }
+.effect-range input[type=color] { width:30px; height:22px; padding:0; border:0; border-radius:4px; background:transparent; cursor:pointer; }
+.effect-range output { min-width:56px; text-align:right; font-size:12px; color:var(--desk-muted,#5f6670); font-variant-numeric:tabular-nums; }
 .input-effects { --effect-border:#d8dee4; --effect-muted:#57606a; --effect-hover:#f0f3f6; --effect-track:#c2c9d1; font-size:13px; }
 .effects-header { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:0 2px 8px; }
 .effects-header strong { font-size:13px; font-weight:600; }

@@ -9,6 +9,7 @@ import { useAutoSave } from '@/shared/ui/use-auto-save'
 import { t, te } from '@/shared/i18n/i18n'
 import ServiceSettings from './ServiceSettings.vue'
 import ProviderMenu from './ProviderMenu.vue'
+import type { ProviderMenuItem } from './ProviderMenu.vue'
 import SelectControl from '@/shared/ui/SelectControl.vue'
 import Button from '@/shared/ui/button/Button.vue'
 import SwitchControl from '@/shared/ui/SwitchControl'
@@ -26,9 +27,9 @@ const system = ref<SystemOcrStatus | null>(null), checking = ref(false)
 // 有已保存连接时，用连接替代同供应商的添加入口，避免出现两个同名选项。
 const engineOptions = computed(() => {
   const available = services.value.filter(supportsOcr)
-  const option = (item: RecognitionService) => ({ value: `service:${item.id}`, label: item.name, description: item.model || t(serviceKind(item)), connection: connectionMode(item.endpoint) })
+  const option = (item: RecognitionService): ProviderMenuItem => ({ value: `service:${item.id}`, label: item.name, description: item.model || t(serviceKind(item)), connection: connectionMode(item.endpoint), presetId: servicePresetId(item), endpoint: item.endpoint })
   const presets = [{ id: 'ocr-space', label: 'OCR.space' }, { id: 'paddle-ocr', label: 'Paddle API' }, { id: 'deepseek', label: 'DeepSeek' }]
-  const cloud = presets.flatMap(preset => {
+  const cloud = presets.flatMap<ProviderMenuItem>(preset => {
     const saved = available.filter(item => servicePresetId(item) === preset.id)
     return saved.length ? saved.map(option) : [{ value: `preset:${preset.id}`, label: preset.label, description: '', connection: 'online' as const }]
   })
@@ -44,6 +45,11 @@ const engineOptions = computed(() => {
 const activeLabel = computed(() => {
   const item = engineOptions.value.find(item => item.value === activeMenu.value)
   return item ? [item.label, 'description' in item ? item.description : ''].filter(Boolean).join(' · ') : ''
+})
+const engineHint = computed(() => {
+  const selected = configuringPreset.value ? `preset:${configuringPreset.value}` : draft.value.provider === 'service' ? `service:${draft.value.serviceId}` : draft.value.provider
+  const item = engineOptions.value.find(option => option.value === selected)
+  return !item ? '' : item.connection === 'online' ? t('在线服务，图片会上传') : t('离线识别，图片不上传')
 })
 function selectEngine(value: string) {
   if (configuringBusy.value || !ready.value) return
@@ -103,12 +109,14 @@ onUnmounted(() => { disposed = true })
 </script>
 
 <template>
-  <div class="ocr-settings recognition-settings-layout">
-    <aside class="recognition-settings-sidebar"><ProviderMenu :model-value="configuringPreset ? `preset:${configuringPreset}` : draft.provider === 'service' ? `service:${draft.serviceId}` : draft.provider" :label="t('OCR 引擎')" :disabled="!ready || autosave.saving.value || configuringBusy" :options="engineOptions" @update:model-value="selectEngine" /></aside>
-    <div class="recognition-settings-content">
+  <div class="ocr-settings">
+    <h2 class="section-heading">{{ t('引擎') }}</h2>
+    <div class="settings-card recognition-card">
+    <div class="setting-row"><span>{{ t('OCR 引擎') }}<small v-if="engineHint">{{ engineHint }}</small></span><ProviderMenu :model-value="configuringPreset ? `preset:${configuringPreset}` : draft.provider === 'service' ? `service:${draft.serviceId}` : draft.provider" :label="t('OCR 引擎')" :disabled="!ready || autosave.saving.value || configuringBusy" :options="engineOptions" @update:model-value="selectEngine" /></div>
+    <div class="recognition-detail">
     <!-- 保留生效状态播报，避免与左侧菜单的当前使用标记重复显示。 -->
     <p class="sr-only" role="status" data-current-ocr>{{ activeSettings ? t('当前 OCR：{0}', { 0: activeLabel }) : t('正在读取配置…') }}</p>
-    <ServiceSettings v-if="configuringPreset || editingServiceId" :key="editingServiceId || configuringPreset" embedded :preset-id="configuringPreset || undefined" :service-id="editingServiceId || undefined" @saved="serviceSaved" @busy-change="configuringBusy = $event" />
+    <ServiceSettings v-if="configuringPreset || editingServiceId" :key="editingServiceId || configuringPreset" embedded :preset-id="configuringPreset || undefined" :service-id="editingServiceId || undefined" @saved="serviceSaved" @close="configuringPreset = ''; editingServiceId = ''" @busy-change="configuringBusy = $event" />
     <template v-else-if="windows">
       <label class="ocr-field">{{ t('识别语言') }}<SelectControl v-model="draft.language" :aria-label="t('识别语言')" :options="languageOptions" :disabled="!ready || checking || autosave.saving.value || !system?.supported || !!system?.error" @update:model-value="autosave.commit" /></label>
       <div class="system-status"><span role="status">{{ checking ? t('正在检查系统语言包…') : !system ? t('状态未读取') : !system.supported ? t('Windows 系统 OCR 仅支持 Windows。') : system.error ? te(system.error) : system.languages.length ? t('已安装 {0} 个 OCR 语言包', { 0: system.languages.length }) : t('未安装 Windows OCR 语言包，请在 Windows 语言设置中安装。') }}</span><Button variant="outline" :disabled="checking" @click="refreshSystem">{{ t('刷新语言包') }}</Button></div>
@@ -118,25 +126,26 @@ onUnmounted(() => { disposed = true })
       <Button variant="outline" :disabled="checkingWechat" @click="refreshWechat">{{ t('重新检测') }}</Button>
     </div>
     <ResourceSettings v-else-if="ready && draft.provider === 'local-ppocr'" kind="ocr" />
+    </div>
+    </div>
     <!-- 识别后的动作与引擎无关；配置在线服务时让位给服务表单。 -->
-    <section v-if="ready && !configuringPreset && !editingServiceId" class="ocr-behavior" :aria-label="t('识别后')">
+    <h2 v-if="ready && !configuringPreset && !editingServiceId" class="section-heading">{{ t('识别后') }}</h2>
+    <section v-if="ready && !configuringPreset && !editingServiceId" class="settings-card" :aria-label="t('识别后')">
       <SettingRow :label="t('识别后自动复制文字')" for="ocr-auto-copy"><SwitchControl id="ocr-auto-copy" v-model="draft.autoCopy" @change="autosave.commit" /></SettingRow>
-      <SettingRow :label="t('识别后自动合并换行')" for="ocr-merge-lines" :tip="t('把同一段落的多行拼成一行，空行仍分段；可在结果里还原。')"><SwitchControl id="ocr-merge-lines" v-model="draft.mergeLines" @change="autosave.commit" /></SettingRow>
+      <SettingRow :label="t('识别后自动合并换行')" for="ocr-merge-lines"><SwitchControl id="ocr-merge-lines" v-model="draft.mergeLines" @change="autosave.commit" /></SettingRow>
     </section>
     <div v-if="!configuringPreset && !editingServiceId && (autosave.saving.value || autosave.saved.value)" class="save-status" :class="{ 'status-ok': !autosave.saving.value }" role="status"><Check v-if="!autosave.saving.value" :size="14" />{{ autosave.saving.value ? t('正在保存…') : t('已自动保存') }}</div>
     <p v-if="autosave.error.value" class="error" role="alert">{{ te(autosave.error.value) }}<Button variant="ghost" @click="autosave.retry">{{ t('重试') }}</Button></p>
     <p v-if="error" class="error" role="alert">{{ te(error) }}</p>
-    </div>
   </div>
 </template>
 
 <style scoped>
 .ocr-settings { font-size:13px; }
-.ocr-field { display:grid; grid-template-columns:124px minmax(0,1fr); align-items:center; gap:12px; margin:8px 0; }
+.ocr-field { display:grid; grid-template-columns:112px minmax(0,1fr); align-items:center; gap:12px; margin:4px 0; }
 .system-status { display:flex; align-items:center; flex-wrap:wrap; gap:8px; margin:8px 0; }
 .system-status span { overflow-wrap:anywhere; }
-.ocr-behavior { margin-top:12px; border-top:1px solid var(--desk-border,#e1e4e8); }
-.hint, .save-status { color:var(--desk-muted, #57606a); font-size:12px; line-height:1.6; margin:8px 0; }
+.hint, .save-status { color:var(--desk-muted, #57606a); font-size:12px; line-height:1.6; margin:6px 4px 0; }
 .save-status.status-ok { color:var(--ui-success-fg,#24834b); }
 .error { color:#b91c1c; overflow-wrap:anywhere; }
 </style>
