@@ -63,7 +63,7 @@ onUnmounted(() => { disposed = true; unlisten?.() })
 </script>
 
 <template>
-  <section :class="kind === 'font' ? 'settings-card mb-4' : ''" :aria-label="kind === 'ocr' ? t('文字识别资源') : t('导出字体')" :aria-busy="busy || checking">
+  <section :aria-label="kind === 'ocr' ? t('文字识别资源') : t('导出字体')" :aria-busy="busy || checking">
     <div v-if="kind === 'ocr'" class="setting-row flex-wrap gap-3">
       <div class="min-w-0 flex-1"><strong>{{ t("识别资源") }}</strong><InfoTip :text="t('离线识别，图片不上传。')" /></div>
       <span :class="{ 'status-ok': status?.ocrReady }" role="status"><Check v-if="status?.ocrReady" :size="14" />{{ status ? status.ocrReady ? t("已就绪") : t("引擎{0} · 模型{1}", { 0: status.runtimeReady ? t("就绪") : t("未就绪"), 1: status.modelsReady ? t("就绪") : t("未就绪") }) : checking ? t("正在检查…") : t("状态未读取") }}</span>

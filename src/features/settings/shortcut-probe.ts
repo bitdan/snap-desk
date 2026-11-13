@@ -20,7 +20,7 @@ export function shortcutProbeMessages(report: ShortcutProbeReport): string[] {
   messages.push(`已注册：${report.registered.join('、')}。`)
   const target = report.target
   if (!target) {
-    messages.push('未观察到外部前台窗口；重新测试并在八秒内切换到目标软件按键。')
+    messages.push('未观察到外部前台窗口；重新测试并在五秒内切换到目标软件按键。')
     return messages
   }
   const received = report.received.filter(item => item.foregroundPid === target.pid)

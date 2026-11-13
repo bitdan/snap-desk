@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import InfoTip from '@/shared/ui/InfoTip.vue'
 import { onMounted, ref } from 'vue'
 import { api, desktop } from '@/services/api'
 import { t, te } from '@/shared/i18n/i18n'
@@ -34,9 +33,9 @@ async function show() {
 onMounted(load)
 </script>
 <template>
-  <section class="general-section shelf-settings" aria-labelledby="shelf-settings-title">
-    <div class="flex items-center gap-1"><h2 id="shelf-settings-title">{{ t('顶部暂存架') }}</h2><InfoTip :text="t('与剪贴板历史共用数据；删除历史会同步移除卡片。固定仅保留架上位置，不阻止历史自动清理。')" /></div>
-    <fieldset :disabled="!desktop || !ready || busy">
+  <section class="shelf-settings" aria-labelledby="shelf-settings-title">
+    <h2 id="shelf-settings-title" class="section-heading">{{ t('顶部暂存架') }}</h2>
+    <fieldset class="settings-card" :disabled="!desktop || !ready || busy">
       <SettingRow :label="t('开启顶部暂存架')" for="shelf-enabled">
         <Button variant="outline" :disabled="!settings.enabled" @click="show">{{ t('展开暂存架') }}</Button>
         <SwitchControl id="shelf-enabled" v-model="settings.enabled" @change="save" />
@@ -51,16 +50,14 @@ onMounted(load)
           <label v-for="category in shelfCategories" :key="category.key" class="shelf-option"><input v-model="settings.categories" type="checkbox" :value="category.key" @change="save" />{{ t(category.label) }}</label>
         </div>
       </div>
-      <p v-if="!settings.categories.length" class="settings-note">{{ t('请选择要放置的类别。') }}</p>
-      <p v-if="settings.enabled && !recordingEnabled" class="settings-note">{{ t('剪贴板记录已关闭，暂存架仅展示已有历史。') }}</p>
     </fieldset>
+    <p v-if="!settings.categories.length" class="section-note">{{ t('请选择要放置的类别。') }}</p>
+    <p v-if="settings.enabled && !recordingEnabled" class="section-note">{{ t('剪贴板记录已关闭，暂存架仅展示已有历史。') }}</p>
     <p v-if="error" role="alert" class="notice error">{{ te(error) }} <Button variant="ghost" :disabled="busy" @click="load">{{ t('重新读取') }}</Button></p>
   </section>
 </template>
 <style scoped>
-fieldset { padding: 0; margin: 0; border: 0; min-width: 0; }
-/* 开关与其下的“停留展开”是同一组设置，中间不画分隔线。 */
-fieldset > .setting-row:first-child { border-bottom: 0; }
+fieldset { margin: 0; min-width: 0; }
 .shelf-option { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; }
 .shelf-category-options { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px 16px; }
 </style>

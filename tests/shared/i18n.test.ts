@@ -56,8 +56,9 @@ describe('application language coverage', () => {
     for (const label of labels) if (label !== '简体中文') expect(han(t(label)), label).toBe(false)
     expect(recordingAudioStatus({ systemAudio: true, microphone: true })).toBe('System audio + Microphone')
     expect(recordingAudioStatus({ systemAudio: false, microphone: false })).toBe('Silent')
-    expect(exportFilenamePreview({ filenamePrefix: '图片-时间戳', includeDimensions: true, format: 'png', jpegQuality: 90, rememberDirectory: true }))
-      .toBe('图片-时间戳-timestamp-1920x1080.png')
+    // 文件名示例是用户前缀加日期时间，不经过界面翻译。
+    expect(exportFilenamePreview({ filenamePrefix: '图片', includeDimensions: true, format: 'png', jpegQuality: 90, rememberDirectory: true }, new Date(2026, 10, 13, 14, 30, 5)))
+      .toBe('图片-20261113-143005-1920x1080.png')
     expect(localizedDate(0)).toBe(new Date(0).toLocaleString('en-US'))
   })
 

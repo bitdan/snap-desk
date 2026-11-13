@@ -12,6 +12,10 @@ vi.mock('../../src/shared/ui/button/Button.vue', async () => {
 import ConfigTransferSettings from '../../src/features/settings/components/ConfigTransferSettings.vue'
 import InfoTip from '../../src/shared/ui/InfoTip.vue'
 clientComponent(InfoTip, new URL('../../src/shared/ui/InfoTip.vue', import.meta.url))
+import ToolHeroStub from '../../src/shared/ui/ToolHero.vue'
+import SegmentedControlStub from '../../src/shared/ui/SegmentedControl.vue'
+clientComponent(ToolHeroStub, new URL('../../src/shared/ui/ToolHero.vue', import.meta.url))
+clientComponent(SegmentedControlStub, new URL('../../src/shared/ui/SegmentedControl.vue', import.meta.url))
 const Component = clientComponent(ConfigTransferSettings, new URL('../../src/features/settings/components/ConfigTransferSettings.vue', import.meta.url))
 let root: MemoryNode
 const text = (node: MemoryNode): string => node.text + node.children.map(text).join('')

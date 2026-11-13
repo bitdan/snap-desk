@@ -58,6 +58,8 @@ input[type=checkbox]:not([role=switch]):disabled { opacity:.45; cursor:default; 
 .switch-control:disabled { opacity:.45; cursor:not-allowed; }
 .switch-control:focus-visible { outline:2px solid var(--ui-focus); outline-offset:3px; }
 /* SettingRow：标签占满左侧，控件与状态文字靠右排列。 */
-.setting-row-label { display:flex; align-items:center; gap:4px; flex:1; min-width:0; }
+.setting-row-label { display:flex; flex-direction:column; justify-content:center; gap:2px; flex:1; min-width:0; }
+.setting-row-title { display:flex; align-items:center; gap:4px; min-width:0; }
+.setting-row-hint { font-size:11px; line-height:1.5; color:var(--desk-muted,#5f6670); overflow-wrap:anywhere; }
 .setting-row-control { display:flex; align-items:center; flex-wrap:wrap; justify-content:flex-end; gap:8px 12px; }
 @media (prefers-reduced-motion:reduce) { .switch-control, .switch-control span { transition:none; } }

@@ -13,6 +13,10 @@ vi.mock('../../src/shared/ui/button/Button.vue', async () => {
 import Appearance from '../../src/features/pins/components/PinAppearanceSettings.vue'
 import InfoTip from '../../src/shared/ui/InfoTip.vue'
 clientComponent(InfoTip, new URL('../../src/shared/ui/InfoTip.vue', import.meta.url))
+import ToolHeroStub from '../../src/shared/ui/ToolHero.vue'
+import SegmentedControlStub from '../../src/shared/ui/SegmentedControl.vue'
+clientComponent(ToolHeroStub, new URL('../../src/shared/ui/ToolHero.vue', import.meta.url))
+clientComponent(SegmentedControlStub, new URL('../../src/shared/ui/SegmentedControl.vue', import.meta.url))
 clientComponent(Appearance, new URL('../../src/features/pins/components/PinAppearanceSettings.vue', import.meta.url))
 import Manager from '../../src/features/pins/components/PinManager.vue'
 const Component = clientComponent(Manager, new URL('../../src/features/pins/components/PinManager.vue', import.meta.url))

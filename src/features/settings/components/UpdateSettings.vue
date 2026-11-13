@@ -78,12 +78,14 @@ onUnmounted(() => { disposed = true; if (timer) clearInterval(timer); unsubscrib
   <section class="update-settings">
     <h2 class="section-heading">{{ t('应用更新') }}</h2>
     <p v-if="updatePreview" class="notice">{{ t('模拟更新，不会下载文件或退出应用。') }}</p>
+    <div class="settings-card">
     <SettingRow :label="t('测试版更新')" for="receive-prerelease" :tip="prereleaseBuild ? t('当前为测试版，始终接收测试版更新；升级到正式版后按此开关决定。') : undefined">
       <SwitchControl id="receive-prerelease" :model-value="prereleaseBuild || preview === true" :disabled="prereleaseBuild || updatePreview || !desktop || preview === null || operating || saving" @update:model-value="togglePreview" />
     </SettingRow>
     <div class="setting-row flex-wrap gap-3">
       <div class="update-version"><span>{{ view ? `v${view.currentVersion}` : t('版本待读取') }}</span><span v-if="view && !hasUpdate && ['checking', 'latest', 'error'].includes(view.phase)" role="status" :class="view.phase === 'latest' ? 'status-ok' : ''"><Check v-if="view.phase === 'latest'" :size="14" />{{ t(phaseLabel) }}</span></div>
       <Button variant="outline" :disabled="!enabled || (!hasUpdate && operating) || saving" @click="hasUpdate ? requestUpdateWindow() : run(api.checkAppUpdate)"><span v-if="hasUpdate" class="update-dot" aria-hidden="true" />{{ t(hasUpdate ? '有更新' : '检查更新') }}</Button>
+    </div>
     </div>
     <p v-if="view?.packageKind === 'unsupported'" class="notice">{{ t('当前安装方式不支持在线更新，请使用 NSIS 安装包重新安装。') }}</p>
     <p v-else-if="view?.supported && !view.configured" class="notice">{{ t('此版本未配置更新签名公钥。') }}</p>
@@ -92,7 +94,6 @@ onUnmounted(() => { disposed = true; if (timer) clearInterval(timer); unsubscrib
 </template>
 
 <style scoped>
-.update-settings { padding: 0 0 16px; border-bottom: 1px solid var(--desk-border); }
 .update-version { display:flex; flex-wrap:wrap; align-items:center; gap:8px 12px; }
 .update-dot { width:6px; height:6px; flex:none; border-radius:50%; background:#dc2626; }
 </style>

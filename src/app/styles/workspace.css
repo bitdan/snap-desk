@@ -1,57 +1,154 @@
-/* 主窗口独立配色，不影响透明辅助窗口。 */
-.app-shell { --desk-bg:#fff; --desk-soft:#f4f6fa; --desk-nav:#f7f8fc; --desk-border:#e5e9f0; --desk-text:#252e40; --desk-muted:#738096; --desk-accent:#3264df; --desk-selected:#eaf0ff; color:var(--desk-text); background:var(--desk-bg); font-size:13px; line-height:1.5; }
-[data-theme=dark] .app-shell { --desk-bg:#181d26; --desk-soft:#242c39; --desk-nav:#1c222d; --desk-border:#333e50; --desk-text:#e2e8f3; --desk-muted:#a1aec3; --desk-accent:#9cbcff; --desk-selected:#293c60; background:var(--desk-bg); color:var(--desk-text); }
-.app-shell .sidebar { width:188px; padding:22px 12px 16px; background:var(--desk-nav); border-color:var(--desk-border); }
-.app-shell .brand { gap:10px; padding:0 8px 12px; letter-spacing:-.3px; color:var(--desk-text); }
-.app-shell .brand-icon { border-radius:9px; background:var(--desk-selected); color:var(--desk-accent); }
-.app-shell .nav-caption { margin:18px 12px 8px; color:var(--desk-muted); font-size:11px; letter-spacing:.6px; }
-.app-shell .nav-item { position:relative; min-height:36px; gap:12px; margin-bottom:4px; padding:8px 12px; border:1px solid transparent; border-radius:6px; color:var(--desk-muted); }
-.app-shell .nav-item svg { width:17px; height:17px; stroke-width:1.7; flex:none; }
+/*
+ * 主窗口外观：浅灰内容区 + 白色分组卡片，侧栏单色图标。
+ * 只作用于 .app-shell，不影响截图、贴图、录屏等透明辅助窗口。
+ */
+.app-shell {
+  --desk-bg:#f9fafb; --desk-surface:#fff; --desk-nav:#f3f4f6;
+  --desk-border:#e3e6ea; --desk-line:#d3d8de; --desk-sep:#eceef1;
+  --desk-text:#1f2328; --desk-muted:#5f6670;
+  --desk-accent:#3b5bdb; --desk-accent-fg:#3b5bdb; --desk-on-accent:#fff;
+  --desk-soft:color-mix(in srgb,#3b5bdb 10%,transparent); --desk-hover:rgba(127,127,127,.12);
+  --desk-selected:var(--desk-soft); --desk-danger:#cf222e;
+  height:100vh; display:flex; overflow:hidden;
+  color:var(--desk-text); background:var(--desk-bg); font-size:13px; line-height:1.5;
+}
+[data-theme=dark] .app-shell {
+  --desk-bg:#202227; --desk-surface:#26292e; --desk-nav:#1b1d21;
+  --desk-border:#33373e; --desk-line:#454a52; --desk-sep:#30343a;
+  --desk-text:#e8eaed; --desk-muted:#9aa0a8;
+  --desk-accent:#4c6ef5; --desk-accent-fg:#9db0ff; --desk-on-accent:#fff;
+  --desk-soft:color-mix(in srgb,#4c6ef5 24%,transparent); --desk-hover:rgba(255,255,255,.08);
+  --desk-danger:#ff7b72; color-scheme:dark;
+}
+.app-shell { --ui-focus:var(--desk-accent); }
+
+/* 侧栏：品牌、搜索、分组导航，版本固定在底部。 */
+.app-shell .sidebar { width:196px; flex:none; display:flex; flex-direction:column; padding:14px 10px 12px; background:var(--desk-nav); border-right:1px solid var(--desk-border); overflow-y:auto; scrollbar-width:none; }
+.app-shell .sidebar::-webkit-scrollbar { display:none; }
+.app-shell .brand { display:flex; align-items:center; gap:8px; padding:2px 8px 12px; font-size:13px; font-weight:600; color:var(--desk-text); }
+.app-shell .brand-icon { width:22px; height:22px; border-radius:6px; display:inline-flex; align-items:center; justify-content:center; background:var(--desk-accent); color:var(--desk-on-accent); }
+.app-shell .nav-search { display:flex; align-items:center; gap:6px; height:30px; margin:0 0 6px; padding:0 8px; border-radius:6px; background:var(--desk-surface); box-shadow:inset 0 0 0 1px var(--desk-line); color:var(--desk-muted); }
+.app-shell .nav-search input[type=search] { flex:1; min-width:0; min-height:0; height:28px; padding:0 !important; border:0 !important; outline:none; background:transparent !important; color:var(--desk-text); font:inherit; font-size:13px; }
+.app-shell .nav-search input[type=search]::-webkit-search-cancel-button { cursor:pointer; }
+.app-shell .nav-search:focus-within { box-shadow:inset 0 0 0 1px var(--desk-accent); }
+.app-shell .nav-caption { margin:12px 8px 4px; font-size:11px; font-weight:600; color:var(--desk-muted); }
+.app-shell .nav-item { position:relative; width:100%; display:flex; align-items:center; gap:9px; min-height:30px; margin:0 0 1px; padding:0 8px; border:0; border-radius:6px; background:transparent; color:var(--desk-text); font-size:13px; text-align:left; }
+.app-shell .nav-item svg { width:16px; height:16px; stroke-width:1.8; flex:none; color:var(--desk-muted); }
+.app-shell .nav-item:hover { background:var(--desk-hover); }
+.app-shell .nav-item.active { background:var(--desk-soft); color:var(--desk-accent-fg); font-weight:500; }
+.app-shell .nav-item.active svg { color:var(--desk-accent-fg); }
 .app-shell .nav-update-dot { width:6px; height:6px; margin-left:auto; border-radius:50%; background:#dc2626; flex:none; }
-.app-shell .nav-item:hover { background:var(--desk-soft); color:var(--desk-text); }
-.app-shell .nav-item.active { background:var(--desk-selected); color:var(--desk-accent); border-color:color-mix(in srgb,var(--desk-accent) 12%,transparent); }
-.app-shell .nav-item.active::before { content:''; position:absolute; left:-6px; width:3px; height:16px; border-radius:3px; background:var(--desk-accent); }
-.app-shell .sidebar-bottom { display:flex; align-items:center; gap:6px; padding:16px 10px 0; color:var(--desk-muted); border-top:1px solid var(--desk-border); margin-top:auto; }
-.app-shell .version-dot { margin:0; flex:none; }
-.app-shell .topbar { height:58px; padding:0 24px; border-color:var(--desk-border); color:var(--desk-muted); gap:12px; }
-.app-shell .page-breadcrumb { display:flex; align-items:center; gap:10px; white-space:nowrap; }
-.app-shell .page-breadcrumb > span { color:var(--desk-muted); font-size:12px; }
-.app-shell .page-breadcrumb h1 { font-size:16px; font-weight:600; color:var(--desk-text); }
-.app-shell .page-content { padding:20px 24px; width:100%; max-width:1000px; margin-inline:auto; }
-.app-shell .page-content.logs-page { max-width:none; }
-/* 翻译编辑区填满剩余窗口高度，矮窗口保留外层滚动，避免压缩文字区域和底部操作。 */
-.app-shell .setting-row { min-height:54px; padding:10px 0; border-color:var(--desk-border); gap:10px 20px; }
+.app-shell .nav-empty { margin:12px 8px; font-size:12px; color:var(--desk-muted); }
+.app-shell .sidebar-bottom { margin-top:auto; padding:12px 8px 0; font-size:11px; color:var(--desk-muted); display:flex; align-items:center; gap:6px; }
+.app-shell .version-dot { width:6px; height:6px; border-radius:50%; background:var(--ui-success-fg); flex:none; margin:0; }
+
+/* 顶栏：页面名 + 全局快捷键总开关。 */
+.app-shell .workspace { flex:1; min-width:0; display:flex; flex-direction:column; }
+.app-shell .topbar { height:52px; flex:none; display:flex; align-items:center; justify-content:space-between; gap:12px; padding:0 24px; border-bottom:1px solid var(--desk-border); color:var(--desk-muted); font-size:12px; }
+.app-shell .topbar h1 { margin:0; font-size:15px; font-weight:600; color:var(--desk-text); }
+.app-shell .topbar-status { display:flex; align-items:center; gap:8px; }
+.app-shell .topbar-status .status-error { color:var(--desk-danger); }
+.app-shell .page-content { flex:1; min-height:0; width:100%; padding:2px 24px 28px; overflow-y:auto; }
+.app-shell .page-content > * { max-width:760px; margin-inline:auto; }
+.app-shell .page-content.logs-page { display:flex; flex-direction:column; }
+.app-shell .page-content.logs-page > * { max-width:none; margin-inline:0; }
+.app-shell .page-content > .notice:first-child, .app-shell .page-content > .notice { margin-top:16px; }
+
+/* 功能卡片：工具页顶部的主操作。 */
+.app-shell .tool-hero { display:flex; align-items:center; gap:14px; margin-top:18px; padding:14px 16px; border:1px solid var(--desk-border); border-radius:10px; background:var(--desk-surface); }
+.app-shell .tool-hero-icon { width:40px; height:40px; flex:none; border-radius:8px; display:inline-flex; align-items:center; justify-content:center; background:var(--desk-soft); color:var(--desk-accent-fg); }
+.app-shell .tool-hero-text { flex:1; min-width:0; display:flex; flex-direction:column; gap:2px; }
+.app-shell .tool-hero-title { font-size:14px; font-weight:600; color:var(--desk-text); }
+.app-shell .tool-hero-meta { font-size:12px; color:var(--desk-muted); overflow-wrap:anywhere; }
+.app-shell .tool-hero-actions { display:flex; align-items:center; flex-wrap:wrap; justify-content:flex-end; gap:8px; }
+
+/* 分组：灰色小标题 + 白色圆角卡片，行间使用缩进的细分隔线。 */
+.app-shell .section-heading { display:flex; align-items:baseline; justify-content:space-between; gap:8px; margin:20px 4px 6px; font-size:12px; font-weight:600; color:var(--desk-muted); }
+.app-shell .section-heading > button { padding:0; border:0; background:transparent; font-size:12px; font-weight:400; color:var(--desk-accent-fg); }
+.app-shell .section-heading > button:disabled { opacity:.45; }
+.app-shell .settings-card { padding:0 0 0 12px; border:1px solid var(--desk-border); border-radius:8px; background:var(--desk-surface); }
+.app-shell .setting-row { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:6px 16px; min-height:44px; padding:7px 12px 7px 0; border-bottom:1px solid var(--desk-sep); font-size:13px; }
+.app-shell .setting-row:last-child { border-bottom:0; }
 .app-shell .setting-row > label:first-child, .app-shell .setting-row > span:first-child { min-width:0; }
-.app-shell .setting-row small { color:var(--desk-muted); font-size:12px; line-height:1.6; max-width:560px; }
-.app-shell .section-heading { font-size:14px; font-weight:600; color:var(--desk-text); margin:22px 0 8px; }
-.app-shell .settings-card { background:transparent; }
-.app-shell .setting-row strong { color:var(--desk-text); white-space:normal; }
-.app-shell :is(input:not([type=checkbox]):not([type=range]):not([type=color]),select,textarea) { border:1px solid var(--desk-border); border-radius:6px; background:var(--desk-bg); color:var(--desk-text); font:inherit; min-height:32px; }
-.app-shell :is(input:not([type=checkbox]):not([type=range]):not([type=color]),select,textarea):hover:enabled { border-color:var(--desk-muted); }
-.app-shell :is(button,input,select,textarea):focus-visible { outline:2px solid var(--desk-accent); outline-offset:3px; }
-.app-shell button.inline-flex { border-radius:6px; gap:6px; font-weight:500; }
+.app-shell .setting-row small { display:block; margin-top:2px; font-size:11px; line-height:1.5; color:var(--desk-muted); }
+.app-shell .setting-row strong { font-weight:400; color:var(--desk-text); white-space:normal; }
+.app-shell .section-note { margin:6px 4px 0; font-size:11px; line-height:1.5; color:var(--desk-muted); }
+.app-shell .settings-save-status { color:var(--desk-muted); font-size:12px; line-height:1.7; margin:6px 4px 0; }
+.app-shell .status-ok { display:inline-flex; align-items:center; gap:4px; color:var(--ui-success-fg); font-size:12px; line-height:1.5; }
+.app-shell .status-check { color:var(--ui-success-fg); flex-shrink:0; width:14px; height:14px; }
+.app-shell .status-ok svg { flex-shrink:0; width:14px; height:14px; stroke-width:2; }
+
+/* 控件：1px 细边框，不带投影；强调色只用于主按钮、选中和焦点。 */
+.app-shell :is(input:not([type=checkbox]):not([type=range]):not([type=color]),textarea) { min-height:28px; padding:3px 8px; border:1px solid var(--desk-line); border-radius:6px; background:var(--desk-surface); color:var(--desk-text); font:inherit; font-size:13px; }
+.app-shell :is(input:not([type=checkbox]):not([type=range]):not([type=color]),textarea):hover:enabled { border-color:var(--desk-muted); }
+.app-shell input[type=range] { accent-color:var(--desk-accent); }
+.app-shell :is(button,input,select,textarea,[role=tab]):focus-visible { outline:2px solid color-mix(in srgb,var(--desk-accent) 60%,transparent); outline-offset:1px; }
+.app-shell button.inline-flex { min-height:28px; padding:3px 12px; border-radius:6px; gap:6px; font-size:13px; font-weight:400; }
+.app-shell button.inline-flex.bg-primary { background:var(--desk-accent); color:var(--desk-on-accent); font-weight:500; }
+.app-shell button.inline-flex.bg-primary:hover:enabled { background:color-mix(in srgb,var(--desk-accent) 88%,#000); }
+.app-shell button.inline-flex.border { border-color:var(--desk-line); background:var(--desk-surface); color:var(--desk-text); }
+.app-shell button.inline-flex.border:hover:enabled { background:var(--desk-hover); }
+.app-shell button.inline-flex.text-zinc-500 { color:var(--desk-muted); }
+.app-shell button.inline-flex.text-zinc-500:hover:enabled { background:var(--desk-hover); color:var(--desk-text); }
 .app-shell button.inline-flex:disabled { opacity:.45; }
-.app-shell .capture-controls { justify-content:flex-start; background:transparent; padding:0 0 16px; gap:12px; }
-.app-shell .capture-delay { display:flex; align-items:center; gap:8px; }
-.app-shell .capture-delay label { display:inline-flex; align-items:center; gap:6px; color:var(--desk-muted); white-space:nowrap; }
-.app-shell .capture-delay .select-trigger { min-width:112px; min-height:36px; }
-.app-shell .capture-controls .capture-start { margin-left:auto; min-width:128px; min-height:36px; padding:6px 16px; }
-.app-shell .capture-panel { border-color:var(--desk-border); }
-.app-shell .tool-actionbar { display:flex; align-items:center; flex-wrap:wrap; gap:12px; justify-content:space-between; padding:0 0 16px; margin-bottom:16px; border-bottom:1px solid var(--desk-border); }
-.app-shell .tool-context { color:var(--desk-muted); font-size:12px; }
-.app-shell .recording-page > .settings-card > .section-heading:first-child { margin-top:0; }
-.app-shell .notice { border:1px solid color-mix(in srgb,currentColor 14%,transparent); border-radius:6px; line-height:1.7; }
-.app-shell kbd { background:var(--desk-soft); border-color:var(--desk-border); color:var(--desk-muted); }
-.app-shell .general-settings-page { max-width:none; }
-.app-shell .general-settings-page .general-section { border-color:var(--desk-border); }
+.app-shell kbd { display:inline-flex; align-items:center; justify-content:center; min-width:20px; height:20px; padding:0 6px; border:0; border-radius:5px; background:var(--desk-hover); color:var(--desk-text); font:600 11px/1 inherit; }
+.app-shell .switch-control { width:34px; height:20px; padding:2px; border-radius:10px; background:var(--desk-line); }
+.app-shell .switch-control span { width:16px; height:16px; box-shadow:0 1px 2px rgba(0,0,0,.25); }
+.app-shell .switch-control[aria-checked=true] { background:var(--desk-accent); }
+.app-shell .switch-control[aria-checked=true] span { transform:translateX(14px); }
+.app-shell .switch-control.switch-small { width:28px; height:16px; }
+.app-shell .switch-control.switch-small span { width:12px; height:12px; }
+.app-shell .switch-control.switch-small[aria-checked=true] span { transform:translateX(12px); }
+.app-shell .select-trigger { --select-bg:var(--desk-surface); --select-fg:var(--desk-text); --select-border:var(--desk-line); --select-hover:var(--desk-surface); --select-accent:var(--desk-muted); min-height:28px; padding:3px 9px; gap:10px; }
+.app-shell .select-trigger:hover:enabled { border-color:var(--desk-muted); }
+.app-shell .setting-row > .select-trigger, .app-shell .setting-row-control > .select-trigger { min-width:150px; }
+
+/* 分段控件：细线框，选中项使用淡色强调底。 */
+.segmented-control { display:inline-flex; flex-wrap:wrap; gap:2px; padding:2px; border-radius:6px; background:var(--desk-surface,#fff); box-shadow:inset 0 0 0 1px var(--desk-line,#d3d8de); }
+.segmented-control button { display:inline-flex; align-items:center; gap:5px; min-height:22px; padding:0 11px; border:0; border-radius:4px; background:transparent; color:var(--desk-muted,#5f6670); font:inherit; font-size:12px; white-space:nowrap; }
+.segmented-control button:hover:enabled { color:var(--desk-text,#1f2328); }
+.segmented-control button[aria-pressed=true], .segmented-control button[aria-selected=true] { background:var(--desk-soft,#eef1fc); color:var(--desk-accent-fg,#3b5bdb); }
+.segmented-control button:disabled { opacity:.45; cursor:default; }
+.app-shell .page-tabs { display:flex; justify-content:center; margin-top:16px; }
+.app-shell .page-tabs .segmented-control button { min-width:88px; justify-content:center; min-height:24px; }
+
+/* 状态提示与说明文字。 */
+.app-shell .notice { margin-bottom:0; border:1px solid color-mix(in srgb,currentColor 14%,transparent); border-radius:6px; background:color-mix(in srgb,var(--desk-accent) 8%,var(--desk-surface)); color:var(--desk-text); line-height:1.6; }
+.app-shell .notice.error { background:color-mix(in srgb,var(--desk-danger) 10%,var(--desk-surface)); color:var(--desk-danger); }
+.app-shell .notice.success { color:var(--ui-success-fg); }
+.app-shell :is(.text-zinc-500,.text-zinc-600,.text-zinc-700) { color:var(--desk-muted); }
+.app-shell .bg-white { background:var(--desk-surface); }
+.app-shell .border-zinc-200 { border-color:var(--desk-line); }
 .app-shell .scope-note { color:var(--desk-muted); }
-@media (max-width:760px) { .app-shell .sidebar { width:154px; padding-inline:8px; } .app-shell .topbar { padding-inline:16px; } .app-shell .page-content { padding:16px; } .app-shell .topbar button.inline-flex { font-size:12px; padding-inline:6px; } }
-@media (max-width:560px) { .app-shell .sidebar { width:132px; } .app-shell .brand { font-size:13px; gap:6px; padding-inline:4px; } .app-shell .brand-icon { width:28px; height:28px; } .app-shell .page-breadcrumb > span { display:none; } .app-shell .topbar { height:auto; min-height:58px; flex-wrap:wrap; padding-block:8px; } .app-shell .setting-row > :is(input:not([type=checkbox]),select) { max-width:100%; } }
 
-/* 长设置页滚动时保留录制控制，避免暂停与停止落在屏幕之外。 */
-.app-shell .recording-page > .tool-actionbar { position:sticky; top:-20px; z-index:2; padding-top:12px; background:var(--desk-bg); }
-@media (max-width:760px) { .app-shell .recording-page > .tool-actionbar { top:-16px; } }
+/* 录屏页的进行中控制条在滚动时保持可见。 */
+.app-shell .tool-actionbar { display:flex; align-items:center; flex-wrap:wrap; gap:8px 12px; justify-content:space-between; margin-top:18px; padding:12px 14px; border:1px solid var(--desk-border); border-radius:10px; background:var(--desk-surface); }
+.app-shell .tool-context { color:var(--desk-muted); font-size:12px; }
+.app-shell .recording-page > .tool-hero { position:sticky; top:16px; z-index:2; }
 
-.app-shell .setting-row > .select-trigger { min-width:168px; }
-.app-shell .settings-save-status { color:var(--desk-muted); font-size:12px; line-height:1.7; margin-block:10px; }
-.app-shell .setting-row > .select-trigger:focus-visible { outline:2px solid color-mix(in srgb,var(--desk-accent) 20%,transparent); outline-offset:2px; }
+/* 通用页沿用分组卡片；旧的分节容器只保留间距。 */
+.app-shell .general-settings-page { width:100%; }
+.app-shell .general-settings-page .general-section { padding:0; border:0; }
+.app-shell .general-settings-page h2:not(.section-heading) { margin:20px 4px 6px; font-size:12px; font-weight:600; color:var(--desk-muted); }
+.app-shell .general-settings-page .settings-note { margin:6px 4px 0; color:var(--desk-muted); font-size:11px; line-height:1.5; }
+.app-shell .directory-path { margin-top:2px; color:var(--desk-muted); font:11px/1.5 Consolas,'Segoe UI','Microsoft YaHei',monospace; overflow-wrap:anywhere; }
+.app-shell .directory-actions { display:flex; align-items:center; justify-content:flex-end; flex-wrap:wrap; gap:6px; }
+.app-shell .directory-content { flex:1 1 220px; min-width:0; }
+.app-shell .directory-error { color:var(--desk-danger); }
+
+@media (max-width:720px) {
+  .app-shell .sidebar { width:168px; }
+  .app-shell .topbar { padding-inline:16px; }
+  .app-shell .page-content { padding-inline:16px; }
+  .app-shell .tool-hero { flex-wrap:wrap; }
+}
+.app-shell fieldset.settings-card { margin:0; min-width:0; }
+.app-shell .settings-card fieldset { margin:0; padding:0; border:0; min-width:0; }
+.app-shell .shortcut-clear { width:18px; height:18px; flex:none; padding:0; border:0; border-radius:50%; display:inline-flex; align-items:center; justify-content:center; background:var(--desk-hover); color:var(--desk-muted); }
+.app-shell .shortcut-clear:hover:enabled { color:var(--desk-text); }
+/* 原生复选框绘制成小开关，保留标签与键盘行为。 */
+.app-shell input.mini-switch { appearance:none; position:relative; flex:none; width:28px; height:16px; margin:0; border:0; border-radius:8px; background:var(--desk-line); cursor:pointer; transition:background .15s; }
+.app-shell input.mini-switch::after { content:''; position:absolute; top:2px; left:2px; width:12px; height:12px; border-radius:50%; background:#fff; box-shadow:0 1px 2px rgba(0,0,0,.25); transition:transform .15s; }
+.app-shell input.mini-switch:checked { background:var(--desk-accent); }
+.app-shell input.mini-switch:checked::after { transform:translateX(12px); }
+.app-shell input.mini-switch:disabled { opacity:.45; cursor:default; }

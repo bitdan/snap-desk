@@ -16,6 +16,10 @@ import Preferences from '../../src/features/recording/components/RecordingPrefer
 import FileSettings from '../../src/features/recording/components/RecordingFileSettings.vue'
 import InfoTip from '../../src/shared/ui/InfoTip.vue'
 clientComponent(InfoTip, new URL('../../src/shared/ui/InfoTip.vue', import.meta.url))
+import ToolHeroStub from '../../src/shared/ui/ToolHero.vue'
+import SegmentedControlStub from '../../src/shared/ui/SegmentedControl.vue'
+clientComponent(ToolHeroStub, new URL('../../src/shared/ui/ToolHero.vue', import.meta.url))
+clientComponent(SegmentedControlStub, new URL('../../src/shared/ui/SegmentedControl.vue', import.meta.url))
 clientComponent(FileSettings, new URL('../../src/features/recording/components/RecordingFileSettings.vue', import.meta.url))
 import Effects from '../../src/features/recording/components/RecordingInputSettings.vue'
 import { defaultRecordingPreferences, readRecordingPreferences, saveRecordingPreferences, RECORDING_PREFERENCES_KEY } from '../../src/features/recording/preferences'
@@ -118,10 +122,9 @@ describe('录屏页设置与录制入口', () => {
     saveRecordingPreferences({ ...defaultRecordingPreferences(), format: 'gif', gifFps: 20 })
     events.dispatchEvent(Object.assign(new Event('storage'), { key: RECORDING_PREFERENCES_KEY }))
     await nextTick()
-    const format = findNode(root, node => node.props.id === 'record-format')!
-    const fps = findNode(root, node => node.props.id === 'record-fps')!
-    expect(format.value).toBe('gif')
-    expect(fps.value).toBe(20)
+    const option = (label: string) => findNode(root, node => node.type === 'button' && node.text === label)!
+    expect(option('GIF').props['aria-pressed']).toBe(true)
+    expect(option('20 FPS').props['aria-pressed']).toBe(true)
     button('选择录制范围')!.props.onClick(); await flush()
     expect(api.selectRecordingArea).toHaveBeenCalledOnce()
     expect(readRecordingPreferences()).toMatchObject({ format: 'gif', gifFps: 20 })

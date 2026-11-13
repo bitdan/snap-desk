@@ -137,7 +137,7 @@ function applyPreset() {
 /** 二级菜单同时列出离线引擎、平台预设和已保存账号，不再逐层打开下拉框。 */
 const selectedMenu = computed(() => local.value ? 'offline' : draft.value.serviceId ? `service:${draft.value.serviceId}` : `preset:${preset.value}`)
 const providerOptions = computed(() => [{ value: 'offline', label: 'CTranslate2', connection: 'offline' as const }, ...serviceOptions.value.map(item => ({ ...item, label: item.value === 'local' ? t('本机模型') : item.label, value: `preset:${item.value}`, sortPriority: item.value === 'custom' ? 1 : undefined, connection: item.value === 'custom' ? (preset.value === 'custom' && !draft.value.serviceId ? connectionMode(draft.value.endpoint) : undefined) : item.value === 'local' ? 'local-api' as const : 'online' as const }))])
-const savedOptions = computed(() => services.value.filter(supportsTranslation).map(item => ({ value: `service:${item.id}`, label: item.name, description: item.model || item.protocol, connection: connectionMode(item.endpoint), presetId: translationPresetId(item) })))
+const savedOptions = computed(() => services.value.filter(supportsTranslation).map(item => ({ value: `service:${item.id}`, label: item.name, description: item.model || item.protocol, connection: connectionMode(item.endpoint), presetId: translationPresetId(item), endpoint: item.endpoint })))
 const activeMenu = computed(() => {
   const value = activeSettings.value
   if (!value) return ''
@@ -197,15 +197,15 @@ async function modelAction(modelId: string, action: 'download' | 'import' | 'del
 </script>
 
 <template>
-  <section class="ai-settings recognition-settings-layout">
-    <aside class="recognition-settings-sidebar">
-      <ProviderMenu :model-value="selectedMenu" :options="menuOptions" :label="t('翻译引擎')" :disabled="busy || !ready" @update:model-value="selectMenu" />
-    </aside>
-    <section class="recognition-settings-content recognition-section translation-section">
+  <section class="ai-settings">
     <!-- 生效变化由读屏播报；视觉状态由菜单勾选统一表达。 -->
     <p class="sr-only" role="status" data-current-translation>{{ activeSettings ? t('当前翻译：{0}', { 0: activeLabel }) : t('正在读取配置…') }}</p>
     <fieldset :disabled="busy || !ready" @input="changed" @change="autosave.commit" @focusout="autosave.flush">
 
+      <h2 class="section-heading">{{ t('引擎') }}</h2>
+      <div class="settings-card recognition-card">
+      <div class="setting-row"><span>{{ t('翻译引擎') }}<small>{{ local ? t('离线翻译，文字不上传') : localEndpoint ? t('调用本机兼容接口') : t('在线服务，文字会上传') }}</small></span><ProviderMenu :model-value="selectedMenu" :options="menuOptions" :label="t('翻译引擎')" :disabled="busy || !ready" @update:model-value="selectMenu" /></div>
+      <div class="recognition-detail">
       <div v-if="local" class="local-resources">
         <div class="model-row runtime-row">
           <span class="runtime-status" :class="{ 'status-ok': localStatus?.runtimeReady }" role="status"><Check v-if="localStatus?.runtimeReady" :size="14" />{{ !localStatus ? checking ? t("正在检查…") : t("引擎状态未读取") : localStatus.runtimeReady ? t("本地引擎已安装") : t("翻译引擎未安装或校验失败") }}</span>
@@ -240,17 +240,19 @@ async function modelAction(modelId: string, action: 'download' | 'import' | 'del
         <p :class="{ 'status-ok': configured }" role="status"><Check v-if="configured" :size="14" />{{ configured === null ? t("正在检查…") : configured ? t("已配置") : t("未配置") }}<InfoTip :text="t('密钥随当前服务地址保存。')" /></p>
         </template>
       </div>
-      <div class="translation-options">
+      </div>
+      </div>
+      <h2 class="section-heading">{{ t('翻译设置') }}</h2>
+      <div class="settings-card"><div class="translation-options">
         <label>{{ t("默认目标语言") }}<SelectControl v-model="draft.targetLanguage" :disabled="busy || !ready" :aria-label="t('目标语言')" :options="languages.map(item => ({ value: item.value, label: t(item.label) }))" @update:model-value="autosave.commit" /></label>
         <label>{{ t("超时（秒）") }}<input v-model.number="draft.timeoutSeconds" type="number" min="5" max="120" /></label>
         <SettingRow :label='t("翻译后自动复制译文")' for="translation-auto-copy"><SwitchControl id="translation-auto-copy" v-model="draft.autoCopy" @change="autosave.commit" /></SettingRow>
         <div v-if="local" class="idle-field"><div class="field-label"><label for="translation-idle-seconds">{{ t("闲置回收（秒）") }}</label><InfoTip :text="t('0 不回收；可设为 30～3600 秒。')" /></div><input id="translation-idle-seconds" v-model.number="draft.localIdleSeconds" type="number" min="0" max="3600" step="1" /></div>
-      </div>
+      </div></div>
       <div class="actions"><span v-if="autosave.saving.value || autosave.saved.value" class="settings-save-status" :class="{ 'status-ok': !autosave.saving.value }" role="status"><Check v-if="!autosave.saving.value" :size="14" />{{ autosave.saving.value ? t("正在保存…") : t("已自动保存") }}</span><Button variant="outline" :disabled="!local && !localEndpoint && !configured" @click="credentialAction('test')">{{ t("测试已保存配置") }}</Button><InfoTip v-if="!local && !localEndpoint" :text="t('测试会发送 Hello，可能产生费用。')" /><Button v-if="!local && !draft.serviceId" variant="ghost" :disabled="!configured" @click="credentialAction('delete')">{{ t("删除已保存密钥") }}</Button></div>
     </fieldset>
     <p v-if="autosave.error.value" class="notice error" role="alert">{{ te(autosave.error.value) }}<Button variant="ghost" @click="autosave.retry">{{ t("重试") }}</Button></p>
     <p v-if="message" :class="{ 'status-ok': !busy }" role="status"><Check v-if="!busy" :size="14" />{{ t(message) }}</p><p v-if="error" class="notice error" role="alert">{{ te(error) }}</p>
-    </section>
   </section>
 </template>
 
@@ -259,21 +261,21 @@ async function modelAction(modelId: string, action: 'download' | 'import' | 'del
 .recognition-section { padding:0; }
 .recognition-section:last-child { border-bottom:0; }
 h3 { font-size:14px; font-weight:600; margin:0 0 12px; }
-p { color:#57606a; margin:8px 0; }
+p { color:var(--desk-muted,#5f6670); margin:8px 0; }
 fieldset { border:0; padding:0; min-width:0; }
-label { display:grid; grid-template-columns:124px minmax(0,1fr); align-items:center; gap:12px; margin:8px 0; }
-input, select { height:32px; border:1px solid #d8dee4; border-radius:4px; padding:4px 8px; min-width:0; width:100%; color:inherit; }
-input:focus-visible, select:focus-visible { outline:2px solid #2563eb; outline-offset:2px; }
+label { display:grid; grid-template-columns:112px minmax(0,1fr); align-items:center; gap:12px; margin:4px 0; }
+input, select { height:28px; border:1px solid var(--desk-line,#d3d8de); border-radius:6px; background:var(--desk-surface,#fff); padding:4px 8px; min-width:0; width:100%; color:inherit; }
+input:focus-visible, select:focus-visible { outline:2px solid var(--desk-accent,#3b5bdb); outline-offset:2px; }
 .provider-field { grid-template-columns:110px minmax(0,240px); margin-top:0; }
-.local-resources { margin:0 0 16px; }
-.model-row { display:grid; grid-template-columns:minmax(120px,1fr) minmax(100px,1fr) minmax(0,auto); align-items:center; gap:8px 16px; padding:8px 0; min-height:48px; border-bottom:1px solid #edf0f2; }
+.local-resources { margin:0; }
+.model-row { display:grid; grid-template-columns:minmax(120px,1fr) minmax(100px,1fr) minmax(0,auto); align-items:center; gap:8px 16px; padding:8px 0; min-height:48px; border-bottom:1px solid var(--desk-sep,#eceef1); }
 .model-row:last-child { border-bottom:0; }
 .runtime-status { grid-column:span 2; }
 .model-name { overflow-wrap:anywhere; }
 .model-actions { display:flex; align-items:center; justify-content:flex-end; flex-wrap:wrap; gap:6px; }
-.translation-options { display:flex; flex-direction:column; gap:8px; margin:16px 0; }
-.translation-options label { display:grid; grid-template-columns:124px minmax(0,1fr); align-items:center; gap:12px; margin:0; font-size:13px; }
-.translation-options :is(input,select) { font-size:13px; color:#24292f; }
+.translation-options { display:flex; flex-direction:column; gap:4px; margin:0; padding:8px 12px 8px 0; }
+.translation-options label { display:grid; grid-template-columns:112px minmax(0,1fr); align-items:center; gap:12px; margin:0; font-size:13px; }
+.translation-options :is(input,select) { font-size:13px; color:var(--desk-text,#1f2328); }
 .idle-field { display:grid; grid-template-columns:124px minmax(0,1fr); gap:12px; align-items:center; }
 .field-label { display:flex; align-items:center; gap:2px; }
 .translation-options .field-label label { display:block; }
@@ -283,7 +285,7 @@ input:focus-visible, select:focus-visible { outline:2px solid #2563eb; outline-o
 .connection-summary > div { display:grid; grid-template-columns:124px minmax(0,1fr); gap:12px; align-items:start; padding:8px 0; }
 .connection-summary dt { color:var(--desk-muted,#57606a); }
 .connection-summary dd { margin:0; overflow-wrap:anywhere; }
-.actions { display:flex; align-items:center; flex-wrap:wrap; gap:8px; padding-top:12px; border-top:1px solid var(--desk-border,#e1e4e8); }
+.actions { display:flex; align-items:center; flex-wrap:wrap; gap:8px; margin-top:10px; }
 .hint { font-size:12px; line-height:1.6; }
 .error { color:#b91c1c; }
 .ai-settings :deep(.setting-row) { min-height:48px; padding-top:0; }

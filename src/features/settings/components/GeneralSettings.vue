@@ -62,23 +62,24 @@ onMounted(() => { void run(refresh); void refreshAutostart() })
 
 <template>
   <section class="general-settings-page">
-    <section class="general-section">
-      <slot />
+    <slot />
+    <h2 class="section-heading">{{ t('启动') }}</h2>
+    <div class="settings-card">
       <SettingRow :label="t('开机自启')" for="autostart">
-        <span :class="autostart && !startupBusy ? 'status-ok' : 'text-sm text-zinc-500'" role="status"><Check v-if="autostart && !startupBusy" :size="14" />{{ startupBusy ? t('处理中…') : autostart === null ? t('状态未读取') : autostart ? t('已开启') : t('已关闭') }}</span>
+        <span :class="autostart && !startupBusy ? 'status-ok' : 'text-xs text-zinc-500'" role="status"><Check v-if="autostart && !startupBusy" :size="14" />{{ startupBusy ? t('处理中…') : autostart === null ? t('状态未读取') : autostart ? t('已开启') : t('已关闭') }}</span>
         <SwitchControl id="autostart" :model-value="autostart === true" :disabled="!desktop || startupBusy || autostart === null" :busy="startupBusy" @update:model-value="toggleAutostart" />
         <Button v-if="autostart === null && !startupBusy" variant="ghost" :disabled="!desktop" @click="refreshAutostart">{{ t('重新读取') }}</Button>
       </SettingRow>
-      <p v-if="startupError" class="notice error" role="alert">{{ te(startupError) }}</p>
-    </section>
-    <section class="general-section general-font"><h2>{{ t('导出字体') }}</h2><ResourceSettings kind="font" /></section>
-    <section class="general-section general-storage">
-    <h2>{{ t('文件与存储') }}</h2>
+    </div>
+    <p v-if="startupError" class="notice error" role="alert">{{ te(startupError) }}</p>
+    <h2 class="section-heading">{{ t('导出字体') }}</h2>
+    <div class="settings-card"><ResourceSettings kind="font" /></div>
+    <h2 class="section-heading">{{ t('文件与存储') }}</h2>
     <p v-if="error" class="notice error" role="alert">{{ te(error) }}</p>
-    <p v-if="message" class="notice" role="status">{{ t(message) }}</p>
+    <p v-if="message" class="notice status-ok" role="status"><Check :size="14" />{{ t(message) }}</p>
     <div class="settings-card">
       <div v-for="directory in directories.filter(item => item.kind !== 'logs')" :key="directory.kind" class="setting-row directory-row">
-        <div class="directory-content"><strong>{{ t(labels[directory.kind].name) }}</strong><p class="directory-path" :class="{ 'directory-error': directory.error }">{{ te(directory.error) || directory.path || t('系统默认位置') }}</p><small v-if="directory.kind === 'clipboard'">{{ t('请在剪贴板窗口清理历史，勿手动删除数据库。') }}</small></div>
+        <div class="directory-content"><span>{{ t(labels[directory.kind].name) }}</span><p class="directory-path" :class="{ 'directory-error': directory.error }">{{ te(directory.error) || directory.path || t('系统默认位置') }}</p></div>
         <div class="directory-actions">
           <Button variant="outline" :disabled="busy || !directory.path" @click="run(() => api.openAppDirectory(directory.kind))">{{ t('打开') }}</Button>
           <Button variant="ghost" :disabled="busy || !directory.path" @click="run(() => api.copyAppDirectory(directory.kind), '目录路径已复制。')">{{ t('复制路径') }}</Button>
@@ -88,9 +89,8 @@ onMounted(() => { void run(refresh); void refreshAutostart() })
           </template>
         </div>
       </div>
-      <Button v-if="error && !directories.length" variant="ghost" :disabled="!desktop || busy" @click="run(refresh)">{{ t('重新读取') }}</Button>
+      <div v-if="error && !directories.length" class="setting-row"><span class="text-zinc-500">{{ t('状态未读取') }}</span><Button variant="ghost" :disabled="!desktop || busy" @click="run(refresh)">{{ t('重新读取') }}</Button></div>
     </div>
-    </section>
   </section>
 </template>
 

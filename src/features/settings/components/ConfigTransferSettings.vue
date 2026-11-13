@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import InfoTip from '@/shared/ui/InfoTip.vue'
 import { ref } from 'vue'
 import { Check } from 'lucide-vue-next'
 import { t, te } from '@/shared/i18n/i18n'
@@ -30,14 +29,19 @@ async function transfer(kind: 'import' | 'export') {
 </script>
 
 <template>
-  <section class="general-settings-page">
-    <section class="general-section">
-      <div class="flex flex-wrap items-center gap-2">
-        <Button variant="outline" :disabled="!desktop || busy" @click="transfer('import')">{{ t('导入配置') }}</Button>
-        <Button variant="outline" :disabled="!desktop || busy" @click="transfer('export')">{{ t('导出配置') }}</Button><InfoTip :text="t('备份包含主配置、快捷键和保存目录，不包含密钥、历史记录及图片视频。')" />
+  <section class="config-transfer">
+    <h2 class="section-heading">{{ t('配置备份') }}</h2>
+    <div class="settings-card">
+      <div class="setting-row">
+        <span>{{ t('导入或导出全部设置') }}</span>
+        <div class="flex flex-wrap items-center gap-2">
+          <Button variant="outline" :disabled="!desktop || busy" @click="transfer('import')">{{ t('导入配置') }}</Button>
+          <Button variant="outline" :disabled="!desktop || busy" @click="transfer('export')">{{ t('导出配置') }}</Button>
+        </div>
       </div>
-      <p v-if="error" class="notice error" role="alert">{{ te(error) }}</p>
-      <p v-if="message" class="notice status-ok" role="status"><Check :size="14" />{{ t(message) }}</p>
-    </section>
+    </div>
+    <p class="section-note">{{ t('不包含密钥、历史记录和图片视频。') }}</p>
+    <p v-if="error" class="notice error" role="alert">{{ te(error) }}</p>
+    <p v-if="message" class="notice status-ok" role="status"><Check :size="14" />{{ t(message) }}</p>
   </section>
 </template>
