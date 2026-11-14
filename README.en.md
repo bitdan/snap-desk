@@ -6,6 +6,20 @@
 
 [Website](https://bitdan.github.io/snap-desk/en/) · [Download](https://github.com/bitdan/snap-desk/releases) · [Quick Start](#quick-start) · [Technical Guide (Chinese)](TECHNICAL.md) · [Roadmap (Chinese)](Snap_Desk_TODO.md)
 
+![Snap Desk capture and annotation: select a chart, box the peak, point at it with an arrow, and mosaic the secret key](docs/assets/screenshots/annotate.png)
+
+## Screenshots
+
+Screenshots show the Simplified Chinese interface; the app also ships an English UI.
+
+| OCR | Translation |
+| :---: | :---: |
+| ![OCR result window: the captured image on the left, recognized text on the right](docs/assets/screenshots/ocr.png) | ![Translate in place: recognized English text above, Chinese translation below](docs/assets/screenshots/translate.png) |
+| Recognize text in a selection, compare it with the image, tidy and copy it | Translate the recognized text in place, source and result side by side |
+| **Pin to desktop** | **Screen recording** |
+| ![An annotated chart pinned beside a document](docs/assets/screenshots/pin.png) | ![Recording toolbar shown after selecting a region](docs/assets/screenshots/recording.png) |
+| Pin a screenshot on top of everything and work alongside it | Select a region, choose audio, pointer and format, then record |
+
 ## Download
 
 Download from [Snap Desk releases](https://github.com/bitdan/snap-desk/releases). Install offline OCR models, the local translation engine, and language packs in the app as needed.

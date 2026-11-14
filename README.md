@@ -6,6 +6,18 @@
 
 [项目官网](https://bitdan.github.io/snap-desk/) · [下载](https://github.com/bitdan/snap-desk/releases) · [开始使用](#开始使用) · [技术说明](TECHNICAL.md) · [开发进度](Snap_Desk_TODO.md)
 
+![Snap Desk 截图与标注：框选图表区域后，用工具栏圈出峰值、画箭头，并给密钥打上马赛克](docs/assets/screenshots/annotate.png)
+
+## 界面预览
+
+| 文字识别 | 翻译 |
+| :---: | :---: |
+| ![文字识别结果窗口：左侧是截图原图，右侧是识别出的文字](docs/assets/screenshots/ocr.png) | ![识别后就地翻译：上方是识别出的英文，下方是中文译文](docs/assets/screenshots/translate.png) |
+| 框选后一键识别，结果与原图对照，可整理、复制 | 识别结果就地翻译，原文与译文同屏 |
+| **桌面贴图** | **录屏** |
+| ![标注过的图表贴图悬浮在文档右侧](docs/assets/screenshots/pin.png) | ![框选区域后展开的录屏工具栏](docs/assets/screenshots/recording.png) |
+| 把截图钉在桌面，始终置顶，对照着写 | 框选范围后选择声音、指针和格式，开始录制 |
+
 ## 下载
 
 前往 [Releases](https://github.com/bitdan/snap-desk/releases) 下载。OCR 模型、本地翻译引擎及语言包可在应用内按需安装。
