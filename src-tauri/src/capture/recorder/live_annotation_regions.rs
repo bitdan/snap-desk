@@ -1,6 +1,7 @@
 //! 录屏覆盖层按选区、工具栏和菜单的并集裁剪；区域外由系统直接命中桌面。
 //! 坐标相对覆盖窗口左上角，单位为物理像素，不能传入 CSS 像素或屏幕绝对坐标。
 use crate::capture::Rect;
+#[cfg(not(target_os = "macos"))]
 use tauri::WebviewWindow;
 
 /// 系统接管成功提交的 HRGN；失败路径仍由本函数释放，避免反复拖动时泄漏 GDI 对象。

@@ -273,7 +273,7 @@ fn recognize_inner(
     let lines: Vec<OcrLine> = reading_order(lines)
         .into_iter()
         .enumerate()
-        .map(|(order, (_, _, mut line))| {
+        .map(|(order, mut line)| {
             line.id = format!("line-{:04}", order + 1);
             line.order = order;
             line

@@ -134,8 +134,8 @@ pub const FLAG_COMMAND: u64 = 0x0010_0000;
 
 /// 当前按住的修饰键位（只取 ⇧⌃⌥⌘ 四位）。读取按键状态不消费事件。
 pub fn modifier_flags() -> u64 {
-    unsafe { CGEventSourceFlagsState(SESSION_STATE) }
-        & (FLAG_SHIFT | FLAG_CONTROL | FLAG_OPTION | FLAG_COMMAND)
+    let flags = unsafe { CGEventSourceFlagsState(SESSION_STATE) };
+    flags & (FLAG_SHIFT | FLAG_CONTROL | FLAG_OPTION | FLAG_COMMAND)
 }
 
 pub fn key_down(key: u16) -> bool {
