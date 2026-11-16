@@ -6,6 +6,8 @@ pub(crate) mod ocr;
 pub(crate) mod ocr_config;
 #[cfg(windows)]
 mod windows_ocr;
+#[cfg(target_os = "macos")]
+mod vision_ocr;
 pub(crate) mod wechat_ocr;
 pub(crate) mod qr;
 pub(crate) mod translation;
@@ -46,7 +48,10 @@ impl OcrProvider for WindowsOcrProvider {
     fn recognize(&self, _app: &tauri::AppHandle, image: &image::RgbaImage, settings: &ocr_config::OcrSettings) -> Result<OcrResult, String> {
         #[cfg(windows)]
         return windows_ocr::recognize(image, &settings.language);
-        #[cfg(not(windows))]
+        // macOS 的“系统 OCR”由 Apple Vision 提供，沿用同一提供方标识。
+        #[cfg(target_os = "macos")]
+        return vision_ocr::recognize(image, &settings.language);
+        #[cfg(not(any(windows, target_os = "macos")))]
         { let _ = (image, settings); Err("Windows 系统 OCR 仅支持 Windows。".into()) }
     }
 }

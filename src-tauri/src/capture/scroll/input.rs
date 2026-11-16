@@ -295,6 +295,103 @@ mod platform {
 #[cfg(windows)]
 pub(super) use platform::Listener;
 
+/// macOS：没有“输入监控”授权就不能安装全局事件监听，因此轮询按键状态检测 Esc 与 ⌘C 的按下边沿。
+/// 轮询只读不拦截，按键仍会传给前台应用；完成时长截图随后写入剪贴板，会覆盖应用自身的复制结果。
+/// 滚动方向不锁定，保持自动识别（ScrollMode::Auto）。
+#[cfg(target_os = "macos")]
+mod mac {
+    use super::Direction;
+    use crate::shared::macos;
+    use std::{
+        sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc,
+        },
+        thread::JoinHandle,
+        time::Duration,
+    };
+
+    pub struct Listener {
+        stop: Arc<AtomicBool>,
+        retry_copy: Arc<AtomicBool>,
+        worker: Option<JoinHandle<()>>,
+    }
+
+    /// 只认单独的 ⌘C；带 ⇧ 或 ⌥ 时多为其他应用的快捷键，不当作完成。
+    fn copy_down() -> bool {
+        let flags = macos::modifier_flags();
+        macos::key_down(macos::KEY_C)
+            && flags & macos::FLAG_COMMAND != 0
+            && flags & (macos::FLAG_SHIFT | macos::FLAG_OPTION) == 0
+    }
+
+    impl Listener {
+        pub fn start(
+            _direction: Direction,
+            _bounds: (i64, i64, i64, i64),
+            cancel: impl Fn() -> bool + Send + 'static,
+            finish: impl Fn() -> bool + Send + 'static,
+        ) -> Result<Self, String> {
+            let stop = Arc::new(AtomicBool::new(false));
+            let stopped = stop.clone();
+            let retry_copy = Arc::new(AtomicBool::new(false));
+            let retry_requested = retry_copy.clone();
+            let worker = std::thread::Builder::new()
+                .name("scroll-keys".into())
+                .spawn(move || {
+                    // 以启动时的状态为基准，避免触发长截图时仍按着的键被当作一次按下。
+                    let mut escape_down = macos::key_down(macos::KEY_ESCAPE);
+                    let mut copying = copy_down();
+                    let mut escape_active = true;
+                    let mut copy_active = true;
+                    log::info!("event=scroll.input_ready module=scroll escape_hook=false");
+                    while !stopped.load(Ordering::Acquire) {
+                        if retry_requested.swap(false, Ordering::AcqRel) {
+                            copy_active = true;
+                            copying = copy_down();
+                        }
+                        std::thread::sleep(Duration::from_millis(20));
+                        let down = macos::key_down(macos::KEY_ESCAPE);
+                        if escape_active && down && !escape_down {
+                            log::info!("event=scroll.escape module=scroll hook=false");
+                            if cancel() {
+                                escape_active = false;
+                            }
+                        }
+                        escape_down = down;
+                        let pressed = copy_down();
+                        if escape_active && copy_active && pressed && !copying && finish() {
+                            // 完成只停止采集；Esc 仍可中断末帧等待或导出。
+                            copy_active = false;
+                        }
+                        copying = pressed;
+                    }
+                })
+                .map_err(|e| e.to_string())?;
+            Ok(Self {
+                stop,
+                retry_copy,
+                worker: Some(worker),
+            })
+        }
+
+        /// 导出失败后允许再次用 ⌘C 完成。
+        pub fn allow_copy_retry(&self) {
+            self.retry_copy.store(true, Ordering::Release);
+        }
+    }
+    impl Drop for Listener {
+        fn drop(&mut self) {
+            self.stop.store(true, Ordering::Release);
+            if let Some(worker) = self.worker.take() {
+                let _ = worker.join();
+            }
+        }
+    }
+}
+#[cfg(target_os = "macos")]
+pub(super) use mac::Listener;
+
 #[cfg(test)]
 mod tests {
     use super::*;

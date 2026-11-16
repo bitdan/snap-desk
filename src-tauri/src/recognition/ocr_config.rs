@@ -60,8 +60,8 @@ pub struct SystemOcrStatus {
 #[tauri::command]
 pub async fn system_ocr_status(window: WebviewWindow) -> Result<SystemOcrStatus, String> {
     crate::capture::require_window(&window, "main")?;
-    #[cfg(windows)]
-    return tauri::async_runtime::spawn_blocking(|| match super::windows_ocr::languages() {
+    #[cfg(any(windows, target_os = "macos"))]
+    return tauri::async_runtime::spawn_blocking(|| match system_languages() {
         Ok(languages) => SystemOcrStatus {
             supported: true,
             languages,
@@ -75,12 +75,21 @@ pub async fn system_ocr_status(window: WebviewWindow) -> Result<SystemOcrStatus,
     })
     .await
     .map_err(|e| e.to_string());
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_os = "macos")))]
     Ok(SystemOcrStatus {
         supported: false,
         languages: vec![],
         error: None,
     })
+}
+
+#[cfg(windows)]
+fn system_languages() -> Result<Vec<OcrLanguage>, String> {
+    super::windows_ocr::languages()
+}
+#[cfg(target_os = "macos")]
+fn system_languages() -> Result<Vec<OcrLanguage>, String> {
+    super::vision_ocr::languages()
 }
 
 /// 同一请求使用同一份引擎与语言快照，识别期间保存设置只影响下次请求。

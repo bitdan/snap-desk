@@ -667,7 +667,7 @@ fn collect(app: AppHandle, id: u64, first_delay: u64, allow_copy_retry: impl Fn(
 }
 
 fn launch(app: &AppHandle, id: u64, first_delay: u64) -> Result<(), String> {
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "macos"))]
     let listener = {
         let state = app.state::<CaptureState>();
         let guard = state.scroll.lock().map_err(err)?;
@@ -695,9 +695,9 @@ fn launch(app: &AppHandle, id: u64, first_delay: u64) -> Result<(), String> {
     std::thread::Builder::new()
         .name("scroll-capture".into())
         .spawn(move || {
-            #[cfg(windows)]
+            #[cfg(any(windows, target_os = "macos"))]
             let allow_copy_retry = || listener.allow_copy_retry();
-            #[cfg(not(windows))]
+            #[cfg(not(any(windows, target_os = "macos")))]
             let allow_copy_retry = || {};
             collect(app, id, first_delay, allow_copy_retry)
         })

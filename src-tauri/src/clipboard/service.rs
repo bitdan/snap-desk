@@ -115,7 +115,7 @@ impl Service {
             .unwrap_or_default();
         Status {
             enabled: self.running.lock().map(|r| r.is_some()).unwrap_or(false),
-            supported: cfg!(target_os = "windows"),
+            supported: cfg!(any(target_os = "windows", target_os = "macos")),
             count,
             byte_size,
             revision: self.revision.load(Ordering::Acquire),

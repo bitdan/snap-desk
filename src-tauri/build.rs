@@ -3,5 +3,10 @@ fn main() {
     println!("cargo:rerun-if-env-changed=SNAP_DESK_UPDATER_PUBLIC_KEY");
     // Tauri 从这个文件读取应用版本；只改 package.json 时也必须刷新内嵌版本与系统资源。
     println!("cargo:rerun-if-changed=../package.json");
+    // macOS 系统 OCR 通过 Objective-C 运行时按类名查找 Vision 的类，没有直接引用的 C 符号，
+    // 必须显式链接框架，否则运行时找不到 VNRecognizeTextRequest。
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
+        println!("cargo:rustc-link-lib=framework=Vision");
+    }
     tauri_build::build()
 }

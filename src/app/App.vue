@@ -284,7 +284,7 @@ onUnmounted(() => { disposed = true; window.removeEventListener('keydown', key);
               <!-- 主页使用同一设置保存接口，确保按钮、托盘和快捷键的延时一致。 -->
               <SettingRow :label="t('延时')"><SegmentedControl :model-value="status?.settings.delaySeconds ?? 0" :label="t('延时')" :options="[{ value: 0, label: t('无延时') }, { value: 3, label: t('3 秒') }, { value: 5, label: t('5 秒') }]" :disabled="locked" @update:model-value="changeDelay" /></SettingRow>
               <SettingRow :label="t('截图包含光标')" for="screenshot-cursor"><SwitchControl id="screenshot-cursor" v-model="draft.screenshotCursor" :disabled="locked || status?.platform !== 'windows'" @change="captureAutoSave.commit" /></SettingRow>
-              <SettingRow :label="t('窗口 / 元素吸附')" for="screenshot-snap"><SwitchControl id="screenshot-snap" v-model="draft.screenshotSnap" :disabled="locked || status?.platform !== 'windows'" @change="captureAutoSave.commit" /></SettingRow>
+              <SettingRow :label="t('窗口 / 元素吸附')" for="screenshot-snap"><SwitchControl id="screenshot-snap" v-model="draft.screenshotSnap" :disabled="locked || (status?.platform !== 'windows' && status?.platform !== 'macos')" @change="captureAutoSave.commit" /></SettingRow>
               <SettingRow :label="t('框选完成后')" for="screenshot-after" :hint="draft.screenshotAfter === 'none' ? '' : t('按住 Ctrl 框选可保留工具栏')"><SelectControl id="screenshot-after" v-model="draft.screenshotAfter" :disabled="locked" :options="[{ value: 'none', label: t('显示工具栏') }, { value: 'copy', label: t('直接复制') }, { value: 'pin', label: t('直接贴图') }, { value: 'save', label: t('直接保存') }]" @update:model-value="captureAutoSave.commit" /></SettingRow>
             </div>
             <h2 class="section-heading">{{ t("文件与导出") }}</h2>

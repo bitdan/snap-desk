@@ -26,6 +26,8 @@ pub(crate) fn file_paths_for_pin() -> Result<Option<Vec<String>>, String> {
     settings.save_copied_files = true;
     match platform::snapshot(&settings)? {
         Some(reader::Snapshot::Files(bytes)) => files::decode(&bytes).map(Some),
+        #[cfg(target_os = "macos")]
+        Some(reader::Snapshot::Paths(paths)) => Ok(Some(paths)),
         _ => Ok(None),
     }
 }

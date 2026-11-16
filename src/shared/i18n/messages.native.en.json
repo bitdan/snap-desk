@@ -892,5 +892,18 @@
   "删除 macOS 钥匙串条目失败。": "Failed to delete the macOS Keychain item.",
   "未知的系统权限。": "Unknown system permission.",
   "未找到可用显示器，请检查显示器连接。": "No display found. Check your display connection.",
-  "读取显示器位置失败。": "Failed to read the display position."
+  "读取显示器位置失败。": "Failed to read the display position.",
+  "需要在“设置 → 通用 → 系统权限”中授予辅助功能权限，内容已复制，可手动粘贴。": "Grant Accessibility permission in Settings → General → System permissions. The content was copied; paste it manually.",
+  "无法创建键盘事件。": "Unable to create a keyboard event.",
+  "原应用已退出，内容已复制，可手动粘贴。": "The original app has quit. The content was copied; paste it manually.",
+  "剪贴板图片转换失败。": "Failed to convert the clipboard image.",
+  "无法启动剪贴板监听线程。": "Unable to start the clipboard watcher thread.",
+  "自动复制选中文字需要辅助功能权限，请在“设置 → 通用 → 系统权限”中授权。": "Copying selected text requires Accessibility permission. Grant it in Settings → General → System permissions.",
+  "无法自动复制选中文字，请检查辅助功能权限。": "Unable to copy the selected text. Check the Accessibility permission.",
+  "读取窗口位置失败。": "Failed to read the window position.",
+  "系统 OCR 无法读取图片。": "System OCR could not read the image.",
+  "无法创建 Apple Vision 文字识别请求。": "Unable to create an Apple Vision text recognition request.",
+  "无法读取 Apple Vision 支持的识别语言。": "Unable to read the languages supported by Apple Vision.",
+  "无法创建 Apple Vision 识别任务。": "Unable to create an Apple Vision recognition task.",
+  "Apple Vision 文字识别失败。": "Apple Vision text recognition failed."
 }
