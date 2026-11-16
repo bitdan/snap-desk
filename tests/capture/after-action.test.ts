@@ -18,5 +18,6 @@ it('按住 Ctrl、录屏、翻译截图、回放和空选区都不直接执行',
   expect(autoFinishAction(frame, { ...state, recording: true })).toBeNull()
   expect(autoFinishAction(frame, { ...state, valid: false })).toBeNull()
   expect(autoFinishAction({ ...frame, translation: true }, state)).toBeNull()
+  expect(autoFinishAction({ ...frame, ocr: true }, state)).toBeNull()
   expect(autoFinishAction({ ...frame, replay: { index: 0, total: 1, rect: { x: 0, y: 0, width: 1, height: 1 }, annotations: [] } }, state)).toBeNull()
 })

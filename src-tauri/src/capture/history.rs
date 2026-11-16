@@ -183,6 +183,7 @@ mod tests {
                 preview_revision: 0,
                 recording: false,
                 translation: false,
+                ocr: false,
                 snap_enabled: false,
                 after_action: "none".into(),
                 origin_x: 0,

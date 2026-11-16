@@ -21,7 +21,7 @@ export function validateRecordingExportSettings(value: RecordingExportSettings):
   return validateExportSettings({ ...defaultSettings().export, ...value })
 }
 
-export type ShortcutAction = 'capture' | 'pin' | 'record' | 'history' | 'translate' | 'shelf'
+export type ShortcutAction = 'capture' | 'pin' | 'record' | 'history' | 'translate' | 'shelf' | 'ocr'
 /** 空字符串表示单独禁用动作；总开关保留映射。 */
 export type Shortcuts = Record<ShortcutAction, string>
 export const shortcutActions: { key: ShortcutAction; label: string; description: string }[] = [
@@ -30,6 +30,7 @@ export const shortcutActions: { key: ShortcutAction; label: string; description:
   { key: 'record', label: '开始 / 停止录屏', description: '选择录制范围，录制中再次按下停止' },
   { key: 'history', label: '剪贴板历史', description: '打开历史管理页面' },
   { key: 'shelf', label: '展开 / 收起暂存架', description: '显示已开启的顶部暂存架' },
+  { key: 'ocr', label: '识别文字', description: '框选屏幕文字并显示识别结果' },
   { key: 'translate', label: '翻译', description: '打开翻译界面，有选中文字时自动复制并翻译' },
 ]
 export const ONBOARDING_VERSION = 1
@@ -38,7 +39,7 @@ export interface Settings { recognitionServices: RecognitionService[]; receivePr
 
 /** 每次返回独立对象，避免编辑草稿时改动“恢复默认”的值。 */
 export function defaultSettings(): Settings {
-  return { recognitionServices: [], receivePrereleaseUpdates: false, pinAppearance: defaultPinAppearance(), recordingExport: defaultRecordingExportSettings(), appearance: { theme: 'system', language: 'zh-CN' }, ai: defaultAiSettings(), ocr: defaultOcrSettings(), clipboard: defaultClipboardSettings(), onboardingVersion: 0, shortcuts: { capture: 'F1', pin: 'F2', record: 'F3', history: 'F4', translate: 'Alt+T', shelf: '' }, shortcutsEnabled: true, delaySeconds: 0, screenshotCursor: false, screenshotSnap: true, screenshotAfter: 'none', export: {
+  return { recognitionServices: [], receivePrereleaseUpdates: false, pinAppearance: defaultPinAppearance(), recordingExport: defaultRecordingExportSettings(), appearance: { theme: 'system', language: 'zh-CN' }, ai: defaultAiSettings(), ocr: defaultOcrSettings(), clipboard: defaultClipboardSettings(), onboardingVersion: 0, shortcuts: { capture: 'F1', pin: 'F2', record: 'F3', history: 'Alt+V', translate: 'Alt+T', shelf: 'Alt+Z', ocr: 'Alt+C' }, shortcutsEnabled: true, delaySeconds: 0, screenshotCursor: false, screenshotSnap: true, screenshotAfter: 'none', export: {
     format: 'png', jpegQuality: 90, filenamePrefix: 'SnapDesk', includeDimensions: false, rememberDirectory: true,
   } }
 }

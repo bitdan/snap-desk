@@ -24,8 +24,8 @@ describe('历史配置及选择顺序', () => {
     settings.clipboard.enabled = false
     expect(defaultSettings().clipboard.enabled).toBe(true)
     expect(settings.clipboard.saveCopiedFiles).toBe(true)
-    expect(settings.shortcuts.history).toBe('F4')
-    expect(validateShortcuts({ ...settings.shortcuts, capture: 'F4' })).toContain('冲突')
+    expect(settings.shortcuts.history).toBe('Alt+V')
+    expect(validateShortcuts({ ...settings.shortcuts, capture: 'Alt+V' })).toContain('冲突')
   })
   it('按点击顺序多选，重排不修改源数组且拒绝无效拖动', () => {
     const ids = toggleSelection(toggleSelection([], 9), 2)

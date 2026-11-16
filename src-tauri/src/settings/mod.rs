@@ -109,6 +109,7 @@ pub enum ShortcutAction {
     History,
     Translate,
     Shelf,
+    Ocr,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -120,6 +121,7 @@ pub struct Shortcuts {
     pub history: String,
     pub translate: String,
     pub shelf: String,
+    pub ocr: String,
 }
 /// 区分缺失字段与显式禁用；兼容旧翻译映射，保留已自定义的快捷键。
 #[derive(Deserialize)]
@@ -130,7 +132,8 @@ struct ShortcutsWire {
     record: String,
     history: Option<String>,
     translate: Option<String>,
-    shelf: String,
+    shelf: Option<String>,
+    ocr: Option<String>,
     // 只读取旧版本的两个翻译映射，保存时统一输出 translate。
     translate_selection: Option<String>,
     translate_clipboard: Option<String>,
@@ -144,7 +147,8 @@ impl Default for ShortcutsWire {
             record: keys.record,
             history: None,
             translate: None,
-            shelf: keys.shelf,
+            shelf: None,
+            ocr: None,
             translate_selection: None,
             translate_clipboard: None,
         }
@@ -154,6 +158,8 @@ impl From<ShortcutsWire> for Shortcuts {
     fn from(wire: ShortcutsWire) -> Self {
         let missing = wire.history.is_none();
         let translation_missing = wire.translate.is_none();
+        let shelf_missing = wire.shelf.is_none();
+        let ocr_missing = wire.ocr.is_none();
         // 旧默认组合升级为 Alt+T；已自定义或禁用的翻译键继续保留。
         let translate = wire.translate
             .or_else(|| wire.translate_selection.filter(|value| value != "Ctrl+Alt+T"))
@@ -165,13 +171,16 @@ impl From<ShortcutsWire> for Shortcuts {
             record: wire.record,
             history: wire.history.unwrap_or_else(|| Self::default().history),
             translate,
-            shelf: wire.shelf,
+            shelf: wire.shelf.unwrap_or_else(|| Self::default().shelf),
+            ocr: wire.ocr.unwrap_or_else(|| Self::default().ocr),
         };
         if missing {
             keys.preserve_legacy_mapping();
         }
         // 旧配置已有相同组合时保留原动作，只禁用新加入的默认快捷键。
         if translation_missing { keys.preserve_translation_mapping(); }
+        if shelf_missing { keys.preserve_default_mapping(ShortcutAction::Shelf); }
+        if ocr_missing { keys.preserve_default_mapping(ShortcutAction::Ocr); }
         keys
     }
 }
@@ -181,30 +190,41 @@ impl Default for Shortcuts {
             capture: "F1".into(),
             pin: "F2".into(),
             record: "F3".into(),
-            history: "F4".into(),
+            history: "Alt+V".into(),
             translate: "Alt+T".into(),
-            shelf: String::new(),
+            shelf: "Alt+Z".into(),
+            ocr: "Alt+C".into(),
         }
     }
 }
 impl Shortcuts {
     fn preserve_legacy_mapping(&mut self) {
-        let history = parse_shortcut(&self.history).ok().flatten();
-        if history.is_some()
-            && [&self.capture, &self.pin, &self.record]
-                .iter()
-                .any(|key| parse_shortcut(key).ok().flatten() == history)
-        {
-            self.history.clear();
-        }
+        self.preserve_default_mapping(ShortcutAction::History);
     }
     fn preserve_translation_mapping(&mut self) {
-        let translate = parse_shortcut(&self.translate).ok().flatten();
-        if translate.is_some() && [&self.capture, &self.pin, &self.record, &self.history]
-            .iter().any(|key| parse_shortcut(key).ok().flatten() == translate)
-        { self.translate.clear(); }
+        self.preserve_default_mapping(ShortcutAction::Translate);
     }
-    pub fn entries(&self) -> [(ShortcutAction, &str, &str); 6] {
+    /// 缺失字段补默认值时让已有动作优先；显式配置的冲突仍由 validate 报错。
+    fn preserve_default_mapping(&mut self, action: ShortcutAction) {
+        let collision = {
+            let entries = self.entries();
+            let key = entries.iter().find(|(id, _, _)| *id == action)
+                .and_then(|(_, _, value)| parse_shortcut(value).ok().flatten());
+            key.is_some() && entries.iter().any(|(id, _, value)| {
+                *id != action && parse_shortcut(value).ok().flatten() == key
+            })
+        };
+        if collision {
+            match action {
+                ShortcutAction::History => self.history.clear(),
+                ShortcutAction::Translate => self.translate.clear(),
+                ShortcutAction::Shelf => self.shelf.clear(),
+                ShortcutAction::Ocr => self.ocr.clear(),
+                _ => {}
+            }
+        }
+    }
+    pub fn entries(&self) -> [(ShortcutAction, &str, &str); 7] {
         [
             (ShortcutAction::Capture, "区域截图", &self.capture),
             (ShortcutAction::Pin, "剪贴板贴图", &self.pin),
@@ -212,6 +232,7 @@ impl Shortcuts {
             (ShortcutAction::History, "剪贴板历史", &self.history),
             (ShortcutAction::Translate, "翻译", &self.translate),
             (ShortcutAction::Shelf, "展开 / 收起暂存架", &self.shelf),
+            (ShortcutAction::Ocr, "识别文字", &self.ocr),
         ]
     }
 }
@@ -314,6 +335,8 @@ impl TryFrom<SettingsWire> for Settings {
             shortcuts.capture = capture;
             shortcuts.preserve_legacy_mapping();
             shortcuts.preserve_translation_mapping();
+            shortcuts.preserve_default_mapping(ShortcutAction::Shelf);
+            shortcuts.preserve_default_mapping(ShortcutAction::Ocr);
         }
         Ok(Self {
             receive_prerelease_updates: wire.receive_prerelease_updates,
@@ -900,7 +923,7 @@ mod tests {
         value.shortcuts.pin = "F1".into();
         value.shortcuts.record = "Ctrl+Shift+S".into();
         assert!(value.validate().is_ok());
-        assert_eq!(shortcut_keys(&value).unwrap().len(), 4);
+        assert_eq!(shortcut_keys(&value).unwrap().len(), 6);
         assert_eq!(
             value.action_for(&"F1".parse().unwrap()),
             Some(ShortcutAction::Pin)
@@ -918,23 +941,49 @@ mod tests {
             serde_json::from_str(r#"{"shortcut":"Ctrl+S","delaySeconds":3}"#).unwrap();
         assert_eq!(old.shortcuts.pin, "F2");
         assert_eq!(old.shortcuts.record, "F3");
-        assert_eq!(old.shortcuts.history, "F4");
+        assert_eq!(old.shortcuts.history, "Alt+V");
         assert!(old.clipboard.enabled);
         assert!(!old.receive_prerelease_updates);
         for json in [
-            r#"{"shortcut":"F4"}"#,
-            r#"{"shortcuts":{"capture":"F4","pin":"F2","record":"F3"}}"#,
+            r#"{"shortcut":"Alt+V"}"#,
+            r#"{"shortcuts":{"capture":"Alt+V","pin":"F2","record":"F3"}}"#,
         ] {
             let migrated: Settings = serde_json::from_str(json).unwrap();
             assert!(migrated.shortcuts.history.is_empty());
             assert!(migrated.validate().is_ok());
-            assert_eq!(migrated.shortcuts.capture, "F4");
+            assert_eq!(migrated.shortcuts.capture, "Alt+V");
         }
         assert!(!serde_json::to_value(old)
             .unwrap()
             .as_object()
             .unwrap()
             .contains_key("shortcut"));
+    }
+
+    #[test]
+    fn ocr_shelf_and_history_defaults_preserve_existing_shortcuts() {
+        let defaults = Settings::default();
+        assert_eq!(defaults.shortcuts.history, "Alt+V");
+        assert_eq!(defaults.shortcuts.shelf, "Alt+Z");
+        assert_eq!(defaults.shortcuts.ocr, "Alt+C");
+        assert_eq!(defaults.action_for(&"Alt+C".parse().unwrap()), Some(ShortcutAction::Ocr));
+        assert!(defaults.validate().is_ok());
+        for (key, action) in [("Alt+C", ShortcutAction::Ocr), ("Alt+Z", ShortcutAction::Shelf)] {
+            for json in [format!(r#"{{"shortcut":"{key}"}}"#), format!(r#"{{"shortcuts":{{"capture":"{key}"}}}}"#)] {
+                let migrated: Settings = serde_json::from_str(&json).unwrap();
+                assert!(migrated.validate().is_ok());
+                assert_eq!(migrated.action_for(&key.parse().unwrap()), Some(ShortcutAction::Capture));
+                assert!(migrated.shortcuts.entries().iter().find(|(id, _, _)| *id == action).unwrap().2.is_empty());
+            }
+        }
+        let old: Settings = serde_json::from_str(r#"{"shortcuts":{"history":"F4","shelf":"","ocr":""}}"#).unwrap();
+        assert_eq!(old.shortcuts.history, "F4");
+        assert!(old.shortcuts.shelf.is_empty());
+        assert!(old.shortcuts.ocr.is_empty());
+        let conflicting: Settings = serde_json::from_str(r#"{"shortcuts":{"capture":"Alt+C","ocr":"Alt+C"}}"#).unwrap();
+        assert!(conflicting.validate().is_err());
+        let restored: Settings = serde_json::from_value(serde_json::to_value(defaults.clone()).unwrap()).unwrap();
+        assert_eq!(restored.shortcuts, defaults.shortcuts);
     }
 
     #[test]
@@ -1451,8 +1500,8 @@ mod tests {
         for n in 1..=24 {
             assert!(parse_shortcut(&format!("F{n}")).unwrap().is_some());
         }
-        // 默认 F2/F3/F4 已分别被贴图、录屏和历史占用，不能重复用作截图键。
-        for n in (1..=24).filter(|n| ![2, 3, 4].contains(n)) {
+        // 默认 F2/F3 被贴图和录屏占用，历史已改为 Alt+V，F4 可重新分配。
+        for n in (1..=24).filter(|n| ![2, 3].contains(n)) {
             assert!(Settings {
                 shortcuts: Shortcuts {
                     capture: format!("F{n}"),
@@ -1464,7 +1513,7 @@ mod tests {
             .is_ok());
         }
         // 重复动作映射及不支持的主键不能通过完整配置校验。
-        for shortcut in ["F2", "F3", "F4", "F25", "Ctrl+A+B"] {
+        for shortcut in ["F2", "F3", "Alt+V", "Alt+Z", "Alt+C", "F25", "Ctrl+A+B"] {
             assert!(Settings {
                 shortcuts: Shortcuts {
                     capture: shortcut.into(),
