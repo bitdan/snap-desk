@@ -47,6 +47,13 @@ extern "C" {
     fn CFNumberGetValue(number: *const c_void, kind: isize, value: *mut c_void) -> bool;
 }
 
+#[link(name = "IOKit", kind = "framework")]
+extern "C" {
+    /// kIOHIDRequestTypeListenEvent = 1：只读监听键鼠（录屏键鼠特效）所需的“输入监控”授权。
+    fn IOHIDCheckAccess(request: u32) -> u32;
+    fn IOHIDRequestAccess(request: u32) -> bool;
+}
+
 #[link(name = "ApplicationServices", kind = "framework")]
 extern "C" {
     /// 辅助功能授权：窗口元素吸附、直接粘贴、划词翻译等后续能力依赖它。
@@ -77,6 +84,16 @@ pub fn request_screen_capture() -> bool {
 
 pub fn accessibility_trusted() -> bool {
     unsafe { AXIsProcessTrusted() }
+}
+
+/// kIOHIDAccessTypeGranted = 0。
+pub fn input_monitoring_granted() -> bool {
+    unsafe { IOHIDCheckAccess(1) == 0 }
+}
+
+/// 首次调用弹出系统授权框并把应用加入“输入监控”列表。
+pub fn request_input_monitoring() -> bool {
+    unsafe { IOHIDRequestAccess(1) }
 }
 
 /// NSStatusWindowLevel：高于菜单栏（24）和 Dock（20），低于系统弹窗与屏保层，
@@ -110,12 +127,26 @@ pub fn raise_overlay(window: &WebviewWindow) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+/// 系统设置“隐私与安全性”中的权限面板。
+#[derive(Clone, Copy)]
+pub enum PrivacyPane {
+    ScreenCapture,
+    Accessibility,
+    InputMonitoring,
+}
+
 /// 打开“系统设置 → 隐私与安全性”的对应面板；地址固定，不接受前端传入。
-pub fn open_privacy_pane(screen_capture: bool) -> Result<(), String> {
-    crate::shared::platform::open_web_page(if screen_capture {
-        "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
-    } else {
-        "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+pub fn open_privacy_pane(pane: PrivacyPane) -> Result<(), String> {
+    crate::shared::platform::open_web_page(match pane {
+        PrivacyPane::ScreenCapture => {
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
+        }
+        PrivacyPane::Accessibility => {
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+        }
+        PrivacyPane::InputMonitoring => {
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent"
+        }
     })
 }
 

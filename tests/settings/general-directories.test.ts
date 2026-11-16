@@ -31,7 +31,7 @@ beforeEach(() => {
   directories = [{ kind: 'captures', path: 'D:/Pictures', error: null }, { kind: 'recordings', path: 'D:/Videos', error: null }, { kind: 'config', path: 'D:/Config', error: null }]
   api.appDirectories.mockImplementation(async () => structuredClone(directories))
   api.autostartEnabled.mockResolvedValue(false)
-  api.systemPermissions.mockResolvedValue({ supported: false, screenCapture: true, accessibility: true })
+  api.systemPermissions.mockResolvedValue({ supported: false, screenCapture: true, accessibility: true, inputMonitoring: true })
 })
 afterEach(() => { memoryRenderer.render(null, root) })
 async function mount(props = {}) { memoryRenderer.render(h(Component, props), root); await flushComponent() }
@@ -83,8 +83,8 @@ describe('通用设置系统权限', () => {
     expect(text(root)).not.toContain('系统权限')
   })
   it('macOS 未授权屏幕录制时可前往授权，并提示重启后生效', async () => {
-    api.systemPermissions.mockResolvedValue({ supported: true, screenCapture: false, accessibility: true })
-    api.requestSystemPermission.mockResolvedValue({ supported: true, screenCapture: false, accessibility: true })
+    api.systemPermissions.mockResolvedValue({ supported: true, screenCapture: false, accessibility: true, inputMonitoring: true })
+    api.requestSystemPermission.mockResolvedValue({ supported: true, screenCapture: false, accessibility: true, inputMonitoring: true })
     await mount()
     expect(text(root)).toContain('系统权限')
     expect(text(root)).toContain('未授权')
@@ -93,7 +93,7 @@ describe('通用设置系统权限', () => {
     expect(text(root)).toContain('请退出并重新打开应用')
   })
   it('全部授权后不再显示授权按钮', async () => {
-    api.systemPermissions.mockResolvedValue({ supported: true, screenCapture: true, accessibility: true })
+    api.systemPermissions.mockResolvedValue({ supported: true, screenCapture: true, accessibility: true, inputMonitoring: true })
     await mount()
     expect(text(root)).toContain('已授权')
     expect(permissionButton()).toBeUndefined()
