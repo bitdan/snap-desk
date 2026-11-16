@@ -5,6 +5,10 @@ use std::collections::VecDeque;
 mod windows;
 #[cfg(target_os = "windows")]
 pub use windows::Listener;
+#[cfg(target_os = "macos")]
+mod macos;
+#[cfg(target_os = "macos")]
+pub use macos::Listener;
 
 /// 所有位置均为虚拟桌面的物理像素；源时间与 WGC 相同，单位 100 ns。
 #[derive(Clone, Debug)]
@@ -169,9 +173,9 @@ impl Keys {
     }
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
 pub struct Listener;
-#[cfg(not(target_os = "windows"))]
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
 impl Listener {
     pub fn start(_config: super::config::InputEffects) -> Result<Self, String> {
         Err("当前平台不支持录屏键鼠特效。".into())

@@ -63,6 +63,7 @@ const permissionBusy = ref(false), permissionError = ref(''), restartHint = ref(
 const permissionRows: { kind: SystemPermissionKind; label: string }[] = [
   { kind: 'screenCapture', label: '屏幕录制' },
   { kind: 'accessibility', label: '辅助功能' },
+  { kind: 'inputMonitoring', label: '输入监控' },
 ]
 async function refreshPermissions() {
   if (!desktop) return
@@ -74,7 +75,7 @@ async function requestPermission(kind: SystemPermissionKind) {
   permissionBusy.value = true; permissionError.value = ''
   try {
     permissions.value = await api.requestSystemPermission(kind)
-    if (kind === 'screenCapture' && !permissions.value.screenCapture) restartHint.value = true
+    if (kind !== 'accessibility' && !permissions.value[kind]) restartHint.value = true
   } catch (e) { permissionError.value = String(e) }
   finally { permissionBusy.value = false }
 }
@@ -103,7 +104,7 @@ onBeforeUnmount(() => globalThis.removeEventListener?.('focus', onFocus))
           <Button v-if="!permissions[row.kind]" variant="outline" :disabled="permissionBusy" @click="requestPermission(row.kind)">{{ t('前往授权…') }}</Button>
         </SettingRow>
       </div>
-      <p v-if="restartHint && !permissions.screenCapture" class="notice" role="status">{{ t('在系统设置中允许 Snap Desk 后，请退出并重新打开应用。') }}</p>
+      <p v-if="restartHint && (!permissions.screenCapture || !permissions.inputMonitoring)" class="notice" role="status">{{ t('在系统设置中允许 Snap Desk 后，请退出并重新打开应用。') }}</p>
       <p v-if="permissionError" class="notice error" role="alert">{{ te(permissionError) }}</p>
     </template>
     <h2 class="section-heading">{{ t('导出字体') }}</h2>

@@ -905,5 +905,14 @@
   "无法创建 Apple Vision 文字识别请求。": "Unable to create an Apple Vision text recognition request.",
   "无法读取 Apple Vision 支持的识别语言。": "Unable to read the languages supported by Apple Vision.",
   "无法创建 Apple Vision 识别任务。": "Unable to create an Apple Vision recognition task.",
-  "Apple Vision 文字识别失败。": "Apple Vision text recognition failed."
+  "Apple Vision 文字识别失败。": "Apple Vision text recognition failed.",
+  "录屏键鼠特效需要“输入监控”权限，请在“设置 → 通用 → 系统权限”中授权后重启应用。": "Recording input effects require Input Monitoring permission. Grant it in Settings → General → System permissions, then restart the app.",
+  "键鼠特效监听线程初始化失败。": "Failed to initialize the input effects listener.",
+  "录屏需要“屏幕录制”权限，请在“设置 → 通用 → 系统权限”中授权后重启应用。": "Recording requires Screen Recording permission. Grant it in Settings → General → System permissions, then restart the app.",
+  "UnsupportedPlatform：macOS 暂不支持单窗口录制，请录制显示器区域。": "UnsupportedPlatform: macOS does not support recording a single window yet. Record a display region instead.",
+  "录制的显示器已断开或布局已改变，请重新选择。": "The recorded display was disconnected or the layout changed. Select it again.",
+  "录屏帧数据不完整。": "The recording frame data is incomplete.",
+  "macOS 暂不支持录制声音。": "macOS does not support recording audio yet.",
+  "无法启动录屏标注交互线程。": "Unable to start the annotation interaction thread.",
+  "录屏标注区域状态不可用。": "The annotation region state is unavailable."
 }

@@ -1297,5 +1297,6 @@
   "未授权": "Not granted",
   "前往授权…": "Grant access…",
   "在系统设置中允许 Snap Desk 后，请退出并重新打开应用。": "After allowing Snap Desk in System Settings, quit and reopen the app.",
-  "支持 {0} 种识别语言": "{0} recognition languages supported"
+  "支持 {0} 种识别语言": "{0} recognition languages supported",
+  "输入监控": "Input Monitoring"
 }
