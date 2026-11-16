@@ -25,7 +25,8 @@ strip = "symbols"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["tray-icon", "image-png"] }
+# macos-private-api：macOS 透明 WebView（贴图、暂存架、截图蒙层）需要；不上架 App Store，可启用。
+tauri = { version = "2", features = ["tray-icon", "image-png", "macos-private-api"] }
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-clipboard-manager = "2"
 tauri-plugin-dialog = "2"
@@ -56,6 +57,8 @@ chrono = { version = "0.4", default-features = false, features = ["clock"] }
 # 使用带版本绑定验签的更新器；只接收原生安装包，不启用旧版 ZIP 更新格式。
 tauri-plugin-updater = { version = "2.14.1", default-features = false, features = ["rustls-tls", "system-proxy"] }
 semver = "1"
+# 诊断包导出在所有平台共用；纯 Rust 压缩后端，无需系统 zlib。
+zip = { version = "=6.0.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
 [dev-dependencies]
 qrcode = { version = "0.14", default-features = false }
@@ -70,11 +73,15 @@ wechat-ocr-core = { git = "https://github.com/MapleREHub/wechat_ocr_sdk", rev = 
 # 禁用 OAR 默认的构建时下载/静态链接，只在用户启用 OCR 后加载固定版本 DLL。
 # rc.13 显式选择 API 24，继续兼容已发布的 ONNX Runtime 1.24.2 DLL。
 ort = { version = "=2.0.0-rc.13", default-features = false, features = ["load-dynamic", "api-24"] }
-zip = { version = "=6.0.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 clipboard-win = "=5.4.1"
 # COM implement 宏生成 ::windows_core 路径，必须直接声明并与 windows 0.62.2 对齐。
 windows-core = "=0.62.2"
 windows = { version = "=0.62.2", features = ["Foundation", "Globalization", "Graphics_Imaging", "Media_Ocr", "Storage", "Storage_Streams", "Win32_System_WinRT", "Win32_Media_Audio", "Win32_System_Com_StructuredStorage", "Win32_System_Variant", "Win32_Security_Credentials", "Win32_System_Threading", "Win32_Media_MediaFoundation", "Win32_System_Com", "Win32_System_Ole", "Win32_System_SystemServices", "Win32_UI_Shell", "Win32_System_DataExchange", "Win32_System_Memory", "Win32_Graphics_Gdi", "Win32_Graphics_Dwm", "Win32_Storage_Xps", "Foundation_Metadata", "Graphics_Capture", "Graphics_DirectX_Direct3D11", "Win32_Graphics_Direct3D", "Win32_Graphics_Direct3D11", "Win32_Graphics_Dxgi_Common", "Win32_System_WinRT_Direct3D11", "Win32_System_WinRT_Graphics_Capture", "Win32_System_Performance", "Win32_UI_WindowsAndMessaging", "Win32_UI_Input", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_HiDpi", "Win32_UI_Accessibility", "Win32_System_LibraryLoader"] }
+
+# macOS 原生能力：钥匙串保存 AI 密钥；objc2 调整截图蒙层窗口层级。版本与 Tauri/native-tls 已锁定的一致。
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = "=3.7.0"
+objc2 = "=0.6.5"
 
 # 其他平台保留构建时下载 CPU 引擎的方式，同样显式选择 API 24。
 [target.'cfg(not(windows))'.dependencies]

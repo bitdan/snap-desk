@@ -117,6 +117,41 @@ impl Rect {
 fn err(error: impl std::fmt::Display) -> String {
     error.to_string()
 }
+
+/// 让蒙层与截图位图完全重合。Windows/Linux 直接使用物理像素；
+/// macOS 物理坐标会按窗口“当前所在屏”的缩放换算，跨 Retina/非 Retina 屏移动时会错位，
+/// 因此改用目标屏的点坐标（像素 ÷ 该屏缩放）定位和定尺寸。
+fn place_overlay(
+    window: &WebviewWindow,
+    desktop: &crate::capture::desktop::Desktop,
+) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    if let Some(display) = desktop.displays.first() {
+        let scale = display.scale.max(0.1);
+        window
+            .set_position(tauri::LogicalPosition::new(
+                f64::from(display.x) / scale,
+                f64::from(display.y) / scale,
+            ))
+            .map_err(err)?;
+        window
+            .set_size(tauri::LogicalSize::new(
+                f64::from(desktop.image.width()) / scale,
+                f64::from(desktop.image.height()) / scale,
+            ))
+            .map_err(err)?;
+        return Ok(());
+    }
+    window
+        .set_position(tauri::PhysicalPosition::new(desktop.x, desktop.y))
+        .map_err(err)?;
+    window
+        .set_size(tauri::PhysicalSize::new(
+            desktop.image.width(),
+            desktop.image.height(),
+        ))
+        .map_err(err)
+}
 fn overlay(app: &AppHandle) -> Result<WebviewWindow, String> {
     app.get_webview_window("capture")
         .ok_or_else(|| "截图窗口不可用，请重启应用。".into())
@@ -456,7 +491,7 @@ fn prepare(
     // 必须位于 capture 之后；前端仍通过 current_capture 补读会话，兼容冷启动时
     // capture-ready 事件早于监听器注册的情况，解码完成后才会调用 show_capture。
     let window = ensure_overlay(app)?;
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         let monitor = window
             .primary_monitor()
@@ -473,15 +508,7 @@ fn prepare(
             scale: monitor.scale_factor(),
         }];
     }
-    window
-        .set_position(tauri::PhysicalPosition::new(desktop.x, desktop.y))
-        .map_err(err)?;
-    window
-        .set_size(tauri::PhysicalSize::new(
-            desktop.image.width(),
-            desktop.image.height(),
-        ))
-        .map_err(err)?;
+    place_overlay(&window, &desktop)?;
     let image = std::mem::take(&mut desktop.image);
     latency.overlay_ready_ms = elapsed_ms(overlay_started);
     let encode_started = Instant::now();
@@ -717,6 +744,8 @@ pub fn show_capture(
         .as_mut()
         .filter(|s| s.frame.id == id && s.frame.preview_revision == revision)
         .ok_or("截图已过期。")?;
+    #[cfg(target_os = "macos")]
+    crate::shared::macos::raise_overlay(&window)?;
     window.show().map_err(err)?;
     window.set_focus().map_err(err)?;
     if !session.shown {

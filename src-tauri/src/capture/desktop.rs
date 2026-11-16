@@ -258,7 +258,67 @@ pub fn capture(primary_only: bool, include_cursor: bool, snap: bool) -> Result<D
     Ok(desktop)
 }
 
-#[cfg(not(windows))]
+/// macOS 截取鼠标所在的那块屏幕（无鼠标位置时回退主屏）。
+/// 一个蒙层窗口不能跨越多块各自拥有桌面空间的显示器，因此先按屏截取，跨屏框选另行实现。
+/// Display 的 x/y 为“点坐标 × 该屏实际缩放”，宽高为 Retina 像素，scale 为像素/点之比；
+/// 调用方据此把蒙层放到点坐标 (x/scale, y/scale)，不依赖窗口当前所在屏的缩放。
+#[cfg(target_os = "macos")]
+pub fn capture(primary_only: bool, include_cursor: bool, _snap: bool) -> Result<Desktop, String> {
+    if include_cursor {
+        return Err("当前平台暂不支持截图包含光标。".into());
+    }
+    let monitors = xcap::Monitor::all().map_err(crate::shared::platform::capture_error)?;
+    let cursor = (!primary_only)
+        .then(crate::shared::macos::cursor_point)
+        .flatten();
+    // 点坐标的屏幕边界；任一属性读取失败的显示器直接跳过，不影响其余屏幕。
+    let bounds = |m: &xcap::Monitor| -> Option<(f64, f64, f64, f64)> {
+        Some((
+            f64::from(m.x().ok()?),
+            f64::from(m.y().ok()?),
+            f64::from(m.width().ok()?),
+            f64::from(m.height().ok()?),
+        ))
+    };
+    let under_cursor = cursor.and_then(|(cx, cy)| {
+        monitors.iter().find(|&m| {
+            bounds(m).is_some_and(|(x, y, w, h)| cx >= x && cx < x + w && cy >= y && cy < y + h)
+        })
+    });
+    let monitor = under_cursor
+        .or_else(|| monitors.iter().find(|m| m.is_primary().unwrap_or(false)))
+        .or(monitors.first())
+        .ok_or("未找到可用显示器，请检查显示器连接。")?;
+    let (x, y, width, _) = bounds(monitor).ok_or("读取显示器位置失败。")?;
+    let image = monitor
+        .capture_image()
+        .map_err(crate::shared::platform::capture_error)?;
+    // 以实际像素宽度反推缩放，比系统报告的 scale_factor 更贴合截图位图（含缩放分辨率模式）。
+    let scale = if width > 0.0 {
+        f64::from(image.width()) / width
+    } else {
+        1.0
+    };
+    let (origin_x, origin_y) = ((x * scale).round() as i32, (y * scale).round() as i32);
+    Ok(Desktop {
+        x: origin_x,
+        y: origin_y,
+        displays: vec![Display {
+            x: origin_x,
+            y: origin_y,
+            width: image.width(),
+            height: image.height(),
+            primary: monitor.is_primary().unwrap_or(false),
+            scale,
+        }],
+        image,
+        targets: Vec::new(),
+        windows: Vec::new(),
+        include_cursor: false,
+    })
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 pub fn capture(_primary_only: bool, include_cursor: bool, _snap: bool) -> Result<Desktop, String> {
     if include_cursor {
         return Err("当前平台暂不支持截图包含光标。".into());

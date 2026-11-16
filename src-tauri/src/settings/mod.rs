@@ -1,6 +1,7 @@
 //! 设置的唯一来源：启动时读取 JSON，保存时同时更新文件和系统快捷键。
 //! 前端只传明确的设置字段，不能指定文件路径。损坏的配置不会在启动时被覆盖。
 pub(crate) mod autostart;
+pub(crate) mod permissions;
 pub(crate) mod shortcut_probe;
 pub(crate) mod storage;
 pub(crate) mod backup;

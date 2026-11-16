@@ -395,9 +395,6 @@ impl PinView {
         {
             return Err("缩放比例无效，透明度应为 20%～100%。".into());
         }
-        if cfg!(target_os = "macos") && self.opacity != 1.0 {
-            return Err("macOS 当前未启用透明贴图窗口。".into());
-        }
         Ok(())
     }
 }
@@ -504,7 +501,8 @@ fn frame(label: &str, pin: &Pin) -> PinFrame {
         height: pin.image.height(),
         view: pin.view.clone(),
         appearance: PinAppearance::default(),
-        transparency_supported: !cfg!(target_os = "macos"),
+        // 各平台均已启用透明窗口（macOS 依赖 macos-private-api）；字段保留给前端判断。
+        transparency_supported: true,
         annotations: pin.annotations.clone(),
     }
 }
@@ -658,8 +656,7 @@ fn create_with_text(
             .skip_taskbar(true)
             .shadow(false)
             .visible(false);
-    // macOS 的透明 WebView 依赖私有 API，本期保持普通背景，不引入该平台开关。
-    #[cfg(not(target_os = "macos"))]
+    // macOS 的透明 WebView 依赖 Tauri 的 macos-private-api 特性及配置项 macOSPrivateApi。
     let builder = builder.transparent(true);
     match crate::shared::dialog_windows::attach(builder, app, &label).build() {
         Ok(window) => {

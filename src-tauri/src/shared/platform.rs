@@ -90,8 +90,8 @@ pub fn reveal_path(path: &std::path::Path) -> Result<(), String> {
     }
 }
 
-/// 非 Windows 平台的主屏捕获回退；Windows 使用 desktop_capture 的多屏实现。
-#[cfg(not(windows))]
+/// Linux 的主屏捕获回退；Windows 使用多屏实现，macOS 按鼠标所在屏截取。
+#[cfg(not(any(windows, target_os = "macos")))]
 pub fn capture_primary() -> Result<RgbaImage, String> {
     #[cfg(target_os = "linux")]
     if std::env::var("XDG_SESSION_TYPE").unwrap_or_default() == "wayland"
@@ -110,7 +110,7 @@ pub fn capture_primary() -> Result<RgbaImage, String> {
 }
 
 #[cfg(not(windows))]
-fn capture_error(error: impl std::fmt::Display) -> String {
+pub(crate) fn capture_error(error: impl std::fmt::Display) -> String {
     #[cfg(target_os = "macos")]
     return format!("截图失败：{error}。请在系统设置 → 隐私与安全性 → 屏幕录制中授权后重启应用。");
     #[cfg(not(target_os = "macos"))]

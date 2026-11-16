@@ -1,4 +1,4 @@
-//! Windows 诊断 ZIP：只写四个固定条目，复用现有 zip 与 tempfile，失败自动清理临时包。
+//! 跨平台诊断 ZIP：只写四个固定条目，复用现有 zip 与 tempfile，失败自动清理临时包。
 use super::{location, logs, runtime};
 use std::{io::Write, path::Path};
 use tauri::{AppHandle, WebviewWindow};

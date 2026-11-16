@@ -3,7 +3,7 @@ import { h } from 'vue'
 import { clientComponent, findNode, MemoryNode, memoryRenderer, flushComponent } from '../helpers/component-host'
 import type { DirectoryView } from '../../src/features/settings/types'
 
-const api = vi.hoisted(() => ({ appDirectories: vi.fn(), chooseCaptureDirectory: vi.fn(), chooseRecordingDirectory: vi.fn(), autostartEnabled: vi.fn(), exportSettings: vi.fn(), importSettings: vi.fn() }))
+const api = vi.hoisted(() => ({ appDirectories: vi.fn(), chooseCaptureDirectory: vi.fn(), chooseRecordingDirectory: vi.fn(), autostartEnabled: vi.fn(), exportSettings: vi.fn(), importSettings: vi.fn(), systemPermissions: vi.fn(), requestSystemPermission: vi.fn() }))
 vi.mock('../../src/services/api', () => ({ api, desktop: true }))
 vi.mock('../../src/features/shelf/components/ShelfSettings.vue', () => ({ default: { render: () => null } }))
 vi.mock('../../src/features/clipboard/components/ClipboardSettings.vue', () => ({ default: { render: () => null } }))
@@ -31,6 +31,7 @@ beforeEach(() => {
   directories = [{ kind: 'captures', path: 'D:/Pictures', error: null }, { kind: 'recordings', path: 'D:/Videos', error: null }, { kind: 'config', path: 'D:/Config', error: null }]
   api.appDirectories.mockImplementation(async () => structuredClone(directories))
   api.autostartEnabled.mockResolvedValue(false)
+  api.systemPermissions.mockResolvedValue({ supported: false, screenCapture: true, accessibility: true })
 })
 afterEach(() => { memoryRenderer.render(null, root) })
 async function mount(props = {}) { memoryRenderer.render(h(Component, props), root); await flushComponent() }
@@ -75,4 +76,26 @@ describe('通用设置保存目录', () => {
   })
 })
 
-
+describe('通用设置系统权限', () => {
+  const permissionButton = () => findNode(root, node => node.type === 'button' && text(node) === '前往授权…')
+  it('不需要授权引导的平台不显示权限分区', async () => {
+    await mount()
+    expect(text(root)).not.toContain('系统权限')
+  })
+  it('macOS 未授权屏幕录制时可前往授权，并提示重启后生效', async () => {
+    api.systemPermissions.mockResolvedValue({ supported: true, screenCapture: false, accessibility: true })
+    api.requestSystemPermission.mockResolvedValue({ supported: true, screenCapture: false, accessibility: true })
+    await mount()
+    expect(text(root)).toContain('系统权限')
+    expect(text(root)).toContain('未授权')
+    await permissionButton()!.props.onClick(); await flushComponent()
+    expect(api.requestSystemPermission).toHaveBeenCalledWith('screenCapture')
+    expect(text(root)).toContain('请退出并重新打开应用')
+  })
+  it('全部授权后不再显示授权按钮', async () => {
+    api.systemPermissions.mockResolvedValue({ supported: true, screenCapture: true, accessibility: true })
+    await mount()
+    expect(text(root)).toContain('已授权')
+    expect(permissionButton()).toBeUndefined()
+  })
+})

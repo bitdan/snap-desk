@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { Component } from 'vue'
+import { shortcutText } from './shortcut-label'
 /** 工具页顶部的主操作卡片：图标、名称、可选状态行、快捷键与操作按钮。 */
 defineProps<{ icon: Component; title: string; meta?: string; shortcut?: string }>()
 </script>
@@ -12,7 +13,7 @@ defineProps<{ icon: Component; title: string; meta?: string; shortcut?: string }
       <span v-if="meta" class="tool-hero-meta"><slot name="meta">{{ meta }}</slot></span>
     </span>
     <span class="tool-hero-actions">
-      <kbd v-if="shortcut">{{ shortcut }}</kbd>
+      <kbd v-if="shortcut">{{ shortcutText(shortcut) }}</kbd>
       <slot />
     </span>
   </section>

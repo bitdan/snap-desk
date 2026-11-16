@@ -2,6 +2,9 @@
 import type { Settings } from '@/features/settings/settings'
 export type AppDirectory = 'config' | 'data' | 'captures' | 'recordings' | 'scrollResults' | 'clipboard' | 'logs'
 export interface DirectoryView { kind: AppDirectory; path: string | null; error: string | null }
+/** 系统隐私授权状态；supported=false 的平台无需应用内引导。 */
+export interface SystemPermissions { supported: boolean; screenCapture: boolean; accessibility: boolean }
+export type SystemPermissionKind = 'screenCapture' | 'accessibility'
 export interface AppStatus { version: string; settings: Settings; shortcutError: string | null; configWarning: string | null; delayRemaining: number; platform: string }
 /** 安装包类型由原生运行标记确定，页面不能指定更新地址。 */
 export interface AppUpdateView {

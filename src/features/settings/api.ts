@@ -1,7 +1,7 @@
 /** 本功能拥有的 IPC 命令；底层调用统一经过 services/ipc。 */
 import type { Settings } from '@/features/settings/settings'
 import type { ShortcutProbeReport } from '@/features/settings/shortcut-probe'
-import type { AppDirectory, DirectoryView, AppStatus, AppUpdateView } from '@/features/settings/types'
+import type { AppDirectory, DirectoryView, AppStatus, AppUpdateView, SystemPermissionKind, SystemPermissions } from '@/features/settings/types'
 import { invoke } from '@/services/ipc'
 import { updatePreview, previewUpdater } from './update-preview'
 
@@ -27,5 +27,7 @@ export const settingsApi = {
   setShortcutsEnabled: (enabled: boolean) => invoke<Settings>('set_shortcuts_enabled', { enabled }),
   setShortcutEditing: (editing: boolean) => invoke<void>('set_shortcut_editing', { editing }),
   probeShortcuts: () => invoke<ShortcutProbeReport>('probe_shortcuts'),
+  systemPermissions: () => invoke<SystemPermissions>('system_permissions'),
+  requestSystemPermission: (kind: SystemPermissionKind) => invoke<SystemPermissions>('request_system_permission', { kind }),
   hide: () => invoke<void>('hide_main'),
 }

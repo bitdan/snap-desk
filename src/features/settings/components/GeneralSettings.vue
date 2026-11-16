@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import { t, te } from '@/shared/i18n/i18n'
-import { onMounted, ref } from 'vue'
+import { onBeforeUnmount, onMounted, ref } from 'vue'
 import Button from '@/shared/ui/button/Button.vue'
 import SwitchControl from '@/shared/ui/SwitchControl'
 import SettingRow from '@/shared/ui/SettingRow'
 import ResourceSettings from '@/features/resources/components/ResourceSettings.vue'
 import { Check } from 'lucide-vue-next'
 import { api, desktop } from '@/services/api'
-import type { AppDirectory, DirectoryView } from '@/features/settings/types'
+import type { AppDirectory, DirectoryView, SystemPermissionKind, SystemPermissions } from '@/features/settings/types'
 import '@/features/settings/settings.css'
 
 const directories = ref<DirectoryView[]>([])
@@ -57,7 +57,30 @@ async function choose(kind: AppDirectory, reset = false) {
     : await api.chooseRecordingDirectory(reset)
   if (result) await refresh()
 }
-onMounted(() => { void run(refresh); void refreshAutostart() })
+// macOS 隐私授权：从系统设置返回时重新读取；屏幕录制的新授权需重启应用才生效。
+const permissions = ref<SystemPermissions | null>(null)
+const permissionBusy = ref(false), permissionError = ref(''), restartHint = ref(false)
+const permissionRows: { kind: SystemPermissionKind; label: string }[] = [
+  { kind: 'screenCapture', label: '屏幕录制' },
+  { kind: 'accessibility', label: '辅助功能' },
+]
+async function refreshPermissions() {
+  if (!desktop) return
+  try { permissions.value = await api.systemPermissions(); permissionError.value = '' }
+  catch (e) { permissionError.value = String(e) }
+}
+async function requestPermission(kind: SystemPermissionKind) {
+  if (!desktop || permissionBusy.value) return
+  permissionBusy.value = true; permissionError.value = ''
+  try {
+    permissions.value = await api.requestSystemPermission(kind)
+    if (kind === 'screenCapture' && !permissions.value.screenCapture) restartHint.value = true
+  } catch (e) { permissionError.value = String(e) }
+  finally { permissionBusy.value = false }
+}
+const onFocus = () => { void refreshPermissions() }
+onMounted(() => { void run(refresh); void refreshAutostart(); void refreshPermissions(); globalThis.addEventListener?.('focus', onFocus) })
+onBeforeUnmount(() => globalThis.removeEventListener?.('focus', onFocus))
 </script>
 
 <template>
@@ -72,6 +95,17 @@ onMounted(() => { void run(refresh); void refreshAutostart() })
       </SettingRow>
     </div>
     <p v-if="startupError" class="notice error" role="alert">{{ te(startupError) }}</p>
+    <template v-if="permissions?.supported">
+      <h2 class="section-heading">{{ t('系统权限') }}</h2>
+      <div class="settings-card">
+        <SettingRow v-for="row in permissionRows" :key="row.kind" :label="t(row.label)">
+          <span :class="permissions[row.kind] ? 'status-ok' : 'text-xs text-zinc-500'" role="status"><Check v-if="permissions[row.kind]" :size="14" />{{ permissions[row.kind] ? t('已授权') : t('未授权') }}</span>
+          <Button v-if="!permissions[row.kind]" variant="outline" :disabled="permissionBusy" @click="requestPermission(row.kind)">{{ t('前往授权…') }}</Button>
+        </SettingRow>
+      </div>
+      <p v-if="restartHint && !permissions.screenCapture" class="notice" role="status">{{ t('在系统设置中允许 Snap Desk 后，请退出并重新打开应用。') }}</p>
+      <p v-if="permissionError" class="notice error" role="alert">{{ te(permissionError) }}</p>
+    </template>
     <h2 class="section-heading">{{ t('导出字体') }}</h2>
     <div class="settings-card"><ResourceSettings kind="font" /></div>
     <h2 class="section-heading">{{ t('文件与存储') }}</h2>

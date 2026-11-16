@@ -1,6 +1,5 @@
 //! 主窗口专属的本地诊断入口：读取、导出与清理走阻塞线程，不授予前端文件权限。
 mod catalog;
-#[cfg(windows)]
 mod export;
 mod logs;
 pub(crate) mod logger;
@@ -44,7 +43,7 @@ fn status(app: &AppHandle) -> Status {
         total_bytes: 0,
         archives: 0,
         recent_errors: 0,
-        export_supported: cfg!(windows),
+        export_supported: true,
     };
     let result = (|| {
         let (root, base) = location(app)?;
@@ -174,18 +173,10 @@ pub async fn diagnostics_clear_archives(
 #[tauri::command]
 pub async fn diagnostics_export(app: AppHandle, window: WebviewWindow) -> Result<bool, String> {
     require_window(&window, "main")?;
-    #[cfg(windows)]
-    {
-        tauri::async_runtime::spawn_blocking(move || {
-            let _guard = OPERATION.try_lock().map_err(|_| "诊断操作正在进行。")?;
-            export::save(&app, &window)
-        })
-        .await
-        .map_err(|_| "诊断包导出任务失败。")?
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = app;
-        Err("当前平台暂不支持 ZIP 诊断包导出。".into())
-    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let _guard = OPERATION.try_lock().map_err(|_| "诊断操作正在进行。")?;
+        export::save(&app, &window)
+    })
+    .await
+    .map_err(|_| "诊断包导出任务失败。")?
 }

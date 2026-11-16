@@ -487,6 +487,8 @@ pub fn run() {
             settings::set_shortcuts_enabled,
             settings::set_shortcut_editing,
             shortcut_probe::probe_shortcuts,
+            settings::permissions::system_permissions,
+            settings::permissions::request_system_permission,
             capture::cancel_pending_capture,
             capture::start_capture,
             capture::current_capture,
