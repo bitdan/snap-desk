@@ -4,10 +4,10 @@ import { h } from 'vue'
 import { clientComponent, findNode, flushComponent, MemoryNode, memoryRenderer } from '../helpers/component-host'
 
 const api = vi.hoisted(() => ({ recognizeCapture: vi.fn(), recognizeQr: vi.fn(), openTranslation: vi.fn(), cancel: vi.fn(), current: vi.fn(), currentScroll: vi.fn(), recordingCapabilities: vi.fn(), startScroll: vi.fn(), startRecording: vi.fn() }))
-const captureEvents = vi.hoisted(() => ({ frame: (_value: unknown) => {} }))
+const captureEvents = vi.hoisted(() => ({ frame: (_value: unknown) => {}, ocr: (_id: number) => {} }))
 vi.mock('../../src/services/api', () => ({ api,
   onFrame: async (callback: typeof captureEvents.frame) => { captureEvents.frame = callback; return () => { captureEvents.frame = () => {} } },
-  onCaptureClosed: async () => () => {}, onCapturePin: async () => () => {}, onScroll: async () => () => {},
+  onCaptureClosed: async () => () => {}, onCapturePin: async () => () => {}, onCaptureOcr: async (callback: typeof captureEvents.ocr) => { captureEvents.ocr = callback; return () => {} }, onScroll: async () => () => {},
 }))
 vi.mock('@tauri-apps/api/core', () => ({ convertFileSrc: () => 'capture-image', isTauri: () => false }))
 vi.mock('../../src/features/annotations/components/AnnotationWorkspace.vue', async () => {
@@ -184,6 +184,19 @@ it('蒙层收起失败时保留截图现场，结果仍在蒙层内显示', asyn
   await flushComponent()
   expect(workspace().props['surface-visible']).toBe(true)
   expect(findNode(root, node => node.props['data-window'] === '文字识别结果')).toBeDefined()
+})
+it('截图进行中按 OCR 全局键识别当前选区；尚未框选时提示先框选', async () => {
+  api.recognizeCapture.mockResolvedValueOnce({ fullText: 'screen text', requestId: 'ocr', lines: [] })
+  captureEvents.ocr(9); await flushComponent()
+  expect(api.recognizeCapture).not.toHaveBeenCalled()
+  captureEvents.ocr(1); await flushComponent()
+  expect(api.recognizeCapture).toHaveBeenCalledExactlyOnceWith(1, { x: 100, y: 100, width: 400, height: 300 })
+  expect(findNode(root, node => node.props['data-window'] === '文字识别结果')).toBeDefined()
+  captureEvents.frame({ id: 2, width: 1000, height: 800, previewRevision: 1, originX: 0, originY: 0, displays: [], targets: [], recording: false })
+  await flushComponent()
+  captureEvents.ocr(2); await flushComponent()
+  expect(api.recognizeCapture).toHaveBeenCalledTimes(1)
+  expect(nodeText(root)).toContain('请先框选要识别的文字区域')
 })
 it('识别到二维码后收起截图蒙层并保留结果窗口，没有识别到时保留截图现场', async () => {
   api.recognizeQr.mockResolvedValueOnce({ id: 1, items: [] })

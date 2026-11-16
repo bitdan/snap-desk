@@ -20,8 +20,8 @@ interface RecognitionOptions {
   /** 二维码识别沿用当前标注历史，结果面板与导出使用同一份形状。 */
   annotations: () => Annotation[]
   releaseFrame: (id?: number) => void
-  /** 截图会话释放前取得选区原图的内存副本；取不到时结果窗口只显示文字。 */
-  snapshot: (rect: Rect) => OcrImage | null
+  /** 截图会话释放前复制选区像素，编码异步完成；返回 blob: 地址，取不到时结果窗口只显示文字。 */
+  snapshot: (rect: Rect) => Promise<OcrImage | null>
 }
 
 /** 识别与翻译共享可编辑草稿；切换面板不重复 OCR，也不丢失用户修正。 */
@@ -45,6 +45,11 @@ export function useCaptureRecognition({ frame, pixels, busy, error, blocked, ges
     ocrResult.value = null
     ocrDraft.value = ''
     ocrDetached.value = false
+    dropSnapshot()
+  }
+
+  function dropSnapshot() {
+    if (ocrSnapshot.value) URL.revokeObjectURL(ocrSnapshot.value.url)
     ocrSnapshot.value = null
   }
 
@@ -72,8 +77,12 @@ export function useCaptureRecognition({ frame, pixels, busy, error, blocked, ges
           ocrMode.value = translate ? 'translate' : 'ocr'
           // 没识别到文字时保留截图现场，便于直接重新框选。
           if (ocrDraft.value.trim()) {
-            ocrSnapshot.value = snapshot(rect)
-            if (!await detach(id, ocrDetached)) ocrSnapshot.value = null
+            // 像素在会话释放前同步复制，编码与收起蒙层并行进行。
+            const pending = snapshot(rect)
+            const detached = await detach(id, ocrDetached)
+            const image = await pending
+            if (detached && ocrDetached.value) ocrSnapshot.value = image
+            else if (image) URL.revokeObjectURL(image.url)
           }
           if (ocrDetached.value || frame.value?.id === id) ocrResult.value = text
         }

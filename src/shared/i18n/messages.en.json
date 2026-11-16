@@ -483,6 +483,7 @@
   "退出会清空贴图，请先保存需要保留的内容。": "Pins are cleared on exit. Save anything you need to keep.",
   "图片二维码识别": "Image QR recognition",
   "未识别到文字。": "No text recognized.",
+  "请先框选要识别的文字区域。": "Select the text area to recognize first.",
   "识别原图（不含标注）": "Original image for recognition (without annotations)",
   "选择识别文字行": "Select recognized text lines",
   "所选文字，可选择部分复制": "Selected text; select a fragment to copy",

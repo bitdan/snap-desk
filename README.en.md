@@ -82,6 +82,7 @@ The macOS and Linux previews currently provide primary-screen capture, annotatio
 | ✅ | Groq Vision | Online API | Select a model that supports image recognition |
 | ✅ | Custom vision service | Online API / Local API | Connect a compatible service with image input support |
 
+- [x] Start text recognition with a global shortcut (`Alt+C` by default); during a capture it recognizes the current selection. The capture closes once content is recognized, leaving only the result window.
 - [x] Edit, copy, or translate recognized text.
 - [x] Recognize QR codes locally; confirm before opening detected links.
 - [x] Use the selected OCR engine without automatically switching to an online service when local recognition fails.

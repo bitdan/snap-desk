@@ -24,9 +24,12 @@ pub(super) fn trigger(app: &AppHandle) {
 }
 
 /// OCR 全局键直接进入文字框选；与普通截图共用会话占用与错误处理。
+/// 截图已在进行时交给截图窗口识别当前选区，不再静默忽略。
 pub(super) fn trigger_ocr(app: &AppHandle) {
-    if app.state::<CaptureState>().active.load(Ordering::SeqCst) {
-        return;
+    match capture::request_ocr(app) {
+        Ok(false) => {}
+        Ok(true) => return,
+        Err(error) => return capture::report_error(app, error),
     }
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
