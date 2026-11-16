@@ -20,8 +20,10 @@ use tauri_plugin_updater::{Update, UpdaterExt};
 
 const REPOSITORY: &str = "bitdan/snap-desk";
 /// 应用常驻托盘，可能连续运行数天；定时复查才能发现运行期间发布的新版本。
-/// 每次复查只请求一次发布列表，远低于 GitHub 匿名接口每小时 60 次的限额。
-const RECHECK_INTERVAL: Duration = Duration::from_secs(60 * 60);
+/// 复查间隔由设置决定（见 settings::UPDATE_CHECK_MINUTES），读取失败时按一小时处理。
+const DEFAULT_RECHECK_INTERVAL: Duration = Duration::from_secs(60 * 60);
+/// 等待期间每分钟重读一次间隔：在设置页改短后不必等旧周期走完。
+const INTERVAL_POLL: Duration = Duration::from_secs(60);
 /// 断网、限流等失败后较快重试，不必等到下一个完整周期。
 const RETRY_INTERVAL: Duration = Duration::from_secs(10 * 60);
 const PUBLIC_KEY: &str = match option_env!("SNAP_DESK_UPDATER_PUBLIC_KEY") {
@@ -507,7 +509,16 @@ pub(super) async fn install_app_update(
     Ok(())
 }
 
-/// 启动后检查一次，此后定时复查；始终不自动下载，页面通过同一状态查询结果。
+/// 当前设置的后台复查间隔；设置锁不可用时退回一小时，不让后台检查停掉。
+fn recheck_interval(app: &AppHandle) -> Duration {
+    app.state::<SettingsState>()
+        .0
+        .lock()
+        .map(|settings| Duration::from_secs(u64::from(settings.value.update_check_minutes) * 60))
+        .unwrap_or(DEFAULT_RECHECK_INTERVAL)
+}
+
+/// 启动后检查一次，此后按设置的间隔复查；始终不自动下载，页面通过同一状态查询结果。
 pub(super) fn initialize(app: &AppHandle) {
     if std::env::args().any(|arg| arg == "--update-failed") {
         if let Ok(mut session) = app.state::<AppUpdateState>().session.lock() {
@@ -523,11 +534,15 @@ pub(super) fn initialize(app: &AppHandle) {
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(Duration::from_secs(10)).await;
         loop {
-            let delay = match check(&app, true).await {
-                Ok(_) => RECHECK_INTERVAL,
-                Err(_) => RETRY_INTERVAL,
-            };
-            tokio::time::sleep(delay).await;
+            let failed = check(&app, true).await.is_err();
+            let checked = std::time::Instant::now();
+            loop {
+                tokio::time::sleep(INTERVAL_POLL).await;
+                let wait = if failed { RETRY_INTERVAL } else { recheck_interval(&app) };
+                if checked.elapsed() >= wait {
+                    break;
+                }
+            }
         }
     });
 }

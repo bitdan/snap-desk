@@ -45,6 +45,7 @@ fn parse(bytes: &[u8]) -> Result<Backup, String> {
     // 新增更新偏好不使旧版完整备份失效；只为这个新增字段补默认值，其他字段仍须完整。
     if let Some(settings) = json.get_mut("settings").and_then(|value| value.as_object_mut()) {
         settings.entry("receivePrereleaseUpdates").or_insert(false.into());
+        settings.entry("updateCheckMinutes").or_insert(60.into());
         settings.entry("recognitionServices").or_insert(serde_json::json!([]));
         // 后续版本新增的行为开关同样补默认值：旧备份导入后保持原有行为（不自动复制、不直接执行，剪贴板默认直接粘贴）。
         settings.entry("screenshotAfter").or_insert("none".into());

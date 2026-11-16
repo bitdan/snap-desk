@@ -4,15 +4,19 @@ import { Check } from 'lucide-vue-next'
 import Button from '@/shared/ui/button/Button.vue'
 import SwitchControl from '@/shared/ui/SwitchControl'
 import SettingRow from '@/shared/ui/SettingRow'
+import SegmentedControl from '@/shared/ui/SegmentedControl.vue'
 import { t, te } from '@/shared/i18n/i18n'
 import { api, desktop } from '@/services/api'
 import { onSettingsImported, requestUpdateWindow } from '@/features/settings/events'
 import { updateSettings } from '@/features/settings/settings-write'
+import { updateCheckIntervals } from '@/features/settings/settings'
 import type { AppUpdateView } from '@/features/settings/types'
 import { updatePreview } from '@/features/settings/update-preview'
 
 const view = ref<AppUpdateView | null>(null)
 const preview = ref<boolean | null>(null)
+// 后台复查间隔（分钟）；读取到设置前为 null，控件保持禁用。
+const interval = ref<number | null>(null)
 const busy = ref(false), saving = ref(false), error = ref('')
 let disposed = false, timer: ReturnType<typeof setInterval> | undefined, refreshing = false
 let unsubscribe: (() => void) | undefined
@@ -54,15 +58,26 @@ async function togglePreview() {
   } catch (e) { error.value = String(e) }
   finally { saving.value = false }
 }
+/** 只保存间隔；原生端每分钟重读一次，不需要重启或立即检查。失败时保留已生效的档位。 */
+async function chooseInterval(minutes: number) {
+  if (interval.value === null || saving.value) return
+  saving.value = true; error.value = ''
+  try {
+    const saved = await updateSettings(current => ({ ...current, updateCheckMinutes: minutes }))
+    interval.value = saved.updateCheckMinutes
+  } catch (e) { error.value = String(e) }
+  finally { saving.value = false }
+}
 async function initialize() {
   if (updatePreview) { await refresh(); return }
   if (!desktop) return
   try {
-    unsubscribe = await onSettingsImported(settings => { preview.value = settings.receivePrereleaseUpdates; void refresh() })
+    unsubscribe = await onSettingsImported(settings => { preview.value = settings.receivePrereleaseUpdates; interval.value = settings.updateCheckMinutes; void refresh() })
     if (disposed) { unsubscribe(); return }
     const status = await api.status()
     if (disposed) return
     preview.value = status.settings.receivePrereleaseUpdates
+    interval.value = status.settings.updateCheckMinutes
     await refresh()
   } catch (e) { if (!disposed) error.value = String(e) }
 }
@@ -81,6 +96,9 @@ onUnmounted(() => { disposed = true; if (timer) clearInterval(timer); unsubscrib
     <div class="settings-card">
     <SettingRow :label="t('测试版更新')" for="receive-prerelease" :tip="prereleaseBuild ? t('当前为测试版，始终接收测试版更新；升级到正式版后按此开关决定。') : undefined">
       <SwitchControl id="receive-prerelease" :model-value="prereleaseBuild || preview === true" :disabled="prereleaseBuild || updatePreview || !desktop || preview === null || operating || saving" @update:model-value="togglePreview" />
+    </SettingRow>
+    <SettingRow :label="t('检查更新间隔')">
+      <SegmentedControl :model-value="interval ?? 60" :label="t('检查更新间隔')" :disabled="updatePreview || !desktop || interval === null || saving" :options="updateCheckIntervals.map(item => ({ value: item.value, label: t(item.label) }))" @update:model-value="chooseInterval" />
     </SettingRow>
     <div class="setting-row">
       <div class="update-version"><span>{{ view ? `v${view.currentVersion}` : t('版本待读取') }}</span><span v-if="view && !hasUpdate && ['checking', 'latest', 'error'].includes(view.phase)" role="status" :class="view.phase === 'latest' ? 'status-ok' : 'text-xs text-zinc-500'"><Check v-if="view.phase === 'latest'" :size="14" />{{ t(phaseLabel) }}</span></div>

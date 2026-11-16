@@ -35,11 +35,15 @@ export const shortcutActions: { key: ShortcutAction; label: string; description:
 ]
 export const ONBOARDING_VERSION = 1
 export function needsOnboarding(version: number): boolean { return version < ONBOARDING_VERSION }
-export interface Settings { recognitionServices: RecognitionService[]; receivePrereleaseUpdates: boolean; appearance: Appearance; ai: AiSettings; ocr: OcrSettings; onboardingVersion: number; shortcuts: Shortcuts; shortcutsEnabled: boolean; delaySeconds: 0 | 3 | 5; screenshotCursor: boolean; screenshotSnap: boolean; screenshotAfter: 'none' | 'copy' | 'pin' | 'save'; export: ExportSettings; pinAppearance: PinAppearance; recordingExport: RecordingExportSettings; clipboard: ClipboardSettings }
+/** 后台检查更新间隔的可选档位（分钟），与原生端 UPDATE_CHECK_MINUTES 保持一致。 */
+export const updateCheckIntervals = [
+  { value: 30, label: '30 分钟' }, { value: 60, label: '1 小时' }, { value: 360, label: '6 小时' }, { value: 1440, label: '24 小时' },
+]
+export interface Settings { recognitionServices: RecognitionService[]; receivePrereleaseUpdates: boolean; updateCheckMinutes: number; appearance: Appearance; ai: AiSettings; ocr: OcrSettings; onboardingVersion: number; shortcuts: Shortcuts; shortcutsEnabled: boolean; delaySeconds: 0 | 3 | 5; screenshotCursor: boolean; screenshotSnap: boolean; screenshotAfter: 'none' | 'copy' | 'pin' | 'save'; export: ExportSettings; pinAppearance: PinAppearance; recordingExport: RecordingExportSettings; clipboard: ClipboardSettings }
 
 /** 每次返回独立对象，避免编辑草稿时改动“恢复默认”的值。 */
 export function defaultSettings(): Settings {
-  return { recognitionServices: [], receivePrereleaseUpdates: false, pinAppearance: defaultPinAppearance(), recordingExport: defaultRecordingExportSettings(), appearance: { theme: 'system', language: 'zh-CN' }, ai: defaultAiSettings(), ocr: defaultOcrSettings(), clipboard: defaultClipboardSettings(), onboardingVersion: 0, shortcuts: { capture: 'F1', pin: 'F2', record: 'F3', history: 'Alt+V', translate: 'Alt+T', shelf: 'Alt+Z', ocr: 'Alt+C' }, shortcutsEnabled: true, delaySeconds: 0, screenshotCursor: false, screenshotSnap: true, screenshotAfter: 'none', export: {
+  return { recognitionServices: [], receivePrereleaseUpdates: false, updateCheckMinutes: 60, pinAppearance: defaultPinAppearance(), recordingExport: defaultRecordingExportSettings(), appearance: { theme: 'system', language: 'zh-CN' }, ai: defaultAiSettings(), ocr: defaultOcrSettings(), clipboard: defaultClipboardSettings(), onboardingVersion: 0, shortcuts: { capture: 'F1', pin: 'F2', record: 'F3', history: 'Alt+V', translate: 'Alt+T', shelf: 'Alt+Z', ocr: 'Alt+C' }, shortcutsEnabled: true, delaySeconds: 0, screenshotCursor: false, screenshotSnap: true, screenshotAfter: 'none', export: {
     format: 'png', jpegQuality: 90, filenamePrefix: 'SnapDesk', includeDimensions: false, rememberDirectory: true,
   } }
 }
