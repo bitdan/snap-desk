@@ -7,6 +7,7 @@ import { defaultOcrSettings, type OcrSettings, type SystemOcrStatus, type Wechat
 import { updateSettings } from '@/features/settings/settings-write'
 import { useAutoSave } from '@/shared/ui/use-auto-save'
 import { t, te } from '@/shared/i18n/i18n'
+import { macPlatform } from '@/shared/platform'
 import ServiceSettings from './ServiceSettings.vue'
 import ProviderMenu from './ProviderMenu.vue'
 import type { ProviderMenuItem } from './ProviderMenu.vue'
@@ -37,7 +38,7 @@ const engineOptions = computed(() => {
     ...cloud,
     ...available.filter(item => !presets.some(preset => preset.id === servicePresetId(item))).map(option),
     { value: 'local-ppocr', label: 'PaddleOCR', description: 'PP-OCRv6', connection: 'offline' as const },
-    { value: 'windows-media', label: 'Windows OCR', connection: 'offline' as const, disabled: !system.value?.supported },
+    { value: 'windows-media', label: macPlatform ? 'Apple Vision' : 'Windows OCR', connection: 'offline' as const, disabled: !system.value?.supported },
     // 检测未完成或失败时仍允许打开面板查看原因和重试，仅明确不支持的平台禁用。
     { value: 'wechat-ocr', label: t('WeChat OCR（实验性）'), connection: 'offline' as const, disabled: wechat.value?.supported === false },
   ]).map(item => ({ ...item, active: item.value === activeMenu.value }))
@@ -119,7 +120,7 @@ onUnmounted(() => { disposed = true })
     <ServiceSettings v-if="configuringPreset || editingServiceId" :key="editingServiceId || configuringPreset" embedded :preset-id="configuringPreset || undefined" :service-id="editingServiceId || undefined" @saved="serviceSaved" @close="configuringPreset = ''; editingServiceId = ''" @busy-change="configuringBusy = $event" />
     <template v-else-if="windows">
       <label class="ocr-field">{{ t('识别语言') }}<SelectControl v-model="draft.language" :aria-label="t('识别语言')" :options="languageOptions" :disabled="!ready || checking || autosave.saving.value || !system?.supported || !!system?.error" @update:model-value="autosave.commit" /></label>
-      <div class="system-status"><span class="text-xs text-zinc-500" role="status">{{ checking ? t('正在检查系统语言包…') : !system ? t('状态未读取') : !system.supported ? t('Windows 系统 OCR 仅支持 Windows。') : system.error ? te(system.error) : system.languages.length ? t('已安装 {0} 个 OCR 语言包', { 0: system.languages.length }) : t('未安装 Windows OCR 语言包，请在 Windows 语言设置中安装。') }}</span><Button variant="outline" :disabled="checking" @click="refreshSystem">{{ t('刷新语言包') }}</Button></div>
+      <div class="system-status"><span class="text-xs text-zinc-500" role="status">{{ checking ? t('正在检查系统语言包…') : !system ? t('状态未读取') : !system.supported ? t('Windows 系统 OCR 仅支持 Windows。') : system.error ? te(system.error) : macPlatform ? t('支持 {0} 种识别语言', { 0: system.languages.length }) : system.languages.length ? t('已安装 {0} 个 OCR 语言包', { 0: system.languages.length }) : t('未安装 Windows OCR 语言包，请在 Windows 语言设置中安装。') }}</span><Button variant="outline" :disabled="checking" @click="refreshSystem">{{ t('刷新语言包') }}</Button></div>
     </template>
     <div v-else-if="draft.provider === 'wechat-ocr'" class="system-status">
       <span class="text-xs text-zinc-500" role="status">{{ checkingWechat ? t('正在检测 WeChat OCR…') : wechatError ? te(wechatError) : !wechat ? t('状态未读取') : wechat.error ? te(wechat.error) : wechat.detected ? t('已找到 WeChat OCR 组件') : t('未找到 WeChat OCR 组件') }}</span>

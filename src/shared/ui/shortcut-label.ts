@@ -2,7 +2,9 @@
  * 快捷键的界面展示。配置中统一保存为 `Ctrl+Alt+Shift+Super+键`（与原生注册格式一致），
  * 这里只改变显示：macOS 使用 ⌃⌥⇧⌘ 符号并按系统惯例紧挨书写，其他平台保持原文。
  */
-export const macPlatform = typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform || navigator.userAgent)
+import { macPlatform } from '@/shared/platform'
+
+export { macPlatform }
 
 const macSymbols: Record<string, string> = { Ctrl: '⌃', Alt: '⌥', Shift: '⇧', Super: '⌘' }
 

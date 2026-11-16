@@ -1,12 +1,14 @@
 import { brandIcons, serviceBrand } from '@/shared/ui/brand-icons'
+import { macPlatform } from '@/shared/platform'
 
 /** 引擎与服务的图标：有品牌图标时返回 SVG 源码，否则返回字母块与底色。 */
 export interface ProviderIcon { icon: string; mono: string; tile: string }
 
 const monograms: Record<string, [string, string]> = {
-  'ocr-space': ['OS', '#2f7d4f'], 'wechat-ocr': ['WX', '#07a35a'], offline: ['CT', '#475569'], custom: ['+', '#7c5cdb'],
+  'ocr-space': ['OS', '#2f7d4f'], 'windows-media': ['AV', '#1d1d1f'], 'wechat-ocr': ['WX', '#07a35a'], offline: ['CT', '#475569'], custom: ['+', '#7c5cdb'],
 }
-const localBrands: Record<string, keyof typeof brandIcons> = { 'local-ppocr': 'baidu', 'windows-media': 'microsoft' }
+// macOS 的系统 OCR 是 Apple Vision，不显示微软标志，改用字母块。
+const localBrands: Record<string, keyof typeof brandIcons> = { 'local-ppocr': 'baidu', ...(macPlatform ? {} : { 'windows-media': 'microsoft' as const }) }
 
 /**
  * value 为菜单值（preset:<id>、service:<id> 或本地引擎名）；已保存的服务另传 presetId 与接口地址，

@@ -8,6 +8,8 @@ use serde::Serialize;
 use std::path::Path;
 #[cfg(target_os = "windows")]
 mod media_foundation;
+#[cfg(target_os = "macos")]
+mod avfoundation;
 mod pixels;
 
 /// 只有读取到硬件转换器标识才报告硬件；系统未公开信息时保留未知。
@@ -55,7 +57,19 @@ pub fn create(
                 format!("无法初始化系统 H.264 / AAC 编码器：{e}。请检查媒体组件、分辨率和磁盘空间。")
             })?,
     ));
-    #[cfg(not(target_os = "windows"))]
+    // macOS 由 VideoToolbox 自行选择硬件或软件编码，编码偏好不适用；首版不录声音。
+    #[cfg(target_os = "macos")]
+    {
+        let _ = preference;
+        if audio {
+            return Err("macOS 暂不支持录制声音。".into());
+        }
+        return Ok(Box::new(
+            avfoundation::AvFoundation::new(path, width, height, fps, bitrate)
+                .map_err(|e| format!("无法初始化系统 H.264 编码器：{e}"))?,
+        ));
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
         let _ = (path, width, height, fps, bitrate, preference, audio);
         Err("UnsupportedPlatform：当前平台尚未实现原生录屏编码。".into())

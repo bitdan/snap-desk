@@ -263,7 +263,7 @@ pub fn capture(primary_only: bool, include_cursor: bool, snap: bool) -> Result<D
 /// Display 的 x/y 为“点坐标 × 该屏实际缩放”，宽高为 Retina 像素，scale 为像素/点之比；
 /// 调用方据此把蒙层放到点坐标 (x/scale, y/scale)，不依赖窗口当前所在屏的缩放。
 #[cfg(target_os = "macos")]
-pub fn capture(primary_only: bool, include_cursor: bool, _snap: bool) -> Result<Desktop, String> {
+pub fn capture(primary_only: bool, include_cursor: bool, snap: bool) -> Result<Desktop, String> {
     if include_cursor {
         return Err("当前平台暂不支持截图包含光标。".into());
     }
@@ -300,7 +300,8 @@ pub fn capture(primary_only: bool, include_cursor: bool, _snap: bool) -> Result<
         1.0
     };
     let (origin_x, origin_y) = ((x * scale).round() as i32, (y * scale).round() as i32);
-    Ok(Desktop {
+    let size = image.dimensions();
+    let mut desktop = Desktop {
         x: origin_x,
         y: origin_y,
         displays: vec![Display {
@@ -315,7 +316,60 @@ pub fn capture(primary_only: bool, include_cursor: bool, _snap: bool) -> Result<
         targets: Vec::new(),
         windows: Vec::new(),
         include_cursor: false,
-    })
+    };
+    if snap && !primary_only {
+        snap_windows(&mut desktop, scale, size);
+    }
+    Ok(desktop)
+}
+
+/// 点坐标的窗口边界换算为截图像素：与蒙层原点使用同一缩放和取整，
+/// 原生窗口截图（native_window_inner）也按此换算，两者才能逐像素对齐。
+#[cfg(target_os = "macos")]
+fn window_pixels(window: &NativeWindow, scale: f64) -> Option<(i32, i32, u32, u32)> {
+    let px = |value: f64| (value * scale).round();
+    Some((
+        px(f64::from(window.x().ok()?)) as i32,
+        px(f64::from(window.y().ok()?)) as i32,
+        px(f64::from(window.width().ok()?)) as u32,
+        px(f64::from(window.height().ok()?)) as u32,
+    ))
+}
+
+/// 吸附候选只取普通层级、位于本屏且未最小化的窗口；顺序沿用系统的前后层次（前者在上）。
+/// 控件级吸附需要辅助功能接口，暂未接入。
+#[cfg(target_os = "macos")]
+fn snap_windows(desktop: &mut Desktop, scale: f64, size: (u32, u32)) {
+    let Ok(windows) = xcap::Window::all() else {
+        return;
+    };
+    let normal = crate::shared::macos::normal_window_ids();
+    let own = std::process::id();
+    for window in windows.into_iter().take(256) {
+        let eligible = window.id().is_ok_and(|id| normal.contains(&id))
+            && window.pid().is_ok_and(|pid| pid != own)
+            && !window.is_minimized().unwrap_or(true);
+        // 小于 40 点的窗口多为工具提示或浮标，吸附反而干扰框选。
+        let Some(rect) = eligible
+            .then(|| window_pixels(&window, scale))
+            .flatten()
+            .filter(|(_, _, w, h)| f64::from(*w) >= 40.0 * scale && f64::from(*h) >= 40.0 * scale)
+            .and_then(|(wx, wy, ww, wh)| clipped(wx, wy, ww, wh, (desktop.x, desktop.y), size))
+        else {
+            continue;
+        };
+        let index = desktop.windows.len();
+        desktop.targets.push(Target {
+            rect,
+            kind: "window",
+            window_index: index,
+            recording_only: false,
+            icon: None,
+            title: window.title().unwrap_or_default().chars().take(160).collect(),
+            app_name: window.app_name().unwrap_or_default().chars().take(80).collect(),
+        });
+        desktop.windows.push(window);
+    }
 }
 
 #[cfg(not(any(windows, target_os = "macos")))]
@@ -394,10 +448,16 @@ fn native_window_inner(
         window.width().map_err(|e| e.to_string())?,
         window.height().map_err(|e| e.to_string())?,
     )?;
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        let _ = include_cursor;
+        return native_window_points(window);
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
     let mut image = window
         .capture_image()
         .map_err(|e| format!("原生窗口截图失败：{e}"))?;
+    #[cfg(not(target_os = "macos"))]
     if image.dimensions()
         != (
             window.width().map_err(|e| e.to_string())?,
@@ -410,6 +470,32 @@ fn native_window_inner(
     if include_cursor {
         windows::draw_cursor(&mut image, x, y)?;
     }
+    #[cfg(not(target_os = "macos"))]
+    return Ok((image, x, y));
+}
+
+/// macOS 的窗口边界是点坐标，截图位图却是 Retina 像素：按位图宽度反推该屏缩放，
+/// 再用 window_pixels 的同一取整规则得到像素位置，与截图会话中的候选框逐像素一致。
+#[cfg(target_os = "macos")]
+fn native_window_points(window: &NativeWindow) -> Result<(RgbaImage, i32, i32), String> {
+    let image = window
+        .capture_image()
+        .map_err(|e| format!("原生窗口截图失败：{e}"))?;
+    let width = window.width().map_err(|e| e.to_string())?;
+    if width == 0 {
+        return Err("原生窗口图片与窗口尺寸不一致，请使用区域截图。".into());
+    }
+    let scale = f64::from(image.width()) / f64::from(width);
+    let (x, y, w, h) = window_pixels(window, scale).ok_or("读取窗口位置失败。")?;
+    // 宽度按定义一致；高度允许 1 像素取整误差，超出说明窗口在截图过程中改变了尺寸。
+    if w != image.width() || h.abs_diff(image.height()) > 1 {
+        return Err("原生窗口图片与窗口尺寸不一致，请使用区域截图。".into());
+    }
+    let image = if h == image.height() {
+        image
+    } else {
+        image::imageops::resize(&image, w, h, image::imageops::FilterType::Nearest)
+    };
     Ok((image, x, y))
 }
 

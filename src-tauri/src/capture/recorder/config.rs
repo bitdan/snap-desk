@@ -235,21 +235,25 @@ impl RecorderCapabilities {
         Self {
             available,
             reason: result.err(),
-            sources: if available {
+            // macOS 首版只录显示器区域：单窗口录制需要 ScreenCaptureKit，尚未接入。
+            sources: if !available {
+                vec![]
+            } else if cfg!(target_os = "macos") {
+                vec![CaptureSource::PrimaryMonitor, CaptureSource::SelectedMonitor]
+            } else {
                 vec![
                     CaptureSource::PrimaryMonitor,
                     CaptureSource::SelectedMonitor,
                     CaptureSource::SelectedWindow,
                 ]
-            } else {
-                vec![]
             },
             frame_rates: if available {
                 vec![10, 20, 30, 60]
             } else {
                 vec![]
             },
-            capture_cursor: available,
+            // macOS 的录制器固定包含光标，不能按设置关闭，因此不提供该选项。
+            capture_cursor: available && !cfg!(target_os = "macos"),
             // Windows MP4 提供声音选项；实际 AAC 编码和 WASAPI 设备在 start_recording 准备时校验。
             system_audio: audio_supported,
             microphone: audio_supported,
@@ -274,9 +278,13 @@ mod tests {
             serde_json::json!({
                 "available": true,
                 "reason": null,
-                "sources": ["primaryMonitor", "selectedMonitor", "selectedWindow"],
+                "sources": if cfg!(target_os = "macos") {
+                    serde_json::json!(["primaryMonitor", "selectedMonitor"])
+                } else {
+                    serde_json::json!(["primaryMonitor", "selectedMonitor", "selectedWindow"])
+                },
                 "frameRates": [10, 20, 30, 60],
-                "captureCursor": true,
+                "captureCursor": !cfg!(target_os = "macos"),
                 "systemAudio": cfg!(target_os = "windows"),
                 "microphone": cfg!(target_os = "windows"),
                 "formats": ["mp4", "gif"],

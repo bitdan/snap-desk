@@ -11,6 +11,7 @@ import Button from '@/shared/ui/button/Button.vue'
 import DetachedWindow from '@/shared/ui/DetachedWindow.vue'
 import type { ProviderMenuItem } from './ProviderMenu.vue'
 import { brandIcons } from '@/shared/ui/brand-icons'
+import { macPlatform } from '@/shared/platform'
 import { providerIcon } from '../provider-icons'
 
 /** OCR 页复用同一配置表单，避免再要求用户跳转到服务管理。 */
@@ -68,8 +69,8 @@ const localEngines = computed(() => {
   return [
     { key: 'ppocr', label: 'PaddleOCR', description: t('PP-OCRv6 · 离线'), mono: 'PP', tile: '#2563a8', icon: brandIcons.baidu, tab: 'ocr' as const, ready: resources?.ocrReady === true, unavailable: false,
       status: [resources == null ? unread : resources.ocrReady ? t('已就绪') : t('未下载识别资源'), ocr] },
-    { key: 'windows', label: 'Windows OCR', description: t('系统自带 · 离线'), mono: 'W', tile: '#0067b8', icon: brandIcons.microsoft, tab: 'ocr' as const, ready: !!system?.supported && system.languages.length > 0, unavailable: system?.supported === false,
-      status: [system == null ? unread : !system.supported ? t('仅 Windows 支持') : system.languages.length ? t('已安装 {0} 个 OCR 语言包', { 0: system.languages.length }) : t('未安装语言包'), ocr] },
+    { key: 'windows', label: macPlatform ? 'Apple Vision' : 'Windows OCR', description: t('系统自带 · 离线'), mono: macPlatform ? 'AV' : 'W', tile: macPlatform ? '#1d1d1f' : '#0067b8', icon: macPlatform ? '' : brandIcons.microsoft, tab: 'ocr' as const, ready: !!system?.supported && system.languages.length > 0, unavailable: system?.supported === false,
+      status: [system == null ? unread : !system.supported ? t('仅 Windows 支持') : macPlatform ? t('支持 {0} 种识别语言', { 0: system.languages.length }) : system.languages.length ? t('已安装 {0} 个 OCR 语言包', { 0: system.languages.length }) : t('未安装语言包'), ocr] },
     { key: 'wechat', label: 'WeChat OCR', description: t('实验性 · 离线'), mono: 'WX', tile: '#07a35a', icon: '', tab: 'ocr' as const, ready: wechat?.detected === true, unavailable: wechat?.supported === false,
       status: [wechat == null ? unread : wechat.supported === false ? t('当前平台不支持') : wechat.detected ? t('已找到 WeChat OCR 组件') : t('未找到 WeChat OCR 组件'), ocr] },
     { key: 'ct2', label: 'CTranslate2', description: t('本地中英互译 · 离线'), mono: 'CT', tile: '#475569', icon: '', tab: 'translation' as const, ready: ct2Ready, unavailable: false,

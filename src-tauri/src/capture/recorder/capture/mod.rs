@@ -1,4 +1,5 @@
-//! 平台采集边界；非 Windows 明确拒绝，不以循环截图降级。
+//! 平台采集边界：Windows 使用 WGC，macOS 使用 AVCaptureScreenInput（经 xcap）；
+//! 其他平台明确拒绝，不以循环截图降级。
 use super::{config::RecorderConfig, frame::VideoFrame};
 
 /// 仅由后端从当前截图会话解析，前端不能直接指定 HWND 或进程。
@@ -29,8 +30,12 @@ pub trait CaptureBackend {
 mod windows;
 #[cfg(target_os = "windows")]
 pub use windows::{now, source_dimensions, supported};
+#[cfg(target_os = "macos")]
+mod macos;
+#[cfg(target_os = "macos")]
+pub use macos::{now, source_dimensions, supported};
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
 pub fn source_dimensions(_source: NativeSource) -> Result<(u32, u32), String> {
     Err("UnsupportedPlatform：当前平台暂不支持窗口录制。".into())
 }
@@ -43,19 +48,21 @@ pub fn prepare(
 ) -> Result<Box<dyn CaptureBackend>, String> {
     #[cfg(target_os = "windows")]
     return Ok(Box::new(windows::Capture::new(config, size, source, pool)?));
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "macos")]
+    return Ok(Box::new(macos::Capture::new(config, size, source, pool)?));
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
         let _ = (config, size, source, pool);
         Err("UnsupportedPlatform：macOS / Linux 原生录屏尚未实现。".into())
     }
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
 pub fn supported() -> Result<(), String> {
     Err("UnsupportedPlatform：macOS / Linux 原生录屏尚未实现。".into())
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
 pub fn now() -> i64 {
     0
 }
