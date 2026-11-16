@@ -2,6 +2,9 @@
 @tailwind components;
 @tailwind utilities;
 
+/* 所有窗口统一使用细滚动条；半透明滑块在浅色与深色主题下都可见，已隐藏滚动条的区域不受影响。 */
+* { scrollbar-width: thin; scrollbar-color: rgba(128, 134, 144, .5) transparent; }
+
 /* 实时录制沿用截图选区窗口；移除冻结截图后让真实桌面透出，不留下不透明背景。 */
 html.capture-window.recording-live, html.capture-window.recording-live body, html.capture-window.recording-live #app { background: transparent; }
 
