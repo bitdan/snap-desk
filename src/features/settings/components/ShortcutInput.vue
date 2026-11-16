@@ -3,6 +3,7 @@ import { t, te } from '@/shared/i18n/i18n'
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { api } from '@/services/api'
 import { captureShortcut } from '@/features/settings/settings'
+import { shortcutKeys, shortcutText } from '@/shared/ui/shortcut-label'
 
 const props = defineProps<{ modelValue: string; disabled?: boolean; label: string; validate: (value: string) => string | null }>()
 const emit = defineEmits<{ 'update:modelValue': [value: string]; editing: [value: boolean]; error: [message: string] }>()
@@ -46,12 +47,12 @@ function keydown(event: KeyboardEvent) {
   if (result.cancel) { void finish(); return }
   if (result.error || result.value !== undefined) candidate = null
   error.value = result.error ?? ''
-  if (result.preview !== undefined) preview.value = result.preview || '请按快捷键…'
+  if (result.preview !== undefined) preview.value = result.preview ? shortcutText(result.preview) : '请按快捷键…'
   if (result.value !== undefined) {
     error.value = props.validate(result.value) ?? ''
     if (!error.value) {
       candidate = { value: result.value, code: event.code, released: false }
-      preview.value = result.value || '已禁用'
+      preview.value = result.value ? shortcutText(result.value) : '已禁用'
     }
   }
 }
@@ -73,7 +74,7 @@ onBeforeUnmount(() => { window.removeEventListener('blur', cancel); disposed = t
     <button ref="button" type="button" class="shortcut-field" :class="{ editing }" :disabled="disabled && !editing && !busy" :aria-label="t('{0}快捷键，点击修改', { 0: t(label) })" :aria-pressed="editing" @click="begin" @keydown="keydown" @keyup="keyup" @blur="finish()">
       <span v-if="busy" class="shortcut-placeholder">{{ t("正在切换…") }}</span>
       <span v-else-if="editing" class="shortcut-placeholder">{{ t(preview) }}</span>
-      <template v-else-if="modelValue"><kbd v-for="key in modelValue.split('+')" :key="key">{{ key }}</kbd></template>
+      <template v-else-if="modelValue"><kbd v-for="key in shortcutKeys(modelValue)" :key="key">{{ key }}</kbd></template>
       <span v-else class="shortcut-placeholder">{{ t("未设置") }}</span>
     </button>
     <p v-if="editing" class="shortcut-help">{{ t("单按 Esc 取消 · 单按 Backspace / Delete 禁用") }}</p>

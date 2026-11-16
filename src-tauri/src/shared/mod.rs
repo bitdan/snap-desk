@@ -7,6 +7,8 @@ pub(crate) mod dialog_windows;
 pub(crate) mod export_staging;
 pub(crate) mod image_io;
 pub(crate) mod image_protocol;
+#[cfg(target_os = "macos")]
+pub(crate) mod macos;
 pub(crate) mod native_i18n;
 pub(crate) mod platform;
 

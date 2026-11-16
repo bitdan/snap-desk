@@ -89,6 +89,8 @@ export const ipcCommands = [
   "latest_recording_result",
   "open_app_directory",
   "open_project_homepage",
+  "system_permissions",
+  "request_system_permission",
   "pin_action",
   "pin_capture",
   "pin_clipboard",

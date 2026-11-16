@@ -1289,5 +1289,12 @@
   "仅 Windows 支持": "Windows only",
   "未安装语言包": "No language packs installed",
   "已安装": "Installed",
-  "未安装": "Not installed"
+  "未安装": "Not installed",
+  "系统权限": "System permissions",
+  "屏幕录制": "Screen Recording",
+  "辅助功能": "Accessibility",
+  "已授权": "Granted",
+  "未授权": "Not granted",
+  "前往授权…": "Grant access…",
+  "在系统设置中允许 Snap Desk 后，请退出并重新打开应用。": "After allowing Snap Desk in System Settings, quit and reopen the app."
 }

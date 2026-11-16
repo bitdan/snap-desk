@@ -886,5 +886,11 @@
   "当前平台尚未支持直接粘贴。": "Direct paste is not supported on this platform yet.",
   "排除应用无效：最多 50 个程序文件名，每个不超过 100 字且不含路径。": "Invalid excluded apps: up to 50 executable names, 100 characters each, without paths.",
   "{0}；恢复贴图窗口失败：{1}": "{0}; could not restore pin windows: {1}",
-  "截图后动作无效。": "Invalid after-capture action."
+  "截图后动作无效。": "Invalid after-capture action.",
+  "无法读取 macOS 钥匙串，请确认已允许 Snap Desk 访问。": "Unable to read the macOS Keychain. Make sure Snap Desk is allowed to access it.",
+  "保存到 macOS 钥匙串失败。": "Failed to save to the macOS Keychain.",
+  "删除 macOS 钥匙串条目失败。": "Failed to delete the macOS Keychain item.",
+  "未知的系统权限。": "Unknown system permission.",
+  "未找到可用显示器，请检查显示器连接。": "No display found. Check your display connection.",
+  "读取显示器位置失败。": "Failed to read the display position."
 }
