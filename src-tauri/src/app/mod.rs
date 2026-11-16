@@ -8,7 +8,7 @@ use crate::resources::lifecycle as resource_lifecycle;
 use crate::settings::{autostart, shortcut_probe, storage};
 use crate::shared::{auxiliary_windows, native_i18n};
 use crate::{capture, clipboard, diagnostics, pins, recognition, resources, settings, shelf};
-use actions::{trigger, trigger_pin, trigger_recording};
+use actions::{trigger, trigger_ocr, trigger_pin, trigger_recording};
 use capture::{show_main, CaptureState};
 use std::sync::atomic::Ordering;
 use tauri::{
@@ -122,6 +122,7 @@ pub fn run() {
                         Some(settings::ShortcutAction::Record) => trigger_recording(app),
                         Some(settings::ShortcutAction::History) => clipboard::open_history(app),
                         Some(settings::ShortcutAction::Shelf) => shelf::toggle(app),
+                        Some(settings::ShortcutAction::Ocr) => trigger_ocr(app),
                         Some(settings::ShortcutAction::Translate) => {
                             recognition::text_input::open(app)
                         }

@@ -23,6 +23,19 @@ pub(super) fn trigger(app: &AppHandle) {
     });
 }
 
+/// OCR 全局键直接进入文字框选；与普通截图共用会话占用与错误处理。
+pub(super) fn trigger_ocr(app: &AppHandle) {
+    if app.state::<CaptureState>().active.load(Ordering::SeqCst) {
+        return;
+    }
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        if let Err(error) = capture::begin_ocr(app.clone()).await {
+            capture::report_error(&app, error);
+        }
+    });
+}
+
 /// 托盘和全局贴图键优先使用当前截图选区；没有截图会话时读取剪贴板。
 pub(super) fn trigger_pin(app: &AppHandle) {
     let app = app.clone();

@@ -71,9 +71,11 @@ pub struct Frame {
     recording: bool,
     /// 从翻译窗口发起时，框选完成立即识别并送回独立翻译窗口。
     translation: bool,
+    /// OCR 全局键发起时，框选后直接显示文字识别结果，不进入翻译。
+    ocr: bool,
     /// 窗口候选始终提供给录屏列表；此开关独立控制截图的鼠标吸附。
     snap_enabled: bool,
-    /// 框选完成后直接执行的动作；录屏和翻译截图固定为 none，由各自流程接力。
+    /// 框选完成后直接执行的动作；录屏、OCR 和翻译固定为 none，由各自流程接力。
     after_action: String,
     origin_x: i32,
     origin_y: i32,
@@ -224,23 +226,29 @@ pub async fn begin(app: AppHandle) -> Result<(), String> {
 
 /// 快捷键入口在派发异步任务前记录时间，包含运行时排队耗时。
 pub(crate) async fn begin_at(app: AppHandle, requested_at: Instant) -> Result<(), String> {
-    begin_with_mode(app, false, false, requested_at).await
+    begin_with_mode(app, false, false, false, requested_at).await
 }
 
 /// 录屏快捷键复用截图的选区能力，确认范围后再交给录屏设置与采集器。
 pub async fn begin_recording(app: AppHandle) -> Result<(), String> {
-    begin_with_mode(app, true, false, Instant::now()).await
+    begin_with_mode(app, true, false, false, Instant::now()).await
 }
 
 /// 翻译截图复用现有采集和 DPI 坐标契约，不叠加截图倒计时。
 pub async fn begin_translation(app: AppHandle) -> Result<(), String> {
-    begin_with_mode(app, false, true, Instant::now()).await
+    begin_with_mode(app, false, true, false, Instant::now()).await
+}
+
+/// OCR 框选不受截图延时和自动复制/保存设置影响。
+pub async fn begin_ocr(app: AppHandle) -> Result<(), String> {
+    begin_with_mode(app, false, false, true, Instant::now()).await
 }
 
 async fn begin_with_mode(
     app: AppHandle,
     recording: bool,
     translation: bool,
+    ocr: bool,
     requested_at: Instant,
 ) -> Result<(), String> {
     let state = app.state::<CaptureState>();
@@ -255,8 +263,8 @@ async fn begin_with_mode(
             return Err("截图正在进行中，请先完成或取消当前截图。".into());
         }
         state.delay_cancelled.store(false, Ordering::SeqCst);
-        // 录屏有独立倒计时，截图翻译直接框选；两个入口都不叠加截图延时。
-        let delay = if recording || translation {
+        // 录屏有独立倒计时，OCR 和翻译直接框选，均不叠加普通截图延时。
+        let delay = if recording || translation || ocr {
             0
         } else {
             settings.value.delay_seconds
@@ -291,7 +299,7 @@ async fn begin_with_mode(
         }
         let mut latency = Latency::new(requested_at);
         latency.delay_ms = elapsed_ms(delay_started);
-        prepare(&worker_app, recording, translation, latency)
+        prepare(&worker_app, recording, translation, ocr, latency)
     })
     .await
     .map_err(err)
@@ -378,6 +386,7 @@ fn prepare(
     app: &AppHandle,
     recording: bool,
     translation: bool,
+    ocr: bool,
     mut latency: Latency,
 ) -> Result<(), String> {
     let started = latency.started;
@@ -433,7 +442,7 @@ fn prepare(
         (
             !recording && guard.value.screenshot_cursor,
             guard.value.screenshot_snap,
-            if recording || translation {
+            if recording || translation || ocr {
                 "none".to_string()
             } else {
                 guard.value.screenshot_after.clone()
@@ -485,6 +494,7 @@ fn prepare(
         id,
         recording,
         translation,
+        ocr,
         snap_enabled: recording || snap,
         after_action,
         origin_x: desktop.x,

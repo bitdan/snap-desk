@@ -3,7 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { h } from 'vue'
 import { clientComponent, findNode, flushComponent, MemoryNode, memoryRenderer } from '../helpers/component-host'
 
-const api = vi.hoisted(() => ({ recognizeCapture: vi.fn(), openTranslation: vi.fn(), cancel: vi.fn(), current: vi.fn(), currentScroll: vi.fn(), recordingCapabilities: vi.fn(), startScroll: vi.fn(), startRecording: vi.fn() }))
+const api = vi.hoisted(() => ({ recognizeCapture: vi.fn(), recognizeQr: vi.fn(), openTranslation: vi.fn(), cancel: vi.fn(), current: vi.fn(), currentScroll: vi.fn(), recordingCapabilities: vi.fn(), startScroll: vi.fn(), startRecording: vi.fn() }))
 const captureEvents = vi.hoisted(() => ({ frame: (_value: unknown) => {} }))
 vi.mock('../../src/services/api', () => ({ api,
   onFrame: async (callback: typeof captureEvents.frame) => { captureEvents.frame = callback; return () => { captureEvents.frame = () => {} } },
@@ -154,16 +154,50 @@ it('绘制标注期间保留工具栏和定位；指针工具空白拖动可调�
   expect(editor.history.present).toHaveLength(1)
 })
 
-it('截图工具栏的截图翻译在识别工作区内就地翻译，不交接也不释放截图', async () => {
+it('截图工具栏的截图翻译识别出文字后收起截图蒙层，结果窗口独立保留并就地翻译', async () => {
   api.recognizeCapture.mockResolvedValueOnce({ fullText: 'screen text', requestId: 'ocr', lines: [] })
   findNode(root, node => node.props['aria-label'] === '截图翻译')!.props.onClick()
   await flushComponent()
   expect(api.recognizeCapture).toHaveBeenCalledExactlyOnceWith(1, { x: 100, y: 100, width: 400, height: 300 })
+  expect(api.cancel).toHaveBeenCalledExactlyOnceWith(1)
+  expect(workspace().props['surface-visible']).toBe(false)
   expect(findNode(root, node => node.props['data-window'] === '截图翻译')).toBeDefined()
   expect(findNode(root, node => node.type === 'textarea' && node.props.id === 'translation-source')?.value).toBe('screen text')
   expect(api.openTranslation).not.toHaveBeenCalled()
+  // 下一次截图到来时，上一次的结果窗口让位。
+  captureEvents.frame({ id: 2, width: 1000, height: 800, previewRevision: 1, originX: 0, originY: 0, displays: [], targets: [], recording: false })
+  await flushComponent()
+  expect(findNode(root, node => node.props['data-window'] === '截图翻译')).toBeUndefined()
+})
+it('没有识别到文字时保留截图现场供重新框选', async () => {
+  api.recognizeCapture.mockResolvedValueOnce({ fullText: '', requestId: 'ocr', lines: [] })
+  findNode(root, node => node.props['aria-label'] === '识别文字')!.props.onClick()
+  await flushComponent()
   expect(api.cancel).not.toHaveBeenCalled()
-  expect(overlay()).toBeDefined()
+  expect(workspace().props['surface-visible']).toBe(true)
+  expect(findNode(root, node => node.props['data-window'] === '文字识别结果')).toBeDefined()
+})
+it('蒙层收起失败时保留截图现场，结果仍在蒙层内显示', async () => {
+  api.recognizeCapture.mockResolvedValueOnce({ fullText: 'screen text', requestId: 'ocr', lines: [] })
+  api.cancel.mockRejectedValueOnce(new Error('busy'))
+  findNode(root, node => node.props['aria-label'] === '识别文字')!.props.onClick()
+  await flushComponent()
+  expect(workspace().props['surface-visible']).toBe(true)
+  expect(findNode(root, node => node.props['data-window'] === '文字识别结果')).toBeDefined()
+})
+it('识别到二维码后收起截图蒙层并保留结果窗口，没有识别到时保留截图现场', async () => {
+  api.recognizeQr.mockResolvedValueOnce({ id: 1, items: [] })
+  findNode(root, node => node.props['aria-label'] === '识别二维码')!.props.onClick()
+  await flushComponent()
+  expect(api.cancel).not.toHaveBeenCalled()
+  expect(workspace().props['surface-visible']).toBe(true)
+  findNode(root, node => node.props['data-window'] === '二维码识别结果')!.props.onClose(); await flushComponent()
+  api.recognizeQr.mockResolvedValueOnce({ id: 1, items: [{ text: 'https://example.com', url: 'https://example.com' }] })
+  findNode(root, node => node.props['aria-label'] === '识别二维码')!.props.onClick()
+  await flushComponent()
+  expect(api.cancel).toHaveBeenCalledExactlyOnceWith(1)
+  expect(workspace().props['surface-visible']).toBe(false)
+  expect(findNode(root, node => node.props['data-window'] === '二维码识别结果')).toBeDefined()
 })
 it('从翻译窗口发起的截图在交接失败时保留截图与识别草稿', async () => {
   captureEvents.frame({ id: 2, width: 1000, height: 800, previewRevision: 1, originX: 0, originY: 0, displays: [], targets: [], recording: false, translation: true })
@@ -178,6 +212,19 @@ it('从翻译窗口发起的截图在交接失败时保留截图与识别草稿'
   expect(api.cancel).not.toHaveBeenCalled()
   expect(overlay()).toBeDefined()
   expect(nodeText(root)).toContain('窗口打开失败')
+})
+it('OCR 快捷键模式框选后直接显示识别结果，不打开翻译窗口', async () => {
+  captureEvents.frame({ ...await api.current(), id: 2, ocr: true, afterAction: 'copy' })
+  await flushComponent()
+  api.recognizeCapture.mockResolvedValueOnce({ fullText: 'OCR shortcut result', requestId: 'ocr-shortcut', lines: [] })
+  overlay().props.onPointerdown(event(50, 60))
+  overlay().props.onPointermoveCapture(event(350, 260))
+  overlay().props.onPointerup(event(350, 260))
+  await flushComponent()
+  expect(api.recognizeCapture).toHaveBeenCalledOnce()
+  expect(api.openTranslation).not.toHaveBeenCalled()
+  expect(api.cancel).toHaveBeenCalledExactlyOnceWith(2)
+  expect(findNode(root, node => node.type === 'textarea' && node.props['aria-label'] === '识别文字，可编辑')?.value).toBe('OCR shortcut result')
 })
 it('翻译截图模式在框选完成后自动 OCR，无需再点截图工具栏', async () => {
   captureEvents.frame({ id: 2, width: 1000, height: 800, previewRevision: 1, originX: 0, originY: 0, displays: [], targets: [], recording: false, translation: true })

@@ -6,11 +6,11 @@ import type { CaptureAfterAction, CaptureFrame } from './types'
  * 否则开启直接执行后就无法再标注。
  */
 export function autoFinishAction(
-  frame: Pick<CaptureFrame, 'afterAction' | 'translation' | 'replay'> | null,
+  frame: Pick<CaptureFrame, 'afterAction' | 'translation' | 'ocr' | 'replay'> | null,
   state: { ctrlKey: boolean; recording: boolean; valid: boolean },
 ): Exclude<CaptureAfterAction, 'none'> | null {
   const action = frame?.afterAction
   if (!frame || !action || action === 'none') return null
-  if (state.ctrlKey || state.recording || frame.translation || frame.replay || !state.valid) return null
+  if (state.ctrlKey || state.recording || frame.translation || frame.ocr || frame.replay || !state.valid) return null
   return action
 }

@@ -6,7 +6,7 @@ import { convertFileSrc } from '@tauri-apps/api/core'
 import ScrollCaptureIcon from '@/features/scroll/components/ScrollCaptureIcon.vue'
 import QrResultCard from '@/features/recognition/components/QrResultCard.vue'
 import OcrWorkspace from '@/features/recognition/components/OcrWorkspace.vue'
-import { ocrWindowSize } from '@/features/recognition/ocr-workspace'
+import { ocrWindowSize, type OcrImage } from '@/features/recognition/ocr-workspace'
 import { computed, nextTick, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue'
 import { Copy, Save, X, Monitor, RotateCcw, Scan, Pin, Video, QrCode, ScanText, Languages, AppWindow, GripVertical, Check, MousePointer2, Volume2, VolumeX, Mic, MicOff, ArrowLeft } from 'lucide-vue-next'
 import { api, onFrame, onCaptureClosed, onCapturePin, onScroll } from '@/services/api'
@@ -59,7 +59,9 @@ const {
   marked: () => marked.value,
   recordingMode,
   onRecordingRegion: () => { void selectedRecordingRegion() },
-  onAutoTranslate: () => { if (frame.value?.translation && valid.value) void recognizeText(true) },
+  onAutoTranslate: () => {
+    if (valid.value && (frame.value?.translation || frame.value?.ocr)) void recognizeText(!!frame.value.translation)
+  },
   // 只有手动框选或点选窗口才直接执行；回放、录屏和翻译截图各有自己的后续流程，按住 Ctrl 抬起则留在工具栏继续标注。
   onAutoFinish: event => {
     const action = autoFinishAction(frame.value, { ctrlKey: event.ctrlKey, recording: recordingMode.value, valid: !!valid.value })
@@ -133,15 +135,29 @@ let offScroll: (() => void) | undefined
 let offPin: (() => void) | undefined
 let disposed = false
 // 识别面板只属于当前截图会话；选区、标注和录屏入口分别维护自己的状态与守卫。
-const { qrResult, ocrResult, ocrDraft, ocrMode, translationTrigger, ocrTrigger, closeOcr, recognizeText, recognizeQr } = useCaptureRecognition({
+const { qrResult, qrDetached, ocrResult, ocrDraft, ocrDetached, ocrSnapshot, ocrMode, translationTrigger, ocrTrigger, closeOcr, closeQr, recognizeText, recognizeQr } = useCaptureRecognition({
   frame, pixels, busy, error,
   blocked: () => editor.pending || editor.interacting,
   gestureActive: () => !!gesture.value,
   annotations: () => editor.history.present,
   releaseFrame,
+  snapshot: selectionSnapshot,
 })
+/** 蒙层收起后整屏图随会话释放；识别窗口左侧的原图改用选区的内存副本（CSP 只放行 data:）。 */
+function selectionSnapshot(rect: Rect): OcrImage | null {
+  const image = screenImage.value
+  if (!image || !imageReady.value) return null
+  try {
+    const canvas = document.createElement('canvas')
+    canvas.width = rect.width; canvas.height = rect.height
+    const context = canvas.getContext('2d')
+    if (!context) return null
+    context.drawImage(image, rect.x, rect.y, rect.width, rect.height, 0, 0, rect.width, rect.height)
+    return { url: canvas.toDataURL('image/png'), width: rect.width, height: rect.height }
+  } catch { return null }
+}
 // 识别工作区左侧显示截图选区原图；OCR 坐标按选区像素映射到整屏图上。
-const ocrImage = computed(() => frame.value && pixels.value && imageUrl.value ? { url: imageUrl.value, width: frame.value.width, height: frame.value.height, crop: { ...pixels.value } } : null)
+const ocrImage = computed<OcrImage | null>(() => ocrSnapshot.value ?? (frame.value && pixels.value && imageUrl.value ? { url: imageUrl.value, width: frame.value.width, height: frame.value.height, crop: { ...pixels.value } } : null))
 // 窗口按截图原尺寸加文字区计算，打开时取当前屏幕可用区域。
 const ocrWindow = computed(() => ocrWindowSize(ocrImage.value, globalThis.devicePixelRatio ?? 1, { width: globalThis.screen?.availWidth ?? 1280, height: globalThis.screen?.availHeight ?? 800 }))
 // 录屏准备条与截图选区共用当前帧，但能力查询、格式偏好和接管清理独立维护。
@@ -199,8 +215,9 @@ function releaseFrame(id = frame.value?.id) {
   editor.reset()
   selection.value = null; gesture.value = null; pointer.value = null
   imageReady.value = false; selectedTarget.value = null; annotating.value = false; recordingMode.value = false
-  qrResult.value = null; ocrResult.value = null
-  ocrDraft.value = ''
+  // 已脱离会话的识别结果窗口继续保留，由用户关闭或下一次截图收起。
+  if (!qrDetached.value) qrResult.value = null
+  if (!ocrDetached.value) { ocrResult.value = null; ocrDraft.value = '' }
 }
 function scrollClosed() { scroll.value = null; releaseFrame() }
 async function copyColor(format = colorFormat.value) {
@@ -278,7 +295,7 @@ function key(e: KeyboardEvent) {
   if ((e.target as HTMLElement).closest('.recording-inline-options')) return
   if ((e.target as HTMLElement).closest('input, textarea, select')) return
   if (!e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && !e.repeat && [',', '.'].includes(e.key)
-    && !frame.value?.translation && !annotating.value && !qrResult.value && !ocrResult.value) {
+    && !frame.value?.translation && !frame.value?.ocr && !annotating.value && !qrResult.value && !ocrResult.value) {
     e.preventDefault(); void replay(e.key === ',' ? 'previous' : 'next'); return
   }
   if (e.key === 'Alt') windowsOnly.value = true
@@ -296,7 +313,7 @@ function key(e: KeyboardEvent) {
     if (e.key === 'Enter' && (e.target as HTMLElement).tagName !== 'BUTTON') { e.preventDefault(); if (!e.repeat) void startRecording(); return }
     if (command && ['c', 's', 'p'].includes(e.key.toLowerCase())) { e.preventDefault(); return }
   }
-  if (frame.value?.translation && e.key === 'Enter' && !e.repeat) { e.preventDefault(); void recognizeText(true); return }
+  if ((frame.value?.translation || frame.value?.ocr) && e.key === 'Enter' && !e.repeat) { e.preventDefault(); void recognizeText(!!frame.value.translation); return }
   // 取色快捷键仅在放大镜可用时生效；复制后保留选区，修饰键组合仍用于截图操作。
   if (showMagnifier.value && !gesture.value && !command && !e.altKey && !e.repeat) {
     if (e.key === 'Shift') { e.preventDefault(); colorFormat.value = colorFormat.value === 'rgb' ? 'hex' : 'rgb'; colorCopied.value = false; return }
@@ -426,9 +443,9 @@ onUnmounted(() => { releaseFrame(); disposed = true; offClosed?.(); off?.(); off
     <DetachedWindow :open="ocrResult !== null" :title="ocrMode === 'translate' ? t('截图翻译') : t('文字识别结果')" :width="ocrWindow.width" :height="ocrWindow.height" @close="closeOcr">
       <OcrWorkspace v-if="ocrResult" v-model:text="ocrDraft" :result="ocrResult" :image="ocrImage" :mode="ocrMode" :error="error" @close="closeOcr" />
     </DetachedWindow>
-    <DetachedWindow :open="!!qrResult" :title="t('二维码识别结果')" :width="480" :height="420" @close="qrResult = null">
+    <DetachedWindow :open="!!qrResult" :title="t('二维码识别结果')" :width="480" :height="420" @close="closeQr">
       <div v-if="qrResult" class="qr-dialog">
-        <QrResultCard :capture-result="qrResult" @close="qrResult = null" @opened="cancel" />
+        <QrResultCard :capture-result="qrResult" @close="closeQr" @opened="qrDetached ? closeQr() : cancel()" />
       </div>
     </DetachedWindow>
     <div v-if="error" class="overlay-error" :style="{ left: `${activeDisplay.x + activeDisplay.width / 2}px`, bottom: 'auto', top: `${activeDisplay.y + 16}px`, maxWidth: `${activeDisplay.width - 32}px` }" role="alert" @pointerdown.stop>{{ te(error) }}</div>

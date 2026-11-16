@@ -23,6 +23,7 @@
   "中英自动互译": "Auto Chinese ↔ English",
   "中英比例接近，使用默认目标语言。": "Chinese and English are balanced. Using the default target language.",
   "打开翻译界面，有选中文字时自动复制并翻译": "Open translation; copy and translate selected text when available",
+  "框选屏幕文字并显示识别结果": "Select on-screen text and show the recognized result",
   "选中后右键翻译": "Translate selection on right-click",
   "Windows 支持读取选区的应用可显示翻译菜单；Shift+右键使用原应用菜单。": "Show the translation menu in Windows apps that expose selected text. Shift+right-click opens the app's original menu.",
   "选中文字翻译": "Translate selected text",
