@@ -914,5 +914,12 @@
   "录屏帧数据不完整。": "The recording frame data is incomplete.",
   "macOS 暂不支持录制声音。": "macOS does not support recording audio yet.",
   "无法启动录屏标注交互线程。": "Unable to start the annotation interaction thread.",
-  "录屏标注区域状态不可用。": "The annotation region state is unavailable."
+  "录屏标注区域状态不可用。": "The annotation region state is unavailable.",
+  "另一个拖拽正在进行。": "Another drag is already in progress.",
+  "当前平台尚未支持内容拖出。": "Dragging content out is not supported on this platform yet.",
+  "窗口尚未就绪，无法开始拖拽。": "The window is not ready, so the drag cannot start.",
+  "系统未能开始拖拽。": "The system could not start the drag.",
+  "没有可拖出的内容。": "There is no content to drag out.",
+  "无法注册拖拽源。": "Unable to register the drag source.",
+  "无法创建拖拽源。": "Unable to create the drag source."
 }

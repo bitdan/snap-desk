@@ -1019,7 +1019,7 @@
   "贴图，按空格显示或隐藏工具栏，右键打开菜单": "Pin; press Space to show or hide tools, right-click for the menu",
   "识别": "Recognize",
   "录屏设置": "Recording settings",
-  "移动贴图 · 按住 Ctrl 拖动可把内容拖到其他应用": "Move pin · Hold Ctrl and drag to drop the content into other apps",
+  "移动贴图 · 按住 {0} 拖动可把内容拖到其他应用": "Move pin · Hold {0} and drag to drop the content into other apps",
   "关闭贴图 Esc": "Close pin Esc",
   "复制图片 Ctrl/⌘+C": "Copy image Ctrl/⌘+C",
   "识别到 {0} 个二维码": "Found {0} QR code(s)",

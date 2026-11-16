@@ -548,21 +548,23 @@ pub async fn clipboard_drag_item(
     window: WebviewWindow,
     id: i64,
 ) -> Result<(), String> {
+    use crate::shared::native_drag::{self, Payload};
+    if !native_drag::SUPPORTED {
+        return Err("当前平台尚未支持内容拖出。".into());
+    }
+    let source = window.clone();
     item_work(app, window, move |app, service| {
         let content = {
             let data = service.data()?;
             let _guard = data.operation.lock().map_err(|_| "历史存储忙碌。")?;
             data.content(id)?
         };
-        let (format, bytes) = match content {
-            Content::Text(text) => (13, crate::shared::native_drag::wide_bytes(&text)),
-            Content::Files(paths) => (15, crate::shared::native_drag::file_bytes(&paths)),
-            Content::Image(image) => (
-                15,
-                crate::shared::native_drag::image_file_bytes(app, &image)?,
-            ),
+        let payload = match content {
+            Content::Text(text) => Payload::Text(text),
+            Content::Files(paths) => Payload::Files(paths),
+            Content::Image(image) => Payload::Files(vec![native_drag::image_file(app, &image)?]),
         };
-        crate::shared::native_drag::start(app, format, bytes)
+        native_drag::start(&source, payload)
     })
     .await
 }
