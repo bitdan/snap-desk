@@ -16,6 +16,7 @@ import type { PinView, PinAction, PinTransform } from '@/features/pins/types'
 import { canEditPin, minimumZoom, pinDisplaySize, pinImagePadding, pinStageOrigin, stepZoom, defaultPinAppearance, pinAppearanceStyle } from '@/features/pins/pins'
 import { onPinAppearance, onPinView } from '@/features/pins/events'
 import layout from '@/features/pins/pin-layout.json'
+import { macPlatform } from '@/shared/platform'
 
 const toolbar = ref<HTMLElement | null>(null)
 /** 工具栏实际宽度；图片比工具栏宽时右对齐图片，否则从窗口左侧内边距开始。 */
@@ -390,7 +391,7 @@ function closeOnResize() {
     <p v-if="error || message" :role="error ? 'alert' : 'status'" class="pin-badge pin-toast" :class="{ 'pin-error': !!error }" :style="{ left: `${origin.left + 8}px`, top: `${Math.max(origin.top + 8, origin.top + display.stageHeight - 32)}px`, maxWidth: `${Math.max(80, display.stageWidth - 16)}px` }" :title="error ? te(error) : t(message)">{{ error ? te(error) : t(message) }}</p>
     <section v-show="controls || !frame" ref="toolbar" :inert="!!recognitionMode" :style="toolbarStyle" class="pin-controls" :aria-label='t("贴图工具")' @contextmenu.stop.prevent>
       <AnnotationToolbar v-if="frame" grouped compact :movable="false" :editor="editor" :disabled="busy || frame.view.locked" :active="annotating" @tool="startEditing">
-        <template #leading><button :disabled="!editable" :aria-pressed="!annotating" :title='t("移动贴图 · 按住 Ctrl 拖动可把内容拖到其他应用")' :aria-label='t("移动贴图")' @click="annotating = false; editor.selected = -1"><Move :size="17" /></button></template>
+        <template #leading><button :disabled="!editable" :aria-pressed="!annotating" :title='t("移动贴图 · 按住 {0} 拖动可把内容拖到其他应用", { 0: macPlatform ? "⌥" : "Ctrl" })' :aria-label='t("移动贴图")' @click="annotating = false; editor.selected = -1"><Move :size="17" /></button></template>
         <template #trailing>
           <span class="tool-divider" />
           <button class="pin-zoom" :disabled="!editable" :title='t("恢复 100% 查看比例")' @click="setView({ zoom: 1 })">{{ Math.round(frame.view.zoom * 100) }}%</button>

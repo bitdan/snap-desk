@@ -1,12 +1,12 @@
 import { expect, it, vi } from 'vitest'
 import { createPinDrag } from '../../src/features/pins/pin-drag'
 
-function host() {
+function host(mac = false) {
   let captured = false
   const target = { setPointerCapture: vi.fn(() => { captured = true }), hasPointerCapture: () => captured, releasePointerCapture: vi.fn(() => { captured = false }) }
   const moveWindow = vi.fn(), exportContent = vi.fn()
-  const drag = createPinDrag(moveWindow, exportContent)
-  const event = (patch = {}) => ({ button: 0, buttons: 1, pointerId: 1, clientX: 10, clientY: 10, ctrlKey: false, currentTarget: target, preventDefault: vi.fn(), stopPropagation: vi.fn(), ...patch }) as unknown as PointerEvent
+  const drag = createPinDrag(moveWindow, exportContent, mac)
+  const event = (patch = {}) => ({ button: 0, buttons: 1, pointerId: 1, clientX: 10, clientY: 10, ctrlKey: false, altKey: false, currentTarget: target, preventDefault: vi.fn(), stopPropagation: vi.fn(), ...patch }) as unknown as PointerEvent
   return { drag, moveWindow, exportContent, target, event }
 }
 
@@ -37,4 +37,13 @@ it.each(['cancel', 'release', 'otherPointer'])('取消、松开或其他指针�
   drag.move(event({ clientX: 100, buttons: mode === 'release' ? 0 : 1, pointerId: mode === 'otherPointer' ? 2 : 1 }))
   expect(exportContent).not.toHaveBeenCalled()
   drag.cancel()
+})
+it('macOS 用 ⌥ 启动内容拖出，Ctrl 仍按普通移动处理', () => {
+  const { drag, event, moveWindow, exportContent } = host(true)
+  drag.down(event({ ctrlKey: true }))
+  expect(moveWindow).toHaveBeenCalledOnce()
+  drag.down(event({ altKey: true }))
+  drag.move(event({ clientX: 30, altKey: true }))
+  expect(exportContent).toHaveBeenCalledOnce()
+  expect(moveWindow).toHaveBeenCalledOnce()
 })

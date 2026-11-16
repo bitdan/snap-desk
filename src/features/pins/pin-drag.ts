@@ -1,5 +1,10 @@
-/** Ctrl 在按下时确定拖出意图；超过阈值后只交给系统拖拽，松开 Ctrl 不改变会话。 */
-export function createPinDrag(moveWindow: () => void, exportContent: () => void) {
+import { macPlatform } from '@/shared/platform'
+
+/**
+ * 拖出修饰键在按下时确定意图；超过阈值后只交给系统拖拽，松开修饰键不改变会话。
+ * Windows 用 Ctrl；macOS 的 Ctrl+点击是右键菜单，改用 ⌥（与访达“拖动时复制”一致）。
+ */
+export function createPinDrag(moveWindow: () => void, exportContent: () => void, mac = macPlatform) {
   let pending: { id: number; x: number; y: number; target: HTMLElement } | null = null
   function cancel() {
     const previous = pending; pending = null
@@ -8,7 +13,7 @@ export function createPinDrag(moveWindow: () => void, exportContent: () => void)
   function down(event: PointerEvent) {
     if (event.button !== 0) return
     cancel()
-    if (!event.ctrlKey) { moveWindow(); return }
+    if (!(mac ? event.altKey : event.ctrlKey)) { moveWindow(); return }
     event.preventDefault(); event.stopPropagation()
     const target = event.currentTarget as HTMLElement
     pending = { id: event.pointerId, x: event.clientX, y: event.clientY, target }
