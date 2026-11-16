@@ -432,8 +432,17 @@ fn native_window_inner(
     if window.is_minimized().map_err(|e| e.to_string())? {
         return Err("目标窗口已最小化，请重新截图。".into());
     }
+    // macOS 的点坐标需换算为像素，单独处理；光标由系统截图决定，不另行绘制。
+    #[cfg(target_os = "macos")]
+    {
+        let _ = include_cursor;
+        return native_window_points(window);
+    }
+    #[cfg(not(target_os = "macos"))]
     let x = window.x().map_err(|e| e.to_string())?;
+    #[cfg(not(target_os = "macos"))]
     let y = window.y().map_err(|e| e.to_string())?;
+    #[cfg(not(target_os = "macos"))]
     if u64::from(window.width().map_err(|e| e.to_string())?)
         * u64::from(window.height().map_err(|e| e.to_string())?)
         > 64_000_000
@@ -448,11 +457,6 @@ fn native_window_inner(
         window.width().map_err(|e| e.to_string())?,
         window.height().map_err(|e| e.to_string())?,
     )?;
-    #[cfg(target_os = "macos")]
-    {
-        let _ = include_cursor;
-        return native_window_points(window);
-    }
     #[cfg(not(any(windows, target_os = "macos")))]
     let mut image = window
         .capture_image()

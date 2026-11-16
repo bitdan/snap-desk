@@ -1,4 +1,4 @@
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 use image::RgbaImage;
 
 /// 使用系统 URL 处理器打开固定地址，不接受前端传入路径或命令。
