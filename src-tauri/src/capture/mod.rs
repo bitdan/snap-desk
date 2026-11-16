@@ -1104,6 +1104,23 @@ pub fn request_pin(app: &AppHandle) -> Result<bool, String> {
     Ok(true)
 }
 
+/// 截图进行中按 OCR 全局键时交给截图窗口识别当前选区；尚未框选则由窗口提示。
+/// 返回 true 表示截图流程已占用入口；倒计时、录屏框选或滚动截图期间不另开会话。
+pub fn request_ocr(app: &AppHandle) -> Result<bool, String> {
+    let state = app.state::<CaptureState>();
+    if !state.active.load(Ordering::SeqCst) {
+        return Ok(false);
+    }
+    let session = state.session.lock().map_err(err)?;
+    if let Some(session) = session.as_ref() {
+        if session.shown && !session.frame.recording {
+            app.emit_to("capture", "capture-ocr-requested", session.frame.id)
+                .map_err(err)?;
+        }
+    }
+    Ok(true)
+}
+
 /// 创建独立贴图后结束截图会话；创建失败时保留原选区供用户重试。
 #[tauri::command]
 pub async fn pin_capture(

@@ -9,7 +9,7 @@ import OcrWorkspace from '@/features/recognition/components/OcrWorkspace.vue'
 import { ocrWindowSize, type OcrImage } from '@/features/recognition/ocr-workspace'
 import { computed, nextTick, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue'
 import { Copy, Save, X, Monitor, RotateCcw, Scan, Pin, Video, QrCode, ScanText, Languages, AppWindow, GripVertical, Check, MousePointer2, Volume2, VolumeX, Mic, MicOff, ArrowLeft } from 'lucide-vue-next'
-import { api, onFrame, onCaptureClosed, onCapturePin, onScroll } from '@/services/api'
+import { api, onFrame, onCaptureClosed, onCapturePin, onCaptureOcr, onScroll } from '@/services/api'
 import type { CaptureFrame, ColorFormat } from '@/features/capture/types'
 import type { ScrollView } from '@/features/scroll/types'
 import { type Handle, type Point, type Rect } from '@/shared/geometry/selection'
@@ -133,6 +133,7 @@ let offClosed: (() => void) | undefined
 let closedThroughId = 0
 let offScroll: (() => void) | undefined
 let offPin: (() => void) | undefined
+let offOcr: (() => void) | undefined
 let disposed = false
 // 识别面板只属于当前截图会话；选区、标注和录屏入口分别维护自己的状态与守卫。
 const { qrResult, qrDetached, ocrResult, ocrDraft, ocrDetached, ocrSnapshot, ocrMode, translationTrigger, ocrTrigger, closeOcr, closeQr, recognizeText, recognizeQr } = useCaptureRecognition({
@@ -143,8 +144,11 @@ const { qrResult, qrDetached, ocrResult, ocrDraft, ocrDetached, ocrSnapshot, ocr
   releaseFrame,
   snapshot: selectionSnapshot,
 })
-/** 蒙层收起后整屏图随会话释放；识别窗口左侧的原图改用选区的内存副本（CSP 只放行 data:）。 */
-function selectionSnapshot(rect: Rect): OcrImage | null {
+/**
+ * 蒙层收起后整屏图随会话释放；识别窗口左侧的原图改用选区的内存副本。
+ * 只有复制像素在调用时同步完成，PNG 编码交给浏览器后台线程；结果以二进制 Blob 保存，窗口关闭时释放。
+ */
+async function selectionSnapshot(rect: Rect): Promise<OcrImage | null> {
   const image = screenImage.value
   if (!image || !imageReady.value) return null
   try {
@@ -153,7 +157,8 @@ function selectionSnapshot(rect: Rect): OcrImage | null {
     const context = canvas.getContext('2d')
     if (!context) return null
     context.drawImage(image, rect.x, rect.y, rect.width, rect.height, 0, 0, rect.width, rect.height)
-    return { url: canvas.toDataURL('image/png'), width: rect.width, height: rect.height }
+    const blob = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, 'image/png'))
+    return blob ? { url: URL.createObjectURL(blob), width: rect.width, height: rect.height } : null
   } catch { return null }
 }
 // 识别工作区左侧显示截图选区原图；OCR 坐标按选区像素映射到整屏图上。
@@ -364,13 +369,20 @@ onMounted(async () => {
       if (frame.value?.id === id && !scroll.value && !recordingMode.value) void finish('pin')
     })
     if (disposed) { offPin(); return }
+    offOcr = await onCaptureOcr(id => {
+      // 截图进行中按 OCR 全局键：已有选区直接识别，否则提示先框选，不让按键看起来没有反应。
+      if (frame.value?.id !== id || scroll.value || recordingMode.value || qrResult.value || ocrResult.value !== null) return
+      if (valid.value) void recognizeText(!!frame.value.translation)
+      else error.value = '请先框选要识别的文字区域。'
+    })
+    if (disposed) { offOcr(); return }
     const current = await api.current()
     if (current && (!frame.value || current.id > frame.value.id)) receive(current)
     const currentScroll = await api.currentScroll()
     if (currentScroll && !disposed) receiveScroll(currentScroll)
   } catch (e) { error.value = String(e) }
 })
-onUnmounted(() => { releaseFrame(); disposed = true; offClosed?.(); off?.(); offScroll?.(); offPin?.(); window.removeEventListener('keydown', key); window.removeEventListener('keyup', keyUp); window.removeEventListener('resize', resized) })
+onUnmounted(() => { releaseFrame(); disposed = true; offClosed?.(); off?.(); offScroll?.(); offPin?.(); offOcr?.(); window.removeEventListener('keydown', key); window.removeEventListener('keyup', keyUp); window.removeEventListener('resize', resized) })
 </script>
 
 <template>
