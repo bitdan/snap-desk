@@ -13,6 +13,9 @@ vi.mock('../../src/shared/ui/button/Button.vue', async () => {
   return { default: defineComponent({ setup: (_, { attrs, slots }) => () => h('button', attrs, slots.default?.()) }) }
 })
 import UpdateSettings from '../../src/features/settings/components/UpdateSettings.vue'
+import SegmentedControlStub from '../../src/shared/ui/SegmentedControl.vue'
+// 子组件同样按客户端模板编译，才能在内存渲染器里点到分段按钮。
+clientComponent(SegmentedControlStub, new URL('../../src/shared/ui/SegmentedControl.vue', import.meta.url))
 const Component = clientComponent(UpdateSettings, new URL('../../src/features/settings/components/UpdateSettings.vue', import.meta.url))
 let root: MemoryNode, native: AppUpdateView
 const text = (node: MemoryNode): string => node.text + node.children.map(text).join('')
@@ -48,6 +51,21 @@ describe('在线更新设置', () => {
     expect(api.saveSettings).toHaveBeenCalledWith({ ...settings, receivePrereleaseUpdates: true })
     expect(toggle().props['aria-checked']).toBe(true)
     expect(api.checkAppUpdate).toHaveBeenCalledOnce()
+  })
+  it('检查更新间隔默认 1 小时，切换只保存间隔，不触发立即检查', async () => {
+    const settings = defaultSettings()
+    api.status.mockResolvedValue({ settings })
+    await mount()
+    const option = (label: string) => findNode(root, node => node.type === 'button' && node.props['aria-pressed'] !== undefined && text(node) === label)!
+    expect(option('1 小时').props['aria-pressed']).toBe(true)
+    await option('6 小时').props.onClick(); await flushComponent()
+    expect(api.saveSettings).toHaveBeenCalledExactlyOnceWith({ ...settings, updateCheckMinutes: 360 })
+    expect(option('6 小时').props['aria-pressed']).toBe(true)
+    expect(api.checkAppUpdate).not.toHaveBeenCalled()
+    api.saveSettings.mockRejectedValueOnce(new Error('保存失败'))
+    await option('24 小时').props.onClick(); await flushComponent()
+    expect(option('6 小时').props['aria-pressed']).toBe(true)
+    expect(text(root)).toContain('保存失败')
   })
   it('测试版构建固定接收测试版，开关显示开启且不可切换', async () => {
     native.currentVersion = '0.2.0-beta.2'

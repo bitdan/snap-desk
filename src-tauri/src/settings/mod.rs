@@ -267,6 +267,8 @@ pub struct Settings {
     /// 默认只接收正式版；开启后也接收 alpha、beta 和 rc 应用更新。
     /// 测试版构建不受此项限制，始终接收测试版（见 app::updater::preview）。
     pub receive_prerelease_updates: bool,
+    /// 后台复查新版本的间隔（分钟），只允许 UPDATE_CHECK_MINUTES 中的档位；手动检查不受影响。
+    pub update_check_minutes: u32,
     pub appearance: Appearance,
     pub recognition_services: Vec<crate::recognition::services::RecognitionService>,
     pub ai: crate::recognition::translation::AiSettings,
@@ -293,6 +295,8 @@ pub struct Settings {
 struct SettingsWire {
     #[serde(default)]
     receive_prerelease_updates: bool,
+    #[serde(default = "hourly_update_check")]
+    update_check_minutes: u32,
     #[serde(default)]
     appearance: Appearance,
     #[serde(default)]
@@ -340,6 +344,7 @@ impl TryFrom<SettingsWire> for Settings {
         }
         Ok(Self {
             receive_prerelease_updates: wire.receive_prerelease_updates,
+            update_check_minutes: wire.update_check_minutes,
             shortcuts,
             shortcuts_enabled: wire.shortcuts_enabled,
             delay_seconds: wire.delay_seconds,
@@ -361,6 +366,11 @@ impl TryFrom<SettingsWire> for Settings {
 fn enabled_by_default() -> bool {
     true
 }
+/// 可选的后台检查更新间隔；最短 30 分钟，每次只请求一次发布列表，远低于 GitHub 匿名接口每小时 60 次的限额。
+pub const UPDATE_CHECK_MINUTES: [u32; 4] = [30, 60, 360, 1440];
+fn hourly_update_check() -> u32 {
+    60
+}
 fn no_after_action() -> String {
     "none".into()
 }
@@ -368,6 +378,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             receive_prerelease_updates: false,
+            update_check_minutes: hourly_update_check(),
             shortcuts: Shortcuts::default(),
             shortcuts_enabled: true,
             delay_seconds: 0,
@@ -419,6 +430,9 @@ impl Settings {
         self.clipboard.validate()?;
         if !["none", "copy", "pin", "save"].contains(&self.screenshot_after.as_str()) {
             return Err("截图后动作无效。".into());
+        }
+        if !UPDATE_CHECK_MINUTES.contains(&self.update_check_minutes) {
+            return Err("检查更新间隔无效。".into());
         }
         if ![0, 3, 5].contains(&self.delay_seconds) {
             return Err("截图延时只能为 0、3 或 5 秒。".into());
@@ -958,6 +972,22 @@ mod tests {
             .as_object()
             .unwrap()
             .contains_key("shortcut"));
+    }
+
+    #[test]
+    fn update_check_interval_defaults_to_hourly_and_rejects_other_values() {
+        let old: Settings = serde_json::from_str("{}").unwrap();
+        assert_eq!(old.update_check_minutes, 60);
+        for minutes in UPDATE_CHECK_MINUTES {
+            let json = format!(r#"{{"updateCheckMinutes":{minutes}}}"#);
+            let settings: Settings = serde_json::from_str(&json).unwrap();
+            assert_eq!(settings.update_check_minutes, minutes);
+            assert!(settings.validate().is_ok());
+        }
+        for minutes in [0, 1, 45, 100_000] {
+            let settings = Settings { update_check_minutes: minutes, ..Settings::default() };
+            assert!(settings.validate().is_err());
+        }
     }
 
     #[test]

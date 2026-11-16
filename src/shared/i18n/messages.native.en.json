@@ -585,6 +585,7 @@
   "快捷键修饰键无效或重复。": "Invalid or duplicate shortcut modifier.",
   "快捷键格式无效：{0}": "Invalid shortcut format: {0}",
   "截图延时只能为 0、3 或 5 秒。": "Capture delay must be 0, 3 or 5 seconds.",
+  "检查更新间隔无效。": "Invalid update check interval.",
   "{0}与{1}的快捷键冲突。": "Shortcut conflict between {0} and {1}.",
   "配置读取失败，已使用默认设置；原文件保留，点击保存将替换配置：{0}": "Could not read settings. Defaults are in use and the original file was kept. Saving replaces it: {0}",
   "配置路径无效。": "Invalid settings path.",
