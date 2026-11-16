@@ -163,6 +163,7 @@ Use the [issue forms](https://github.com/bitdan/snap-desk/issues/new/choose) to 
 - [Tauri](https://github.com/tauri-apps/tauri): an easy-to-use GUI framework.
 - [Pot](https://github.com/pot-app/pot-desktop): a reference for the translation and OCR modules. Thanks for sharing the project as open source.
 - [wechat_ocr_sdk](https://github.com/MapleREHub/wechat_ocr_sdk): provides the Rust adapter for WeChat PC's built-in OCR engine.
+- [LINUX DO](https://linux.do): a sincere, friendly and professional tech community; thanks to its members for trying Snap Desk and sending feedback.
 
 ## License
 
