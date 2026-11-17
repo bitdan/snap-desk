@@ -43,11 +43,10 @@ export const updateCheckIntervals = [
 export interface Settings { recognitionServices: RecognitionService[]; receivePrereleaseUpdates: boolean; updateCheckMinutes: number; appearance: Appearance; ai: AiSettings; ocr: OcrSettings; onboardingVersion: number; shortcuts: Shortcuts; shortcutsEnabled: boolean; delaySeconds: 0 | 3 | 5; screenshotCursor: boolean; screenshotSnap: boolean; screenshotAfter: 'none' | 'copy' | 'pin' | 'save'; export: ExportSettings; pinAppearance: PinAppearance; recordingExport: RecordingExportSettings; clipboard: ClipboardSettings }
 
 /** 每次返回独立对象，避免编辑草稿时改动“恢复默认”的值。 */
-/** 与 Rust `Shortcuts::default` 一致：macOS 的 F1–F3 是系统键、⌥+字母会输入特殊字符，改用 ⌃⌥+字母。 */
+/** 与 Rust `Shortcuts::default` 一致：截图、贴图、录屏三平台都是 F1–F3；macOS 的 ⌥+字母会输入特殊字符，其余功能改用 ⌃⌥+字母。 */
 export function defaultShortcuts(mac = macPlatform): Settings['shortcuts'] {
-  return mac
-    ? { capture: 'Ctrl+Alt+A', pin: 'Ctrl+Alt+P', record: 'Ctrl+Alt+R', history: 'Ctrl+Alt+V', translate: 'Ctrl+Alt+T', shelf: 'Ctrl+Alt+Z', ocr: 'Ctrl+Alt+C' }
-    : { capture: 'F1', pin: 'F2', record: 'F3', history: 'Alt+V', translate: 'Alt+T', shelf: 'Alt+Z', ocr: 'Alt+C' }
+  const modifier = mac ? 'Ctrl+Alt+' : 'Alt+'
+  return { capture: 'F1', pin: 'F2', record: 'F3', history: `${modifier}V`, translate: `${modifier}T`, shelf: `${modifier}Z`, ocr: `${modifier}C` }
 }
 
 export function defaultSettings(): Settings {
