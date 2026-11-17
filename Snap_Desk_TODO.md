@@ -62,5 +62,5 @@
 
 - [ ] 云端专用接口：百度通用 OCR、腾讯 OCR、火山 OCR、讯飞 OCR、Simple LaTeX。
 - [ ] 图片翻译专用接口：腾讯图片翻译、百度图片翻译。
-- [ ] 本地引擎：Tesseract / Tesseract.js、RapidOCR、macOS Apple Vision。
+- [ ] 本地引擎：Tesseract / Tesseract.js、RapidOCR。
 - [ ] 通用翻译 / OCR 服务插件机制。

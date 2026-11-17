@@ -27,10 +27,10 @@ Download from [Snap Desk releases](https://github.com/bitdan/snap-desk/releases)
 | Platform | File | Notes |
 | --- | --- | --- |
 | Windows x64 | `-setup.exe` installer / `-standalone.exe` standalone EXE | Full feature set, with online updates |
-| macOS Apple silicon (preview) | `-macos-arm64.dmg` | Requires macOS 13.3 or later. Not notarized by Apple: allow it in System Settings → Privacy & Security on first launch, and grant Screen Recording permission |
+| macOS Apple silicon | `-macos-arm64.dmg` | Nearly full feature set, with online updates. Requires macOS 13.3 or later. Not notarized by Apple: allow it in System Settings → Privacy & Security on first launch, and grant Screen Recording permission |
 | Linux x64 (preview) | `-linux-x64.AppImage` / `-linux-x64.deb` | Requires Ubuntu 24.04 or a comparable distribution (glibc 2.39+). Capture requires an X11 session. The AppImage bundles the web engine and system libraries (about 100 MB), runs across distributions, and updates online. The deb is small (about 20 MB), gets its dependencies from the package manager, and is upgraded by installing the new package |
 
-The macOS preview supports screenshots (with window and control snapping and an optional cursor), scrolling capture, MP4/GIF recording with system audio and microphone, clipboard history, pinning, system OCR, and selected-text translation. Selecting across screens, the local translation engine, and local PaddleOCR are not available there. The Linux preview currently provides primary-screen capture, annotation, pinning, OCR, and translation, with the rest still in progress; see the [roadmap](Snap_Desk_TODO.md).
+On macOS, Snap Desk supports screenshots (with window and control snapping and an optional cursor), scrolling capture, MP4/GIF recording with system audio and microphone, clipboard history, pinning, Apple Vision OCR, and selected-text translation. Selecting across screens, the local translation engine, and local PaddleOCR are not available there yet. Linux is the only platform still being ported: the preview provides primary-screen capture, annotation, pinning, OCR, and translation, while multi-display capture, window snapping, recording, clipboard history, and selected-text translation are in progress; see the [roadmap](Snap_Desk_TODO.md).
 
 ## Features
 
@@ -66,9 +66,9 @@ The macOS preview supports screenshots (with window and control snapping and an 
 
 ### Screen Recording
 
-- [x] **Offline / Windows** · Record a region or display and export MP4/GIF.
-- [x] **Offline / Windows** · Pause/resume, keyboard and mouse visualization, and live annotations.
-- [x] **Offline / Windows** · Record system audio and microphone input in MP4 recordings.
+- [x] **Offline / Windows, macOS** · Record a region or display and export MP4/GIF.
+- [x] **Offline / Windows, macOS** · Pause/resume, keyboard and mouse visualization, and live annotations.
+- [x] **Offline / Windows, macOS** · Record system audio and microphone input in MP4 recordings.
 - [ ] Webcam overlay, H.265, HDR, and advanced video editing.
 
 ### OCR
@@ -77,6 +77,7 @@ The macOS preview supports screenshots (with window and control snapping and an 
 | --- | --- | --- | --- |
 | ✅ | PaddleOCR · PP-OCRv6 | Offline | Install recognition resources on first use |
 | ✅ | Windows OCR | Offline | Uses installed Windows recognition language packs |
+| ✅ | Apple Vision | Offline | Built-in macOS text recognition; nothing to install |
 | ✅ | OCR.space | Online API | Requires an API key; large screenshots are compressed to meet the free tier's 1 MB limit |
 | ✅ | Paddle API | Online API | Requires an AI Studio token; model options include PP-OCRv6, PaddleOCR-VL-1.6, and PP-StructureV3 |
 | ✅ | Groq Vision | Online API | Select a model that supports image recognition |
@@ -101,7 +102,7 @@ When online OCR is selected, recognition uploads the selected image directly. Se
 | ✅ | Custom text service | Online API / Local API | Configure the endpoint, model, and required credentials |
 
 - [x] A separate translation window for typed text, clipboard text, selected-text shortcuts, and screenshot translation.
-- [x] Press `Alt+T` to open the translation window; selected text is copied and translated automatically on Windows. The shortcut is customizable.
+- [x] Press `Alt+T` to open the translation window; selected text is copied and translated automatically on Windows and macOS. The shortcut is customizable.
 - [x] Press `Enter` to translate and `Shift+Enter` for a new line; switch languages, copy results, merge line breaks, and keep the window on top.
 - [x] Shared translation access from the screenshot toolbar, pinned images, and translation window. Online text translation sends only the text to translate.
 
@@ -112,7 +113,7 @@ See the [translation technical guide (Chinese)](TECHNICAL.md#翻译接入) for d
 - [x] Separate OCR, translation, and service settings pages, with cloud APIs first, followed by local APIs and offline engines.
 - [x] Multiple account/model connections. Saved connections replace provider presets while preserving separate accounts.
 - [x] Display the active service, model, and current-use indicator; distinguish the configuration being viewed from the one in use.
-- [x] Store secrets in Windows Credential Manager, isolated by connection and endpoint; exclude secrets from configuration exports.
+- [x] Store secrets in Windows Credential Manager or the macOS Keychain, isolated by connection and endpoint; exclude secrets from configuration exports.
 - [x] Link to official credential pages and connect with API keys/tokens.
 - [ ] Sign in through a browser to authorize Snap Desk directly.
 
@@ -144,11 +145,11 @@ For development, builds, and additional service integrations, see the [technical
 
 ### Which platforms are supported?
 
-Windows x64 has the full feature set, as an installer or standalone EXE: screenshot capture, screen recording, OCR, translation, and clipboard history in one desktop app. macOS (Apple silicon) and Linux x64 are available as previews; see [Download](#download) for what they include.
+Windows x64 has the full feature set, as an installer or standalone EXE: screenshot capture, screen recording, OCR, translation, and clipboard history in one desktop app. macOS (Apple silicon) has nearly all of it, apart from selecting across screens and some local engines. Linux x64 is a preview that is still being ported; see [Download](#download) for what it includes.
 
 ### Can OCR and translation work offline?
 
-Yes. PaddleOCR and Windows OCR recognize text locally. CTranslate2 supports offline Chinese–English translation after its resources are installed. You can also choose online services such as OCR.space, Paddle API, DeepL, and Groq using your own credentials.
+Yes. PaddleOCR, Windows OCR, and Apple Vision recognize text locally. CTranslate2 supports offline Chinese–English translation after its resources are installed. You can also choose online services such as OCR.space, Paddle API, DeepL, and Groq using your own credentials.
 
 ### Is Snap Desk free?
 
