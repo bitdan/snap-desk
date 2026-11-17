@@ -415,14 +415,14 @@ impl CaptureBackend for Capture {
         self.current().map(|_| ())
     }
     fn next_frame(&mut self) -> Result<Option<VideoFrame>, String> {
-        let now = Instant::now();
-        if self.due.is_some_and(|due| now < due) {
+        let instant = Instant::now();
+        if self.due.is_some_and(|due| instant < due) {
             return Ok(None);
         }
         // 落后超过一帧时从当前时间重新计时，不连续补抓追赶。
         self.due = Some(match self.due {
-            Some(due) if now < due + self.interval => due + self.interval,
-            _ => now + self.interval,
+            Some(due) if instant < due + self.interval => due + self.interval,
+            _ => instant + self.interval,
         });
         let image = self.grab()?;
         Ok(Some(VideoFrame {
