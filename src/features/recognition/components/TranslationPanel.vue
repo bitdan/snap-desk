@@ -10,14 +10,18 @@ import Button from '@/shared/ui/button/Button.vue'
 import SelectControl from '@/shared/ui/SelectControl.vue'
 import { updateSettings } from '@/features/settings/settings-write'
 import { automaticTarget, detectTextLanguage } from '@/features/recognition/translation-direction'
+import { matchesSegments } from '@/features/recognition/translation-overlay'
 
-const emit = defineEmits<{ close: []; back: []; busy: [value: boolean] }>()
+/** segments：截图翻译的段落原文；设置开启覆盖原文且原文未被改动时按段落批量翻译，并逐段回传译文。 */
+const emit = defineEmits<{ close: []; back: []; busy: [value: boolean]; segments: [value: string[] | null]; overlay: [value: boolean] }>()
+// overlay：本次是否以“覆盖原文”展示译文；出现任何错误都退回面板展示，确保提示可见。
 // pasteable=false：贴图窗口无权读取剪贴板原文，嵌入识别工作区时隐藏该按钮。
-const props = withDefaults(defineProps<{ workspace?: boolean; standalone?: boolean; autoTranslate?: boolean; pasteable?: boolean }>(), { workspace: false, autoTranslate: true, pasteable: true })
+const props = withDefaults(defineProps<{ workspace?: boolean; standalone?: boolean; autoTranslate?: boolean; pasteable?: boolean; segments?: string[] | null }>(), { workspace: false, autoTranslate: true, pasteable: true })
 const source = defineModel<string>('text', { required: true })
 const translated = ref('')
 const busy = ref(false), error = ref(''), message = ref(''), target = ref('')
 watch(busy, value => emit('busy', value))
+watch(error, value => { if (value) emit('overlay', false) })
 const loading = ref(false), copying = ref(false)
 const sourceLanguage = ref(''), savingDefault = ref(false), readingClipboard = ref(false)
 const input = ref<HTMLTextAreaElement | null>(null)
@@ -63,6 +67,7 @@ async function loadConfig() {
     autoDirection.value = !sourceLanguage.value && ['zh-CN', 'en'].includes(value.targetLanguage)
     applyAutomaticDirection()
     loaded = true
+    emit('overlay', !!value.overlay && matchesSegments(source.value, props.segments))
     if (config.value.provider !== 'local-ctranslate2' && !onlineTranslationReady(config.value)) error.value = '请先在“翻译”中选择服务，或在“服务管理”中添加服务。'
   } catch (e) { if (!disposed) error.value = String(e) }
   finally { loading.value = false }
@@ -76,8 +81,20 @@ async function translate() {
   if (sourceLanguage.value === target.value) { error.value = '原文语言和目标语言不能相同。'; return }
   if (new TextEncoder().encode(source.value).length > 32_000) { error.value = '翻译文字超过 32 KB，请减少文字后重试。'; return }
   const id = crypto.randomUUID(); requestId = id; cancelled = false
-  busy.value = true; error.value = ''; message.value = ''; translated.value = ''
+  busy.value = true; error.value = ''; message.value = ''; translated.value = ''; emit('segments', null)
   try {
+    const segments = config.value.overlay && matchesSegments(source.value, props.segments) ? props.segments : null
+    emit('overlay', !!segments)
+    if (segments) {
+      const batch = await api.translateTexts(id, { texts: segments, sourceLanguage: sourceLanguage.value || null, targetLanguage: target.value }, true, config.value)
+      if (!disposed && !cancelled && requestId === id && batch.requestId === id && batch.translations.length === segments.length) {
+        const texts = batch.translations.map(item => item.translatedText)
+        translated.value = texts.join('\n\n')
+        emit('segments', texts)
+        if (config.value.autoCopy) void copy()
+      }
+      return
+    }
     // 默认方向保留单文本调用；临时方向和指定原文语言通过现有批量契约传递。
     const result = !sourceLanguage.value && target.value === config.value.targetLanguage
       ? await api.translateText(id, source.value, true, config.value)
@@ -91,7 +108,7 @@ async function translate() {
   finally { if (requestId === id) { busy.value = false; requestId = null } }
 }
 /** 修改原文或方向即清除旧结果，避免复制到与当前语言不匹配的译文。 */
-function invalidate() { translated.value = ''; message.value = ''; error.value = '' }
+function invalidate() { translated.value = ''; message.value = ''; error.value = ''; emit('segments', null) }
 function swap() {
   if (busy.value || !swapSource.value) return
   const previousSource = swapSource.value
