@@ -116,11 +116,12 @@ describe('录屏文件设置', () => {
 })
 
 describe('默认快捷键', () => {
-  it('macOS 避开需按 Fn 的功能键和会输入特殊字符的 ⌥+字母', () => {
-    const mac = Object.values(defaultShortcuts(true))
-    expect(mac.every(key => key.startsWith('Ctrl+Alt+'))).toBe(true)
-    expect(new Set(mac).size).toBe(mac.length)
-    expect(validateShortcuts({ ...defaultSettings().shortcuts, ...defaultShortcuts(true) })).toBeNull()
-    expect(defaultShortcuts(false).capture).toBe('F1')
+  it('截图、贴图、录屏三平台一致；macOS 其余功能避开会输入特殊字符的 ⌥+字母', () => {
+    const mac = defaultShortcuts(true), other = defaultShortcuts(false)
+    for (const keys of [mac, other]) expect([keys.capture, keys.pin, keys.record]).toEqual(['F1', 'F2', 'F3'])
+    expect([mac.history, mac.translate, mac.shelf, mac.ocr]).toEqual(['Ctrl+Alt+V', 'Ctrl+Alt+T', 'Ctrl+Alt+Z', 'Ctrl+Alt+C'])
+    expect(other.history).toBe('Alt+V')
+    expect(new Set(Object.values(mac)).size).toBe(7)
+    expect(validateShortcuts(mac)).toBeNull()
   })
 })
