@@ -69,7 +69,7 @@ unsafe fn source() -> Result<Id, String> {
                 .ok_or("无法注册拖拽源。")?;
             builder.add_method(
                 sel!(draggingSession:sourceOperationMaskForDraggingContext:),
-                operation_mask as extern "C-unwind" fn(&AnyObject, Sel, Id, isize) -> usize,
+                operation_mask as extern "C-unwind" fn(_, _, _, _) -> _,
             );
             if let Some(protocol) = AnyProtocol::get(c"NSDraggingSource") {
                 builder.add_protocol(protocol);
