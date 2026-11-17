@@ -6066,6 +6066,7 @@ dependencies = [
  "windows-core",
  "windows-sys 0.59.0",
  "xcap",
+ "xcb",
  "zip",
 ]
 

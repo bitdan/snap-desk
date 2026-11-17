@@ -85,6 +85,10 @@ objc2 = "=0.6.5"
 # 系统完成回调（ScreenCaptureKit、麦克风授权）需要 Objective-C block；版本与 Cargo.lock 中已有的一致。
 block2 = "=0.6.2"
 
+# X11 截图：RandR 读取物理像素显示器边界，XFixes 读取光标；版本与 xcap 依赖的一致。
+[target.'cfg(target_os = "linux")'.dependencies]
+xcb = { version = "=1.7.1", features = ["randr", "xfixes"] }
+
 # 其他平台保留构建时下载 CPU 引擎的方式，同样显式选择 API 24。
 [target.'cfg(not(windows))'.dependencies]
 ort = { version = "=2.0.0-rc.13", default-features = false, features = ["download-binaries", "tls-native", "api-24"] }
