@@ -92,7 +92,7 @@ fn monitor(x11: &X11, x: i32, y: i32) -> Result<(i32, i32, u32, u32), String> {
 
 /// 窗口需仍存在、已映射（最小化的窗口会被取消映射）且属于原进程，返回其外框。
 fn window(x11: &X11, id: u32, pid: u32) -> Result<(i32, i32, u32, u32), String> {
-    let window = unsafe { x::Window::new(id) };
+    let window = x::Window::new(id);
     let viewable = x11
         .conn
         .wait_for_reply(x11.conn.send_request(&x::GetWindowAttributes { window }))
