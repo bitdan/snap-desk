@@ -17,6 +17,11 @@ mod cursor;
 #[cfg(target_os = "macos")]
 #[path = "desktop_accessibility_macos.rs"]
 mod accessibility;
+#[cfg(not(any(windows, target_os = "macos")))]
+#[path = "desktop_linux.rs"]
+mod linux;
+#[cfg(not(any(windows, target_os = "macos")))]
+pub use linux::capture;
 
 /// 把当前光标叠加到截图上；`origin` 为截图左上角的全局点坐标。读不到光标时保持原图。
 #[cfg(target_os = "macos")]
@@ -455,22 +460,6 @@ fn snap_windows(desktop: &mut Desktop, scale: f64, size: (u32, u32)) {
     accessibility::collect(&desktop.windows, &mut desktop.targets, origin, size, scale);
 }
 
-#[cfg(not(any(windows, target_os = "macos")))]
-pub fn capture(_primary_only: bool, include_cursor: bool, _snap: bool) -> Result<Desktop, String> {
-    if include_cursor {
-        return Err("当前平台暂不支持截图包含光标。".into());
-    }
-    Ok(Desktop {
-        image: crate::shared::platform::capture_primary()?,
-        x: 0,
-        y: 0,
-        displays: Vec::new(),
-        targets: Vec::new(),
-        windows: Vec::new(),
-        include_cursor: false,
-    })
-}
-
 /// 原生窗口抓取不接受任意窗口句柄，只允许当前会话已识别的窗口。
 pub fn native_window(
     window: &NativeWindow,
@@ -515,14 +504,16 @@ fn native_window_inner(
     if window.is_minimized().map_err(|e| e.to_string())? {
         return Err("目标窗口已最小化，请重新截图。".into());
     }
-    // macOS 的点坐标需换算为像素，单独处理。
+    // macOS 的点坐标需换算为像素，单独处理；X11 需按外框补齐窗口装饰。
     #[cfg(target_os = "macos")]
     return native_window_points(window, include_cursor);
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(windows, target_os = "macos")))]
+    return linux::native_window(window, include_cursor);
+    #[cfg(windows)]
     let x = window.x().map_err(|e| e.to_string())?;
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(windows)]
     let y = window.y().map_err(|e| e.to_string())?;
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(windows)]
     if u64::from(window.width().map_err(|e| e.to_string())?)
         * u64::from(window.height().map_err(|e| e.to_string())?)
         > 64_000_000
@@ -537,11 +528,7 @@ fn native_window_inner(
         window.width().map_err(|e| e.to_string())?,
         window.height().map_err(|e| e.to_string())?,
     )?;
-    #[cfg(not(any(windows, target_os = "macos")))]
-    let mut image = window
-        .capture_image()
-        .map_err(|e| format!("原生窗口截图失败：{e}"))?;
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(windows)]
     if image.dimensions()
         != (
             window.width().map_err(|e| e.to_string())?,
@@ -554,7 +541,7 @@ fn native_window_inner(
     if include_cursor {
         windows::draw_cursor(&mut image, x, y)?;
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(windows)]
     return Ok((image, x, y));
 }
 

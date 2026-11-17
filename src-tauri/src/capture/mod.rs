@@ -494,23 +494,6 @@ fn prepare(
     // 必须位于 capture 之后；前端仍通过 current_capture 补读会话，兼容冷启动时
     // capture-ready 事件早于监听器注册的情况，解码完成后才会调用 show_capture。
     let window = ensure_overlay(app)?;
-    #[cfg(not(any(windows, target_os = "macos")))]
-    {
-        let monitor = window
-            .primary_monitor()
-            .map_err(err)?
-            .ok_or("主显示器不可用。")?;
-        desktop.x = monitor.position().x;
-        desktop.y = monitor.position().y;
-        desktop.displays = vec![crate::capture::desktop::Display {
-            x: desktop.x,
-            y: desktop.y,
-            width: desktop.image.width(),
-            height: desktop.image.height(),
-            primary: true,
-            scale: monitor.scale_factor(),
-        }];
-    }
     place_overlay(&window, &desktop)?;
     let image = std::mem::take(&mut desktop.image);
     latency.overlay_ready_ms = elapsed_ms(overlay_started);
