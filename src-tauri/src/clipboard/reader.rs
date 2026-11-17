@@ -3,7 +3,7 @@ use super::{model::ClipboardSettings, platform, service::Content};
 use image::{ImageDecoder, ImageFormat};
 use std::io::Cursor;
 /// 原生剪贴板的有界原始数据。Windows 为 UTF-16 文本、DIB 与 CF_HDROP；
-/// macOS 直接给出 UTF-8 文本与已解码的文件路径。
+/// macOS 与 Linux 直接给出 UTF-8 文本与已解码的文件路径。
 pub enum Snapshot {
     #[cfg_attr(not(windows), allow(dead_code))]
     Text(Vec<u8>),
@@ -12,9 +12,9 @@ pub enum Snapshot {
     Dib(Vec<u8>),
     #[cfg_attr(not(windows), allow(dead_code))]
     Files(Vec<u8>),
-    #[cfg(target_os = "macos")]
+    #[cfg(not(windows))]
     Utf8(String),
-    #[cfg(target_os = "macos")]
+    #[cfg(not(windows))]
     Paths(Vec<String>),
 }
 
@@ -38,14 +38,14 @@ pub fn read(settings: &ClipboardSettings) -> Result<Option<Content>, String> {
             }
             Ok(Some(Content::Text(text)))
         }
-        #[cfg(target_os = "macos")]
+        #[cfg(not(windows))]
         Snapshot::Utf8(text) => {
             if text.len() > settings.max_text_bytes as usize {
                 return Err("文本超过历史大小限制，未记录。".into());
             }
             Ok(Some(Content::Text(text)))
         }
-        #[cfg(target_os = "macos")]
+        #[cfg(not(windows))]
         Snapshot::Paths(paths) => Ok(Some(Content::Files(paths))),
         Snapshot::Png(bytes) => {
             decode(bytes, ImageFormat::Png, settings).map(|i| Some(Content::Image(i)))

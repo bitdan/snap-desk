@@ -11,14 +11,7 @@ pub fn validate(paths: &[String]) -> Result<(), String> {
         return Err("文件历史每条最多 100 个路径，路径总大小不超过 1 MiB。".into());
     }
     for path in paths {
-        let bytes = path.as_bytes();
-        let drive = bytes.len() >= 3
-            && bytes[0].is_ascii_alphabetic()
-            && bytes[1] == b':'
-            && matches!(bytes[2], b'\\' | b'/');
-        let unc = path.starts_with("\\\\")
-            && path[2..].split('\\').filter(|s| !s.is_empty()).count() >= 2;
-        if (!drive && !unc)
+        if !absolute(path)
             || path.chars().any(char::is_control)
             || path.starts_with("\\\\.\\")
             || path.encode_utf16().count() > 32767
@@ -27,6 +20,19 @@ pub fn validate(paths: &[String]) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// 盘符或 UNC 绝对路径在各平台都保持原有判定；macOS / Linux 另外接受以 `/` 开头的绝对路径，
+/// 否则系统剪贴板里的 POSIX 文件引用全部会被拒绝。
+fn absolute(path: &str) -> bool {
+    let bytes = path.as_bytes();
+    let drive = bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && matches!(bytes[2], b'\\' | b'/');
+    let unc =
+        path.starts_with("\\\\") && path[2..].split('\\').filter(|s| !s.is_empty()).count() >= 2;
+    drive || unc || (cfg!(not(windows)) && path.starts_with('/'))
 }
 
 pub fn from_stored(text: &str) -> Result<Vec<String>, String> {
@@ -106,5 +112,16 @@ mod tests {
         assert!(decode(&payload(&["relative.txt"])).is_err());
         assert!(decode(&payload(&["C:\\bad\nname"])).is_err());
         assert!(decode(&payload(&vec![r"C:\file.txt"; 101])).is_err());
+    }
+    #[cfg(not(windows))]
+    #[test]
+    fn posix_paths_must_be_absolute() {
+        let paths = vec![
+            "/home/用户/报告😀.pdf".to_string(),
+            "/tmp/a b.png".to_string(),
+        ];
+        assert_eq!(paths, from_stored(&paths.join("\n")).unwrap());
+        assert!(validate(&["relative.txt".into()]).is_err());
+        assert!(validate(&["/tmp/bad\nname".into()]).is_err());
     }
 }

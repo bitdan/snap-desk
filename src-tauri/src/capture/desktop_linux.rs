@@ -170,8 +170,7 @@ impl X11 {
 }
 
 pub(super) fn wayland() -> bool {
-    std::env::var("XDG_SESSION_TYPE").is_ok_and(|v| v.eq_ignore_ascii_case("wayland"))
-        || std::env::var_os("WAYLAND_DISPLAY").is_some()
+    crate::shared::x11::wayland()
 }
 
 /// ZPixmap 32 位像素按服务器字节序为 BGRX（LSB）或 XRGB（MSB），扫描线无额外填充。
