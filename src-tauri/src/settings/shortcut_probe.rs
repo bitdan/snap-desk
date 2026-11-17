@@ -207,9 +207,14 @@ fn foreground_pid() -> u32 {
         .and_then(|pid| u32::try_from(pid).ok())
         .unwrap_or(0)
 }
+/// X11 读取 EWMH 前台窗口的 `_NET_WM_PID`；Wayland、无窗口管理器或未设置时为 0。
 #[cfg(not(any(windows, target_os = "macos")))]
 fn foreground_pid() -> u32 {
-    0
+    use crate::shared::x11::X11;
+    X11::connect()
+        .ok()
+        .and_then(|x| x.window_pid(x.active_window()?))
+        .unwrap_or(0)
 }
 
 #[cfg(target_os = "macos")]
@@ -389,9 +394,28 @@ fn covers_monitor(pid: u32) -> Option<bool> {
     )
 }
 
+/// X11 同样没有管理员提升的概念；全屏按前台窗口与其中心所在 RandR 显示器比较，
+/// 键盘布局取 `_XKB_RULES_NAMES` 中配置的布局列表（如 `us,ru`）。
 #[cfg(not(any(windows, target_os = "macos")))]
 fn foreground(_: &AppHandle) -> Option<Foreground> {
-    None
+    use crate::shared::x11::{covers_monitor, xkb_layout, X11};
+    let x = X11::connect().ok()?;
+    let window = x.active_window()?;
+    let pid = x.window_pid(window)?;
+    let covers_monitor = x
+        .window_rect(window)
+        .and_then(|rect| covers_monitor(rect, &x.monitors()));
+    let keyboard_layout = x
+        .existing("_XKB_RULES_NAMES")
+        .and_then(|property| x.string(x.root, property, 1024))
+        .and_then(|rules| xkb_layout(&rules))
+        .unwrap_or_else(|| "0".into());
+    Some(Foreground {
+        pid,
+        elevated: None,
+        covers_monitor,
+        keyboard_layout,
+    })
 }
 
 #[cfg(test)]

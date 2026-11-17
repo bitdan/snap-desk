@@ -13,5 +13,7 @@ pub(crate) mod native_i18n;
 pub(crate) mod platform;
 
 pub(crate) mod text_image;
+#[cfg(target_os = "linux")]
+pub(crate) mod x11;
 
 pub(crate) mod native_drag;

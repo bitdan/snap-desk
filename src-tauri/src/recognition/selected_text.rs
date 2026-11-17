@@ -1,4 +1,5 @@
 //! 全局翻译键先在原应用执行复制，确认剪贴板更新后再读取，避免使用历史文字。
+//! X11 例外：直接读取 PRIMARY 选区（用户当前选中的文字），不经过剪贴板。
 use tauri::AppHandle;
 
 /// HWND 转为纯数值跨线程传递；执行复制时重新核对前台，窗口切换即停止。
@@ -11,14 +12,56 @@ pub(super) fn foreground() -> Result<usize, String> {
     Ok(window.0 as usize)
 }
 
+/// X11 以 EWMH 前台窗口号代替 HWND；全局快捷键不会激活本程序，前台仍是用户选中文字的窗口。
 #[cfg(not(any(windows, target_os = "macos")))]
 pub(super) fn foreground() -> Result<usize, String> {
-    Err("当前平台暂不支持自动复制选中文字，请在翻译页读取剪贴板。".into())
+    use crate::shared::x11::X11;
+    use xcb::Xid;
+    let x = X11::connect()?;
+    let window = x.active_window().ok_or("没有可复制文字的前台窗口。")?;
+    if x.window_pid(window) == Some(std::process::id()) {
+        return Err("没有可复制文字的前台窗口。".into());
+    }
+    Ok(window.resource_id() as usize)
 }
 
+/// X11 选中文字即进入 PRIMARY 选区，直接向选区所有者请求 UTF-8 文本，
+/// 不注入 Ctrl+C，也不覆盖用户的剪贴板。终端等程序里 Ctrl+C 是中断键，注入反而有害。
 #[cfg(not(any(windows, target_os = "macos")))]
-pub(super) fn copy(_app: &AppHandle, _target: usize) -> Result<String, String> {
-    Err("当前平台暂不支持自动复制选中文字，请在翻译页读取剪贴板。".into())
+pub(super) fn copy(_app: &AppHandle, target: usize) -> Result<String, String> {
+    use crate::shared::x11::{ReadError, SelectionReader, X11};
+    use xcb::{x, Xid};
+    /// 超过翻译上限的选区不必整段取回，留出余量让上层给出“超过 32 KB”的提示。
+    const LIMIT: usize = 64 * 1024;
+    let x11 = X11::connect()?;
+    if x11.active_window().map(|w| w.resource_id() as usize) != Some(target) {
+        return Err("前台窗口已切换，请重新选中文字。".into());
+    }
+    let reader = SelectionReader::new(&x11)?;
+    if reader.owner(x::ATOM_PRIMARY).is_none() {
+        return Err("未读取到选中文字，请先选择文字。".into());
+    }
+    let mut last = None;
+    for name in ["UTF8_STRING", "text/plain;charset=utf-8", "STRING"] {
+        let format = x11.intern(name)?;
+        match reader.read(x::ATOM_PRIMARY, format, LIMIT) {
+            Ok(Some(bytes)) if !bytes.is_empty() => {
+                // STRING 按规范是 Latin-1；其余目标均为 UTF-8。
+                return Ok(if name == "STRING" {
+                    bytes.iter().map(|b| char::from(*b)).collect()
+                } else {
+                    String::from_utf8_lossy(&bytes).into_owned()
+                });
+            }
+            Ok(_) => {}
+            Err(e) => last = Some(e),
+        }
+    }
+    Err(match last {
+        Some(ReadError::TooLarge) => "翻译文字超过 32 KB，请减少文字后重试。".into(),
+        Some(ReadError::Timeout) => "目标应用未响应选区请求，请重新选中文字。".into(),
+        _ => "未读取到选中文字，请确认已选择文字。".into(),
+    })
 }
 
 /// macOS 以前台应用进程号代替 HWND；全局快捷键不会激活本程序，前台仍是用户选中文字的应用。
