@@ -9,6 +9,10 @@ pub use windows::Listener;
 mod macos;
 #[cfg(target_os = "macos")]
 pub use macos::Listener;
+#[cfg(target_os = "linux")]
+mod linux;
+#[cfg(target_os = "linux")]
+pub use linux::Listener;
 
 /// 所有位置均为虚拟桌面的物理像素；源时间与 WGC 相同，单位 100 ns。
 #[derive(Clone, Debug)]
@@ -173,9 +177,9 @@ impl Keys {
     }
 }
 
-#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
 pub struct Listener;
-#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
 impl Listener {
     pub fn start(_config: super::config::InputEffects) -> Result<Self, String> {
         Err("当前平台不支持录屏键鼠特效。".into())

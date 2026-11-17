@@ -1,4 +1,5 @@
-//! 音频契约、主机时钟对齐混音和独立采集线程（Windows 用 QPC，macOS 用 mach 主机时钟）。
+//! 音频契约、主机时钟对齐混音和独立采集线程（Windows 用 QPC，macOS 用 mach 主机时钟，
+//! Linux 用 CLOCK_MONOTONIC）。
 //! WASAPI 的共享模式负责设备格式 → 48 kHz 双声道浮点的高质量重采样；
 //! 此模块按视频时间轴裁剪暂停，补静音，再向 AAC 编码器提交 PCM16。
 use super::timeline::Timeline;
@@ -12,6 +13,10 @@ pub use windows::Worker;
 mod macos;
 #[cfg(target_os = "macos")]
 pub use macos::Worker;
+#[cfg(target_os = "linux")]
+mod linux;
+#[cfg(target_os = "linux")]
+pub use linux::Worker;
 
 pub const RATE: u32 = 48_000;
 pub const CHANNELS: usize = 2;
@@ -27,7 +32,10 @@ pub enum Source {
 
 impl Source {
     /// 错误提示中的来源名称。
-    #[cfg_attr(not(any(target_os = "windows", target_os = "macos")), allow(dead_code))]
+    #[cfg_attr(
+        not(any(target_os = "windows", target_os = "macos", target_os = "linux")),
+        allow(dead_code)
+    )]
     fn label(self) -> &'static str {
         match self {
             Self::System => "系统声音",
@@ -138,9 +146,9 @@ impl Mixer {
     }
 }
 
-#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
 pub struct Worker;
-#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
 impl Worker {
     pub fn start(_: bool, _: bool, _: impl Fn() -> bool + Send + 'static) -> Result<Self, String> {
         Err("当前平台尚未支持音频录制。".into())

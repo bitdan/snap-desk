@@ -232,7 +232,8 @@ impl RecorderCapabilities {
     /// 仅映射采集接口检查结果，不触发媒体组件初始化、文件写入或音频设备访问。
     pub(super) fn from_capture_support(result: Result<(), String>) -> Self {
         let available = result.is_ok();
-        let audio_supported = available && cfg!(any(target_os = "windows", target_os = "macos"));
+        let audio_supported =
+            available && cfg!(any(target_os = "windows", target_os = "macos", target_os = "linux"));
         Self {
             available,
             reason: result.err(),
@@ -253,7 +254,7 @@ impl RecorderCapabilities {
             // macOS 的录制器固定包含光标，不能按设置关闭，因此不提供该选项。
             capture_cursor: available && !cfg!(target_os = "macos"),
             // MP4 提供声音选项；实际 AAC 编码与声音设备（WASAPI / ScreenCaptureKit、麦克风授权）
-            // 在 start_recording 准备时校验。
+            // 在 start_recording 准备时校验；Linux 为 PulseAudio / PipeWire 与 GStreamer AAC 插件。
             system_audio: audio_supported,
             microphone: audio_supported,
             formats: if available {
@@ -280,8 +281,8 @@ mod tests {
                 "sources": ["primaryMonitor", "selectedMonitor", "selectedWindow"],
                 "frameRates": [10, 20, 30, 60],
                 "captureCursor": !cfg!(target_os = "macos"),
-                "systemAudio": cfg!(any(target_os = "windows", target_os = "macos")),
-                "microphone": cfg!(any(target_os = "windows", target_os = "macos")),
+                "systemAudio": cfg!(any(target_os = "windows", target_os = "macos", target_os = "linux")),
+                "microphone": cfg!(any(target_os = "windows", target_os = "macos", target_os = "linux")),
                 "formats": ["mp4", "gif"],
             })
         );

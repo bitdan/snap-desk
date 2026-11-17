@@ -10,6 +10,8 @@ use std::path::Path;
 mod media_foundation;
 #[cfg(target_os = "macos")]
 mod avfoundation;
+#[cfg(target_os = "linux")]
+mod linux;
 mod pixels;
 
 /// 只有读取到硬件转换器标识才报告硬件；系统未公开信息时保留未知。
@@ -66,7 +68,12 @@ pub fn create(
                 .map_err(|e| format!("无法初始化系统 H.264 / AAC 编码器：{e}"))?,
         ));
     }
-    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    #[cfg(target_os = "linux")]
+    return Ok(Box::new(
+        linux::GStreamer::new(path, width, height, fps, bitrate, preference, audio)
+            .map_err(|e| format!("无法初始化 H.264 / AAC 编码器：{e}"))?,
+    ));
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
     {
         let _ = (path, width, height, fps, bitrate, preference, audio);
         Err("UnsupportedPlatform：当前平台尚未实现原生录屏编码。".into())

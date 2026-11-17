@@ -270,6 +270,36 @@ pub(super) fn frame_rect(
     ))
 }
 
+/// 录屏按窗口 ID 读取外框，与吸附候选同样计入装饰并去掉 GTK 阴影，两处换算保持一致。
+pub(crate) fn window_frame_of(
+    x11: &crate::shared::x11::X11,
+    window: x::Window,
+) -> Option<(i32, i32, u32, u32)> {
+    let extents = |name: &str| {
+        let Some(property) = x11.existing(name) else {
+            return Extents::default();
+        };
+        x11.conn
+            .wait_for_reply(x11.conn.send_request(&x::GetProperty {
+                delete: false,
+                window,
+                property,
+                r#type: x::ATOM_CARDINAL,
+                long_offset: 0,
+                long_length: 4,
+            }))
+            .ok()
+            .filter(|reply| reply.format() == 32)
+            .map(|reply| Extents::from(reply.value::<u32>()))
+            .unwrap_or_default()
+    };
+    frame_rect(
+        x11.window_rect(window)?,
+        extents("_NET_FRAME_EXTENTS"),
+        extents("_GTK_FRAME_EXTENTS"),
+    )
+}
+
 struct WindowFrame {
     rect: (i32, i32, u32, u32),
     decoration: Extents,
