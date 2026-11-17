@@ -40,7 +40,7 @@ export function needsOnboarding(version: number): boolean { return version < ONB
 export const updateCheckIntervals = [
   { value: 30, label: '30 分钟' }, { value: 60, label: '1 小时' }, { value: 360, label: '6 小时' }, { value: 1440, label: '24 小时' },
 ]
-export interface Settings { recognitionServices: RecognitionService[]; receivePrereleaseUpdates: boolean; updateCheckMinutes: number; appearance: Appearance; ai: AiSettings; ocr: OcrSettings; onboardingVersion: number; shortcuts: Shortcuts; shortcutsEnabled: boolean; delaySeconds: 0 | 3 | 5; screenshotCursor: boolean; screenshotSnap: boolean; screenshotAfter: 'none' | 'copy' | 'pin' | 'save'; export: ExportSettings; pinAppearance: PinAppearance; recordingExport: RecordingExportSettings; clipboard: ClipboardSettings }
+export interface Settings { recognitionServices: RecognitionService[]; receivePrereleaseUpdates: boolean; updateCheckMinutes: number; appearance: Appearance; ai: AiSettings; ocr: OcrSettings; onboardingVersion: number; shortcuts: Shortcuts; shortcutsEnabled: boolean; delaySeconds: 0 | 3 | 5; screenshotCursor: boolean; screenshotSnap: boolean; screenshotReuseLast: boolean; screenshotAfter: 'none' | 'copy' | 'pin' | 'save'; export: ExportSettings; pinAppearance: PinAppearance; recordingExport: RecordingExportSettings; clipboard: ClipboardSettings }
 
 /** 每次返回独立对象，避免编辑草稿时改动“恢复默认”的值。 */
 /** 与 Rust `Shortcuts::for_platform` 一致，只在应用状态读取前兜底；“恢复默认”使用状态中的 defaultShortcuts。
@@ -51,7 +51,7 @@ export function defaultShortcuts(mac = macPlatform): Settings['shortcuts'] {
 }
 
 export function defaultSettings(): Settings {
-  return { recognitionServices: [], receivePrereleaseUpdates: false, updateCheckMinutes: 60, pinAppearance: defaultPinAppearance(), recordingExport: defaultRecordingExportSettings(), appearance: { theme: 'system', language: 'zh-CN' }, ai: defaultAiSettings(), ocr: defaultOcrSettings(), clipboard: defaultClipboardSettings(), onboardingVersion: 0, shortcuts: defaultShortcuts(), shortcutsEnabled: true, delaySeconds: 0, screenshotCursor: false, screenshotSnap: true, screenshotAfter: 'none', export: {
+  return { recognitionServices: [], receivePrereleaseUpdates: false, updateCheckMinutes: 60, pinAppearance: defaultPinAppearance(), recordingExport: defaultRecordingExportSettings(), appearance: { theme: 'system', language: 'zh-CN' }, ai: defaultAiSettings(), ocr: defaultOcrSettings(), clipboard: defaultClipboardSettings(), onboardingVersion: 0, shortcuts: defaultShortcuts(), shortcutsEnabled: true, delaySeconds: 0, screenshotCursor: false, screenshotSnap: true, screenshotReuseLast: false, screenshotAfter: 'none', export: {
     format: 'png', jpegQuality: 90, filenamePrefix: 'SnapDesk', includeDimensions: false, rememberDirectory: true,
   } }
 }

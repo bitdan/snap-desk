@@ -367,6 +367,8 @@ pub struct Settings {
     /// 普通截图包含系统光标，与录屏光标设置独立。
     pub screenshot_cursor: bool,
     pub screenshot_snap: bool,
+    /// 打开普通截图时预先选中上次成功导出的选区；屏幕布局或分辨率变化时不恢复。
+    pub screenshot_reuse_last: bool,
     /// 框选完成后的动作：none 显示工具栏，copy / pin / save 直接执行并结束截图。
     pub screenshot_after: String,
     pub export: ExportSettings,
@@ -403,6 +405,8 @@ struct SettingsWire {
     screenshot_cursor: bool,
     #[serde(default = "enabled_by_default")]
     screenshot_snap: bool,
+    #[serde(default)]
+    screenshot_reuse_last: bool,
     #[serde(default = "no_after_action")]
     screenshot_after: String,
     #[serde(default)]
@@ -438,6 +442,7 @@ impl TryFrom<SettingsWire> for Settings {
             delay_seconds: wire.delay_seconds,
             screenshot_cursor: wire.screenshot_cursor,
             screenshot_snap: wire.screenshot_snap,
+            screenshot_reuse_last: wire.screenshot_reuse_last,
             screenshot_after: wire.screenshot_after,
             export: wire.export,
             recording_export: wire.recording_export,
@@ -472,6 +477,7 @@ impl Default for Settings {
             delay_seconds: 0,
             screenshot_cursor: false,
             screenshot_snap: true,
+            screenshot_reuse_last: false,
             screenshot_after: no_after_action(),
             export: ExportSettings::default(),
             recording_export: RecordingExportSettings::default(),
@@ -1260,6 +1266,7 @@ mod tests {
         assert_eq!(value.delay_seconds, 5);
         assert!(!value.screenshot_cursor);
         assert!(value.screenshot_snap);
+        assert!(!value.screenshot_reuse_last);
         assert!(value.shortcuts_enabled);
         assert_eq!(value.ocr, crate::recognition::ocr_config::OcrSettings::default());
         assert_eq!(value.export, ExportSettings::default());

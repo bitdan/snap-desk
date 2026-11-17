@@ -75,6 +75,8 @@ pub struct Frame {
     ocr: bool,
     /// 窗口候选始终提供给录屏列表；此开关独立控制截图的鼠标吸附。
     snap_enabled: bool,
+    /// 普通截图打开时预选最近选区；录屏、OCR 和翻译入口固定为 false。
+    reuse_last_selection: bool,
     /// 框选完成后直接执行的动作；录屏、OCR 和翻译固定为 none，由各自流程接力。
     after_action: String,
     origin_x: i32,
@@ -471,12 +473,13 @@ fn prepare(
     #[cfg(not(windows))]
     let _ = dwm_started;
     let capture_started = Instant::now();
-    let (include_cursor, snap, after_action) = {
+    let (include_cursor, snap, reuse_last_selection, after_action) = {
         let settings = app.state::<crate::settings::SettingsState>();
         let guard = settings.0.lock().map_err(err)?;
         (
             !recording && guard.value.screenshot_cursor,
             guard.value.screenshot_snap,
+            !(recording || translation || ocr) && guard.value.screenshot_reuse_last,
             if recording || translation || ocr {
                 "none".to_string()
             } else {
@@ -523,6 +526,7 @@ fn prepare(
         translation,
         ocr,
         snap_enabled: recording || snap,
+        reuse_last_selection,
         after_action,
         origin_x: desktop.x,
         origin_y: desktop.y,

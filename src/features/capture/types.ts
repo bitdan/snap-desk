@@ -4,7 +4,7 @@ import type { Annotation } from '@/features/annotations/annotations'
 export interface CaptureReplay { index: number; total: number; rect: Rect; annotations: Annotation[] }
 export interface CaptureTarget { rect: Rect; kind: 'window' | 'element'; windowIndex: number; title?: string; appName?: string; recordingOnly?: boolean; icon?: string | null }
 export interface CaptureDisplay { x: number; y: number; width: number; height: number; primary: boolean; scale: number }
-export interface CaptureFrame { originX: number; originY: number; displays: CaptureDisplay[]; targets: CaptureTarget[]; layoutKey: string; id: number; width: number; height: number; previewRevision: number; recording: boolean; translation?: boolean; ocr?: boolean; snapEnabled?: boolean; afterAction?: CaptureAfterAction; replay?: CaptureReplay | null }
+export interface CaptureFrame { originX: number; originY: number; displays: CaptureDisplay[]; targets: CaptureTarget[]; layoutKey: string; id: number; width: number; height: number; previewRevision: number; recording: boolean; translation?: boolean; ocr?: boolean; snapEnabled?: boolean; reuseLastSelection?: boolean; afterAction?: CaptureAfterAction; replay?: CaptureReplay | null }
 /** 框选完成后的动作；none 表示停留在工具栏。 */
 export type CaptureAfterAction = 'none' | 'copy' | 'pin' | 'save'
 export type ColorFormat = 'hex' | 'rgb'
