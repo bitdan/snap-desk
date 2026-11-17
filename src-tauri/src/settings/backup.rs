@@ -53,7 +53,7 @@ fn parse(bytes: &[u8]) -> Result<Backup, String> {
         // 后续版本新增的行为开关同样补默认值：旧备份导入后保持原有行为（不自动复制、不直接执行，剪贴板默认直接粘贴）。
         settings.entry("screenshotAfter").or_insert("none".into());
         for (field, additions) in [
-            ("ai", serde_json::json!({"serviceId": "", "autoCopy": false})),
+            ("ai", serde_json::json!({"serviceId": "", "autoCopy": false, "overlay": false})),
             ("ocr", serde_json::json!({"serviceId": "", "autoCopy": false, "mergeLines": false})),
             ("clipboard", serde_json::json!({"pasteOnActivate": true, "excludedApps": []})),
         ] {
