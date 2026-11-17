@@ -369,7 +369,7 @@ pub(crate) fn hide_interaction(app: &AppHandle) {
     }
     restore_desktop_focus(app);
     if let Some(window) = app.get_webview_window(LABEL) {
-        if let Err(error) = window.set_ignore_cursor_events(true) {
+        if let Err(error) = input_regions::ignore_cursor(&window, true) {
             log::warn!("event=recording.overlay_passthrough_failed module=recording error={error}");
         }
         if let Err(error) = window.hide() {
@@ -799,9 +799,7 @@ fn apply_mode(app: &AppHandle, id: u64, editing: bool) -> Result<(), String> {
         if editing {
             input_regions::set(&overlay, &[drawing_region])?;
         }
-        overlay
-            .set_ignore_cursor_events(!editing)
-            .map_err(|e| e.to_string())?;
+        input_regions::ignore_cursor(&overlay, !editing)?;
         if !editing {
             input_regions::reset(&overlay)?;
         }

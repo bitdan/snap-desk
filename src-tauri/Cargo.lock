@@ -6050,6 +6050,7 @@ dependencies = [
  "clipboard-win",
  "dbus-secret-service",
  "gif",
+ "gtk",
  "image",
  "log",
  "oar-ocr",
