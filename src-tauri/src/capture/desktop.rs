@@ -11,6 +11,17 @@ pub use windows::AppWindow as NativeWindow;
 pub(crate) use windows::PhysicalDpi;
 #[cfg(not(windows))]
 pub type NativeWindow = xcap::Window;
+#[cfg(target_os = "macos")]
+#[path = "desktop_cursor_macos.rs"]
+mod cursor;
+
+/// 把当前光标叠加到截图上；`origin` 为截图左上角的全局点坐标。读不到光标时保持原图。
+#[cfg(target_os = "macos")]
+fn draw_cursor(image: &mut RgbaImage, origin: (f64, f64), scale: f64) {
+    if let Some(cursor) = cursor::current(origin, scale) {
+        image::imageops::overlay(image, &cursor.image, cursor.left, cursor.top);
+    }
+}
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -264,9 +275,6 @@ pub fn capture(primary_only: bool, include_cursor: bool, snap: bool) -> Result<D
 /// 调用方据此把蒙层放到点坐标 (x/scale, y/scale)，不依赖窗口当前所在屏的缩放。
 #[cfg(target_os = "macos")]
 pub fn capture(primary_only: bool, include_cursor: bool, snap: bool) -> Result<Desktop, String> {
-    if include_cursor {
-        return Err("当前平台暂不支持截图包含光标。".into());
-    }
     let monitors = xcap::Monitor::all().map_err(crate::shared::platform::capture_error)?;
     let cursor = (!primary_only)
         .then(crate::shared::macos::cursor_point)
@@ -290,7 +298,7 @@ pub fn capture(primary_only: bool, include_cursor: bool, snap: bool) -> Result<D
         .or(monitors.first())
         .ok_or("未找到可用显示器，请检查显示器连接。")?;
     let (x, y, width, _) = bounds(monitor).ok_or("读取显示器位置失败。")?;
-    let image = monitor
+    let mut image = monitor
         .capture_image()
         .map_err(crate::shared::platform::capture_error)?;
     // 以实际像素宽度反推缩放，比系统报告的 scale_factor 更贴合截图位图（含缩放分辨率模式）。
@@ -300,6 +308,9 @@ pub fn capture(primary_only: bool, include_cursor: bool, snap: bool) -> Result<D
         1.0
     };
     let (origin_x, origin_y) = ((x * scale).round() as i32, (y * scale).round() as i32);
+    if include_cursor {
+        draw_cursor(&mut image, (x, y), scale);
+    }
     let size = image.dimensions();
     let mut desktop = Desktop {
         x: origin_x,
@@ -315,7 +326,7 @@ pub fn capture(primary_only: bool, include_cursor: bool, snap: bool) -> Result<D
         image,
         targets: Vec::new(),
         windows: Vec::new(),
-        include_cursor: false,
+        include_cursor,
     };
     if snap && !primary_only {
         snap_windows(&mut desktop, scale, size);
@@ -432,12 +443,9 @@ fn native_window_inner(
     if window.is_minimized().map_err(|e| e.to_string())? {
         return Err("目标窗口已最小化，请重新截图。".into());
     }
-    // macOS 的点坐标需换算为像素，单独处理；光标由系统截图决定，不另行绘制。
+    // macOS 的点坐标需换算为像素，单独处理。
     #[cfg(target_os = "macos")]
-    {
-        let _ = include_cursor;
-        return native_window_points(window);
-    }
+    return native_window_points(window, include_cursor);
     #[cfg(not(target_os = "macos"))]
     let x = window.x().map_err(|e| e.to_string())?;
     #[cfg(not(target_os = "macos"))]
@@ -481,7 +489,10 @@ fn native_window_inner(
 /// macOS 的窗口边界是点坐标，截图位图却是 Retina 像素：按位图宽度反推该屏缩放，
 /// 再用 window_pixels 的同一取整规则得到像素位置，与截图会话中的候选框逐像素一致。
 #[cfg(target_os = "macos")]
-fn native_window_points(window: &NativeWindow) -> Result<(RgbaImage, i32, i32), String> {
+fn native_window_points(
+    window: &NativeWindow,
+    include_cursor: bool,
+) -> Result<(RgbaImage, i32, i32), String> {
     let image = window
         .capture_image()
         .map_err(|e| format!("原生窗口截图失败：{e}"))?;
@@ -495,11 +506,16 @@ fn native_window_points(window: &NativeWindow) -> Result<(RgbaImage, i32, i32), 
     if w != image.width() || h.abs_diff(image.height()) > 1 {
         return Err("原生窗口图片与窗口尺寸不一致，请使用区域截图。".into());
     }
-    let image = if h == image.height() {
+    let mut image = if h == image.height() {
         image
     } else {
         image::imageops::resize(&image, w, h, image::imageops::FilterType::Nearest)
     };
+    if include_cursor {
+        // 与 window_pixels 一致：窗口原点的全局点坐标即像素位置除以缩放。
+        let origin = (f64::from(x) / scale, f64::from(y) / scale);
+        draw_cursor(&mut image, origin, scale);
+    }
     Ok((image, x, y))
 }
 
