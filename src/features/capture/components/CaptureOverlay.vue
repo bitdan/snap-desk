@@ -30,6 +30,7 @@ import { useCaptureActions } from '@/features/capture/use-capture-actions'
 import { autoFinishAction } from '@/features/capture/after-action'
 import { useCaptureRecognition } from '@/features/capture/use-capture-recognition'
 import { useCaptureRecording } from '@/features/capture/use-capture-recording'
+import { macPlatform } from '@/shared/platform'
 
 // 截图帧是不可变快照，大量窗口目标不需要逐项响应式代理。
 const frame = shallowRef<CaptureFrame | null>(null)
@@ -64,7 +65,8 @@ const {
   },
   // 只有手动框选或点选窗口才直接执行；回放、录屏和翻译截图各有自己的后续流程，按住 Ctrl 抬起则留在工具栏继续标注。
   onAutoFinish: event => {
-    const action = autoFinishAction(frame.value, { ctrlKey: event.ctrlKey, recording: recordingMode.value, valid: !!valid.value })
+    // macOS 的 Ctrl+点击是右键菜单，改用 ⌘ 保留工具栏。
+    const action = autoFinishAction(frame.value, { ctrlKey: macPlatform ? event.metaKey : event.ctrlKey, recording: recordingMode.value, valid: !!valid.value })
     if (action) void finish(action)
   },
 })

@@ -319,7 +319,8 @@ function key(event: KeyboardEvent) {
   if (annotating.value && editor.key(event)) return
   if ((event.target as HTMLElement).closest('input, textarea, select')) return
   if (event.repeat) return
-  if (event.ctrlKey && event.altKey && event.key.toLowerCase() === 'p') {
+  // 物理键判断：macOS 按住 ⌥ 时 event.key 是 π；⌘⌥P 与 Ctrl+Alt+P 等效。
+  if ((event.ctrlKey || event.metaKey) && event.altKey && event.code === 'KeyP') {
     event.preventDefault(); closeMenu(); void setView({ clickThrough: !frame.value?.view.clickThrough }); return
   }
   const command = event.ctrlKey || event.metaKey

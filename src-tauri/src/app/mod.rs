@@ -540,6 +540,13 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("无法启动 Snap Desk")
         .run(|app, event| {
+            // macOS 关闭主窗口只是隐藏；点击程序坞图标时重新显示，截图进行中保持安静（与再次启动一致）。
+            #[cfg(target_os = "macos")]
+            if matches!(event, tauri::RunEvent::Reopen { .. })
+                && !app.state::<CaptureState>().active.load(Ordering::SeqCst)
+            {
+                show_main(app);
+            }
             // 录屏的退出流程完成后才收到 Exit；等待历史在途写入释放。
             if matches!(event, tauri::RunEvent::Exit) {
                 log::info!("event=app.exiting module=app");

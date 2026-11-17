@@ -382,7 +382,8 @@ mod tests {
         value["unexpected"] = true.into();
         assert!(parse(&serde_json::to_vec(&value).unwrap()).is_err());
         value.as_object_mut().unwrap().remove("unexpected");
-        value["settings"]["shortcuts"]["pin"] = "F1".into();
+        // 与截图键重复即无效（默认键因平台而异，取实际值）。
+        value["settings"]["shortcuts"]["pin"] = value["settings"]["shortcuts"]["capture"].clone();
         assert!(parse(&serde_json::to_vec(&value).unwrap()).is_err());
         assert!(parse(&vec![b' '; MAX_BYTES as usize + 1]).is_err());
     }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { defaultSettings, validateRecordingExportSettings, exportFilenamePreview, validateExportSettings, validateShortcuts, captureShortcut, needsOnboarding } from '../../src/features/settings/settings'
+import { defaultSettings, defaultShortcuts, validateRecordingExportSettings, exportFilenamePreview, validateExportSettings, validateShortcuts, captureShortcut, needsOnboarding } from '../../src/features/settings/settings'
 
 describe('导出设置', () => {
   it('草稿与恢复默认的嵌套导出对象互不影响', () => {
@@ -112,5 +112,15 @@ describe('录屏文件设置', () => {
     for (const filenamePrefix of ['', '..', '../video', 'C:\\video', 'bad:name']) {
       expect(validateRecordingExportSettings({ ...settings.recordingExport, filenamePrefix })).not.toBeNull()
     }
+  })
+})
+
+describe('默认快捷键', () => {
+  it('macOS 避开需按 Fn 的功能键和会输入特殊字符的 ⌥+字母', () => {
+    const mac = Object.values(defaultShortcuts(true))
+    expect(mac.every(key => key.startsWith('Ctrl+Alt+'))).toBe(true)
+    expect(new Set(mac).size).toBe(mac.length)
+    expect(validateShortcuts({ ...defaultSettings().shortcuts, ...defaultShortcuts(true) })).toBeNull()
+    expect(defaultShortcuts(false).capture).toBe('F1')
   })
 })

@@ -1255,7 +1255,7 @@
   "启动": "Startup",
   "排查": "Troubleshooting",
   "关于与帮助": "About & help",
-  "按住 Ctrl 框选可保留工具栏": "Hold Ctrl while selecting to keep the toolbar",
+  "按住 {0} 框选可保留工具栏": "Hold {0} while selecting to keep the toolbar",
   "点击“识别与翻译”安装本地资源、选择翻译引擎或添加在线服务。": "Click “Recognition & translation” to install local resources, choose a translation engine or add online services.",
   "点击“关于与帮助”完成引导，以后也可以在这里重新查看。": "Click “About & help” to finish the tour. You can reopen it there later.",
   "未观察到外部前台窗口；重新测试并在五秒内切换到目标软件按键。": "No external foreground window observed. Test again and switch to the target app within five seconds.",

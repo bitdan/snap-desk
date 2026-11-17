@@ -187,14 +187,24 @@ impl From<ShortcutsWire> for Shortcuts {
 }
 impl Default for Shortcuts {
     fn default() -> Self {
+        // macOS 的 F1–F3 默认是亮度、调度中心等系统键（需按住 Fn），⌥+字母会输入 √、ç 等字符；
+        // 改用 ⌃⌥+字母：不产生字符，也极少与系统或应用快捷键冲突。
+        #[cfg(target_os = "macos")]
+        let [capture, pin, record, history, translate, shelf, ocr] = [
+            "Ctrl+Alt+A", "Ctrl+Alt+P", "Ctrl+Alt+R", "Ctrl+Alt+V", "Ctrl+Alt+T", "Ctrl+Alt+Z",
+            "Ctrl+Alt+C",
+        ];
+        #[cfg(not(target_os = "macos"))]
+        let [capture, pin, record, history, translate, shelf, ocr] =
+            ["F1", "F2", "F3", "Alt+V", "Alt+T", "Alt+Z", "Alt+C"];
         Self {
-            capture: "F1".into(),
-            pin: "F2".into(),
-            record: "F3".into(),
-            history: "Alt+V".into(),
-            translate: "Alt+T".into(),
-            shelf: "Alt+Z".into(),
-            ocr: "Alt+C".into(),
+            capture: capture.into(),
+            pin: pin.into(),
+            record: record.into(),
+            history: history.into(),
+            translate: translate.into(),
+            shelf: shelf.into(),
+            ocr: ocr.into(),
         }
     }
 }
@@ -931,6 +941,8 @@ mod tests {
             assert!(serde_json::from_str::<Settings>(invalid).is_err());
         }
     }
+    // 以下迁移用例以 Windows / Linux 的默认键为基准；macOS 默认键见 macos_defaults_avoid_function_and_option_keys。
+    #[cfg(not(target_os = "macos"))]
     #[test]
     fn maps_actions_clears_keys_and_migrates_strictly() {
         let mut value = Settings::default();
@@ -991,6 +1003,8 @@ mod tests {
         }
     }
 
+    // 以下迁移用例以 Windows / Linux 的默认键为基准；macOS 默认键见 macos_defaults_avoid_function_and_option_keys。
+    #[cfg(not(target_os = "macos"))]
     #[test]
     fn ocr_shelf_and_history_defaults_preserve_existing_shortcuts() {
         let defaults = Settings::default();
@@ -1017,6 +1031,8 @@ mod tests {
         assert_eq!(restored.shortcuts, defaults.shortcuts);
     }
 
+    // 以下迁移用例以 Windows / Linux 的默认键为基准；macOS 默认键见 macos_defaults_avoid_function_and_option_keys。
+    #[cfg(not(target_os = "macos"))]
     #[test]
     fn translation_shortcuts_migrate_without_replacing_existing_actions() {
         for json in [
@@ -1050,6 +1066,25 @@ mod tests {
         }
         let defaults = serde_json::to_value(Shortcuts::default()).unwrap();
         assert_eq!(defaults["translate"], "Alt+T");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_defaults_avoid_function_and_option_keys() {
+        let defaults = Settings::default();
+        assert!(defaults.validate().is_ok());
+        for (_, _, key) in defaults.shortcuts.entries() {
+            assert!(key.starts_with("Ctrl+Alt+"), "{key}");
+        }
+        assert_eq!(
+            defaults.action_for(&"Ctrl+Alt+A".parse().unwrap()),
+            Some(ShortcutAction::Capture)
+        );
+        // 旧配置把新增默认键占给其他动作时，保留原动作，只禁用新加入的快捷键。
+        let migrated: Settings =
+            serde_json::from_str(r#"{"shortcuts":{"capture":"Ctrl+Alt+V"}}"#).unwrap();
+        assert!(migrated.shortcuts.history.is_empty());
+        assert!(migrated.validate().is_ok());
     }
 
     #[test]
