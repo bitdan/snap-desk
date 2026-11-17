@@ -1,4 +1,4 @@
-//! 录屏配置只表达当前已支持的能力；Windows MP4 可选系统声音与麦克风。
+//! 录屏配置只表达当前已支持的能力；Windows / macOS 的 MP4 可选系统声音与麦克风。
 use crate::capture::Rect;
 use serde::{Deserialize, Serialize};
 
@@ -236,17 +236,14 @@ impl RecorderCapabilities {
         Self {
             available,
             reason: result.err(),
-            // macOS 首版只录显示器区域：单窗口录制需要 ScreenCaptureKit，尚未接入。
-            sources: if !available {
-                vec![]
-            } else if cfg!(target_os = "macos") {
-                vec![CaptureSource::PrimaryMonitor, CaptureSource::SelectedMonitor]
-            } else {
+            sources: if available {
                 vec![
                     CaptureSource::PrimaryMonitor,
                     CaptureSource::SelectedMonitor,
                     CaptureSource::SelectedWindow,
                 ]
+            } else {
+                vec![]
             },
             frame_rates: if available {
                 vec![10, 20, 30, 60]
@@ -280,11 +277,7 @@ mod tests {
             serde_json::json!({
                 "available": true,
                 "reason": null,
-                "sources": if cfg!(target_os = "macos") {
-                    serde_json::json!(["primaryMonitor", "selectedMonitor"])
-                } else {
-                    serde_json::json!(["primaryMonitor", "selectedMonitor", "selectedWindow"])
-                },
+                "sources": ["primaryMonitor", "selectedMonitor", "selectedWindow"],
                 "frameRates": [10, 20, 30, 60],
                 "captureCursor": !cfg!(target_os = "macos"),
                 "systemAudio": cfg!(any(target_os = "windows", target_os = "macos")),

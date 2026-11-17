@@ -9,6 +9,12 @@ use objc2::{
     runtime::{AnyObject, Bool},
 };
 use std::ffi::{c_char, c_void, CStr, CString};
+use std::{
+    sync::mpsc::{self, Receiver},
+    time::Duration,
+};
+use block2::RcBlock;
+use objc2::rc::Retained;
 use tauri::WebviewWindow;
 
 /// 自动释放对象的裸指针；只在 `objc2::rc::autoreleasepool` 闭包内使用，离开池即失效。
@@ -403,3 +409,50 @@ pub(crate) struct StreamDescription {
     pub bits_per_channel: u32,
     pub reserved: u32,
 }
+
+// ---- 系统异步接口（ScreenCaptureKit、AVFoundation）共用设施 ----
+
+extern "C" {
+    fn dispatch_queue_create(label: *const c_char, attributes: *const c_void) -> *mut c_void;
+}
+
+/// NSError 的本地化描述；空指针返回“未知错误”。
+pub(crate) unsafe fn error_text(error: Id) -> String {
+    if error.is_null() {
+        return "未知错误".into();
+    }
+    let text: Id = msg_send![error, localizedDescription];
+    rust_string(text).unwrap_or_else(|| "未知错误".into())
+}
+
+/// 创建串行 GCD 队列作为系统回调队列。
+pub(crate) unsafe fn dispatch_queue(label: &std::ffi::CStr) -> Result<Retained<AnyObject>, String> {
+    // GCD 队列是 Objective-C 对象，交给 Retained 管理生命周期。
+    Retained::from_raw(dispatch_queue_create(label.as_ptr(), std::ptr::null()) as Id)
+        .ok_or_else(|| "无法创建系统回调队列。".into())
+}
+
+/// 只带一个 NSError 参数的系统完成回调及其结果通道。
+pub(crate) fn completion() -> (RcBlock<dyn Fn(Id)>, Receiver<Option<String>>) {
+    let (sender, receiver) = mpsc::sync_channel::<Option<String>>(1);
+    let block = RcBlock::new(move |error: Id| {
+        let _ = sender.try_send((!error.is_null()).then(|| unsafe { error_text(error) }));
+    });
+    (block, receiver)
+}
+
+pub(crate) fn completed(
+    receiver: Receiver<Option<String>>,
+    timeout: Duration,
+    what: &str,
+) -> Result<(), String> {
+    match receiver.recv_timeout(timeout) {
+        Ok(None) => Ok(()),
+        Ok(Some(error)) => Err(format!("{what}：{error}")),
+        Err(_) => Err(format!("{what}：系统响应超时。")),
+    }
+}
+
+/// 跨线程传回 Objective-C 对象：只在接收方线程内使用，传递期间不访问。
+pub(crate) struct Handoff(pub Retained<AnyObject>);
+unsafe impl Send for Handoff {}

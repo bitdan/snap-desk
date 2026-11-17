@@ -952,5 +952,19 @@
   "无法接入麦克风输出。": "Unable to attach the microphone output.",
   "麦克风启动失败，请检查设备连接与权限。": "The microphone failed to start. Check the device connection and permission.",
   "音频状态不可用。": "The audio state is unavailable.",
-  "麦克风超过 3 秒没有数据，请检查设备连接。": "The microphone sent no data for over 3 seconds. Check the device connection."
+  "麦克风超过 3 秒没有数据，请检查设备连接。": "The microphone sent no data for over 3 seconds. Check the device connection.",
+  "无法创建系统回调队列。": "Unable to create the system callback queue.",
+  "录制来源尺寸无效。": "The recording source size is invalid.",
+  "窗口录制已被系统中止：{0}": "The system stopped the window recording: {0}",
+  "无法注册窗口录制回调。": "Unable to register the window recording callback.",
+  "无法创建窗口录制回调。": "Unable to create the window recording callback.",
+  "读取可录制窗口超时。": "Timed out reading the windows available for recording.",
+  "无法读取可录制窗口，请确认已授予“屏幕录制”权限：{0}": "Unable to read the windows available for recording. Make sure Screen Recording permission is granted: {0}",
+  "录屏选区需在来源范围内。": "The recording selection must be inside the source.",
+  "无法创建窗口录制范围。": "Unable to create the window recording filter.",
+  "无法创建窗口录制配置。": "Unable to create the window recording configuration.",
+  "无法创建窗口录制流。": "Unable to create the window recording stream.",
+  "无法注册窗口录制输出：{0}": "Unable to register the window recording output: {0}",
+  "无法开始窗口录制：{0}": "Unable to start the window recording: {0}",
+  "显示器录制收到了窗口来源。": "Display recording received a window source."
 }

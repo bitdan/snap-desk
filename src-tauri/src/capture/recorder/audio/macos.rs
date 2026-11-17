@@ -5,7 +5,8 @@
 //! 控制线程按录制状态门控：倒计时与暂停期间丢弃数据，停止时同步结束系统采集。
 use super::{AudioFrame, Source, CHANNELS, RATE};
 use crate::shared::macos::{
-    array_items, host_ticks, ns_array, rust_string, CMTime, Id, StreamDescription,
+    array_items, completed, completion, dispatch_queue as queue, error_text, host_ticks, ns_array,
+    CMTime, Handoff, Id, StreamDescription,
 };
 use block2::RcBlock;
 use objc2::{
@@ -15,7 +16,7 @@ use objc2::{
     sel,
 };
 use std::{
-    ffi::{c_char, c_void},
+    ffi::c_void,
     sync::{
         atomic::{AtomicBool, AtomicI64, Ordering},
         mpsc::{self, Receiver, SyncSender, TrySendError},
@@ -62,10 +63,6 @@ extern "C" {
 #[link(name = "CoreFoundation", kind = "framework")]
 extern "C" {
     fn CFRelease(value: *const c_void);
-}
-
-extern "C" {
-    fn dispatch_queue_create(label: *const c_char, attributes: *const c_void) -> *mut c_void;
 }
 
 #[link(name = "AVFoundation", kind = "framework")]
@@ -309,14 +306,6 @@ unsafe fn receiver() -> Result<Id, String> {
     Ok(*RECEIVER.get_or_init(|| pointer) as Id)
 }
 
-unsafe fn error_text(error: Id) -> String {
-    if error.is_null() {
-        return "未知错误".into();
-    }
-    let text: Id = msg_send![error, localizedDescription];
-    rust_string(text).unwrap_or_else(|| "未知错误".into())
-}
-
 unsafe fn number(value: i64) -> Id {
     msg_send![class!(NSNumber), numberWithLongLong: value]
 }
@@ -335,33 +324,6 @@ unsafe fn dictionary(entries: &[(Id, Id)]) -> Id {
         count: keys.len()
     ]
 }
-
-unsafe fn queue(label: &std::ffi::CStr) -> Result<Retained<AnyObject>, String> {
-    // GCD 队列是 Objective-C 对象，交给 Retained 管理生命周期。
-    Retained::from_raw(dispatch_queue_create(label.as_ptr(), std::ptr::null()) as Id)
-        .ok_or_else(|| "无法创建音频回调队列。".into())
-}
-
-/// 只带一个 NSError 参数的系统完成回调及其结果通道。
-fn completion() -> (RcBlock<dyn Fn(Id)>, Receiver<Option<String>>) {
-    let (sender, receiver) = mpsc::sync_channel::<Option<String>>(1);
-    let block = RcBlock::new(move |error: Id| {
-        let _ = sender.try_send((!error.is_null()).then(|| unsafe { error_text(error) }));
-    });
-    (block, receiver)
-}
-
-fn completed(receiver: Receiver<Option<String>>, timeout: Duration, what: &str) -> Result<(), String> {
-    match receiver.recv_timeout(timeout) {
-        Ok(None) => Ok(()),
-        Ok(Some(error)) => Err(format!("{what}：{error}")),
-        Err(_) => Err(format!("{what}：系统响应超时。")),
-    }
-}
-
-/// 跨线程传回 Objective-C 对象：只在控制线程内使用，传递期间不访问。
-struct Handoff(Retained<AnyObject>);
-unsafe impl Send for Handoff {}
 
 /// 系统声音：对主显示器建立只取音频的 SCStream（视频输出未注册，系统按 1 FPS 丢弃）。
 struct SystemAudio {
