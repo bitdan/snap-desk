@@ -1,5 +1,5 @@
 //! Win32 元素边界与光标合成；所有系统资源在失败路径上也由 Drop 释放。
-use super::{clipped, Target};
+use super::{same_bounds, Elements, Target};
 use base64::Engine;
 use image::RgbaImage;
 #[path = "desktop_accessibility.rs"]
@@ -240,66 +240,11 @@ impl Drop for PhysicalDpi {
     }
 }
 
-struct Elements {
-    targets: Vec<Target>,
-    index: usize,
-    parent: crate::capture::Rect,
-    origin: (i32, i32),
-    size: (u32, u32),
-}
 impl Elements {
-    /// 两种系统识别方式共用裁剪与去重；候选始终使用截图物理像素坐标。
+    /// Win32 与 UIA 的边界都是 RECT；裁剪与去重沿用跨平台的 `push_edges`。
     fn push(&mut self, bounds: RECT) {
-        if bounds.right <= bounds.left || bounds.bottom <= bounds.top {
-            return;
-        }
-        let Some(mut rect) = clipped(
-            bounds.left,
-            bounds.top,
-            (i64::from(bounds.right) - i64::from(bounds.left)).min(u32::MAX as i64) as u32,
-            (i64::from(bounds.bottom) - i64::from(bounds.top)).min(u32::MAX as i64) as u32,
-            self.origin,
-            self.size,
-        ) else {
-            return;
-        };
-        let right = (rect.x + rect.width).min(self.parent.x + self.parent.width);
-        let bottom = (rect.y + rect.height).min(self.parent.y + self.parent.height);
-        rect.x = rect.x.max(self.parent.x);
-        rect.y = rect.y.max(self.parent.y);
-        if right <= rect.x || bottom <= rect.y {
-            return;
-        }
-        rect.width = right - rect.x;
-        rect.height = bottom - rect.y;
-        // 忽略文本碎片、与整窗重合的容器和重复边界，但遍历器仍会深入这些容器。
-        if rect.width < 12
-            || rect.height < 12
-            || same_bounds(rect, self.parent)
-            || self
-                .targets
-                .iter()
-                .any(|target| same_bounds(target.rect, rect))
-        {
-            return;
-        }
-        self.targets.push(Target {
-            rect,
-            kind: "element",
-            window_index: self.index,
-            title: String::new(),
-            app_name: String::new(),
-            recording_only: false,
-            icon: None,
-        });
+        self.push_edges(bounds.left, bounds.top, bounds.right, bounds.bottom);
     }
-}
-
-fn same_bounds(a: crate::capture::Rect, b: crate::capture::Rect) -> bool {
-    a.x.abs_diff(b.x) <= 2
-        && a.y.abs_diff(b.y) <= 2
-        && (a.x + a.width).abs_diff(b.x + b.width) <= 2
-        && (a.y + a.height).abs_diff(b.y + b.height) <= 2
 }
 
 #[cfg(test)]

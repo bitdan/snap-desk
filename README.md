@@ -28,7 +28,7 @@
 | macOS Apple 芯片（预览） | `-macos-arm64.dmg` | 需 macOS 13.3 及以上；未经 Apple 公证，首次打开需在“系统设置 → 隐私与安全性”中放行，并授予屏幕录制权限 |
 | Linux x64（预览） | `-linux-x64.AppImage` / `-linux-x64.deb` | 需 Ubuntu 24.04 或同期发行版（glibc 2.39+）；截图需要 X11 会话；AppImage 自带界面引擎和系统库（约 100 MB），不挑发行版并支持在线更新；deb 体积小（约 20 MB），依赖由包管理器安装，升级需下载新版本覆盖安装 |
 
-macOS 与 Linux 预览版目前提供主屏截图、标注、贴图、识别与翻译；录屏、滚动截图、剪贴板历史、Windows OCR 及本地翻译引擎暂未适配，进度见 [TODO](Snap_Desk_TODO.md)。
+macOS 预览版已适配截图（窗口与控件吸附、包含光标）、滚动截图、MP4/GIF 录屏（含系统声音与麦克风）、剪贴板历史、贴图、系统 OCR 与划词翻译，跨屏框选、本地翻译引擎和本地 PaddleOCR 暂不提供；Linux 预览版目前提供主屏截图、标注、贴图、识别与翻译，其余功能仍在适配。进度见 [TODO](Snap_Desk_TODO.md)。
 
 ## 功能
 

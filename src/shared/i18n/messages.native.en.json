@@ -600,7 +600,6 @@
   "请先结束快捷键录入或当前截图。": "Finish shortcut entry or capture first.",
   "请在主窗口录入快捷键。": "Enter shortcuts in the main window.",
   "此轮测试已被新的测试替代。": "A newer test replaced this one.",
-  "此环境测试仅支持 Windows。": "This test supports Windows only.",
   "请先结束截图、滚动截图或录屏，再测试快捷键。": "Finish capture, scroll capture or recording before testing shortcuts.",
   "快捷键测试正在进行。": "Shortcut test is running.",
   "测试已因截图或录屏开始而结束，功能快捷键继续正常工作。": "Test ended because capture or recording started. Action shortcuts continue working normally.",
@@ -967,5 +966,6 @@
   "无法注册窗口录制输出：{0}": "Unable to register the window recording output: {0}",
   "无法开始窗口录制：{0}": "Unable to start the window recording: {0}",
   "显示器录制收到了窗口来源。": "Display recording received a window source.",
-  "以下快捷键已被系统或其他程序占用，暂未生效：{0}。请在“快捷键”页更换按键。": "These shortcuts are taken by the system or another app and are not active: {0}. Choose different keys on the Shortcuts page."
+  "以下快捷键已被系统或其他程序占用，暂未生效：{0}。请在“快捷键”页更换按键。": "These shortcuts are taken by the system or another app and are not active: {0}. Choose different keys on the Shortcuts page.",
+  "此环境测试仅支持 Windows 和 macOS。": "This test supports Windows and macOS only."
 }

@@ -1,5 +1,9 @@
 /** 与原生主动测试的报告契约对齐；未知权限与未观察到目标窗口均保持显式状态。 */
 export interface ShortcutProbeReport {
+  /** 与 Rust 的 `std::env::consts::OS` 一致；旧版本报告缺省按 Windows 处理。 */
+  platform?: string
+  /** 仅 macOS：测试期间是否有应用开启了安全输入。 */
+  secureInput?: boolean | null
   enabled: boolean
   editing: boolean
   registrationError: string | null
@@ -28,10 +32,16 @@ export function shortcutProbeMessages(report: ShortcutProbeReport): string[] {
     ? `目标进程 PID ${target.pid} 在前台时已收到：${[...new Set(received.map(item => item.shortcut))].join('、')}。若实际动作仍失败，请查看日志中的截图或录屏错误。`
     : `目标进程 PID ${target.pid} 在前台时未收到快捷键；本次观测无法确定它是否拦截了按键。请确认使用已保存组合并重新测试。`)
   if (report.received.some(item => item.foregroundPid !== target.pid)) messages.push('其他前台窗口收到过热键；这不代表目标软件内也能触发。')
-  if (target.elevated === null || report.appElevated === null) messages.push('进程权限读取失败，无法比较权限级别；受保护进程可能禁止查询。')
+  if (report.platform === 'macos') {
+    // macOS 没有管理员提升的区别；常见原因是安全输入和 F 键被当作媒体键。
+    if (report.secureInput) messages.push('测试期间有应用开启了安全输入（如密码框或终端的“安全键盘输入”），系统可能因此不分发快捷键；离开密码框或关闭该选项后重试。')
+    if (!received.length && report.registered.some(key => /(^|\+)F\d+$/i.test(key))) messages.push('Mac 键盘上的 F 键默认控制亮度、音量等，需要同时按 Fn；也可以在“系统设置 → 键盘”中打开“将 F1、F2 等键用作标准功能键”。')
+  } else if (target.elevated === null || report.appElevated === null) messages.push('进程权限读取失败，无法比较权限级别；受保护进程可能禁止查询。')
   else if (target.elevated !== report.appElevated) messages.push('目标软件与 Snap Desk 的管理员提升状态不同；可先将两者以普通权限运行后对比，勿为此关闭系统安全保护。')
   else messages.push('目标软件与 Snap Desk 的管理员提升状态相同；此检查不代表所有进程安全属性一致。')
-  if (target.coversMonitor) messages.push('目标窗口覆盖显示器，但无法据此判断全屏独占；尝试窗口化或无边框模式后对比。')
+  if (target.coversMonitor) messages.push(report.platform === 'macos'
+    ? '目标窗口覆盖显示器（可能处于全屏空间）；尝试退出全屏后对比。'
+    : '目标窗口覆盖显示器，但无法据此判断全屏独占；尝试窗口化或无边框模式后对比。')
   if (target.coversMonitor === null) messages.push('无法读取目标窗口的物理边界，满屏状态未知。')
   messages.push(`目标键盘布局：${target.keyboardLayout === '0' ? '未知' : target.keyboardLayout}。若组合被输入法使用，切换英文输入或改用 F 键组合后对比。`)
   return messages
