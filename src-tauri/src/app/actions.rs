@@ -1,7 +1,46 @@
-//! 托盘与全局快捷键共用的功能入口，负责处理会话冲突并异步启动任务。
-use crate::{capture::{self, CaptureState}, pins};
+//! 托盘、全局快捷键与命令行共用的功能入口，负责处理会话冲突并异步启动任务。
+use crate::{capture::{self, CaptureState}, clipboard, pins, recognition, settings::ShortcutAction, shelf};
 use std::sync::atomic::Ordering;
 use tauri::{AppHandle, Manager};
+
+/// 按动作分发；全局快捷键与命令行触发走同一入口。
+pub(super) fn run(app: &AppHandle, action: ShortcutAction) {
+    match action {
+        ShortcutAction::Capture => trigger(app),
+        ShortcutAction::Pin => trigger_pin(app),
+        ShortcutAction::Record => trigger_recording(app),
+        ShortcutAction::History => clipboard::open_history(app),
+        ShortcutAction::Shelf => shelf::toggle(app),
+        ShortcutAction::Ocr => trigger_ocr(app),
+        ShortcutAction::Translate => recognition::text_input::open(app),
+    }
+}
+
+/// 命令行 `--action <名称>` 或 `--action=<名称>`（名称同设置字段，如 capture）。
+/// 应用无法注册全局快捷键时（如 Linux Wayland），用户可把系统快捷键或 macOS 快捷指令绑定到这条命令；
+/// 已有实例运行时由单实例插件转交参数，不会启动第二个进程。
+pub(super) fn from_args<I, S>(args: I) -> Option<ShortcutAction>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<std::ffi::OsStr>,
+{
+    let args: Vec<String> = args
+        .into_iter()
+        .map(|arg| arg.as_ref().to_string_lossy().into_owned())
+        .collect();
+    let name = args.iter().enumerate().find_map(|(index, arg)| {
+        if arg == "--action" {
+            args.get(index + 1).cloned()
+        } else {
+            arg.strip_prefix("--action=").map(str::to_owned)
+        }
+    })?;
+    let action = ShortcutAction::from_id(&name);
+    if action.is_none() {
+        log::warn!("event=app.cli_action_unknown module=app");
+    }
+    action
+}
 
 pub(super) fn trigger(app: &AppHandle) {
     // 倒计时内再次按截图键代表取消；真正截图开始后不重复创建会话。
@@ -72,4 +111,18 @@ pub(super) fn trigger_recording(app: &AppHandle) {
             capture::report_error(&app, error);
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn command_line_actions_accept_both_forms_and_ignore_unknown_names() {
+        assert_eq!(from_args(["snap-desk", "--action", "capture"]), Some(ShortcutAction::Capture));
+        assert_eq!(from_args(["snap-desk", "--action=ocr"]), Some(ShortcutAction::Ocr));
+        assert_eq!(from_args(["snap-desk", "--autostart"]), None);
+        assert_eq!(from_args(["snap-desk", "--action"]), None);
+        assert_eq!(from_args(["snap-desk", "--action", "rm"]), None);
+    }
 }

@@ -5,7 +5,7 @@ export interface DirectoryView { kind: AppDirectory; path: string | null; error:
 /** 系统隐私授权状态；supported=false 的平台无需应用内引导。 */
 export interface SystemPermissions { supported: boolean; screenCapture: boolean; accessibility: boolean; inputMonitoring: boolean }
 export type SystemPermissionKind = 'screenCapture' | 'accessibility' | 'inputMonitoring'
-export interface AppStatus { version: string; settings: Settings; shortcutError: string | null; configWarning: string | null; delayRemaining: number; platform: string }
+export interface AppStatus { version: string; settings: Settings; shortcutError: string | null; unavailableShortcuts: string[]; defaultShortcuts: Settings['shortcuts']; configWarning: string | null; delayRemaining: number; platform: string }
 /** 安装包类型由原生运行标记确定，页面不能指定更新地址。 */
 export interface AppUpdateView {
   currentVersion: string

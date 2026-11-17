@@ -113,6 +113,62 @@ pub enum ShortcutAction {
     Ocr,
 }
 
+impl ShortcutAction {
+    pub const ALL: [Self; 7] = [
+        Self::Capture,
+        Self::Pin,
+        Self::Record,
+        Self::History,
+        Self::Translate,
+        Self::Shelf,
+        Self::Ocr,
+    ];
+    /// 与设置字段、前端动作键以及命令行 `--action` 参数一致的名称。
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Capture => "capture",
+            Self::Pin => "pin",
+            Self::Record => "record",
+            Self::History => "history",
+            Self::Translate => "translate",
+            Self::Shelf => "shelf",
+            Self::Ocr => "ocr",
+        }
+    }
+    pub fn from_id(id: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|action| action.id() == id)
+    }
+}
+
+/// 默认快捷键所属的平台；备份跨平台导入时据此换算默认键。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Platform {
+    Windows,
+    Macos,
+    Linux,
+}
+
+impl Platform {
+    pub fn current() -> Self {
+        Self::from_id(std::env::consts::OS)
+    }
+    /// 与 `std::env::consts::OS` 一致；其他类 Unix 系统按 Linux 处理。
+    pub fn from_id(id: &str) -> Self {
+        match id {
+            "windows" => Self::Windows,
+            "macos" => Self::Macos,
+            _ => Self::Linux,
+        }
+    }
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Windows => "windows",
+            Self::Macos => "macos",
+            Self::Linux => "linux",
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", from = "ShortcutsWire")]
 pub struct Shortcuts {
@@ -187,12 +243,18 @@ impl From<ShortcutsWire> for Shortcuts {
 }
 impl Default for Shortcuts {
     fn default() -> Self {
-        // 截图、贴图、录屏三平台一致用 F1–F3（mac 上需按 Fn，或在系统设置中把 F 键设为标准功能键）。
-        // 其余功能沿用同一助记字母；macOS 的 ⌥+字母会输入 √、ç 等字符，改用 ⌃⌥+字母。
-        #[cfg(target_os = "macos")]
-        let [history, translate, shelf, ocr] = ["Ctrl+Alt+V", "Ctrl+Alt+T", "Ctrl+Alt+Z", "Ctrl+Alt+C"];
-        #[cfg(not(target_os = "macos"))]
-        let [history, translate, shelf, ocr] = ["Alt+V", "Alt+T", "Alt+Z", "Alt+C"];
+        Self::for_platform(Platform::current())
+    }
+}
+impl Shortcuts {
+    /// 默认快捷键的唯一来源；前端通过应用状态读取，不另行维护。
+    /// 截图、贴图、录屏三平台一致用 F1–F3（mac 上需按 Fn，或在系统设置中把 F 键设为标准功能键）。
+    /// 其余功能沿用同一助记字母；macOS 的 ⌥+字母会输入 √、ç 等字符，改用 ⌃⌥+字母。
+    pub fn for_platform(platform: Platform) -> Self {
+        let [history, translate, shelf, ocr] = match platform {
+            Platform::Macos => ["Ctrl+Alt+V", "Ctrl+Alt+T", "Ctrl+Alt+Z", "Ctrl+Alt+C"],
+            Platform::Windows | Platform::Linux => ["Alt+V", "Alt+T", "Alt+Z", "Alt+C"],
+        };
         let [capture, pin, record] = ["F1", "F2", "F3"];
         Self {
             capture: capture.into(),
@@ -206,6 +268,24 @@ impl Default for Shortcuts {
     }
 }
 impl Shortcuts {
+    /// 备份来自其他平台时，把仍等于来源平台默认值的按键换成本机默认值；自定义的按键保持不变。
+    pub fn adopt_platform_defaults(&mut self, from: Platform) {
+        let (source, target) = (Self::for_platform(from), Self::default());
+        let pairs = [
+            (&mut self.capture, &source.capture, &target.capture),
+            (&mut self.pin, &source.pin, &target.pin),
+            (&mut self.record, &source.record, &target.record),
+            (&mut self.history, &source.history, &target.history),
+            (&mut self.translate, &source.translate, &target.translate),
+            (&mut self.shelf, &source.shelf, &target.shelf),
+            (&mut self.ocr, &source.ocr, &target.ocr),
+        ];
+        for (value, source, target) in pairs {
+            if value == source {
+                value.clone_from(target);
+            }
+        }
+    }
     fn preserve_legacy_mapping(&mut self) {
         self.preserve_default_mapping(ShortcutAction::History);
     }
@@ -610,8 +690,24 @@ fn apply_settings(
     } else {
         vec![]
     };
+    // 原配置里就有、这次没有改动的按键（启动时或此前被其他程序占用而未注册成功）只尽力重试：
+    // 失败时保持未生效并提示，不拖累其他设置的保存。新设置的按键仍按事务处理，失败即整体回滚。
+    let configured = if old.shortcuts_enabled {
+        shortcut_keys(old).unwrap_or_default()
+    } else {
+        vec![]
+    };
     let mut added = Vec::new();
+    let mut unavailable = Vec::new();
     for key in new_keys.iter().filter(|key| !old_keys.contains(key)) {
+        if configured.contains(key) {
+            if register(*key).is_err() {
+                unavailable.push(*key);
+            } else {
+                added.push(*key);
+            }
+            continue;
+        }
         if let Err(error) = register(*key) {
             // 任意动作注册失败都撤销新增键，保留原配置。
             let feature = next
@@ -674,7 +770,45 @@ fn apply_settings(
         }
         removed.push(*key);
     }
-    Ok(None)
+    if unavailable.is_empty() {
+        return Ok(None);
+    }
+    let names: Vec<_> = next
+        .shortcuts
+        .entries()
+        .into_iter()
+        .filter(|(_, _, value)| {
+            parse_shortcut(value)
+                .ok()
+                .flatten()
+                .is_some_and(|key| unavailable.contains(&key))
+        })
+        .map(|(_, name, value)| format!("{name} ({value})"))
+        .collect();
+    Ok(Some(format!(
+        "以下快捷键已被系统或其他程序占用，暂未生效：{}。请在“快捷键”页更换按键。",
+        names.join("、")
+    )))
+}
+
+/// 已配置却没有注册成功的动作（被系统或其他程序占用）；总开关关闭或录入中时不计。
+pub fn unavailable_actions(current: &RuntimeSettings) -> Vec<&'static str> {
+    if !current.value.shortcuts_enabled || current.editing {
+        return Vec::new();
+    }
+    current
+        .value
+        .shortcuts
+        .entries()
+        .into_iter()
+        .filter(|(_, _, value)| {
+            parse_shortcut(value)
+                .ok()
+                .flatten()
+                .is_some_and(|key| !current.registered.contains(&key))
+        })
+        .map(|(action, _, _)| action.id())
+        .collect()
 }
 
 /// 在设置锁外完成快捷键注册与磁盘提交；返回系统实际注册列表和事务结果。
@@ -1598,5 +1732,75 @@ mod tests {
             .validate()
             .is_err());
         }
+    }
+
+    #[test]
+    fn occupied_configured_keys_do_not_block_startup_or_other_saves() {
+        let value = Settings::default();
+        let capture = parse_shortcut(&value.shortcuts.capture).unwrap().unwrap();
+        let occupied = |key: Shortcut| if key == capture { Err("occupied".to_string()) } else { Ok(()) };
+        let mut registered = Vec::new();
+        let warning = apply_settings(&value, &value, &mut registered, occupied, |_| Ok(()), |_| Ok(()))
+            .unwrap()
+            .unwrap();
+        assert!(warning.contains("区域截图 (F1)"), "{warning}");
+        assert!(!registered.contains(&capture));
+        assert_eq!(registered.len(), shortcut_keys(&value).unwrap().len() - 1);
+        let current = RuntimeSettings {
+            value: value.clone(),
+            registered: registered.clone(),
+            editing: false,
+            shortcut_error: Some(warning),
+            config_warning: None,
+        };
+        assert_eq!(unavailable_actions(&current), vec!["capture"]);
+        // 仍被占用时修改其他设置照常保存，只重试并继续提示该按键。
+        let next = Settings { delay_seconds: 3, ..value.clone() };
+        let written = std::cell::Cell::new(false);
+        let warning = apply_settings(&value, &next, &mut registered, occupied, |_| Ok(()), |_| {
+            written.set(true);
+            Ok(())
+        })
+        .unwrap();
+        assert!(written.get() && warning.is_some());
+        // 改成新的被占用按键仍整体回滚。
+        let changed = Settings {
+            shortcuts: Shortcuts { pin: "F8".into(), ..value.shortcuts.clone() },
+            ..value.clone()
+        };
+        let f8 = parse_shortcut("F8").unwrap().unwrap();
+        let before = registered.clone();
+        assert!(apply_settings(
+            &value,
+            &changed,
+            &mut registered,
+            |key| if key == f8 || key == capture { Err("occupied".into()) } else { Ok(()) },
+            |_| Ok(()),
+            |_| panic!("冲突不能写配置"),
+        )
+        .is_err());
+        assert_eq!(registered, before);
+    }
+
+    #[test]
+    fn platform_defaults_share_function_keys_and_map_across_backups() {
+        for platform in [Platform::Windows, Platform::Macos, Platform::Linux] {
+            let keys = Shortcuts::for_platform(platform);
+            assert_eq!([&*keys.capture, &*keys.pin, &*keys.record], ["F1", "F2", "F3"]);
+            assert!(Settings { shortcuts: keys, ..Settings::default() }.validate().is_ok());
+            assert_eq!(Platform::from_id(platform.id()), platform);
+        }
+        assert_eq!(Shortcuts::for_platform(Platform::Macos).history, "Ctrl+Alt+V");
+        assert_eq!(Shortcuts::for_platform(Platform::Windows).history, "Alt+V");
+        // 来源平台的默认键换成本机默认键，自定义按键保持不变。
+        for from in [Platform::Windows, Platform::Macos] {
+            let mut keys = Shortcuts { capture: "Ctrl+F8".into(), ..Shortcuts::for_platform(from) };
+            keys.adopt_platform_defaults(from);
+            assert_eq!(keys, Shortcuts { capture: "Ctrl+F8".into(), ..Shortcuts::default() });
+        }
+        for action in ShortcutAction::ALL {
+            assert_eq!(ShortcutAction::from_id(action.id()), Some(action));
+        }
+        assert_eq!(ShortcutAction::from_id("unknown"), None);
     }
 }

@@ -966,5 +966,6 @@
   "无法创建窗口录制流。": "Unable to create the window recording stream.",
   "无法注册窗口录制输出：{0}": "Unable to register the window recording output: {0}",
   "无法开始窗口录制：{0}": "Unable to start the window recording: {0}",
-  "显示器录制收到了窗口来源。": "Display recording received a window source."
+  "显示器录制收到了窗口来源。": "Display recording received a window source.",
+  "以下快捷键已被系统或其他程序占用，暂未生效：{0}。请在“快捷键”页更换按键。": "These shortcuts are taken by the system or another app and are not active: {0}. Choose different keys on the Shortcuts page."
 }

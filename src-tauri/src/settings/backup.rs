@@ -1,6 +1,6 @@
 //! 完整配置备份：固定版本格式、受限文件选择、快捷键事务和目录/监听状态回滚。
 use super::{
-    apply_outside_lock, notify_settings, Settings, SettingsState, ShortcutPressState,
+    apply_outside_lock, notify_settings, Platform, Settings, SettingsState, ShortcutPressState,
 };
 use crate::{
     capture::recording::output,
@@ -32,6 +32,9 @@ struct Directories {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Backup {
     schema_version: u32,
+    /// 导出时的平台（`std::env::consts::OS`）。旧备份没有该字段，导入时不换算快捷键。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    platform: Option<String>,
     settings: Settings,
     directories: Directories,
 }
@@ -64,6 +67,7 @@ fn parse(bytes: &[u8]) -> Result<Backup, String> {
     // 导入要求当前完整结构，不借用启动配置的缺省补齐来悄悄重置遗漏字段。
     let shape = serde_json::to_value(Backup {
         schema_version: VERSION,
+        platform: None,
         settings: Settings::default(),
         directories: Directories {
             captures: None,
@@ -74,10 +78,16 @@ fn parse(bytes: &[u8]) -> Result<Backup, String> {
     if !complete_shape(&json, &shape) {
         return Err("配置格式无效，请选择当前版本导出的配置文件。".into());
     }
-    let value: Backup = serde_json::from_value(json)
+    let mut value: Backup = serde_json::from_value(json)
         .map_err(|_| "配置格式无效，请选择当前版本导出的配置文件。".to_string())?;
     if value.schema_version != VERSION {
         return Err("配置版本不支持，请使用当前版本重新导出。".into());
+    }
+    // 跨平台导入：仍是来源平台默认值的快捷键换成本机默认值（如 Windows 的 Alt+V → macOS 的 ⌃⌥V）。
+    if let Some(from) = value.platform.as_deref().map(Platform::from_id) {
+        if from != Platform::current() {
+            value.settings.shortcuts.adopt_platform_defaults(from);
+        }
     }
     value.settings.validate()?;
     Ok(value)
@@ -274,6 +284,7 @@ pub async fn export_settings(app: AppHandle, window: WebviewWindow) -> Result<bo
         };
         let value = Backup {
             schema_version: VERSION,
+            platform: Some(Platform::current().id().into()),
             directories: Directories {
                 captures: image_io::current_directory(&app)?,
                 recordings: output::configured_directory(&app, remember_recording)?,
@@ -350,6 +361,7 @@ mod tests {
     fn backup() -> Backup {
         Backup {
             schema_version: VERSION,
+            platform: Some(Platform::current().id().into()),
             settings: Settings::default(),
             directories: Directories {
                 captures: None,
@@ -454,5 +466,26 @@ mod tests {
         );
         assert!(!root.path().join("export-directory.json").exists());
         assert_eq!(fs::read(root.path().join("image.png")).unwrap(), b"keep");
+    }
+
+    #[test]
+    fn cross_platform_backups_map_default_shortcuts_and_keep_custom_ones() {
+        let other = if Platform::current() == Platform::Macos { Platform::Windows } else { Platform::Macos };
+        let mut value = backup();
+        value.platform = Some(other.id().into());
+        value.settings.shortcuts = super::super::Shortcuts {
+            pin: "Ctrl+F8".into(),
+            ..super::super::Shortcuts::for_platform(other)
+        };
+        let imported = parse(&serde_json::to_vec(&value).unwrap()).unwrap();
+        assert_eq!(
+            imported.settings.shortcuts,
+            super::super::Shortcuts { pin: "Ctrl+F8".into(), ..super::super::Shortcuts::default() }
+        );
+        // 旧备份没有平台字段：照原样导入。
+        let mut json = serde_json::to_value(&value).unwrap();
+        json.as_object_mut().unwrap().remove("platform");
+        let legacy = parse(&serde_json::to_vec(&json).unwrap()).unwrap();
+        assert_eq!(legacy.settings.shortcuts, value.settings.shortcuts);
     }
 }
