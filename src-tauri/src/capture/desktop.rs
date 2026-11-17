@@ -22,6 +22,8 @@ mod accessibility;
 mod linux;
 #[cfg(not(any(windows, target_os = "macos")))]
 pub use linux::capture;
+#[cfg(not(any(windows, target_os = "macos")))]
+pub(crate) use linux::window_frame_of as linux_window_frame;
 
 /// 把当前光标叠加到截图上；`origin` 为截图左上角的全局点坐标。读不到光标时保持原图。
 #[cfg(target_os = "macos")]

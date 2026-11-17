@@ -87,8 +87,15 @@ block2 = "=0.6.2"
 
 # X11：RandR 读取物理像素显示器边界，XFixes 读取光标并监听剪贴板变化，XTest 注入粘贴键；版本与 xcap 依赖的一致。
 # Secret Service 保存 AI 密钥：复用 tao 已依赖的 libdbus，会话用 OpenSSL（已随 native-tls 引入）加密传输。
+# GTK 发起内容拖出并设置录屏标注的输入形状；版本与 tauri / tao 已依赖的一致，不引入第二套 GTK 绑定。
+# 录屏：MIT-SHM 抓屏、XInput2 原始键鼠事件；GStreamer 0.21 与 GTK 同用 glib 0.18，
+# 编码与声音插件取自系统（WebKitGTK 已依赖 GStreamer 核心库）。
 [target.'cfg(target_os = "linux")'.dependencies]
-xcb = { version = "=1.7.1", features = ["randr", "xfixes", "xtest"] }
+gtk = "=0.18.2"
+xcb = { version = "=1.7.1", features = ["randr", "xfixes", "xtest", "shm", "xinput"] }
+gstreamer = "=0.21.3"
+gstreamer-app = "=0.21.2"
+libc = "0.2"
 dbus-secret-service = { version = "=4.1.0", features = ["crypto-openssl"] }
 
 # 其他平台保留构建时下载 CPU 引擎的方式，同样显式选择 API 24。

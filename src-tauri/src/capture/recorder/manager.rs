@@ -616,7 +616,7 @@ pub async fn start_recording(
 
 /// 诊断不触发试录/编码器探测，不采集视频或音频。
 pub(crate) fn diagnostic_summary() -> serde_json::Value {
-    serde_json::json!({"backend":std::env::consts::OS,"captureSupported":capture::supported().is_ok(),"encoderProbed":false,"audioBackend":if cfg!(target_os = "windows") { "wasapi" } else { "unsupported" },"audioProbed":false})
+    serde_json::json!({"backend":std::env::consts::OS,"captureSupported":capture::supported().is_ok(),"encoderProbed":false,"audioBackend":if cfg!(target_os = "windows") { "wasapi" } else if cfg!(target_os = "linux") { "pulseaudio" } else { "unsupported" },"audioProbed":false})
 }
 
 /// 单次取样在状态锁外计时；空取样也统计耗时，不包含 wait_for_frame 的空闲等待。

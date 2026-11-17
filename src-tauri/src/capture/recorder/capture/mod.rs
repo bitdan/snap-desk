@@ -1,6 +1,6 @@
 //! 平台采集边界：Windows 使用 WGC，macOS 显示器使用 AVCaptureScreenInput（经 xcap）、
-//! 单窗口使用 ScreenCaptureKit；
-//! 其他平台明确拒绝，不以循环截图降级。
+//! 单窗口使用 ScreenCaptureKit；Linux X11 没有系统录屏接口，按帧率经 MIT-SHM 抓取根窗口；
+//! 其他平台明确拒绝。
 use super::{config::RecorderConfig, frame::VideoFrame};
 
 /// 仅由后端从当前截图会话解析，前端不能直接指定 HWND 或进程。
@@ -36,7 +36,12 @@ mod macos;
 #[cfg(target_os = "macos")]
 pub use macos::{now, source_dimensions, supported};
 
-#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+#[cfg(target_os = "linux")]
+mod linux;
+#[cfg(target_os = "linux")]
+pub use linux::{now, source_dimensions, supported};
+
+#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
 pub fn source_dimensions(_source: NativeSource) -> Result<(u32, u32), String> {
     Err("UnsupportedPlatform：当前平台暂不支持窗口录制。".into())
 }
@@ -51,19 +56,21 @@ pub fn prepare(
     return Ok(Box::new(windows::Capture::new(config, size, source, pool)?));
     #[cfg(target_os = "macos")]
     return macos::prepare(config, size, source, pool);
-    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    #[cfg(target_os = "linux")]
+    return linux::prepare(config, size, source, pool);
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
     {
         let _ = (config, size, source, pool);
-        Err("UnsupportedPlatform：macOS / Linux 原生录屏尚未实现。".into())
+        Err("UnsupportedPlatform：当前平台尚未实现原生录屏。".into())
     }
 }
 
-#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
 pub fn supported() -> Result<(), String> {
-    Err("UnsupportedPlatform：macOS / Linux 原生录屏尚未实现。".into())
+    Err("UnsupportedPlatform：当前平台尚未实现原生录屏。".into())
 }
 
-#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
 pub fn now() -> i64 {
     0
 }

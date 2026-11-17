@@ -380,7 +380,7 @@
   "麦克风：{0}": "Microphone: {0}",
   "音频采集线程提前停止，请检查设备连接及音频权限。": "Audio capture thread stopped early. Check device connections and permissions.",
   "音频采集线程异常退出。": "Audio capture thread terminated unexpectedly.",
-  "UnsupportedPlatform：macOS / Linux 原生录屏尚未实现。": "UnsupportedPlatform: native recording is not implemented on macOS / Linux.",
+  "UnsupportedPlatform：当前平台尚未实现原生录屏。": "UnsupportedPlatform: native recording is not implemented on this platform.",
   "Windows 屏幕采集失败：{0}。请检查显示器、图形驱动及屏幕捕获权限后重试。": "Windows screen capture failed: {0}. Check monitor, graphics driver and screen capture permissions.",
   "当前设备不支持 Windows Graphics Capture。": "This device does not support Windows Graphics Capture.",
   "无法创建 D3D11 设备。": "Could not create D3D11 device.",
