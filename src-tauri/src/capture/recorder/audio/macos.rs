@@ -372,7 +372,7 @@ struct SystemAudio {
 
 impl SystemAudio {
     unsafe fn new() -> Result<Self, String> {
-        let (sender, receiver) = mpsc::sync_channel::<Result<Handoff, String>>(1);
+        let (sender, content) = mpsc::sync_channel::<Result<Handoff, String>>(1);
         let block = RcBlock::new(move |content: Id, error: Id| {
             let result = if content.is_null() {
                 Err(unsafe { error_text(error) })
@@ -390,7 +390,7 @@ impl SystemAudio {
             class!(SCShareableContent),
             getShareableContentWithCompletionHandler: &*block
         ];
-        let display = receiver
+        let display = content
             .recv_timeout(Duration::from_secs(10))
             .map_err(|_| "读取可录制内容超时。".to_string())?
             .map_err(|e| format!("无法读取可录制内容，请确认已授予“屏幕录制”权限：{e}"))?
