@@ -90,7 +90,7 @@ async function undo() {
 function key(event: KeyboardEvent) {
   if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') { event.preventDefault(); turn(event.key === 'ArrowLeft' ? -1 : 1) }
   if (event.key === 'Escape') { event.preventDefault(); void hide() }
-  if (event.ctrlKey && event.key.toLowerCase() === 'z') { event.preventDefault(); void run(undo) }
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') { event.preventDefault(); void run(undo) }
 }
 onMounted(async () => {
   window.addEventListener('keydown', key)

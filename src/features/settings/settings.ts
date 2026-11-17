@@ -5,6 +5,7 @@ import type { Appearance } from '@/shared/ui/appearance'
 import { defaultOcrSettings, type OcrSettings } from '@/features/recognition/ocr'
 import { defaultAiSettings, type AiSettings } from '@/features/recognition/ai'
 import { defaultClipboardSettings, type ClipboardSettings } from '@/features/clipboard/clipboard'
+import { macPlatform } from '@/shared/platform'
 /** 与 Rust Settings / ExportSettings 的 camelCase 序列化契约一致。 */
 export interface ExportSettings {
   format: 'png' | 'jpeg' | 'webp'
@@ -42,8 +43,15 @@ export const updateCheckIntervals = [
 export interface Settings { recognitionServices: RecognitionService[]; receivePrereleaseUpdates: boolean; updateCheckMinutes: number; appearance: Appearance; ai: AiSettings; ocr: OcrSettings; onboardingVersion: number; shortcuts: Shortcuts; shortcutsEnabled: boolean; delaySeconds: 0 | 3 | 5; screenshotCursor: boolean; screenshotSnap: boolean; screenshotAfter: 'none' | 'copy' | 'pin' | 'save'; export: ExportSettings; pinAppearance: PinAppearance; recordingExport: RecordingExportSettings; clipboard: ClipboardSettings }
 
 /** 每次返回独立对象，避免编辑草稿时改动“恢复默认”的值。 */
+/** 与 Rust `Shortcuts::default` 一致：macOS 的 F1–F3 是系统键、⌥+字母会输入特殊字符，改用 ⌃⌥+字母。 */
+export function defaultShortcuts(mac = macPlatform): Settings['shortcuts'] {
+  return mac
+    ? { capture: 'Ctrl+Alt+A', pin: 'Ctrl+Alt+P', record: 'Ctrl+Alt+R', history: 'Ctrl+Alt+V', translate: 'Ctrl+Alt+T', shelf: 'Ctrl+Alt+Z', ocr: 'Ctrl+Alt+C' }
+    : { capture: 'F1', pin: 'F2', record: 'F3', history: 'Alt+V', translate: 'Alt+T', shelf: 'Alt+Z', ocr: 'Alt+C' }
+}
+
 export function defaultSettings(): Settings {
-  return { recognitionServices: [], receivePrereleaseUpdates: false, updateCheckMinutes: 60, pinAppearance: defaultPinAppearance(), recordingExport: defaultRecordingExportSettings(), appearance: { theme: 'system', language: 'zh-CN' }, ai: defaultAiSettings(), ocr: defaultOcrSettings(), clipboard: defaultClipboardSettings(), onboardingVersion: 0, shortcuts: { capture: 'F1', pin: 'F2', record: 'F3', history: 'Alt+V', translate: 'Alt+T', shelf: 'Alt+Z', ocr: 'Alt+C' }, shortcutsEnabled: true, delaySeconds: 0, screenshotCursor: false, screenshotSnap: true, screenshotAfter: 'none', export: {
+  return { recognitionServices: [], receivePrereleaseUpdates: false, updateCheckMinutes: 60, pinAppearance: defaultPinAppearance(), recordingExport: defaultRecordingExportSettings(), appearance: { theme: 'system', language: 'zh-CN' }, ai: defaultAiSettings(), ocr: defaultOcrSettings(), clipboard: defaultClipboardSettings(), onboardingVersion: 0, shortcuts: defaultShortcuts(), shortcutsEnabled: true, delaySeconds: 0, screenshotCursor: false, screenshotSnap: true, screenshotAfter: 'none', export: {
     format: 'png', jpegQuality: 90, filenamePrefix: 'SnapDesk', includeDimensions: false, rememberDirectory: true,
   } }
 }
