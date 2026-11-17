@@ -127,10 +127,10 @@ mod tests {
     use super::*;
     #[test]
     fn paths_become_escaped_file_uris() {
-        let uris = uris(&["/tmp/a b/报告#1.png".into()]).unwrap();
-        assert_eq!(uris.len(), 1);
-        assert!(uris[0].starts_with("file:///tmp/a%20b/"));
-        assert!(!uris[0].contains(' ') && !uris[0].contains('#'));
+        let encoded = uris(&["/tmp/a b/报告#1.png".into()]).unwrap();
+        assert_eq!(encoded.len(), 1);
+        assert!(encoded[0].starts_with("file:///tmp/a%20b/"));
+        assert!(!encoded[0].contains(' ') && !encoded[0].contains('#'));
         assert!(uris(&["relative.png".into()]).is_err());
     }
 }
