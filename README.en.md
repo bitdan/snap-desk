@@ -133,7 +133,8 @@ See the [translation technical guide (Chinese)](TECHNICAL.md#翻译接入) for d
 2. When you need text recognition, select an engine in OCR settings. Install resources for offline engines, or enter your own API key/token and save an online service.
 3. Select a local or online translation service and set the default target language. Configure additional accounts or models in service management.
 4. Check the current OCR/translation summary and the current-use indicator in the menu to confirm which configuration is active.
-5. Use the screenshot toolbar, pinned-image menu, or translation window. View and customize shortcuts in shortcut settings.
+5. Use the screenshot toolbar, pinned-image menu, or translation window. View and customize shortcuts in shortcut settings; keys taken by another app are marked "In use".
+6. If the app cannot register global shortcuts (for example on Linux Wayland), bind a system shortcut to `snap-desk --action capture`. Available actions: `capture`, `pin`, `record`, `history`, `translate`, `shelf`, `ocr`.
 
 Paddle offers an official asynchronous endpoint (recommended) and a synchronous endpoint with a custom address. Use the official asynchronous option unless your console provides a synchronous endpoint. Online services may incur charges; quotas and usage rights depend on your provider's account terms.
 

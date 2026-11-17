@@ -25,6 +25,10 @@ pub fn run() {
         .manage(pins::html::RenderState::default())
         .plugin(tauri_plugin_single_instance::init(|app, args, _| {
             // 登录自启与已有实例相遇时保持安静；手动再次启动仍唤起主窗口。
+            if let Some(action) = actions::from_args(&args) {
+                actions::run(app, action);
+                return;
+            }
             if !autostart::is_autostart(args)
                 && !app.state::<CaptureState>().active.load(Ordering::SeqCst)
             {
@@ -116,17 +120,8 @@ pub fn run() {
                             }
                             Some(action)
                         });
-                    match action {
-                        Some(settings::ShortcutAction::Capture) => trigger(app),
-                        Some(settings::ShortcutAction::Pin) => trigger_pin(app),
-                        Some(settings::ShortcutAction::Record) => trigger_recording(app),
-                        Some(settings::ShortcutAction::History) => clipboard::open_history(app),
-                        Some(settings::ShortcutAction::Shelf) => shelf::toggle(app),
-                        Some(settings::ShortcutAction::Ocr) => trigger_ocr(app),
-                        Some(settings::ShortcutAction::Translate) => {
-                            recognition::text_input::open(app)
-                        }
-                        None => {}
+                    if let Some(action) = action {
+                        actions::run(app, action);
                     }
                 })
                 .build(),
@@ -321,7 +316,9 @@ pub fn run() {
                 .find(|config| config.label == "main")
                 .ok_or("缺少主窗口配置。")?;
             // 首次加载也保持隐藏，收到前端就绪通知后再显示，避免冷启动白屏。
-            let automatic = autostart::is_autostart(std::env::args_os().skip(1));
+            // 命令行触发动作（见 actions::from_args）时同样不弹出主窗口，就绪后直接执行该动作。
+            let automatic = autostart::is_autostart(std::env::args_os().skip(1))
+                || actions::from_args(std::env::args_os().skip(1)).is_some();
             app.state::<capture::MainWindowState>()
                 .show_requested
                 .store(!automatic, Ordering::SeqCst);
@@ -540,6 +537,11 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("无法启动 Snap Desk")
         .run(|app, event| {
+            if matches!(event, tauri::RunEvent::Ready) {
+                if let Some(action) = actions::from_args(std::env::args_os().skip(1)) {
+                    actions::run(app, action);
+                }
+            }
             // macOS 关闭主窗口只是隐藏；点击程序坞图标时重新显示，截图进行中保持安静（与再次启动一致）。
             #[cfg(target_os = "macos")]
             if matches!(event, tauri::RunEvent::Reopen { .. })

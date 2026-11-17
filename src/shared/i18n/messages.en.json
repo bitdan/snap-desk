@@ -1298,5 +1298,7 @@
   "前往授权…": "Grant access…",
   "在系统设置中允许 Snap Desk 后，请退出并重新打开应用。": "After allowing Snap Desk in System Settings, quit and reopen the app.",
   "支持 {0} 种识别语言": "{0} recognition languages supported",
-  "输入监控": "Input Monitoring"
+  "输入监控": "Input Monitoring",
+  "已被占用": "In use",
+  "已被系统或其他程序占用，暂未生效，请更换按键。": "Taken by the system or another app and not active. Choose a different key."
 }

@@ -144,7 +144,8 @@ function resetCapture() {
   captureAutoSave.schedule(); void captureAutoSave.flush()
 }
 function resetShortcuts() {
-  draft.value.shortcuts = defaultSettings().shortcuts
+  // 默认键以后端为准（按平台区分）；状态尚未读取时才用前端的同表兜底。
+  draft.value.shortcuts = { ...(status.value?.defaultShortcuts ?? defaultSettings().shortcuts) }
   shortcutAutoSave.schedule(); void shortcutAutoSave.flush()
 }
 /** 配置转移先提交未完成的自动保存，避免导出遗漏或旧草稿覆盖导入。 */
@@ -327,7 +328,7 @@ onUnmounted(() => { disposed = true; window.removeEventListener('keydown', key);
             <h2 class="section-heading">{{ t('全局快捷键') }}<button type="button" :disabled="locked" @click="resetShortcuts">{{ t('恢复默认') }}</button></h2>
             <div class="settings-card">
               <div v-for="action in shortcutActions" :key="action.key" class="setting-row" :data-onboarding="action.key === 'capture' ? 'shortcut-settings' : undefined">
-                <span>{{ t(action.label) }}</span>
+                <span>{{ t(action.label) }}<span v-if="status?.unavailableShortcuts?.includes(action.key)" class="status-error shortcut-occupied" role="status" :title="t('已被系统或其他程序占用，暂未生效，请更换按键。')">{{ t('已被占用') }}</span></span>
                 <div class="flex items-center gap-2">
                   <ShortcutInput v-model="draft.shortcuts[action.key]" :label="action.label" :title="t(action.description)" :disabled="locked" :validate="value => validateShortcuts({ ...draft.shortcuts, [action.key]: value })" @editing="editingShortcut = $event; if (!$event) shortcutAutoSave.flush()" @error="error = $event" @update:model-value="shortcutAutoSave.schedule" />
                   <button v-if="draft.shortcuts[action.key]" type="button" class="shortcut-clear" :disabled="locked" :title="t('禁用')" :aria-label="t('禁用{0}快捷键', { 0: t(action.label) })" @click="draft.shortcuts[action.key] = ''; shortcutAutoSave.commit()"><X :size="10" :stroke-width="3" /></button>

@@ -10,6 +10,10 @@ use tauri::{AppHandle, Manager, WebviewWindow};
 pub(super) struct AppStatus {
     settings: settings::Settings,
     shortcut_error: Option<String>,
+    /// 已配置却被系统或其他程序占用、没有生效的动作（与设置字段同名）。
+    unavailable_shortcuts: Vec<&'static str>,
+    /// 本平台的默认快捷键；“恢复默认”以此为准，前端不另行维护。
+    default_shortcuts: settings::Shortcuts,
     config_warning: Option<String>,
     delay_remaining: u8,
     platform: &'static str,
@@ -26,6 +30,8 @@ pub(super) async fn app_status(app: AppHandle, window: WebviewWindow) -> Result<
         Ok(AppStatus {
             settings: current.value.clone(),
             shortcut_error: current.shortcut_error.clone(),
+            unavailable_shortcuts: settings::unavailable_actions(&current),
+            default_shortcuts: settings::Shortcuts::default(),
             config_warning: current.config_warning.clone(),
             delay_remaining: app
                 .state::<CaptureState>()

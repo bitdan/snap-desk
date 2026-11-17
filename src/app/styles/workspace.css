@@ -48,6 +48,7 @@
 .app-shell .topbar h1 { margin:0; font-size:15px; font-weight:600; color:var(--desk-text); }
 .app-shell .topbar-status { display:flex; align-items:center; gap:8px; }
 .app-shell .topbar-status .status-error { color:var(--desk-danger); }
+.app-shell .shortcut-occupied { margin-left:.5rem; font-size:.75rem; color:var(--desk-danger); }
 .app-shell .page-content { flex:1; min-height:0; width:100%; padding:2px 24px 28px; overflow-y:auto; }
 .app-shell .page-content > * { max-width:760px; margin-inline:auto; }
 .app-shell .page-content.logs-page { display:flex; flex-direction:column; }
