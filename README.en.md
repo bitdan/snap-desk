@@ -30,7 +30,7 @@ Download from [Snap Desk releases](https://github.com/bitdan/snap-desk/releases)
 | macOS Apple silicon (preview) | `-macos-arm64.dmg` | Requires macOS 13.3 or later. Not notarized by Apple: allow it in System Settings → Privacy & Security on first launch, and grant Screen Recording permission |
 | Linux x64 (preview) | `-linux-x64.AppImage` / `-linux-x64.deb` | Requires Ubuntu 24.04 or a comparable distribution (glibc 2.39+). Capture requires an X11 session. The AppImage bundles the web engine and system libraries (about 100 MB), runs across distributions, and updates online. The deb is small (about 20 MB), gets its dependencies from the package manager, and is upgraded by installing the new package |
 
-The macOS and Linux previews currently provide primary-screen capture, annotation, pinning, OCR, and translation. Screen recording, scrolling capture, clipboard history, Windows OCR, and the local translation engine are not yet available there; see the [roadmap](Snap_Desk_TODO.md).
+The macOS preview supports screenshots (with window and control snapping and an optional cursor), scrolling capture, MP4/GIF recording with system audio and microphone, clipboard history, pinning, system OCR, and selected-text translation. Selecting across screens, the local translation engine, and local PaddleOCR are not available there. The Linux preview currently provides primary-screen capture, annotation, pinning, OCR, and translation, with the rest still in progress; see the [roadmap](Snap_Desk_TODO.md).
 
 ## Features
 

@@ -55,4 +55,19 @@ describe('特殊应用热键主动诊断', () => {
     expect(messages).toContain('提升状态不同')
     expect(messages).toContain('将两者以普通权限运行后对比')
   })
+  it('macOS 不比较管理员权限，改为提示安全输入与 Fn 键', () => {
+    const messages = shortcutProbeMessages(report({ platform: 'macos', secureInput: true, appElevated: null,
+      target: { pid: 42, elevated: null, coversMonitor: true, keyboardLayout: 'com.apple.inputmethod.SCIM.ITABC' } })).join(' ')
+    expect(messages).toContain('安全输入')
+    expect(messages).toContain('同时按 Fn')
+    expect(messages).toContain('退出全屏')
+    expect(messages).toContain('com.apple.inputmethod.SCIM.ITABC')
+    expect(messages).not.toContain('权限')
+  })
+  it('macOS 已收到按键时不再提示 Fn', () => {
+    const messages = shortcutProbeMessages(report({ platform: 'macos', secureInput: false,
+      received: [{ shortcut: 'F1', foregroundPid: 42 }] })).join(' ')
+    expect(messages).not.toContain('Fn')
+    expect(messages).not.toContain('安全输入')
+  })
 })

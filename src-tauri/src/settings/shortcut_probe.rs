@@ -32,6 +32,10 @@ pub struct Foreground {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProbeReport {
+    /// 与 `std::env::consts::OS` 一致，前端据此选择适用的排查建议。
+    platform: &'static str,
+    /// 仅 macOS：测试期间是否有应用开启了“安全输入”（密码框、终端的安全键盘输入等）。
+    secure_input: Option<bool>,
     enabled: bool,
     editing: bool,
     registration_error: Option<String>,
@@ -93,8 +97,8 @@ pub fn receive(app: &AppHandle, shortcut: String) -> bool {
 #[tauri::command]
 pub async fn probe_shortcuts(app: AppHandle, window: WebviewWindow) -> Result<ProbeReport, String> {
     require_window(&window, "main")?;
-    if !cfg!(windows) {
-        return Err("此环境测试仅支持 Windows。".into());
+    if !cfg!(any(windows, target_os = "macos")) {
+        return Err("此环境测试仅支持 Windows 和 macOS。".into());
     }
     if app
         .state::<crate::capture::CaptureState>()
@@ -109,6 +113,8 @@ pub async fn probe_shortcuts(app: AppHandle, window: WebviewWindow) -> Result<Pr
             let state = app.state::<SettingsState>();
             let current = state.0.lock().map_err(|e| e.to_string())?;
             ProbeReport {
+                platform: std::env::consts::OS,
+                secure_input: None,
                 enabled: current.value.shortcuts_enabled,
                 editing: current.editing,
                 registration_error: current.shortcut_error.clone(),
@@ -147,10 +153,14 @@ pub async fn probe_shortcuts(app: AppHandle, window: WebviewWindow) -> Result<Pr
                 interrupted = true;
                 break;
             }
-            if let Some(target) = foreground() {
+            if let Some(target) = foreground(&app) {
                 // 返回设置页不会覆盖刚测试的外部窗口；不读取窗口标题和文档内容。
                 if target.pid != std::process::id() {
                     report.target = Some(target);
+                    // 安全输入通常由前台应用开启，只在外部应用位于前台时采样；出现过一次即记为开启。
+                    if let Some(secure) = secure_input() {
+                        report.secure_input = Some(report.secure_input.unwrap_or(false) || secure);
+                    }
                 }
             }
             let received_external = state
@@ -191,9 +201,24 @@ fn foreground_pid() -> u32 {
     }
     pid
 }
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+fn foreground_pid() -> u32 {
+    crate::shared::macos::frontmost_pid()
+        .and_then(|pid| u32::try_from(pid).ok())
+        .unwrap_or(0)
+}
+#[cfg(not(any(windows, target_os = "macos")))]
 fn foreground_pid() -> u32 {
     0
+}
+
+#[cfg(target_os = "macos")]
+fn secure_input() -> Option<bool> {
+    Some(crate::shared::macos::secure_input_enabled())
+}
+#[cfg(not(target_os = "macos"))]
+fn secure_input() -> Option<bool> {
+    None
 }
 
 /// 查询失败保留 unknown；高权限/受保护进程不可读并不等于它一定拦截了快捷键。
@@ -237,7 +262,7 @@ fn elevation(_: u32) -> Option<bool> {
 }
 
 #[cfg(windows)]
-fn foreground() -> Option<Foreground> {
+fn foreground(_: &AppHandle) -> Option<Foreground> {
     use windows::Win32::{
         Foundation::RECT,
         Graphics::Gdi::{
@@ -308,8 +333,64 @@ fn foreground() -> Option<Foreground> {
         })
     }
 }
-#[cfg(not(windows))]
-fn foreground() -> Option<Foreground> {
+/// macOS 没有管理员提升的概念，elevated 保持未知；输入法标识需在主线程读取。
+#[cfg(target_os = "macos")]
+fn foreground(app: &AppHandle) -> Option<Foreground> {
+    let pid = foreground_pid();
+    if pid == 0 {
+        return None;
+    }
+    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+    let keyboard_layout = app
+        .run_on_main_thread(move || {
+            let _ = sender.send(crate::shared::macos::input_source_id());
+        })
+        .ok()
+        .and_then(|_| receiver.recv_timeout(Duration::from_millis(200)).ok())
+        .flatten()
+        .unwrap_or_else(|| "0".into());
+    Some(Foreground {
+        pid,
+        elevated: None,
+        covers_monitor: covers_monitor(pid),
+        keyboard_layout,
+    })
+}
+
+/// 取该进程最上层的普通窗口，与其所在显示器的点坐标边界比较。
+#[cfg(target_os = "macos")]
+fn covers_monitor(pid: u32) -> Option<bool> {
+    let normal = crate::shared::macos::normal_window_ids();
+    let window = xcap::Window::all().ok()?.into_iter().find(|window| {
+        window.pid().is_ok_and(|value| value == pid)
+            && window.id().is_ok_and(|id| normal.contains(&id))
+            && !window.is_minimized().unwrap_or(true)
+    })?;
+    let (x, y) = (window.x().ok()?, window.y().ok()?);
+    let (right, bottom) = (
+        i64::from(x) + i64::from(window.width().ok()?),
+        i64::from(y) + i64::from(window.height().ok()?),
+    );
+    let (cx, cy) = ((i64::from(x) + right) / 2, (i64::from(y) + bottom) / 2);
+    let monitor = xcap::Monitor::all().ok()?.into_iter().find(|monitor| {
+        let (mx, my) = (monitor.x().unwrap_or(0), monitor.y().unwrap_or(0));
+        let (mw, mh) = (monitor.width().unwrap_or(0), monitor.height().unwrap_or(0));
+        cx >= i64::from(mx)
+            && cy >= i64::from(my)
+            && cx < i64::from(mx) + i64::from(mw)
+            && cy < i64::from(my) + i64::from(mh)
+    })?;
+    let (mx, my) = (i64::from(monitor.x().ok()?), i64::from(monitor.y().ok()?));
+    Some(
+        i64::from(x) <= mx
+            && i64::from(y) <= my
+            && right >= mx + i64::from(monitor.width().ok()?)
+            && bottom >= my + i64::from(monitor.height().ok()?),
+    )
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
+fn foreground(_: &AppHandle) -> Option<Foreground> {
     None
 }
 

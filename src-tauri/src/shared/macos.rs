@@ -201,6 +201,35 @@ pub fn post_command_key(key: u16) -> Result<(), String> {
     Ok(())
 }
 
+#[link(name = "Carbon", kind = "framework")]
+extern "C" {
+    fn TISCopyCurrentKeyboardInputSource() -> *const c_void;
+    fn TISGetInputSourceProperty(source: *const c_void, key: *const c_void) -> *const c_void;
+    static kTISPropertyInputSourceID: *const c_void;
+    fn IsSecureEventInputEnabled() -> u8;
+}
+
+/// 当前键盘输入源的标识，如 `com.apple.keylayout.ABC`、`com.apple.inputmethod.SCIM.ITABC`。
+/// 文字输入服务要求在主线程调用。
+pub fn input_source_id() -> Option<String> {
+    objc2::rc::autoreleasepool(|_| unsafe {
+        let source = TISCopyCurrentKeyboardInputSource();
+        if source.is_null() {
+            return None;
+        }
+        // 属性值归输入源所有，在释放输入源之前复制出来；CFString 与 NSString 可直接互换。
+        let id = TISGetInputSourceProperty(source, kTISPropertyInputSourceID);
+        let text = rust_string(id as Id);
+        CFRelease(source);
+        text
+    })
+}
+
+/// 是否有应用开启了“安全输入”（密码框、终端的“安全键盘输入”等）；开启期间系统会限制键盘事件的分发。
+pub fn secure_input_enabled() -> bool {
+    unsafe { IsSecureEventInputEnabled() != 0 }
+}
+
 /// 前台应用的进程号；读取失败返回 None。
 pub fn frontmost_pid() -> Option<i32> {
     objc2::rc::autoreleasepool(|_| unsafe {

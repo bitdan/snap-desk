@@ -14,6 +14,9 @@ pub type NativeWindow = xcap::Window;
 #[cfg(target_os = "macos")]
 #[path = "desktop_cursor_macos.rs"]
 mod cursor;
+#[cfg(target_os = "macos")]
+#[path = "desktop_accessibility_macos.rs"]
+mod accessibility;
 
 /// 把当前光标叠加到截图上；`origin` 为截图左上角的全局点坐标。读不到光标时保持原图。
 #[cfg(target_os = "macos")]
@@ -79,6 +82,73 @@ pub fn clipped(
         width: (right - left) as u32,
         height: (bottom - top) as u32,
     })
+}
+
+/// 某个窗口内的控件候选：边界先换算为截图像素，再裁剪到父窗口并去重。
+/// Windows（Win32 子窗口、UIA）与 macOS（辅助功能）共用这套规则。
+#[cfg(any(windows, target_os = "macos"))]
+pub(crate) struct Elements {
+    pub targets: Vec<Target>,
+    pub index: usize,
+    pub parent: crate::capture::Rect,
+    pub origin: (i32, i32),
+    pub size: (u32, u32),
+}
+#[cfg(any(windows, target_os = "macos"))]
+impl Elements {
+    /// 参数为截图所用的全局像素坐标（右、下边界不含）。
+    pub fn push_edges(&mut self, left: i32, top: i32, right: i32, bottom: i32) {
+        if right <= left || bottom <= top {
+            return;
+        }
+        let Some(mut rect) = clipped(
+            left,
+            top,
+            (i64::from(right) - i64::from(left)).min(u32::MAX as i64) as u32,
+            (i64::from(bottom) - i64::from(top)).min(u32::MAX as i64) as u32,
+            self.origin,
+            self.size,
+        ) else {
+            return;
+        };
+        let right = (rect.x + rect.width).min(self.parent.x + self.parent.width);
+        let bottom = (rect.y + rect.height).min(self.parent.y + self.parent.height);
+        rect.x = rect.x.max(self.parent.x);
+        rect.y = rect.y.max(self.parent.y);
+        if right <= rect.x || bottom <= rect.y {
+            return;
+        }
+        rect.width = right - rect.x;
+        rect.height = bottom - rect.y;
+        // 忽略文本碎片、与整窗重合的容器和重复边界，但遍历器仍会深入这些容器。
+        if rect.width < 12
+            || rect.height < 12
+            || same_bounds(rect, self.parent)
+            || self
+                .targets
+                .iter()
+                .any(|target| same_bounds(target.rect, rect))
+        {
+            return;
+        }
+        self.targets.push(Target {
+            rect,
+            kind: "element",
+            window_index: self.index,
+            title: String::new(),
+            app_name: String::new(),
+            recording_only: false,
+            icon: None,
+        });
+    }
+}
+
+#[cfg(any(windows, target_os = "macos"))]
+pub(crate) fn same_bounds(a: crate::capture::Rect, b: crate::capture::Rect) -> bool {
+    a.x.abs_diff(b.x) <= 2
+        && a.y.abs_diff(b.y) <= 2
+        && (a.x + a.width).abs_diff(b.x + b.width) <= 2
+        && (a.y + a.height).abs_diff(b.y + b.height) <= 2
 }
 
 /// 将虚拟桌面选区转换为单屏局部像素，跨屏或空选区必须拒绝。
@@ -348,7 +418,7 @@ fn window_pixels(window: &NativeWindow, scale: f64) -> Option<(i32, i32, u32, u3
 }
 
 /// 吸附候选只取普通层级、位于本屏且未最小化的窗口；顺序沿用系统的前后层次（前者在上）。
-/// 控件级吸附需要辅助功能接口，暂未接入。
+/// 授予“辅助功能”权限后，再从这些窗口的辅助功能树补充控件候选。
 #[cfg(target_os = "macos")]
 fn snap_windows(desktop: &mut Desktop, scale: f64, size: (u32, u32)) {
     let Ok(windows) = xcap::Window::all() else {
@@ -381,6 +451,8 @@ fn snap_windows(desktop: &mut Desktop, scale: f64, size: (u32, u32)) {
         });
         desktop.windows.push(window);
     }
+    let origin = (desktop.x, desktop.y);
+    accessibility::collect(&desktop.windows, &mut desktop.targets, origin, size, scale);
 }
 
 #[cfg(not(any(windows, target_os = "macos")))]
