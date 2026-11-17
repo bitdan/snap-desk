@@ -143,6 +143,11 @@ export function useCaptureSelection({
     onRecordingRegion()
   }
 
+  /** 截图打开时预选最近选区：不触发“框选后直接执行”，用户可直接导出、微调或重新框选。 */
+  function preselectRecent() {
+    if (recentRect.value && !selection.value) selection.value = { ...recentRect.value }
+  }
+
   function selectAll() {
     const editor = getEditor()
     selectedTarget.value = null
@@ -168,6 +173,6 @@ export function useCaptureSelection({
   return {
     selection, selectedTarget, windowsOnly, hoverLevel, pointer, recentSelection, recentRect, gesture,
     hoverCandidates, hoverTarget, hoverStyle, pixels, valid, boxStyle, activeDisplay, pointerDisplay,
-    point, down, drag, up, abortGesture, reselect, restoreSelection, selectAll, nudge, remember,
+    point, down, drag, up, abortGesture, reselect, restoreSelection, preselectRecent, selectAll, nudge, remember,
   }
 }

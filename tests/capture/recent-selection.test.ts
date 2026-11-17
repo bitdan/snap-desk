@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { parseRecentSelection, readRecentSelection, restoreRecentSelection, writeRecentSelection } from '../../src/features/capture/recent-selection'
+import { parseRecentSelection, readRecentSelection, restoreRecentSelection, reuseOnOpen, writeRecentSelection } from '../../src/features/capture/recent-selection'
 import { toPixels } from '../../src/shared/geometry/selection'
 
 const image = { width: 2560, height: 1440 }
@@ -43,5 +43,12 @@ describe('最近选区', () => {
     vi.stubGlobal('localStorage', { setItem: () => { throw new Error('quota') }, getItem: () => { throw new Error('denied') } })
     expect(readRecentSelection()).toBeNull()
     expect(writeRecentSelection(rect, image)).toEqual(saved)
+  })
+  it('仅在开关开启的普通截图中预选，回放与录屏、识别入口不沿用', () => {
+    expect(reuseOnOpen({ reuseLastSelection: true })).toBe(true)
+    expect(reuseOnOpen({})).toBe(false)
+    for (const extra of [{ replay: { rect } }, { recording: true }, { translation: true }, { ocr: true }]) {
+      expect(reuseOnOpen({ reuseLastSelection: true, ...extra })).toBe(false)
+    }
   })
 })

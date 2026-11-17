@@ -8,7 +8,7 @@ use crate::resources::lifecycle as resource_lifecycle;
 use crate::settings::{autostart, shortcut_probe, storage};
 use crate::shared::{auxiliary_windows, native_i18n};
 use crate::{capture, clipboard, diagnostics, pins, recognition, resources, settings, shelf};
-use actions::{trigger, trigger_ocr, trigger_pin, trigger_recording};
+use actions::{trigger_pin, trigger_recording};
 use capture::{show_main, CaptureState};
 use std::sync::atomic::Ordering;
 use tauri::{

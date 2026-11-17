@@ -28,6 +28,7 @@ import { fromPixels } from '@/features/capture/capture-targets'
 import { useCaptureSelection } from '@/features/capture/use-capture-selection'
 import { useCaptureActions } from '@/features/capture/use-capture-actions'
 import { autoFinishAction } from '@/features/capture/after-action'
+import { reuseOnOpen } from '@/features/capture/recent-selection'
 import { useCaptureRecognition } from '@/features/capture/use-capture-recognition'
 import { useCaptureRecording } from '@/features/capture/use-capture-recording'
 import { macPlatform } from '@/shared/platform'
@@ -53,7 +54,7 @@ const recordingMode = ref(false)
 const {
   selection, selectedTarget, windowsOnly, hoverLevel, pointer, recentSelection, recentRect, gesture,
   hoverCandidates, hoverTarget, hoverStyle, pixels, valid, boxStyle, activeDisplay, pointerDisplay,
-  down, drag, up, abortGesture, reselect, restoreSelection, selectAll, nudge, remember,
+  down, drag, up, abortGesture, reselect, restoreSelection, preselectRecent, selectAll, nudge, remember,
 } = useCaptureSelection({
   root: captureRoot, frame, viewport, busy, error, colorCopied, annotating,
   getEditor: () => editor,
@@ -243,6 +244,7 @@ function receive(value: CaptureFrame, fromReplay = false) {
   liveRecordingId.value = null
   busy.value = false; reselect(); windowsOnly.value = false; scroll.value = null; imageReady.value = false; recordingMode.value = !!value.recording; frame.value = value
   if (value.recording) void loadRecordingCapabilities()
+  if (reuseOnOpen(value)) preselectRecent()
   if (value.replay) {
     selection.value = fromPixels(value.replay.rect, value, viewport.value)
     editor.reset(value.replay.annotations)
@@ -349,7 +351,13 @@ function key(e: KeyboardEvent) {
   else if (command && e.key.toLowerCase() === 'y') { e.preventDefault(); void editor.travel('redo') }
 }
 function keyUp(e: KeyboardEvent) { if (e.key === 'Alt') windowsOnly.value = false }
-function resized() { viewport.value = { width: innerWidth, height: innerHeight }; if (!scroll.value && liveRecordingId.value === null) reselect() }
+// 蒙层可能在帧到达后才调整尺寸；重置选区时按新视口重新预选，避免开关失效。
+function resized() {
+  viewport.value = { width: innerWidth, height: innerHeight }
+  if (scroll.value || liveRecordingId.value !== null) return
+  reselect()
+  if (frame.value && reuseOnOpen(frame.value)) preselectRecent()
+}
 async function imageFailed() {
   error.value = '截图预览加载失败，请重新截图。'
   await cancel()

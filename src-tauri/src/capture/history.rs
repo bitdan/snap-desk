@@ -185,6 +185,7 @@ mod tests {
                 translation: false,
                 ocr: false,
                 snap_enabled: false,
+                reuse_last_selection: false,
                 after_action: "none".into(),
                 origin_x: 0,
                 origin_y: 0,

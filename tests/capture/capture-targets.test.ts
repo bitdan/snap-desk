@@ -75,6 +75,6 @@ describe('桌面目标与混合 DPI 坐标', () => {
     expect(restoreRecentSelection(recent, { ...image, layoutKey: 'right-primary' }, image)).toBeNull()
   })
   it('光标默认隐藏，吸附默认开启', () => {
-    expect(defaultSettings()).toMatchObject({ screenshotCursor: false, screenshotSnap: true })
+    expect(defaultSettings()).toMatchObject({ screenshotCursor: false, screenshotSnap: true, screenshotReuseLast: false })
   })
 })

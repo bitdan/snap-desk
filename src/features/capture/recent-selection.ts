@@ -33,6 +33,11 @@ export function restoreRecentSelection(recent: RecentSelection | null, image: Si
     width: rect.width * viewport.width / image.width, height: rect.height * viewport.height / image.height }
 }
 
+/** 设置开启时，普通截图打开即预选最近选区；回放、录屏和识别入口有各自的选区来源。 */
+export function reuseOnOpen(frame: { reuseLastSelection?: boolean; replay?: unknown; recording?: boolean; translation?: boolean; ocr?: boolean }): boolean {
+  return !!frame.reuseLastSelection && !frame.replay && !frame.recording && !frame.translation && !frame.ocr
+}
+
 /** WebView 禁用存储或配额不足不应影响截图；仍可在当前窗口会话中记住范围。 */
 export function readRecentSelection(): RecentSelection | null {
   try { return parseRecentSelection(localStorage.getItem(storageKey)) } catch { return null }
