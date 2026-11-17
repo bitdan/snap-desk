@@ -1,4 +1,5 @@
-//! 平台采集边界：Windows 使用 WGC，macOS 使用 AVCaptureScreenInput（经 xcap）；
+//! 平台采集边界：Windows 使用 WGC，macOS 显示器使用 AVCaptureScreenInput（经 xcap）、
+//! 单窗口使用 ScreenCaptureKit；
 //! 其他平台明确拒绝，不以循环截图降级。
 use super::{config::RecorderConfig, frame::VideoFrame};
 
@@ -49,7 +50,7 @@ pub fn prepare(
     #[cfg(target_os = "windows")]
     return Ok(Box::new(windows::Capture::new(config, size, source, pool)?));
     #[cfg(target_os = "macos")]
-    return Ok(Box::new(macos::Capture::new(config, size, source, pool)?));
+    return macos::prepare(config, size, source, pool);
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
         let _ = (config, size, source, pool);

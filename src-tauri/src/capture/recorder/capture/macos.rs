@@ -1,13 +1,17 @@
-//! macOS 显示器录制：复用 xcap 的 AVCaptureScreenInput 录制器取整屏帧，再裁剪为选区。
+//! macOS 录制来源：显示器复用 xcap 的 AVCaptureScreenInput 录制器取整屏帧再裁剪为选区；
+//! 单窗口使用 ScreenCaptureKit（见 `macos_window.rs`）。
 //!
 //! 坐标约定与截图一致：`NativeSource::Monitor` 的 x/y 与选区都是“点坐标 × 该屏缩放”的物理像素。
 //! xcap 每帧给出整屏 RGBA；这里只复制选区并转回 BGRA，交给与 Windows 共用的合成与编码流水线。
-//! xcap 录制器固定包含光标，且不支持单窗口录制，这两项在能力中如实标为不可用。
+//! xcap 录制器固定包含光标，因此能力中不提供关闭光标的选项。
 use super::{
     super::frame::{BgraImage, FramePool},
     CaptureBackend, NativeSource, RecorderConfig, VideoFrame,
 };
 use crate::capture::Rect;
+#[path = "macos_window.rs"]
+mod window;
+
 use std::{
     sync::{mpsc::Receiver, Arc, Mutex},
     time::Duration,
@@ -38,8 +42,9 @@ pub fn source_dimensions(source: NativeSource) -> Result<(u32, u32), String> {
                 px(monitor.height().map_err(|e| e.to_string())?),
             ))
         }
-        NativeSource::Window { .. } => {
-            Err("UnsupportedPlatform：macOS 暂不支持单窗口录制，请录制显示器区域。".into())
+        NativeSource::Window { id, pid } => {
+            let geometry = window::geometry(id, pid)?;
+            Ok((geometry.width, geometry.height))
         }
     }
 }
@@ -58,6 +63,22 @@ fn monitor_at(x: i32, y: i32) -> Result<xcap::Monitor, String> {
                 && (f64::from(my) * scale - f64::from(y)).abs() <= 2.0
         })
         .ok_or_else(|| "录制的显示器已断开或布局已改变，请重新选择。".into())
+}
+
+/// 按来源选择采集实现。
+pub fn prepare(
+    config: &RecorderConfig,
+    size: (u32, u32),
+    source: NativeSource,
+    pool: Arc<FramePool>,
+) -> Result<Box<dyn CaptureBackend>, String> {
+    supported()?;
+    Ok(match source {
+        NativeSource::Monitor { .. } => Box::new(Capture::new(config, size, source, pool)?),
+        NativeSource::Window { id, pid } => {
+            Box::new(window::WindowCapture::new(config, size, id, pid, pool)?)
+        }
+    })
 }
 
 pub struct Capture {
@@ -84,7 +105,7 @@ impl Capture {
     ) -> Result<Self, String> {
         supported()?;
         let NativeSource::Monitor { x, y } = source else {
-            return Err("UnsupportedPlatform：macOS 暂不支持单窗口录制，请录制显示器区域。".into());
+            return Err("显示器录制收到了窗口来源。".into());
         };
         let monitor = monitor_at(x, y)?;
         let (recorder, frames) = monitor
