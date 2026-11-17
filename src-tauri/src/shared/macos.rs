@@ -4,7 +4,8 @@
 //! 的显示器坐标一致；乘以各屏 backing scale 才是 Retina 像素。这里只声明少量系统函数，
 //! 不引入额外框架绑定，所有 NSWindow 调用都必须在主线程执行。
 use objc2::{
-    class, msg_send,
+    class,
+    msg_send,
     runtime::{AnyObject, Bool},
 };
 use std::ffi::{c_char, c_void, CStr, CString};
@@ -333,4 +334,72 @@ pub fn normal_window_ids() -> std::collections::HashSet<u32> {
         CFRelease(list);
     }
     ids
+}
+
+/// CoreMedia 时间值。录屏流水线统一使用 100 ns 刻度；系统采集回调的时间戳与
+/// [`host_ticks`] 同属主机时钟（mach_absolute_time），可直接相减。
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct CMTime {
+    pub value: i64,
+    pub timescale: i32,
+    pub flags: u32,
+    pub epoch: i64,
+}
+// CMTime 是匿名 typedef 结构体，运行时类型编码为 {?=qiIq}。
+unsafe impl objc2::encode::Encode for CMTime {
+    const ENCODING: objc2::encode::Encoding = objc2::encode::Encoding::Struct(
+        "?",
+        &[
+            <i64 as objc2::encode::Encode>::ENCODING,
+            <i32 as objc2::encode::Encode>::ENCODING,
+            <u32 as objc2::encode::Encode>::ENCODING,
+            <i64 as objc2::encode::Encode>::ENCODING,
+        ],
+    );
+}
+impl CMTime {
+    /// 100 ns 刻度的时间（kCMTimeFlags_Valid = 1）。
+    pub fn from_ticks(value: i64) -> Self {
+        Self {
+            value,
+            timescale: 10_000_000,
+            flags: 1,
+            epoch: 0,
+        }
+    }
+    /// 转为 100 ns 刻度；无效或时间刻度非正时返回 None。
+    pub fn ticks(self) -> Option<i64> {
+        (self.flags & 1 != 0 && self.timescale > 0).then(|| {
+            (i128::from(self.value) * 10_000_000 / i128::from(self.timescale)) as i64
+        })
+    }
+}
+
+#[link(name = "CoreMedia", kind = "framework")]
+extern "C" {
+    fn CMClockGetHostTimeClock() -> *const c_void;
+    fn CMClockGetTime(clock: *const c_void) -> CMTime;
+}
+
+/// 主机时钟的当前时间（100 ns）；视频帧与音频包都以它为时间轴零点之外的共同参照。
+pub(crate) fn host_ticks() -> i64 {
+    unsafe { CMClockGetTime(CMClockGetHostTimeClock()) }
+        .ticks()
+        .unwrap_or(0)
+}
+
+/// CoreAudio 的 AudioStreamBasicDescription。
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub(crate) struct StreamDescription {
+    pub sample_rate: f64,
+    pub format_id: u32,
+    pub format_flags: u32,
+    pub bytes_per_packet: u32,
+    pub frames_per_packet: u32,
+    pub bytes_per_frame: u32,
+    pub channels_per_frame: u32,
+    pub bits_per_channel: u32,
+    pub reserved: u32,
 }

@@ -9,14 +9,14 @@ use super::{
 };
 use crate::capture::Rect;
 use std::{
-    sync::{mpsc::Receiver, Arc, Mutex, OnceLock},
-    time::{Duration, Instant},
+    sync::{mpsc::Receiver, Arc, Mutex},
+    time::Duration,
 };
 
-/// 录屏时间轴的单位是 100 ns；以进程内首次调用为零点的单调时钟即可，只比较差值。
+/// 录屏时间轴的单位是 100 ns。使用主机时钟，与系统音频、麦克风回调的时间戳同源，
+/// 音画按同一时间轴对齐。
 pub fn now() -> i64 {
-    static START: OnceLock<Instant> = OnceLock::new();
-    (START.get_or_init(Instant::now).elapsed().as_nanos() / 100) as i64
+    crate::shared::macos::host_ticks()
 }
 
 /// 录屏需要“屏幕录制”授权；未授权时系统只返回桌面壁纸，必须提前拒绝而不是录出空白视频。

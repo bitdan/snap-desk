@@ -7,6 +7,8 @@ fn main() {
     // 必须显式链接框架，否则运行时找不到 VNRecognizeTextRequest。
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
         println!("cargo:rustc-link-lib=framework=Vision");
+        // 录制系统声音按类名使用 SCStream 等 ScreenCaptureKit 类，同样需要显式链接。
+        println!("cargo:rustc-link-lib=framework=ScreenCaptureKit");
     }
     tauri_build::build()
 }
