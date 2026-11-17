@@ -6030,6 +6030,7 @@ dependencies = [
  "ab_glyph",
  "base64 0.22.1",
  "blake3",
+ "block2",
  "chrono",
  "clipboard-win",
  "gif",

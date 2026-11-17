@@ -31,13 +31,6 @@ fn error(e: windows::core::Error) -> String {
 }
 
 impl Source {
-    fn label(self) -> &'static str {
-        match self {
-            Self::System => "系统声音",
-            Self::Microphone => "麦克风",
-        }
-    }
-
     fn flow(self) -> EDataFlow {
         match self {
             Self::System => eRender,

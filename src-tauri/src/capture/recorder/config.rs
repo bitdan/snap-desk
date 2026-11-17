@@ -193,9 +193,10 @@ impl RecorderConfig {
             return Err("MP4 支持 30 / 60 FPS，GIF 支持 10 / 20 FPS。".into());
         }
         if (self.system_audio || self.microphone)
-            && (matches!(self.format, OutputFormat::Gif) || !cfg!(target_os = "windows"))
+            && (matches!(self.format, OutputFormat::Gif)
+                || !cfg!(any(target_os = "windows", target_os = "macos")))
         {
-            return Err("音频录制仅支持 Windows MP4，GIF 不支持声音。".into());
+            return Err("音频录制仅支持 Windows / macOS 的 MP4，GIF 不支持声音。".into());
         }
         if matches!(self.format, OutputFormat::Gif) && (r.width > 65535 || r.height > 65535) {
             return Err("GIF 单边不能超过 65535 像素。".into());
@@ -231,7 +232,7 @@ impl RecorderCapabilities {
     /// 仅映射采集接口检查结果，不触发媒体组件初始化、文件写入或音频设备访问。
     pub(super) fn from_capture_support(result: Result<(), String>) -> Self {
         let available = result.is_ok();
-        let audio_supported = available && cfg!(target_os = "windows");
+        let audio_supported = available && cfg!(any(target_os = "windows", target_os = "macos"));
         Self {
             available,
             reason: result.err(),
@@ -254,7 +255,8 @@ impl RecorderCapabilities {
             },
             // macOS 的录制器固定包含光标，不能按设置关闭，因此不提供该选项。
             capture_cursor: available && !cfg!(target_os = "macos"),
-            // Windows MP4 提供声音选项；实际 AAC 编码和 WASAPI 设备在 start_recording 准备时校验。
+            // MP4 提供声音选项；实际 AAC 编码与声音设备（WASAPI / ScreenCaptureKit、麦克风授权）
+            // 在 start_recording 准备时校验。
             system_audio: audio_supported,
             microphone: audio_supported,
             formats: if available {
@@ -285,8 +287,8 @@ mod tests {
                 },
                 "frameRates": [10, 20, 30, 60],
                 "captureCursor": !cfg!(target_os = "macos"),
-                "systemAudio": cfg!(target_os = "windows"),
-                "microphone": cfg!(target_os = "windows"),
+                "systemAudio": cfg!(any(target_os = "windows", target_os = "macos")),
+                "microphone": cfg!(any(target_os = "windows", target_os = "macos")),
                 "formats": ["mp4", "gif"],
             })
         );
@@ -484,12 +486,12 @@ mod tests {
         config.system_audio = true;
         assert_eq!(
             config.validate((1920, 1080)).is_ok(),
-            cfg!(target_os = "windows")
+            cfg!(any(target_os = "windows", target_os = "macos"))
         );
         config.microphone = true;
         assert_eq!(
             config.validate((1920, 1080)).is_ok(),
-            cfg!(target_os = "windows")
+            cfg!(any(target_os = "windows", target_os = "macos"))
         );
         config.format = OutputFormat::Gif;
         config.fps = 10;

@@ -57,16 +57,13 @@ pub fn create(
                 format!("无法初始化系统 H.264 / AAC 编码器：{e}。请检查媒体组件、分辨率和磁盘空间。")
             })?,
     ));
-    // macOS 由 VideoToolbox 自行选择硬件或软件编码，编码偏好不适用；首版不录声音。
+    // macOS 由 VideoToolbox 自行选择硬件或软件编码，编码偏好不适用。
     #[cfg(target_os = "macos")]
     {
         let _ = preference;
-        if audio {
-            return Err("macOS 暂不支持录制声音。".into());
-        }
         return Ok(Box::new(
-            avfoundation::AvFoundation::new(path, width, height, fps, bitrate)
-                .map_err(|e| format!("无法初始化系统 H.264 编码器：{e}"))?,
+            avfoundation::AvFoundation::new(path, width, height, fps, bitrate, audio)
+                .map_err(|e| format!("无法初始化系统 H.264 / AAC 编码器：{e}"))?,
         ));
     }
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]

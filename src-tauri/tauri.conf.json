@@ -115,7 +115,8 @@
     "category": "Utility",
     "shortDescription": "Screenshot, pin, OCR and translation tool",
     "macOS": {
-      "minimumSystemVersion": "13.3"
+      "minimumSystemVersion": "13.3",
+      "entitlements": "./Entitlements.plist"
     },
     "linux": {
       "deb": {
