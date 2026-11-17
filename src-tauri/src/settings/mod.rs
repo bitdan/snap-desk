@@ -1565,7 +1565,7 @@ mod tests {
         for n in 1..=24 {
             assert!(parse_shortcut(&format!("F{n}")).unwrap().is_some());
         }
-        // 默认 F2/F3 被贴图和录屏占用，历史已改为 Alt+V，F4 可重新分配。
+        // 默认 F2/F3 被贴图和录屏占用，其余默认键都带修饰键，F4 起可重新分配。
         for n in (1..=24).filter(|n| ![2, 3].contains(n)) {
             assert!(Settings {
                 shortcuts: Shortcuts {
@@ -1577,8 +1577,17 @@ mod tests {
             .validate()
             .is_ok());
         }
-        // 重复动作映射及不支持的主键不能通过完整配置校验。
-        for shortcut in ["F2", "F3", "Alt+V", "Alt+Z", "Alt+C", "F25", "Ctrl+A+B"] {
+        // 重复动作映射及不支持的主键不能通过完整配置校验；其余默认键因平台而异，取实际值。
+        let keys = Shortcuts::default();
+        for shortcut in [
+            "F2",
+            "F3",
+            keys.history.as_str(),
+            keys.shelf.as_str(),
+            keys.ocr.as_str(),
+            "F25",
+            "Ctrl+A+B",
+        ] {
             assert!(Settings {
                 shortcuts: Shortcuts {
                     capture: shortcut.into(),
