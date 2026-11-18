@@ -5,6 +5,12 @@ pub mod export;
 mod files;
 pub mod model;
 mod platform;
+
+/// X11 图片写入（PNG + BMP 目标），供共享的图片复制入口调用。
+#[cfg(target_os = "linux")]
+pub(crate) fn write_x11_image(image: &image::RgbaImage) -> Result<(), String> {
+    platform::write_image(image)
+}
 mod reader;
 mod repository;
 mod service;

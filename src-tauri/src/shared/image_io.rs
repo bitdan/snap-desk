@@ -26,6 +26,17 @@ pub fn copy(app: &AppHandle, image: &RgbaImage) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     return windows_clipboard::copy(app, image);
 
+    // X11 由本程序持有选区，额外提供 BMP 目标（VirtualBox 等只认 BMP）；失败时交回剪贴板插件。
+    #[cfg(target_os = "linux")]
+    if !crate::shared::x11::wayland() {
+        match crate::clipboard::write_x11_image(image) {
+            Ok(()) => return Ok(()),
+            Err(error) => {
+                log::warn!("event=clipboard.x11_image_failed module=clipboard error={error}")
+            }
+        }
+    }
+
     #[cfg(not(target_os = "windows"))]
     app.clipboard()
         .write_image(&tauri::image::Image::new(
