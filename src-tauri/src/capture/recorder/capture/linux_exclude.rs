@@ -33,7 +33,6 @@ struct Toplevel {
 
 pub(super) struct Exclusion {
     pid: u32,
-    manager: Option<x::Atom>,
     wallpaper: Option<x::Atom>,
     composited: bool,
     checked: Option<Instant>,
@@ -44,16 +43,8 @@ pub(super) struct Exclusion {
 
 impl Exclusion {
     pub(super) fn new(x11: &X11, len: usize) -> Self {
-        let index = x11
-            .conn
-            .get_setup()
-            .roots()
-            .position(|screen| screen.root() == x11.root)
-            .unwrap_or(0);
         Self {
             pid: std::process::id(),
-            // 合成管理器按 EWMH 持有 `_NET_WM_CM_S<屏幕序号>` 选区。
-            manager: x11.intern(&format!("_NET_WM_CM_S{index}")).ok(),
             wallpaper: x11.existing("_XROOTPMAP_ID"),
             composited: false,
             checked: None,
@@ -75,11 +66,7 @@ impl Exclusion {
             .map_or(true, |at| at.elapsed() >= Duration::from_secs(1))
         {
             self.checked = Some(Instant::now());
-            self.composited = self.manager.is_some_and(|selection| {
-                x11.conn
-                    .wait_for_reply(x11.conn.send_request(&x::GetSelectionOwner { selection }))
-                    .is_ok_and(|reply| reply.owner() != x::WINDOW_NONE)
-            });
+            self.composited = x11.composited();
         }
         self.composited
     }

@@ -769,6 +769,14 @@ fn restore_desktop_focus(app: &AppHandle) {
 }
 
 fn apply_mode(app: &AppHandle, id: u64, editing: bool) -> Result<(), String> {
+    // 画布是覆盖整屏的透明窗口；X11 没有合成管理器时它显示为黑底，会挡住正在录制的画面。
+    #[cfg(target_os = "linux")]
+    if editing && !crate::shared::x11::X11::connect()?.composited() {
+        return Err(
+            "当前桌面未开启窗口合成，无法显示录屏标注画布；请在窗口管理器设置中开启合成（混成）后重试。"
+                .into(),
+        );
+    }
     let state = app.state::<LiveAnnotationState>();
     let _write = state.write.lock().map_err(|e| e.to_string())?;
     require_editing(app, id)?;

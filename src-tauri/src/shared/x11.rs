@@ -191,6 +191,30 @@ impl X11 {
         }
     }
 
+    /// 合成管理器按 EWMH 持有 `_NET_WM_CM_S<屏幕序号>` 选区；没有它时透明窗口显示为黑底。
+    pub fn composited(&self) -> bool {
+        let index = self
+            .conn
+            .get_setup()
+            .roots()
+            .position(|screen| screen.root() == self.root)
+            .unwrap_or(0);
+        let Some(selection) = self.existing(&format!("_NET_WM_CM_S{index}")) else {
+            return false;
+        };
+        self.conn
+            .wait_for_reply(self.conn.send_request(&x::GetSelectionOwner { selection }))
+            .is_ok_and(|reply| reply.owner() != x::WINDOW_NONE)
+    }
+
+    /// 当前按下的键码位图（每位一个键码），配合 [`pressed`] 判断；查询失败返回 None。
+    pub fn keymap(&self) -> Option<Vec<u8>> {
+        self.conn
+            .wait_for_reply(self.conn.send_request(&x::QueryKeymap {}))
+            .ok()
+            .map(|reply| reply.keys().to_vec())
+    }
+
     /// 通过 XTest 发送 Ctrl+字母：按下、松开成对发送，最后同步等待服务器处理完毕。
     pub fn ctrl_chord(&self, letter: u32) -> Result<(), String> {
         if !self.has(xcb::Extension::Test) {
@@ -343,7 +367,7 @@ fn bytes(reply: &x::GetPropertyReply) -> Result<&[u8], ReadError> {
     }
 }
 
-fn pressed(keys: &[u8], code: u8) -> bool {
+pub(crate) fn pressed(keys: &[u8], code: u8) -> bool {
     keys.get(usize::from(code / 8))
         .is_some_and(|byte| byte & (1 << (code % 8)) != 0)
 }
