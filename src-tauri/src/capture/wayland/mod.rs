@@ -11,7 +11,7 @@ mod image_copy;
 mod kwin;
 mod outputs;
 mod pipewire_frame;
-mod portal;
+pub(crate) mod portal;
 mod screencopy;
 
 use image::RgbaImage;
@@ -122,10 +122,33 @@ const NO_BACKEND: &str = crate::shared::desktop_support::NO_CAPTURE_BACKEND;
 const CAPTURE_FAILED: &str = "Wayland 截图失败，请确认已允许屏幕共享，详情见日志。";
 
 /// 上次截图所在显示器的逻辑几何，覆盖层据此全屏到同一块显示器。
-static LAST_OUTPUT: Mutex<Option<(i32, i32, i32, i32)>> = Mutex::new(None);
+static LAST_OUTPUT: Mutex<Option<Frozen>> = Mutex::new(None);
+
+/// 上次冻结的显示器：逻辑几何（覆盖层全屏定位）与物理原点、尺寸（截图坐标与录屏来源）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Frozen {
+    pub logical: (i32, i32, i32, i32),
+    pub origin: (i32, i32),
+    pub size: (u32, u32),
+}
 
 pub(crate) fn last_output() -> Option<(i32, i32, i32, i32)> {
+    last_frozen().map(|frozen| frozen.logical)
+}
+
+pub(crate) fn last_frozen() -> Option<Frozen> {
     LAST_OUTPUT.lock().ok().and_then(|value| *value)
+}
+
+impl Shot {
+    /// 物理原点 = 逻辑位置 × 该显示器缩放；同一会话内截图、选区与录屏来源都使用它。
+    pub(crate) fn origin(&self) -> (i32, i32) {
+        let scale = self.output.scale();
+        (
+            (f64::from(self.output.x) * scale).round() as i32,
+            (f64::from(self.output.y) * scale).round() as i32,
+        )
+    }
 }
 
 pub(crate) fn capture(include_cursor: bool) -> Result<Shot, String> {
@@ -139,7 +162,11 @@ pub(crate) fn capture(include_cursor: bool) -> Result<Shot, String> {
     })?;
     if let Ok(mut last) = LAST_OUTPUT.lock() {
         let o = &shot.output;
-        *last = Some((o.x, o.y, o.width, o.height));
+        *last = Some(Frozen {
+            logical: (o.x, o.y, o.width, o.height),
+            origin: shot.origin(),
+            size: shot.image.dimensions(),
+        });
     }
     Ok(shot)
 }

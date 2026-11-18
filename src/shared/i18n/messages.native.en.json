@@ -1013,5 +1013,11 @@
   "截图门户返回了无效的文件地址。": "The screenshot portal returned an invalid file address.",
   "截图门户返回的图片与显示器布局不一致。": "The screenshot portal image does not match the display layout.",
   "当前 Wayland 桌面只能通过截图门户截图，截图不包含光标。": "This Wayland desktop can only take screenshots through the screenshot portal, so screenshots do not include the cursor.",
-  "Wayland 下无法连续读取屏幕画面，滚动截图不可用。": "Wayland does not allow continuous screen reading, so scrolling capture is unavailable."
+  "Wayland 下无法连续读取屏幕画面，滚动截图不可用。": "Wayland does not allow continuous screen reading, so scrolling capture is unavailable.",
+  "当前 Wayland 桌面没有屏幕共享门户（xdg-desktop-portal ScreenCast），无法录屏。": "This Wayland desktop has no screen sharing portal (xdg-desktop-portal ScreenCast), so recording is unavailable.",
+  "Wayland 下暂不支持单窗口录制，请录制显示器区域。": "Recording a single window is not supported on Wayland. Record an area of the display instead.",
+  "屏幕共享授权的显示器与所选显示器不一致，请重新录屏并在系统对话框中选择同一块显示器。": "Screen sharing was granted for a different display than the one selected. Start the recording again and pick the same display in the system dialog.",
+  "屏幕共享已停止，录制已结束。": "Screen sharing stopped, so the recording ended.",
+  "屏幕共享画面尺寸与录制来源不一致。": "The shared screen size does not match the recording source.",
+  "Wayland 下无法把标注画布对齐到录制区域，录屏实时标注不可用。": "On Wayland the annotation canvas cannot be aligned with the recording area, so live annotations are unavailable."
 }

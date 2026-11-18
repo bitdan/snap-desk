@@ -329,8 +329,7 @@ fn capture_wayland(include_cursor: bool) -> Result<Desktop, String> {
     let shot = super::wayland::capture(include_cursor)?;
     let scale = shot.output.scale();
     let (width, height) = shot.image.dimensions();
-    let x = (f64::from(shot.output.x) * scale).round() as i32;
-    let y = (f64::from(shot.output.y) * scale).round() as i32;
+    let (x, y) = shot.origin();
     Ok(Desktop {
         image: shot.image,
         x,
