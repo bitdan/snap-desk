@@ -67,6 +67,8 @@ pub(crate) struct Probe {
     pub portal_screencast: bool,
     pub portal_global_shortcuts: bool,
     pub portal_remote_desktop: bool,
+    /// Wayland 会话中可经 Xwayland 读写剪贴板与 PRIMARY 选区。
+    pub xwayland: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -141,6 +143,7 @@ pub struct DesktopProtocols {
     pub(crate) portal_screencast: bool,
     pub(crate) portal_global_shortcuts: bool,
     pub(crate) portal_remote_desktop: bool,
+    pub(crate) xwayland: bool,
 }
 
 /// 单项功能是否可用；不可用时 `reason` 是中文消息键，前端经词典显示。
@@ -213,8 +216,6 @@ impl DesktopSupport {
     }
 }
 
-pub(crate) const WAYLAND_PENDING: &str =
-    "Wayland 会话暂不支持此功能，请在登录界面选择 X11（Xorg）会话后使用。";
 pub(crate) const WAYLAND_SHORTCUTS: &str =
     "Wayland 下应用无法直接注册全局快捷键，请在桌面或合成器的快捷键设置中绑定下方命令。";
 const WAYLAND_INPUT: &str = "Wayland 不允许应用监听全局键鼠，录屏键鼠特效不可用。";
@@ -223,6 +224,8 @@ const WAYLAND_PASTE: &str =
 const WAYLAND_SNAP: &str = "当前 Wayland 桌面不提供窗口位置，截图时无法吸附窗口。";
 const WAYLAND_ON_TOP: &str = "当前 Wayland 桌面不允许应用置顶窗口，贴图可能被其他窗口遮挡。";
 const WAYLAND_CURSOR: &str = "当前 Wayland 桌面只能通过截图门户截图，截图不包含光标。";
+const NO_XWAYLAND: &str =
+    "当前 Wayland 会话没有 Xwayland（DISPLAY 未设置），无法读取剪贴板与选中文字。";
 const NO_SCREENCAST: &str =
     "当前 Wayland 桌面没有屏幕共享门户（xdg-desktop-portal ScreenCast），无法录屏。";
 const WAYLAND_SCROLL: &str = "Wayland 下无法连续读取屏幕画面，滚动截图不可用。";
@@ -247,6 +250,7 @@ pub(crate) fn report(
         portal_screencast: probe.portal_screencast,
         portal_global_shortcuts: probe.portal_global_shortcuts,
         portal_remote_desktop: probe.portal_remote_desktop,
+        xwayland: probe.xwayland,
     };
     let features = if session == Session::Wayland {
         wayland_features(&protocols)
@@ -319,8 +323,17 @@ fn wayland_features(protocols: &DesktopProtocols) -> DesktopFeatures {
         } else {
             DesktopFeature::no(WAYLAND_SHORTCUTS)
         },
-        clipboard_history: DesktopFeature::no(WAYLAND_PENDING),
-        selected_text: DesktopFeature::no(WAYLAND_PENDING),
+        // 剪贴板与选中文字经 Xwayland 的选区同步读取；没有 Xwayland 时不可用。
+        clipboard_history: if protocols.xwayland {
+            DesktopFeature::yes()
+        } else {
+            DesktopFeature::no(NO_XWAYLAND)
+        },
+        selected_text: if protocols.xwayland {
+            DesktopFeature::yes()
+        } else {
+            DesktopFeature::no(NO_XWAYLAND)
+        },
         direct_paste: DesktopFeature::no(WAYLAND_PASTE),
         pin_on_top: if protocols.layer_shell {
             DesktopFeature::yes()
@@ -535,6 +548,14 @@ mod tests {
         let gnome = report(Session::Wayland, "GNOME", &gnome, "x".into());
         assert!(gnome.features.screenshot.available());
         assert!(gnome.features.recording.available());
+        assert_eq!(gnome.features.clipboard_history.reason(), NO_XWAYLAND);
+        let bridged = Probe {
+            xwayland: true,
+            ..Probe::default()
+        };
+        let bridged = report(Session::Wayland, "GNOME", &bridged, "x".into());
+        assert!(bridged.features.clipboard_history.available());
+        assert!(bridged.features.selected_text.available());
 
         // 只有 Screenshot 门户时可以截图，但不含光标。
         let portal_only = Probe {
@@ -578,7 +599,6 @@ mod tests {
         )
         .unwrap();
         for message in [
-            WAYLAND_PENDING,
             WAYLAND_SHORTCUTS,
             WAYLAND_INPUT,
             WAYLAND_PASTE,
@@ -587,6 +607,7 @@ mod tests {
             WAYLAND_CURSOR,
             WAYLAND_SCROLL,
             NO_SCREENCAST,
+            NO_XWAYLAND,
             NO_CAPTURE_BACKEND,
         ] {
             assert!(

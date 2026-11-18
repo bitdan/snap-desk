@@ -17,6 +17,10 @@ pub(super) fn foreground() -> Result<usize, String> {
 pub(super) fn foreground() -> Result<usize, String> {
     use crate::shared::x11::X11;
     use xcb::Xid;
+    // Wayland 读不到前台窗口；PRIMARY 经 Xwayland 同步，无需前台窗口号。
+    if crate::shared::x11::wayland() {
+        return Ok(0);
+    }
     let x = X11::connect()?;
     let window = x.active_window().ok_or("没有可复制文字的前台窗口。")?;
     if x.window_pid(window) == Some(std::process::id()) {
@@ -33,8 +37,10 @@ pub(super) fn copy(_app: &AppHandle, target: usize) -> Result<String, String> {
     use xcb::{x, Xid};
     /// 超过翻译上限的选区不必整段取回，留出余量让上层给出“超过 32 KB”的提示。
     const LIMIT: usize = 64 * 1024;
-    let x11 = X11::connect()?;
-    if x11.active_window().map(|w| w.resource_id() as usize) != Some(target) {
+    let x11 = X11::connect_selections()?;
+    if !crate::shared::x11::wayland()
+        && x11.active_window().map(|w| w.resource_id() as usize) != Some(target)
+    {
         return Err("前台窗口已切换，请重新选中文字。".into());
     }
     let reader = SelectionReader::new(&x11)?;

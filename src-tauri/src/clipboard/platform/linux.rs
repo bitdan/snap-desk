@@ -31,7 +31,7 @@ fn selection_mask() -> xfixes::SelectionEventMask {
 
 /// 打开连接并订阅 CLIPBOARD 变化；返回连接与 CLIPBOARD 原子。
 fn subscribe() -> Result<(X11, x::Atom), String> {
-    let x11 = X11::connect()?;
+    let x11 = X11::connect_selections()?;
     x11.xfixes()?;
     let clipboard = x11.intern("CLIPBOARD")?;
     let window = x11.hidden_window(x::EventMask::empty())?;
@@ -158,7 +158,7 @@ pub fn sequence() -> u32 {
 
 /// 读取顺序与 Windows / macOS 一致：文件引用优先，其次 PNG 图片，最后 UTF-8 文本。
 pub fn snapshot(settings: &ClipboardSettings) -> Result<Option<Snapshot>, String> {
-    let x11 = X11::connect()?;
+    let x11 = X11::connect_selections()?;
     let clipboard = x11.intern("CLIPBOARD")?;
     let reader = SelectionReader::new(&x11)?;
     let Some(owner) = reader.owner(clipboard) else {
@@ -375,7 +375,7 @@ impl Owner {
         if let Some(owner) = slot.as_ref().filter(|o| o.x11.conn.has_error().is_ok()) {
             return Ok(owner.clone());
         }
-        let x11 = X11::connect()?;
+        let x11 = X11::connect_selections()?;
         let owner = Arc::new(Owner {
             window: x11.hidden_window(x::EventMask::empty())?,
             clipboard: x11.intern("CLIPBOARD")?,
