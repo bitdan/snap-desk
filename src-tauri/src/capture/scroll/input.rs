@@ -392,6 +392,186 @@ mod mac {
 #[cfg(target_os = "macos")]
 pub(super) use mac::Listener;
 
+/// Linux（X11）：与 macOS 相同，轮询全局键盘状态检测 Esc 与 Ctrl+C 的按下边沿。
+/// X11 只有抢占整个键盘才能拦截按键，因此按键仍会传给前台应用；完成时长截图随后写入剪贴板，
+/// 会覆盖应用自身的复制结果。滚动方向不锁定，保持自动识别。
+#[cfg(target_os = "linux")]
+mod linux {
+    use super::Direction;
+    use crate::shared::x11::{self, X11};
+    use std::{
+        sync::{
+            atomic::{AtomicBool, Ordering},
+            mpsc, Arc,
+        },
+        thread::JoinHandle,
+        time::Duration,
+    };
+
+    const ESCAPE: u32 = 0xff1b;
+    const C: u32 = 0x63;
+    const CONTROL: [u32; 2] = [0xffe3, 0xffe4];
+    /// Shift、Alt、Meta、Super：带这些修饰键时多为其他应用的快捷键，不当作完成。
+    const OTHER: [u32; 8] = [
+        0xffe1, 0xffe2, 0xffe9, 0xffea, 0xffe7, 0xffe8, 0xffeb, 0xffec,
+    ];
+
+    /// 启动时按当前键盘映射解析一次键码。
+    struct Keys {
+        escape: Vec<u8>,
+        c: Vec<u8>,
+        control: Vec<u8>,
+        other: Vec<u8>,
+    }
+
+    impl Keys {
+        fn new(x11: &X11) -> Self {
+            let codes = |syms: &[u32]| -> Vec<u8> {
+                x11.keycodes(syms)
+                    .into_iter()
+                    .map(|(_, code)| code)
+                    .collect()
+            };
+            Self {
+                escape: codes(&[ESCAPE]),
+                c: codes(&[C]),
+                control: codes(&CONTROL),
+                other: codes(&OTHER),
+            }
+        }
+
+        /// 返回（Esc 是否按下，单独的 Ctrl+C 是否按下）。
+        fn state(&self, keymap: &[u8]) -> (bool, bool) {
+            let any = |codes: &[u8]| codes.iter().any(|code| x11::pressed(keymap, *code));
+            (
+                any(&self.escape),
+                any(&self.c) && any(&self.control) && !any(&self.other),
+            )
+        }
+    }
+
+    pub struct Listener {
+        stop: Arc<AtomicBool>,
+        retry_copy: Arc<AtomicBool>,
+        worker: Option<JoinHandle<()>>,
+    }
+
+    impl Listener {
+        pub fn start(
+            _direction: Direction,
+            _bounds: (i64, i64, i64, i64),
+            cancel: impl Fn() -> bool + Send + 'static,
+            finish: impl Fn() -> bool + Send + 'static,
+        ) -> Result<Self, String> {
+            let stop = Arc::new(AtomicBool::new(false));
+            let stopped = stop.clone();
+            let retry_copy = Arc::new(AtomicBool::new(false));
+            let retry_requested = retry_copy.clone();
+            let (tx, rx) = mpsc::sync_channel(1);
+            let worker = std::thread::Builder::new()
+                .name("scroll-keys".into())
+                .spawn(move || {
+                    let x11 = match X11::connect() {
+                        Ok(x11) => x11,
+                        Err(error) => {
+                            let _ = tx.send(Err(format!("Esc 退出监听失败：{error}")));
+                            return;
+                        }
+                    };
+                    let keys = Keys::new(&x11);
+                    if keys.escape.is_empty() {
+                        let _ = tx.send(Err("Esc 退出监听失败：键盘映射中没有 Esc。".to_string()));
+                        return;
+                    }
+                    // 以启动时的状态为基准，避免触发长截图时仍按着的键被当作一次按下。
+                    let (mut escape_down, mut copying) = x11
+                        .keymap()
+                        .map_or((true, true), |keymap| keys.state(&keymap));
+                    let mut escape_active = true;
+                    let mut copy_active = true;
+                    log::info!("event=scroll.input_ready module=scroll escape_hook=false");
+                    let _ = tx.send(Ok(()));
+                    while !stopped.load(Ordering::Acquire) {
+                        std::thread::sleep(Duration::from_millis(20));
+                        let Some(keymap) = x11.keymap() else {
+                            continue;
+                        };
+                        let (down, pressed) = keys.state(&keymap);
+                        if retry_requested.swap(false, Ordering::AcqRel) {
+                            copy_active = true;
+                            copying = pressed;
+                        }
+                        if escape_active && down && !escape_down {
+                            log::info!("event=scroll.escape module=scroll hook=false");
+                            if cancel() {
+                                escape_active = false;
+                            }
+                        }
+                        escape_down = down;
+                        if escape_active && copy_active && pressed && !copying && finish() {
+                            // 完成只停止采集；Esc 仍可中断末帧等待或导出。
+                            copy_active = false;
+                        }
+                        copying = pressed;
+                    }
+                })
+                .map_err(|e| e.to_string())?;
+            let listener = Self {
+                stop,
+                retry_copy,
+                worker: Some(worker),
+            };
+            rx.recv()
+                .map_err(|_| "Esc 退出监听线程初始化失败。".to_string())??;
+            Ok(listener)
+        }
+
+        /// 导出失败后允许再次用 Ctrl+C 完成。
+        pub fn allow_copy_retry(&self) {
+            self.retry_copy.store(true, Ordering::Release);
+        }
+    }
+
+    impl Drop for Listener {
+        fn drop(&mut self) {
+            self.stop.store(true, Ordering::Release);
+            if let Some(worker) = self.worker.take() {
+                let _ = worker.join();
+            }
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        fn press(keymap: &mut [u8], code: u8) {
+            keymap[usize::from(code / 8)] |= 1 << (code % 8);
+        }
+
+        #[test]
+        fn copy_chord_requires_control_without_other_modifiers() {
+            let keys = Keys {
+                escape: vec![9],
+                c: vec![54],
+                control: vec![37, 105],
+                other: vec![50],
+            };
+            let mut keymap = [0u8; 32];
+            assert_eq!(keys.state(&keymap), (false, false));
+            press(&mut keymap, 54);
+            assert_eq!(keys.state(&keymap), (false, false));
+            press(&mut keymap, 105);
+            assert_eq!(keys.state(&keymap), (false, true));
+            press(&mut keymap, 50);
+            press(&mut keymap, 9);
+            assert_eq!(keys.state(&keymap), (true, false));
+        }
+    }
+}
+#[cfg(target_os = "linux")]
+pub(super) use linux::Listener;
+
 #[cfg(test)]
 mod tests {
     use super::*;
