@@ -32,11 +32,11 @@ describe('翻译设置契约', () => {
       expect(validateAiSettings({ ...defaultAiSettings(), provider: 'online-llm', targetLanguage })).toBeNull()
     }
   })
-  it('拒绝不安全地址、URL 凭证和非本机明文连接', () => {
-    for (const endpoint of ['http://example.com/v1', 'https://key@example.com/v1', 'https://example.com/?key=x', 'file:///tmp/test', 'https://example.com/#secret', 'invalid']) {
+  it('拒绝不安全地址与 URL 凭证，允许内网 HTTP', () => {
+    for (const endpoint of ['ftp://example.com/v1', 'https://key@example.com/v1', 'https://example.com/?key=x', 'file:///tmp/test', 'https://example.com/#secret', 'invalid']) {
       expect(validateAiSettings({ ...defaultAiSettings(), endpoint })).not.toBeNull()
     }
-    for (const endpoint of ['https://example.com/v1/chat/completions', 'http://127.0.0.1:8080/v1/chat/completions']) {
+    for (const endpoint of ['https://example.com/v1/chat/completions', 'http://127.0.0.1:8080/v1/chat/completions', 'http://intranet.example.com:8089/v1']) {
       expect(validateAiSettings({ ...defaultAiSettings(), endpoint })).toBeNull()
     }
   })
