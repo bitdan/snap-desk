@@ -1307,5 +1307,6 @@
   "已被系统或其他程序占用，暂未生效，请更换按键。": "Taken by the system or another app and not active. Choose a different key.",
   "测试期间有应用开启了安全输入（如密码框或终端的“安全键盘输入”），系统可能因此不分发快捷键；离开密码框或关闭该选项后重试。": "An app turned on Secure Input during the test (a password field or Terminal's Secure Keyboard Entry), which can stop shortcuts from being delivered. Leave the password field or turn the option off, then try again.",
   "Mac 键盘上的 F 键默认控制亮度、音量等，需要同时按 Fn；也可以在“系统设置 → 键盘”中打开“将 F1、F2 等键用作标准功能键”。": "On a Mac keyboard the F keys control brightness, volume and so on by default, so hold Fn with them, or turn on \"Use F1, F2, etc. keys as standard function keys\" in System Settings → Keyboard.",
-  "目标窗口覆盖显示器（可能处于全屏空间）；尝试退出全屏后对比。": "The target window covers the display (it may be in a full-screen Space). Compare after leaving full screen."
+  "目标窗口覆盖显示器（可能处于全屏空间）；尝试退出全屏后对比。": "The target window covers the display (it may be in a full-screen Space). Compare after leaving full screen.",
+  "系统快捷键命令": "Commands for system shortcuts"
 }

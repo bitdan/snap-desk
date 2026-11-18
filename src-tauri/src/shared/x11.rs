@@ -6,9 +6,9 @@ use xcb::{randr, x, xfixes, Xid, XidNew};
 
 pub(crate) const WAYLAND_HINT: &str = "暂不支持 Wayland 会话，请在登录界面选择 X11（Xorg）会话。";
 
+/// 会话识别与 `SNAP_DESK_SESSION` 覆盖见 `desktop_support::session`。
 pub(crate) fn wayland() -> bool {
-    std::env::var("XDG_SESSION_TYPE").is_ok_and(|v| v.eq_ignore_ascii_case("wayland"))
-        || std::env::var_os("WAYLAND_DISPLAY").is_some()
+    crate::shared::desktop_support::session() == crate::shared::desktop_support::Session::Wayland
 }
 
 /// X keysym（与键盘布局无关的按键符号）。
