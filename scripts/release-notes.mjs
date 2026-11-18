@@ -11,7 +11,7 @@ export function createReleaseNotes(tag, annotation, engineTag) {
   if ([tag, `Snap Desk ${tag}`].includes(lines[0]?.trim())) lines.shift()
   const changes = lines.join('\n').trim()
   if (!changes) throw new Error('标签缺少更新内容，请使用 git tag -a 并在标签注释中填写本次变动。')
-  return `## 更新内容\n\n${changes}\n\n## 下载与资源\n\n- Windows x64：NSIS 安装包（-setup.exe）或独立 EXE（-standalone.exe），功能完整。\n- macOS Apple 芯片（预览）：DMG；未经 Apple 公证，首次打开需在“系统设置 → 隐私与安全性”中放行。\n- Linux x64（预览）：AppImage 或 deb；截图需要 X11 会话，AppImage 支持在线更新。\n- macOS 与 Linux 预览版目前提供截图、标注、贴图、识别与翻译，录屏、滚动截图和剪贴板历史暂未适配。\n- .app.tar.gz、.sig 与 updater.json 供在线更新使用，无需手动下载。\n- 翻译引擎：${engineTag}（Windows x64 CPU，协议 1）。\n- 请在“识别与翻译”设置中下载或导入翻译引擎与语言包，各分发形式均按需安装这些资源。\n- 模型来源和许可见各模型包内的 pack.json、LICENSE.txt。\n`
+  return `## 更新内容\n\n${changes}\n\n## 下载与资源\n\n- Windows x64：NSIS 安装包（-setup.exe）或独立 EXE（-standalone.exe），功能完整。\n- macOS Apple 芯片（预览）：DMG；未经 Apple 公证，首次打开需在“系统设置 → 隐私与安全性”中放行，并授予屏幕录制权限；已适配截图、滚动截图、录屏和剪贴板历史，暂不支持跨屏框选。\n- Linux x64（预览）：AppImage 或 deb，AppImage 支持在线更新。X11 已适配多屏截图、窗口吸附、滚动截图、录屏和剪贴板历史；Wayland 支持单显示器截图和经屏幕共享门户录屏，剪贴板历史与划词翻译经 Xwayland 提供。\n- macOS 与 Linux 的上述功能仅通过 CI 构建和自动化测试，尚未在实机上验证，遇到问题欢迎反馈。\n- .app.tar.gz、.sig 与 updater.json 供在线更新使用，无需手动下载。\n- 翻译引擎：${engineTag}（Windows x64 CPU，协议 1）。\n- 请在“识别与翻译”设置中下载或导入翻译引擎与语言包，各分发形式均按需安装这些资源。\n- 模型来源和许可见各模型包内的 pack.json、LICENSE.txt。\n`
 }
 
 export function notesFromTag(tag, repository = root) {
