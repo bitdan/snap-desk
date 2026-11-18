@@ -22,6 +22,9 @@ mod accessibility;
 mod linux;
 #[cfg(not(any(windows, target_os = "macos")))]
 pub use linux::capture;
+#[cfg(target_os = "linux")]
+#[path = "wayland/mod.rs"]
+pub(crate) mod wayland;
 #[cfg(not(any(windows, target_os = "macos")))]
 pub(crate) use linux::window_frame_of as linux_window_frame;
 

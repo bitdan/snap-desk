@@ -144,6 +144,10 @@ fn place_overlay(
             .map_err(err)?;
         return Ok(());
     }
+    #[cfg(target_os = "linux")]
+    if crate::shared::x11::wayland() {
+        return fullscreen_on_output(window);
+    }
     window
         .set_position(tauri::PhysicalPosition::new(desktop.x, desktop.y))
         .map_err(err)?;
@@ -154,6 +158,37 @@ fn place_overlay(
         ))
         .map_err(err)
 }
+/// Wayland 不能指定窗口位置；按截图所在显示器的逻辑几何找到 GDK 显示器，在其上全屏。
+/// 找不到对应显示器时交给合成器决定（通常是焦点显示器）。GTK 调用必须在主线程执行。
+#[cfg(target_os = "linux")]
+fn fullscreen_on_output(window: &WebviewWindow) -> Result<(), String> {
+    use gtk::prelude::*;
+    let geometry = crate::capture::desktop::wayland::last_output();
+    let target = window.clone();
+    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+    window
+        .run_on_main_thread(move || {
+            let result = target.gtk_window().map_err(err).map(|gtk_window| {
+                let monitor = geometry.and_then(|(x, y, width, height)| {
+                    let display = gtk::gdk::Display::default()?;
+                    (0..display.n_monitors()).find(|index| {
+                        display.monitor(*index).is_some_and(|monitor| {
+                            let area = monitor.geometry();
+                            (area.x(), area.y(), area.width(), area.height()) == (x, y, width, height)
+                        })
+                    })
+                });
+                match (monitor, GtkWindowExt::screen(&gtk_window)) {
+                    (Some(index), Some(screen)) => gtk_window.fullscreen_on_monitor(&screen, index),
+                    _ => gtk_window.fullscreen(),
+                }
+            });
+            let _ = sender.send(result);
+        })
+        .map_err(err)?;
+    receiver.recv().map_err(err)?
+}
+
 fn overlay(app: &AppHandle) -> Result<WebviewWindow, String> {
     app.get_webview_window("capture")
         .ok_or_else(|| "截图窗口不可用，请重启应用。".into())
