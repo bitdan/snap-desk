@@ -131,16 +131,16 @@ const WLR_DATA_CONTROL: &str = "zwlr_data_control_manager_v1";
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct DesktopProtocols {
-    kwin_screenshot: bool,
-    ext_image_copy_capture: bool,
-    wlr_screencopy: bool,
-    layer_shell: bool,
-    ext_data_control: bool,
-    wlr_data_control: bool,
-    portal_screenshot: bool,
-    portal_screencast: bool,
-    portal_global_shortcuts: bool,
-    portal_remote_desktop: bool,
+    pub(crate) kwin_screenshot: bool,
+    pub(crate) ext_image_copy_capture: bool,
+    pub(crate) wlr_screencopy: bool,
+    pub(crate) layer_shell: bool,
+    pub(crate) ext_data_control: bool,
+    pub(crate) wlr_data_control: bool,
+    pub(crate) portal_screenshot: bool,
+    pub(crate) portal_screencast: bool,
+    pub(crate) portal_global_shortcuts: bool,
+    pub(crate) portal_remote_desktop: bool,
 }
 
 /// 单项功能是否可用；不可用时 `reason` 是中文消息键，前端经词典显示。
@@ -203,6 +203,16 @@ pub struct DesktopSupport {
     command_line: String,
 }
 
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+impl DesktopSupport {
+    pub(crate) fn protocols(&self) -> &DesktopProtocols {
+        &self.protocols
+    }
+    pub(crate) fn compositor(&self) -> &'static str {
+        self.compositor
+    }
+}
+
 pub(crate) const WAYLAND_PENDING: &str =
     "Wayland 会话暂不支持此功能，请在登录界面选择 X11（Xorg）会话后使用。";
 pub(crate) const WAYLAND_SHORTCUTS: &str =
@@ -212,8 +222,9 @@ const WAYLAND_PASTE: &str =
     "Wayland 不允许应用向其他窗口发送按键，选择条目后只写入剪贴板，请手动粘贴。";
 const WAYLAND_SNAP: &str = "当前 Wayland 桌面不提供窗口位置，截图时无法吸附窗口。";
 const WAYLAND_ON_TOP: &str = "当前 Wayland 桌面不允许应用置顶窗口，贴图可能被其他窗口遮挡。";
-const WAYLAND_CURSOR: &str = "Wayland 截图暂不包含光标。";
-const NO_CAPTURE_BACKEND: &str =
+const WAYLAND_CURSOR: &str = "当前 Wayland 桌面只能通过截图门户截图，截图不包含光标。";
+const WAYLAND_SCROLL: &str = "Wayland 下无法连续读取屏幕画面，滚动截图不可用。";
+pub(crate) const NO_CAPTURE_BACKEND: &str =
     "当前 Wayland 桌面没有可用的截图接口（KWin、ext-image-copy-capture、wlr-screencopy 或屏幕共享门户）。";
 
 pub(crate) fn report(
@@ -269,24 +280,35 @@ pub(crate) fn report(
     }
 }
 
-/// Wayland 各功能尚未接入时统一标注；有截图接口的桌面提示先使用 X11，没有接口的桌面说明原因。
+/// Wayland 截图按可用后端判断；尚未接入的功能统一标注，没有截图接口的桌面说明原因。
 fn wayland_features(protocols: &DesktopProtocols) -> DesktopFeatures {
-    let capture_backend = protocols.kwin_screenshot
+    // 除 Screenshot 门户外，其余后端都能把光标合成进画面。
+    let cursor_backend = protocols.kwin_screenshot
         || protocols.ext_image_copy_capture
         || protocols.wlr_screencopy
-        || protocols.portal_screencast
-        || protocols.portal_screenshot;
-    let capture = DesktopFeature::no(if capture_backend {
-        WAYLAND_PENDING
-    } else {
-        NO_CAPTURE_BACKEND
-    });
+        || protocols.portal_screencast;
+    let capture_backend = cursor_backend || protocols.portal_screenshot;
+    let no_backend = DesktopFeature::no(NO_CAPTURE_BACKEND);
     DesktopFeatures {
-        screenshot: capture.clone(),
-        screenshot_cursor: DesktopFeature::no(WAYLAND_CURSOR),
+        screenshot: if capture_backend {
+            DesktopFeature::yes()
+        } else {
+            no_backend.clone()
+        },
+        screenshot_cursor: if cursor_backend {
+            DesktopFeature::yes()
+        } else if capture_backend {
+            DesktopFeature::no(WAYLAND_CURSOR)
+        } else {
+            no_backend.clone()
+        },
         window_snap: DesktopFeature::no(WAYLAND_SNAP),
-        scroll_capture: capture.clone(),
-        recording: capture,
+        scroll_capture: DesktopFeature::no(WAYLAND_SCROLL),
+        recording: if capture_backend {
+            DesktopFeature::no(WAYLAND_PENDING)
+        } else {
+            no_backend
+        },
         recording_effects: DesktopFeature::no(WAYLAND_INPUT),
         global_shortcuts: DesktopFeature::no(WAYLAND_SHORTCUTS),
         clipboard_history: DesktopFeature::no(WAYLAND_PENDING),
@@ -457,7 +479,10 @@ mod tests {
         assert!(support.protocols.ext_image_copy_capture && support.protocols.wlr_screencopy);
         assert!(support.protocols.layer_shell && support.protocols.ext_data_control);
         assert!(!support.protocols.wlr_data_control);
-        assert_eq!(support.features.screenshot.reason(), WAYLAND_PENDING);
+        assert!(support.features.screenshot.available());
+        assert!(support.features.screenshot_cursor.available());
+        assert_eq!(support.features.scroll_capture.reason(), WAYLAND_SCROLL);
+        assert_eq!(support.features.recording.reason(), WAYLAND_PENDING);
         assert_eq!(
             support.features.global_shortcuts.reason(),
             WAYLAND_SHORTCUTS
@@ -491,7 +516,19 @@ mod tests {
             ..Probe::default()
         };
         let gnome = report(Session::Wayland, "GNOME", &gnome, "x".into());
-        assert_eq!(gnome.features.screenshot.reason(), WAYLAND_PENDING);
+        assert!(gnome.features.screenshot.available());
+
+        // 只有 Screenshot 门户时可以截图，但不含光标。
+        let portal_only = Probe {
+            portal_screenshot: true,
+            ..Probe::default()
+        };
+        let portal_only = report(Session::Wayland, "", &portal_only, "x".into());
+        assert!(portal_only.features.screenshot.available());
+        assert_eq!(
+            portal_only.features.screenshot_cursor.reason(),
+            WAYLAND_CURSOR
+        );
     }
 
     #[test]
@@ -530,6 +567,7 @@ mod tests {
             WAYLAND_SNAP,
             WAYLAND_ON_TOP,
             WAYLAND_CURSOR,
+            WAYLAND_SCROLL,
             NO_CAPTURE_BACKEND,
         ] {
             assert!(

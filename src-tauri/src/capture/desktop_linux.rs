@@ -323,7 +323,36 @@ fn window_frame(x11: &X11, window: &NativeWindow) -> Option<WindowFrame> {
     })
 }
 
+/// Wayland 只冻结一块显示器：覆盖层无法跨屏定位，只能全屏到该显示器上。
+/// 坐标使用该显示器的物理像素（逻辑位置 × 缩放），前端按视口比例换算，不依赖窗口位置。
+fn capture_wayland(include_cursor: bool) -> Result<Desktop, String> {
+    let shot = super::wayland::capture(include_cursor)?;
+    let scale = shot.output.scale();
+    let (width, height) = shot.image.dimensions();
+    let x = (f64::from(shot.output.x) * scale).round() as i32;
+    let y = (f64::from(shot.output.y) * scale).round() as i32;
+    Ok(Desktop {
+        image: shot.image,
+        x,
+        y,
+        displays: vec![Display {
+            x,
+            y,
+            width,
+            height,
+            primary: true,
+            scale,
+        }],
+        targets: Vec::new(),
+        windows: Vec::new(),
+        include_cursor,
+    })
+}
+
 pub fn capture(primary_only: bool, include_cursor: bool, snap: bool) -> Result<Desktop, String> {
+    if wayland() {
+        return capture_wayland(include_cursor);
+    }
     let x11 = X11::connect()?;
     // Xft.dpi 是 X11 的全局缩放，仅用于浮窗布局；截图坐标始终是物理像素。
     let scale = xcap::Monitor::all()

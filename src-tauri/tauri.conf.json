@@ -133,7 +133,7 @@
           "gstreamer1.0-plugins-good",
           "gstreamer1.0-pulseaudio"
         ],
-        "recommends": ["gstreamer1.0-plugins-ugly", "gstreamer1.0-plugins-bad", "gstreamer1.0-libav"]
+        "recommends": ["gstreamer1.0-pipewire", "gstreamer1.0-plugins-ugly", "gstreamer1.0-plugins-bad", "gstreamer1.0-libav"]
       }
     },
     "resources": {
