@@ -6209,12 +6209,14 @@ dependencies = [
  "tauri-plugin-updater",
  "tempfile",
  "tokio",
+ "wayland-client",
  "wechat-ocr-core",
  "windows",
  "windows-core",
  "windows-sys 0.59.0",
  "xcap",
  "xcb",
+ "zbus",
  "zip",
 ]
 

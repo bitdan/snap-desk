@@ -971,5 +971,13 @@
   "无法开始窗口录制：{0}": "Unable to start the window recording: {0}",
   "显示器录制收到了窗口来源。": "Display recording received a window source.",
   "以下快捷键已被系统或其他程序占用，暂未生效：{0}。请在“快捷键”页更换按键。": "These shortcuts are taken by the system or another app and are not active: {0}. Choose different keys on the Shortcuts page.",
-  "此环境测试仅支持 Windows 和 macOS。": "This test supports Windows and macOS only."
+  "此环境测试仅支持 Windows 和 macOS。": "This test supports Windows and macOS only.",
+  "Wayland 会话暂不支持此功能，请在登录界面选择 X11（Xorg）会话后使用。": "This feature is not supported in Wayland sessions yet. Choose an X11 (Xorg) session on the login screen to use it.",
+  "Wayland 下应用无法直接注册全局快捷键，请在桌面或合成器的快捷键设置中绑定下方命令。": "Apps cannot register global shortcuts directly on Wayland. Bind the command below in your desktop or compositor shortcut settings.",
+  "Wayland 不允许应用监听全局键鼠，录屏键鼠特效不可用。": "Wayland does not let apps watch global keyboard and mouse input, so recording key and mouse effects are unavailable.",
+  "Wayland 不允许应用向其他窗口发送按键，选择条目后只写入剪贴板，请手动粘贴。": "Wayland does not let apps send keystrokes to other windows. Choosing an entry only copies it to the clipboard; paste it manually.",
+  "当前 Wayland 桌面不提供窗口位置，截图时无法吸附窗口。": "This Wayland desktop does not expose window positions, so screenshots cannot snap to windows.",
+  "当前 Wayland 桌面不允许应用置顶窗口，贴图可能被其他窗口遮挡。": "This Wayland desktop does not let apps keep windows on top, so pins may be covered by other windows.",
+  "Wayland 截图暂不包含光标。": "Wayland screenshots do not include the cursor yet.",
+  "当前 Wayland 桌面没有可用的截图接口（KWin、ext-image-copy-capture、wlr-screencopy 或屏幕共享门户）。": "This Wayland desktop offers no screen capture interface (KWin, ext-image-copy-capture, wlr-screencopy, or the screen sharing portal)."
 }

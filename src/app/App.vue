@@ -37,6 +37,7 @@ import AppearanceSettings from '@/features/settings/components/AppearanceSetting
 import { applyAppearance, type Appearance } from '@/shared/ui/appearance'
 import UpdateNotice from '@/features/settings/components/UpdateNotice.vue'
 import { macPlatform } from '@/shared/platform'
+import { featureAvailable, pageLimitations, shortcutCommands } from '@/features/settings/desktop-support'
 
 const availableUpdate = ref<string | null>(null)
 
@@ -101,6 +102,9 @@ let disposed = false
 let delayRevision = 0, configRevision = 0, statusRevision = 0
 const initializing = ref(false)
 const initializationFailed = ref(false)
+const support = computed(() => status.value?.desktopSupport)
+const limitations = computed(() => pageLimitations(support.value, page.value))
+const boundCommands = computed(() => shortcutCommands(support.value, shortcutActions))
 const locked = computed(() => !desktop || !status.value || initializing.value || initializationFailed.value || pending.value || saving.value || editingShortcut.value || testingShortcuts.value || remaining.value > 0)
 async function refreshStatus() {
   const revision = delayRevision, config = configRevision, request = ++statusRevision
@@ -275,18 +279,19 @@ onUnmounted(() => { disposed = true; window.removeEventListener('keydown', key);
         <div v-if="status?.configWarning" class="notice" role="alert">{{ te(status.configWarning) }}</div>
         <div v-if="remaining > 0" class="notice flex items-center justify-between" role="status"><span>{{ remaining }} {{ t('秒后截图，可切换到目标窗口；再次按截图快捷键可取消。') }}</span><Button variant="outline" @click="cancelPending">{{ t('取消截图') }}</Button></div>
 
+        <div v-if="limitations.length" class="notice" role="note" data-testid="desktop-limitations"><p v-for="reason in limitations" :key="reason">{{ te(reason) }}</p></div>
         <OnboardingGuide v-if="onboarding && status" :busy="completingOnboarding" :error="onboardingError" @complete="completeOnboarding" @navigate="navigate" />
         <template v-if="page === '截图'">
           <ToolHero :icon="Camera" :title="t('区域截图')" :shortcut="status?.settings.shortcutsEnabled ? status.settings.shortcuts.capture : ''" data-onboarding="capture-controls">
-            <Button :disabled="locked" @click="start">{{ remaining > 0 ? `${remaining} ${t('秒后截图')}` : pending ? t('正在准备…') : t('开始截图') }}</Button>
+            <Button :disabled="locked || !featureAvailable(support, 'screenshot')" :title="featureAvailable(support, 'screenshot') ? undefined : te(support?.features.screenshot.reason)" @click="start">{{ remaining > 0 ? `${remaining} ${t('秒后截图')}` : pending ? t('正在准备…') : t('开始截图') }}</Button>
           </ToolHero>
           <form @submit.prevent @input="captureAutoSave.schedule" @change="captureAutoSave.commit" @focusout="captureAutoSave.flush">
             <h2 class="section-heading">{{ t('截图') }}<button type="button" :disabled="locked" @click="resetCapture">{{ t('恢复默认') }}</button></h2>
             <div class="settings-card">
               <!-- 主页使用同一设置保存接口，确保按钮、托盘和快捷键的延时一致。 -->
               <SettingRow :label="t('延时')"><SegmentedControl :model-value="status?.settings.delaySeconds ?? 0" :label="t('延时')" :options="[{ value: 0, label: t('无延时') }, { value: 3, label: t('3 秒') }, { value: 5, label: t('5 秒') }]" :disabled="locked" @update:model-value="changeDelay" /></SettingRow>
-              <SettingRow :label="t('截图包含光标')" for="screenshot-cursor"><SwitchControl id="screenshot-cursor" v-model="draft.screenshotCursor" :disabled="locked || (status?.platform !== 'windows' && status?.platform !== 'macos')" @change="captureAutoSave.commit" /></SettingRow>
-              <SettingRow :label="t('窗口 / 元素吸附')" for="screenshot-snap"><SwitchControl id="screenshot-snap" v-model="draft.screenshotSnap" :disabled="locked || (status?.platform !== 'windows' && status?.platform !== 'macos')" @change="captureAutoSave.commit" /></SettingRow>
+              <SettingRow :label="t('截图包含光标')" for="screenshot-cursor"><SwitchControl id="screenshot-cursor" v-model="draft.screenshotCursor" :disabled="locked || !featureAvailable(support, 'screenshotCursor')" @change="captureAutoSave.commit" /></SettingRow>
+              <SettingRow :label="t('窗口 / 元素吸附')" for="screenshot-snap"><SwitchControl id="screenshot-snap" v-model="draft.screenshotSnap" :disabled="locked || !featureAvailable(support, 'windowSnap')" @change="captureAutoSave.commit" /></SettingRow>
               <SettingRow :label="t('沿用上次选区')" for="screenshot-reuse-last"><SwitchControl id="screenshot-reuse-last" v-model="draft.screenshotReuseLast" :disabled="locked" @change="captureAutoSave.commit" /></SettingRow>
               <SettingRow :label="t('框选完成后')" for="screenshot-after" :hint="draft.screenshotAfter === 'none' ? '' : t('按住 {0} 框选可保留工具栏', { 0: macPlatform ? '⌘' : 'Ctrl' })"><SelectControl id="screenshot-after" v-model="draft.screenshotAfter" :disabled="locked" :options="[{ value: 'none', label: t('显示工具栏') }, { value: 'copy', label: t('直接复制') }, { value: 'pin', label: t('直接贴图') }, { value: 'save', label: t('直接保存') }]" @update:model-value="captureAutoSave.commit" /></SettingRow>
             </div>
@@ -326,6 +331,12 @@ onUnmounted(() => { disposed = true; window.removeEventListener('keydown', key);
         <PinManager v-else-if="page === '贴图'" :shortcut="status?.settings.shortcutsEnabled ? status.settings.shortcuts.pin : ''" />
         <template v-else-if="page === '快捷键'">
           <form @submit.prevent>
+            <template v-if="boundCommands.length">
+              <h2 class="section-heading">{{ t('系统快捷键命令') }}</h2>
+              <div class="settings-card" data-testid="shortcut-commands">
+                <div v-for="item in boundCommands" :key="item.command" class="setting-row"><span>{{ t(item.label) }}</span><code class="select-all text-xs">{{ item.command }}</code></div>
+              </div>
+            </template>
             <h2 class="section-heading">{{ t('全局快捷键') }}<button type="button" :disabled="locked" @click="resetShortcuts">{{ t('恢复默认') }}</button></h2>
             <div class="settings-card">
               <div v-for="action in shortcutActions" :key="action.key" class="setting-row" :data-onboarding="action.key === 'capture' ? 'shortcut-settings' : undefined">

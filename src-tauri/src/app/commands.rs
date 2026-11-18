@@ -17,6 +17,8 @@ pub(super) struct AppStatus {
     config_warning: Option<String>,
     delay_remaining: u8,
     platform: &'static str,
+    /// 会话类型与各功能可用性；入口据此提前隐藏或标注，而不是点击后才报错。
+    desktop_support: &'static crate::shared::desktop_support::DesktopSupport,
     version: String,
 }
 
@@ -38,6 +40,7 @@ pub(super) async fn app_status(app: AppHandle, window: WebviewWindow) -> Result<
                 .delay_remaining
                 .load(Ordering::SeqCst),
             platform: std::env::consts::OS,
+            desktop_support: crate::shared::desktop_support::current(),
             version: app.package_info().version.to_string(),
         })
     })

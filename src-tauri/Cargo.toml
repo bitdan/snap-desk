@@ -97,6 +97,9 @@ gstreamer = "=0.21.3"
 gstreamer-app = "=0.21.2"
 libc = "0.2"
 dbus-secret-service = { version = "=4.1.0", features = ["crypto-openssl"] }
+# Wayland 会话探测：列出合成器全局对象、查询 KWin / xdg-desktop-portal 接口；版本与 xcap 已依赖的一致。
+wayland-client = "=0.31.15"
+zbus = "=5.19.0"
 
 # 其他平台保留构建时下载 CPU 引擎的方式，同样显式选择 API 24。
 [target.'cfg(not(windows))'.dependencies]

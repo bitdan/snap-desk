@@ -129,6 +129,7 @@ pub fn run() {
         .setup(|app| {
             diagnostics::logger::initialize(app.handle());
             diagnostics::runtime::initialize(app.handle());
+            crate::shared::desktop_support::warm_up();
             log::info!(
                 "event=app.starting module=app version={} platform={}",
                 app.package_info().version,
