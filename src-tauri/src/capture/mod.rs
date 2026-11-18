@@ -178,7 +178,7 @@ fn fullscreen_on_output(window: &WebviewWindow) -> Result<(), String> {
                         })
                     })
                 });
-                match (monitor, gtk_window.screen()) {
+                match (monitor, GtkWindowExt::screen(&gtk_window)) {
                     (Some(index), Some(screen)) => gtk_window.fullscreen_on_monitor(&screen, index),
                     _ => gtk_window.fullscreen(),
                 }
