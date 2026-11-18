@@ -313,7 +313,12 @@ fn wayland_features(protocols: &DesktopProtocols) -> DesktopFeatures {
             DesktopFeature::no(NO_SCREENCAST)
         },
         recording_effects: DesktopFeature::no(WAYLAND_INPUT),
-        global_shortcuts: DesktopFeature::no(WAYLAND_SHORTCUTS),
+        // 门户绑定的按键以桌面确认为准；没有门户时由用户在桌面中绑定命令行入口。
+        global_shortcuts: if protocols.portal_global_shortcuts {
+            DesktopFeature::yes()
+        } else {
+            DesktopFeature::no(WAYLAND_SHORTCUTS)
+        },
         clipboard_history: DesktopFeature::no(WAYLAND_PENDING),
         selected_text: DesktopFeature::no(WAYLAND_PENDING),
         direct_paste: DesktopFeature::no(WAYLAND_PASTE),
@@ -491,6 +496,15 @@ mod tests {
             WAYLAND_SHORTCUTS
         );
         assert!(support.features.pin_on_top.available());
+        let kde = Probe {
+            compositor: Compositor::Kwin,
+            portal_global_shortcuts: true,
+            ..Probe::default()
+        };
+        assert!(report(Session::Wayland, "KDE", &kde, "x".into())
+            .features
+            .global_shortcuts
+            .available());
         assert!(!support.features.recording_effects.available());
 
         // 只有源管理器而没有拷贝管理器时不算可用。
