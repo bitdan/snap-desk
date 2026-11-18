@@ -464,7 +464,8 @@ pub async fn start_recording(
             };
             source
         } else {
-            if matches!(config.source, CaptureSource::PrimaryMonitor) {
+            // Wayland 下 GDK 报告的主屏不可靠，且来源固定为截图时冻结的显示器。
+            if matches!(config.source, CaptureSource::PrimaryMonitor) && !wayland_session() {
                 let primary = app.primary_monitor().map_err(err)?.ok_or("主屏不可用。")?;
                 if (primary.position().x, primary.position().y) != (screen.x, screen.y) {
                     return Err("旧版主屏录制配置不能用于副屏，请重新选择录制来源。".into());
@@ -476,6 +477,15 @@ pub async fn start_recording(
             }
         };
         config.region = rect;
+        // Wayland 不允许读取全局键鼠；旧配置里开启的特效在这里关闭，不让录制因此失败。
+        if wayland_session() {
+            let effects = &mut config.input_effects;
+            effects.keyboard = false;
+            effects.clicks = false;
+            effects.movement = false;
+            effects.drag = false;
+            effects.wheel = false;
+        }
         config.validate(source_size)?;
         capture::supported()?;
         // 准备时固定本次目录；临时录制文件和最终文件同盘，停止时无需跨盘移动。
@@ -642,3 +652,11 @@ fn measured_capture(
     s.view.revision += 1;
     result
 }
+
+fn wayland_session() -> bool {
+    #[cfg(target_os = "linux")]
+    return crate::shared::x11::wayland();
+    #[cfg(not(target_os = "linux"))]
+    false
+}
+

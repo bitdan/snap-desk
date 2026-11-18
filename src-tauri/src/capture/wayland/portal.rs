@@ -17,7 +17,7 @@ const SCREENCAST: &str = "org.freedesktop.portal.ScreenCast";
 /// 授权对话框等待用户操作的上限。
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(120);
 
-fn connect() -> Result<Connection, String> {
+pub(crate) fn connect() -> Result<Connection, String> {
     zbus::blocking::connection::Builder::session()
         .map(|builder| builder.method_timeout(Duration::from_secs(30)))
         .and_then(|builder| builder.build())
@@ -119,17 +119,18 @@ struct Screenshot {
 }
 
 /// 授权后的屏幕共享会话；析构时关闭，避免系统继续显示“正在共享屏幕”。
-pub(crate) struct Session<'c> {
-    conn: &'c Connection,
+/// 持有连接的克隆（zbus 连接为引用计数），会话可以随录制来源跨线程长期保存。
+pub(crate) struct Session {
+    conn: Connection,
     pub handle: OwnedObjectPath,
     pub streams: Vec<(u32, Option<(i32, i32)>, Option<(i32, i32)>)>,
     pub restore_token: Option<String>,
 }
 
-impl Session<'_> {
+impl Session {
     pub fn open_pipewire(&self) -> Result<std::os::fd::OwnedFd, String> {
         let proxy =
-            Proxy::new(self.conn, PORTAL, PORTAL_PATH, SCREENCAST).map_err(|e| e.to_string())?;
+            Proxy::new(&self.conn, PORTAL, PORTAL_PATH, SCREENCAST).map_err(|e| e.to_string())?;
         let fd: zbus::zvariant::OwnedFd = proxy
             .call(
                 "OpenPipeWireRemote",
@@ -140,10 +141,10 @@ impl Session<'_> {
     }
 }
 
-impl Drop for Session<'_> {
+impl Drop for Session {
     fn drop(&mut self) {
         if let Ok(proxy) = Proxy::new(
-            self.conn,
+            &self.conn,
             PORTAL,
             self.handle.as_str(),
             "org.freedesktop.portal.Session",
@@ -162,12 +163,12 @@ fn cursor_modes(conn: &Connection) -> u32 {
 }
 
 /// 创建会话、选择显示器并开始共享；`restore` 为上次保存的令牌。
-pub(crate) fn start<'c>(
-    conn: &'c Connection,
+pub(crate) fn start(
+    conn: &Connection,
     restore: Option<&str>,
     cursor: bool,
     multiple: bool,
-) -> Result<Session<'c>, String> {
+) -> Result<Session, String> {
     let proxy = Proxy::new(conn, PORTAL, PORTAL_PATH, SCREENCAST).map_err(|e| e.to_string())?;
     let session_token = token();
     let created: Results = request(conn, |handle| {
@@ -181,7 +182,7 @@ pub(crate) fn start<'c>(
     })?;
     let handle = session_handle(created)?;
     let mut session = Session {
-        conn,
+        conn: conn.clone(),
         handle,
         streams: Vec::new(),
         restore_token: None,
@@ -272,15 +273,16 @@ pub(crate) fn forget_token(name: &str) {
     }
 }
 
-const SCREENSHOT_TOKEN: &str = "screencast-token";
+/// 截图与录屏共用同一份授权：GNOME 上选过一次显示器后两者都不再弹窗。
+pub(crate) const SCREENCAST_TOKEN: &str = "screencast-token";
 
 /// 带令牌的授权失败（显示器变化或令牌被撤销）时清除令牌，再请求一次完整授权。
-pub(crate) fn start_with_token<'c>(
-    conn: &'c Connection,
+pub(crate) fn start_with_token(
+    conn: &Connection,
     name: &str,
     cursor: bool,
     multiple: bool,
-) -> Result<Session<'c>, String> {
+) -> Result<Session, String> {
     let saved = read_token(name);
     match start(conn, saved.as_deref(), cursor, multiple) {
         Err(error) if saved.is_some() && error != CANCELLED => {
@@ -294,7 +296,7 @@ pub(crate) fn start_with_token<'c>(
 
 pub(super) fn screencast(layout: &[Output], _target: usize, cursor: bool) -> Result<Shot, String> {
     let conn = connect()?;
-    let session = start_with_token(&conn, SCREENSHOT_TOKEN, cursor, false)?;
+    let session = start_with_token(&conn, SCREENCAST_TOKEN, cursor, false)?;
     // 用户在对话框中选中的显示器即截图目标；对应不上时按唯一流处理，几何取流自身的尺寸。
     let (node, position, size) = session.streams[0];
     let fd = session.open_pipewire()?;
@@ -315,7 +317,7 @@ pub(super) fn screencast(layout: &[Output], _target: usize, cursor: bool) -> Res
         }
     };
     if let Some(value) = &session.restore_token {
-        write_token(SCREENSHOT_TOKEN, value);
+        write_token(SCREENCAST_TOKEN, value);
     }
     drop(session);
     Ok(Shot { output, image })

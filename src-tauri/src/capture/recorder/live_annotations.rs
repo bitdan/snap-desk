@@ -770,6 +770,11 @@ fn restore_desktop_focus(app: &AppHandle) {
 
 fn apply_mode(app: &AppHandle, id: u64, editing: bool) -> Result<(), String> {
     // 画布是覆盖整屏的透明窗口；X11 没有合成管理器时它显示为黑底，会挡住正在录制的画面。
+    // Wayland 不允许应用把窗口放到指定位置，画布无法对齐录制区域。
+    #[cfg(target_os = "linux")]
+    if editing && crate::shared::x11::wayland() {
+        return Err("Wayland 下无法把标注画布对齐到录制区域，录屏实时标注不可用。".into());
+    }
     #[cfg(target_os = "linux")]
     if editing && !crate::shared::x11::X11::connect()?.composited() {
         return Err(

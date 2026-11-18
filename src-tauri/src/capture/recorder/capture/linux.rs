@@ -21,6 +21,8 @@ use xcb::{shm, x, xfixes, XidNew};
 
 #[path = "linux_exclude.rs"]
 mod exclude;
+#[path = "linux_wayland.rs"]
+mod wayland;
 
 /// 录屏时间轴单位为 100 ns，取 CLOCK_MONOTONIC；GStreamer 系统时钟默认同源，音画对齐无需换算。
 pub fn now() -> i64 {
@@ -34,6 +36,9 @@ pub fn now() -> i64 {
 }
 
 pub fn supported() -> Result<(), String> {
+    if x11::wayland() {
+        return wayland::supported();
+    }
     let x11 = connect()?;
     pixel_order(&x11).map(|_| ())
 }
@@ -116,6 +121,9 @@ fn source_rect(x11: &X11, source: NativeSource) -> Result<(i32, i32, u32, u32), 
 }
 
 pub fn source_dimensions(source: NativeSource) -> Result<(u32, u32), String> {
+    if x11::wayland() {
+        return wayland::source_dimensions(source);
+    }
     let x11 = connect()?;
     let (_, _, width, height) = source_rect(&x11, source)?;
     if width < 2 || height < 2 {
@@ -130,6 +138,9 @@ pub fn prepare(
     source: NativeSource,
     pool: Arc<FramePool>,
 ) -> Result<Box<dyn CaptureBackend>, String> {
+    if x11::wayland() {
+        return wayland::prepare(config, size, source, pool);
+    }
     Ok(Box::new(Capture::new(config, size, source, pool)?))
 }
 

@@ -223,6 +223,8 @@ const WAYLAND_PASTE: &str =
 const WAYLAND_SNAP: &str = "当前 Wayland 桌面不提供窗口位置，截图时无法吸附窗口。";
 const WAYLAND_ON_TOP: &str = "当前 Wayland 桌面不允许应用置顶窗口，贴图可能被其他窗口遮挡。";
 const WAYLAND_CURSOR: &str = "当前 Wayland 桌面只能通过截图门户截图，截图不包含光标。";
+const NO_SCREENCAST: &str =
+    "当前 Wayland 桌面没有屏幕共享门户（xdg-desktop-portal ScreenCast），无法录屏。";
 const WAYLAND_SCROLL: &str = "Wayland 下无法连续读取屏幕画面，滚动截图不可用。";
 pub(crate) const NO_CAPTURE_BACKEND: &str =
     "当前 Wayland 桌面没有可用的截图接口（KWin、ext-image-copy-capture、wlr-screencopy 或屏幕共享门户）。";
@@ -300,14 +302,15 @@ fn wayland_features(protocols: &DesktopProtocols) -> DesktopFeatures {
         } else if capture_backend {
             DesktopFeature::no(WAYLAND_CURSOR)
         } else {
-            no_backend.clone()
+            no_backend
         },
         window_snap: DesktopFeature::no(WAYLAND_SNAP),
         scroll_capture: DesktopFeature::no(WAYLAND_SCROLL),
-        recording: if capture_backend {
-            DesktopFeature::no(WAYLAND_PENDING)
+        // Wayland 录屏只走屏幕共享门户 + PipeWire。
+        recording: if protocols.portal_screencast {
+            DesktopFeature::yes()
         } else {
-            no_backend
+            DesktopFeature::no(NO_SCREENCAST)
         },
         recording_effects: DesktopFeature::no(WAYLAND_INPUT),
         global_shortcuts: DesktopFeature::no(WAYLAND_SHORTCUTS),
@@ -482,7 +485,7 @@ mod tests {
         assert!(support.features.screenshot.available());
         assert!(support.features.screenshot_cursor.available());
         assert_eq!(support.features.scroll_capture.reason(), WAYLAND_SCROLL);
-        assert_eq!(support.features.recording.reason(), WAYLAND_PENDING);
+        assert_eq!(support.features.recording.reason(), NO_SCREENCAST);
         assert_eq!(
             support.features.global_shortcuts.reason(),
             WAYLAND_SHORTCUTS
@@ -517,6 +520,7 @@ mod tests {
         };
         let gnome = report(Session::Wayland, "GNOME", &gnome, "x".into());
         assert!(gnome.features.screenshot.available());
+        assert!(gnome.features.recording.available());
 
         // 只有 Screenshot 门户时可以截图，但不含光标。
         let portal_only = Probe {
@@ -568,6 +572,7 @@ mod tests {
             WAYLAND_ON_TOP,
             WAYLAND_CURSOR,
             WAYLAND_SCROLL,
+            NO_SCREENCAST,
             NO_CAPTURE_BACKEND,
         ] {
             assert!(
