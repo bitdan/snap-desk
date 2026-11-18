@@ -1027,5 +1027,6 @@
   "当前 Wayland 会话没有 Xwayland（DISPLAY 未设置），无法读取剪贴板与选中文字。": "This Wayland session has no Xwayland (DISPLAY is not set), so the clipboard and selected text cannot be read.",
   "当前桌面不支持原生窗口截图，请按选区截图。": "Native window capture is not supported on this desktop. Capture a selected area instead.",
   "KWin 脚本没有回传窗口列表。": "The KWin script did not return the window list.",
-  "无法运行 KWin 脚本。": "Unable to run the KWin script."
+  "无法运行 KWin 脚本。": "Unable to run the KWin script.",
+  "复制失败，请重试或保存图片。": "Copy failed. Try again or save the image."
 }

@@ -349,11 +349,24 @@ fn parse_gnome_copied_files(bytes: &[u8]) -> Vec<String> {
     }
 }
 
-/// 本程序持有 CLIPBOARD 时提供的数据。
+/// 本程序持有 CLIPBOARD 时提供的数据：文件引用或图片，二者只有一种非空。
+#[derive(Default)]
 struct Offer {
     uri_list: Vec<u8>,
     gnome: Vec<u8>,
     text: Vec<u8>,
+    png: Arc<Vec<u8>>,
+    /// VirtualBox 等程序只认 BMP；与 PNG 同时提供 `image/bmp` 与 `image/x-bmp`。
+    bmp: Arc<Vec<u8>>,
+}
+
+/// 超过单次请求上限的数据按 ICCCM INCR 分段发送：请求方每删除一次属性，写入下一段，最后写入空段结束。
+struct Transfer {
+    window: x::Window,
+    property: x::Atom,
+    target: x::Atom,
+    data: Arc<Vec<u8>>,
+    offset: usize,
 }
 
 /// X11 剪贴板没有中心存储：写入方必须持有选区并应答每次粘贴请求，
@@ -363,6 +376,7 @@ struct Owner {
     window: x::Window,
     clipboard: x::Atom,
     offer: Mutex<Option<Arc<Offer>>>,
+    transfers: Mutex<Vec<Transfer>>,
 }
 
 impl Owner {
@@ -381,6 +395,7 @@ impl Owner {
             clipboard: x11.intern("CLIPBOARD")?,
             x11,
             offer: Mutex::new(None),
+            transfers: Mutex::new(Vec::new()),
         });
         let atoms = Atoms::new(&owner.x11)?;
         let serving = owner.clone();
@@ -396,6 +411,11 @@ impl Owner {
         loop {
             match self.x11.conn.wait_for_event() {
                 Ok(xcb::Event::X(x::Event::SelectionRequest(ev))) => self.answer(&ev, atoms),
+                Ok(xcb::Event::X(x::Event::PropertyNotify(ev)))
+                    if ev.state() == x::Property::Delete =>
+                {
+                    self.continue_transfer(ev.window(), ev.atom());
+                }
                 Ok(xcb::Event::X(x::Event::SelectionClear(ev)))
                     if ev.selection() == self.clipboard =>
                 {
@@ -421,8 +441,23 @@ impl Owner {
         let accepted = match offer {
             Some(offer) if ev.selection() == self.clipboard => {
                 let target = ev.target();
+                let image = !offer.png.is_empty();
                 if target == atoms.targets {
-                    self.put(ev.requestor(), property, x::ATOM_ATOM, &atoms.offered()[..])
+                    if image {
+                        let offered = atoms.images(!offer.bmp.is_empty());
+                        self.put(ev.requestor(), property, x::ATOM_ATOM, &offered[..])
+                    } else {
+                        self.put(ev.requestor(), property, x::ATOM_ATOM, &atoms.offered()[..])
+                    }
+                } else if image && target == atoms.png {
+                    self.send(ev.requestor(), property, target, offer.png.clone(), atoms)
+                } else if image
+                    && !offer.bmp.is_empty()
+                    && (target == atoms.bmp || target == atoms.x_bmp)
+                {
+                    self.send(ev.requestor(), property, target, offer.bmp.clone(), atoms)
+                } else if image {
+                    false
                 } else if target == atoms.uri_list {
                     self.put(ev.requestor(), property, target, offer.uri_list.as_slice())
                 } else if target == atoms.gnome {
@@ -451,6 +486,88 @@ impl Owner {
         let _ = self.x11.conn.flush();
     }
 
+    fn chunk(&self) -> usize {
+        // 最大请求长度以 4 字节为单位；留出请求头余量，每段最多 1 MiB。
+        ((self.x11.conn.get_maximum_request_length() as usize).saturating_mul(4) / 2)
+            .clamp(4096, 1 << 20)
+    }
+
+    /// 小数据一次写入；大数据先写 INCR 头并订阅请求方窗口的属性删除事件，后续分段在 `continue_transfer` 中发送。
+    fn send(
+        &self,
+        window: x::Window,
+        property: x::Atom,
+        target: x::Atom,
+        data: Arc<Vec<u8>>,
+        atoms: &Atoms,
+    ) -> bool {
+        if data.len() <= self.chunk() {
+            return self.put(window, property, target, data.as_slice());
+        }
+        let Ok(length) = u32::try_from(data.len()) else {
+            return false;
+        };
+        let Ok(mut transfers) = self.transfers.lock() else {
+            return false;
+        };
+        // 同一窗口同一属性只保留最新一次；请求方异常退出留下的传输最多保留 8 个。
+        transfers.retain(|t| !(t.window == window && t.property == property));
+        if transfers.len() >= 8 {
+            transfers.remove(0);
+        }
+        self.x11.conn.send_request(&x::ChangeWindowAttributes {
+            window,
+            value_list: &[x::Cw::EventMask(x::EventMask::PROPERTY_CHANGE)],
+        });
+        self.x11.conn.send_request(&x::ChangeProperty {
+            mode: x::PropMode::Replace,
+            window,
+            property,
+            r#type: atoms.incr,
+            data: &[length],
+        });
+        transfers.push(Transfer {
+            window,
+            property,
+            target,
+            data,
+            offset: 0,
+        });
+        true
+    }
+
+    fn continue_transfer(&self, window: x::Window, property: x::Atom) {
+        let Ok(mut transfers) = self.transfers.lock() else {
+            return;
+        };
+        let Some(index) = transfers
+            .iter()
+            .position(|t| t.window == window && t.property == property)
+        else {
+            return;
+        };
+        let chunk = self.chunk();
+        let transfer = &mut transfers[index];
+        let end = (transfer.offset + chunk).min(transfer.data.len());
+        let finished = transfer.offset == end;
+        self.x11.conn.send_request(&x::ChangeProperty {
+            mode: x::PropMode::Replace,
+            window,
+            property,
+            r#type: transfer.target,
+            data: &transfer.data[transfer.offset..end],
+        });
+        transfer.offset = end;
+        if finished {
+            transfers.remove(index);
+            self.x11.conn.send_request(&x::ChangeWindowAttributes {
+                window,
+                value_list: &[x::Cw::EventMask(x::EventMask::empty())],
+            });
+        }
+        let _ = self.x11.conn.flush();
+    }
+
     /// 文件列表最多 1 MiB，远小于常见的最大请求长度，不需要 INCR 分段；超出时拒绝而不是截断。
     fn put<P: x::PropEl>(
         &self,
@@ -476,6 +593,10 @@ impl Owner {
 
 struct Atoms {
     targets: x::Atom,
+    incr: x::Atom,
+    png: x::Atom,
+    bmp: x::Atom,
+    x_bmp: x::Atom,
     uri_list: x::Atom,
     gnome: x::Atom,
     utf8: x::Atom,
@@ -485,11 +606,22 @@ impl Atoms {
     fn new(x11: &X11) -> Result<Self, String> {
         Ok(Self {
             targets: x11.intern("TARGETS")?,
+            incr: x11.intern("INCR")?,
+            png: x11.intern("image/png")?,
+            bmp: x11.intern("image/bmp")?,
+            x_bmp: x11.intern("image/x-bmp")?,
             uri_list: x11.intern(URI_LIST)?,
             gnome: x11.intern(GNOME_FILES)?,
             utf8: x11.intern("UTF8_STRING")?,
             plain: x11.intern("text/plain;charset=utf-8")?,
         })
+    }
+    fn images(&self, bmp: bool) -> Vec<x::Atom> {
+        let mut atoms = vec![self.targets, self.png];
+        if bmp {
+            atoms.extend([self.bmp, self.x_bmp]);
+        }
+        atoms
     }
     fn offered(&self) -> [x::Atom; 5] {
         [
@@ -516,6 +648,7 @@ pub fn write_files(paths: &[String]) -> Result<(), String> {
         uri_list: uri_list(paths),
         gnome: gnome_copied_files(paths),
         text: paths.join("\n").into_bytes(),
+        ..Offer::default()
     }));
     owner.x11.conn.send_request(&x::SetSelectionOwner {
         owner: owner.window,
@@ -534,6 +667,67 @@ pub fn write_files(paths: &[String]) -> Result<(), String> {
         return Err("复制文件引用失败，请重试。".into());
     }
     Ok(())
+}
+
+/// 图片同时以 PNG 与 BMP 提供；PNG 用快速压缩，避免大图复制时长时间阻塞。
+/// 只在 X11 会话使用，Wayland 仍交给剪贴板插件。超过 64 MiB 的 BMP 不提供。
+pub fn write_image(image: &image::RgbaImage) -> Result<(), String> {
+    use image::{codecs, ExtendedColorType, ImageEncoder};
+    let (width, height) = image.dimensions();
+    let mut png = Vec::new();
+    codecs::png::PngEncoder::new_with_quality(
+        &mut png,
+        codecs::png::CompressionType::Fast,
+        codecs::png::FilterType::Adaptive,
+    )
+    .write_image(image.as_raw(), width, height, ExtendedColorType::Rgba8)
+    .map_err(|e| format!("复制失败，请重试或保存图片：{e}"))?;
+    let bmp = encode_bmp(image).unwrap_or_default();
+    let owner = Owner::get()?;
+    *owner.offer.lock().map_err(|_| "剪贴板写入状态不可用。")? = Some(Arc::new(Offer {
+        png: Arc::new(png),
+        bmp: Arc::new(bmp),
+        ..Offer::default()
+    }));
+    owner.x11.conn.send_request(&x::SetSelectionOwner {
+        owner: owner.window,
+        selection: owner.clipboard,
+        time: x::CURRENT_TIME,
+    });
+    let current = owner
+        .x11
+        .conn
+        .wait_for_reply(owner.x11.conn.send_request(&x::GetSelectionOwner {
+            selection: owner.clipboard,
+        }))
+        .map_err(|_| "复制失败，请重试或保存图片。")?
+        .owner();
+    if current != owner.window {
+        return Err("复制失败，请重试或保存图片。".into());
+    }
+    Ok(())
+}
+
+/// 32 位 BMP（带 alpha）；尺寸超过上限时返回 None，只提供 PNG。
+fn encode_bmp(image: &image::RgbaImage) -> Option<Vec<u8>> {
+    let (width, height) = image.dimensions();
+    if (width as usize)
+        .saturating_mul(height as usize)
+        .saturating_mul(4)
+        > IMAGE_LIMIT
+    {
+        return None;
+    }
+    let mut bmp = Vec::new();
+    image::codecs::bmp::BmpEncoder::new(&mut bmp)
+        .encode(
+            image.as_raw(),
+            width,
+            height,
+            image::ExtendedColorType::Rgba8,
+        )
+        .ok()?;
+    Some(bmp)
 }
 
 /// 唤出剪贴板窗口前的前台窗口；属于本程序或读取失败时返回 0。
@@ -610,6 +804,18 @@ pub fn send_paste(target: usize) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn bmp_is_offered_for_ordinary_images_only() {
+        let image = image::RgbaImage::from_pixel(2, 1, image::Rgba([1, 2, 3, 4]));
+        let bmp = encode_bmp(&image).unwrap();
+        assert_eq!(&bmp[..2], b"BM");
+        let decoded = image::load_from_memory_with_format(&bmp, image::ImageFormat::Bmp)
+            .unwrap()
+            .to_rgba8();
+        assert_eq!(decoded.dimensions(), (2, 1));
+        assert!(encode_bmp(&image::RgbaImage::new(5000, 5000)).is_none());
+    }
+
     #[test]
     fn file_references_are_percent_encoded_for_both_targets() {
         let paths = vec!["/home/用户/a b#1.txt".to_string(), "/tmp/x%y".to_string()];
