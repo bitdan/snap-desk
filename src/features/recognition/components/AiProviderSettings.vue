@@ -119,6 +119,9 @@ function selectService(id: string) {
   autosave.commit()
 }
 function applyPreset() {
+  // 从预设、DeepL 或已保存服务切到自定义时清空地址与模型，避免沿用上一平台的配置；已在自定义中则保留输入。
+  const fromOther = !!draft.value.serviceId || draft.value.provider === 'deepl'
+    || translationPresets.some(item => item.endpoint === draft.value.endpoint)
   draft.value.serviceId = ''
   secret.value = ''; configured.value = null
   if (preset.value === 'deepl') {
@@ -126,11 +129,10 @@ function applyPreset() {
     if (!deepLEndpoints.includes(draft.value.endpoint)) draft.value.endpoint = deepLEndpoints[0]!
     draft.value.model = ''
   } else {
-    const wasDeepL = draft.value.provider === 'deepl'
     draft.value.provider = 'online-llm'
     const selected = translationPresets.find(item => item.value === preset.value)
     if (selected) { draft.value.endpoint = selected.endpoint; draft.value.model = selected.model }
-    else if (wasDeepL) { draft.value.endpoint = ''; draft.value.model = '' }
+    else if (fromOther) { draft.value.endpoint = ''; draft.value.model = '' }
   }
   autosave.commit()
 }
