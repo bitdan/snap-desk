@@ -57,26 +57,44 @@ fn language(value: &str) -> Result<&'static str, String> {
     }
 }
 
+/// keys 为服务的密钥顺序；认证失败或额度不足时依次换下一个密钥重试。
 pub async fn translate(
     settings: &AiSettings,
     request: &TranslationRequest,
+    keys: &[String],
 ) -> Result<Vec<String>, String> {
     request.validate()?;
     let endpoint = super::translation::endpoint_url(&settings.endpoint)?;
     let local = matches!(endpoint.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"));
-    let secret = crate::recognition::ai_credentials::read(&super::services::credential_key(&settings.service_id, &settings.endpoint))?;
-    let secret = match secret { Some(value) => value, None if local => String::new(), None => return Err("请先保存此服务的 API Key。".into()) };
+    let mut secrets = super::services::secrets(&settings.service_id, &settings.endpoint, keys)?;
+    if secrets.is_empty() {
+        if !local {
+            return Err("请先在服务管理中保存此服务的 API Key。".into());
+        }
+        secrets.push(String::new());
+    }
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(Duration::from_secs(10))
         .timeout(Duration::from_secs(settings.timeout_seconds))
         .build()
         .map_err(|_| "无法初始化翻译网络客户端。")?;
-    match settings.provider.as_str() {
-        "deepl" => deepl::translate(&client, settings, request, &secret).await,
-        "online-llm" => openai_compatible::translate(&client, settings, request, &secret).await,
-        _ => Err("不支持此翻译引擎。".into()),
+    let count = secrets.len();
+    let mut result = Err("不支持此翻译引擎。".to_string());
+    for (index, secret) in secrets.iter().enumerate() {
+        result = match settings.provider.as_str() {
+            "deepl" => deepl::translate(&client, settings, request, secret).await,
+            "online-llm" => openai_compatible::translate(&client, settings, request, secret).await,
+            _ => return Err("不支持此翻译引擎。".into()),
+        };
+        match &result {
+            Err(error) if index + 1 < count && super::services::key_rejected(error) => {
+                log::warn!("event=translation.key_fallback module=translation key_index={index}");
+            }
+            _ => break,
+        }
     }
+    result
 }
 
 /// 错误只保留状态码，不回传可能含原文或凭证的服务正文；禁止重试和重定向。

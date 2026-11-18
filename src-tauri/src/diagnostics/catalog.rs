@@ -189,6 +189,8 @@ pub const COMMANDS: &[&str] = &[
     "open_recognition_portal",
     "recognition_service_status",
     "recognition_service_credential",
+    "recognition_service_test",
+    "recognition_service_keys",
     "system_ocr_status",
     "wechat_ocr_status",
     "copy_shortcut_example",

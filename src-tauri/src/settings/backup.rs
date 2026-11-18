@@ -37,6 +37,48 @@ struct Backup {
     platform: Option<String>,
     settings: Settings,
     directories: Directories,
+    /// 仅在用户导出时明确勾选才写入的服务密钥（明文）；默认导出不含此字段。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    secrets: Vec<SecretEntry>,
+}
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SecretEntry {
+    service_id: String,
+    key_id: String,
+    secret: String,
+}
+/// 读取已保存服务的全部密钥；读取失败直接报错，避免导出一份缺密钥却显示成功的备份。
+fn collect_secrets(settings: &Settings) -> Result<Vec<SecretEntry>, String> {
+    let mut entries = Vec::new();
+    for service in &settings.recognition_services {
+        for key in &service.keys {
+            let name = crate::recognition::services::secret_key(&service.id, &service.endpoint, key);
+            if let Some(secret) = crate::recognition::ai_credentials::read(&name)? {
+                entries.push(SecretEntry { service_id: service.id.clone(), key_id: key.clone(), secret });
+            }
+        }
+    }
+    Ok(entries)
+}
+/// 导入后把备份中的密钥写回系统凭据库；只写入导入配置中存在的服务与密钥标识。
+fn restore_secrets(settings: &Settings, secrets: Vec<SecretEntry>) -> Result<(), String> {
+    let mut failed = 0;
+    for entry in secrets {
+        let Some(service) = settings.recognition_services.iter().find(|service| service.id == entry.service_id) else { continue };
+        if !service.keys.contains(&entry.key_id) || entry.secret.is_empty() || entry.secret.len() > 2048 || entry.secret.chars().any(char::is_control) {
+            continue;
+        }
+        let name = crate::recognition::services::secret_key(&service.id, &service.endpoint, &entry.key_id);
+        if crate::recognition::ai_credentials::write(&name, Some(entry.secret)).is_err() {
+            failed += 1;
+        }
+    }
+    if failed == 0 {
+        Ok(())
+    } else {
+        Err(format!("配置已导入，但有 {failed} 个密钥未能写入系统凭据，请在服务管理中重新填写。"))
+    }
 }
 
 fn parse(bytes: &[u8]) -> Result<Backup, String> {
@@ -73,6 +115,7 @@ fn parse(bytes: &[u8]) -> Result<Backup, String> {
             captures: None,
             recordings: None,
         },
+        secrets: Vec::new(),
     })
     .map_err(|e| e.to_string())?;
     if !complete_shape(&json, &shape) {
@@ -170,7 +213,13 @@ impl Files {
     }
 }
 
-fn commit(app: &AppHandle, backup: Backup) -> Result<Settings, String> {
+fn commit(app: &AppHandle, mut backup: Backup) -> Result<Settings, String> {
+    let secrets = std::mem::take(&mut backup.secrets);
+    let next = commit_settings(app, backup)?;
+    restore_secrets(&next, secrets)?;
+    Ok(next)
+}
+fn commit_settings(app: &AppHandle, backup: Backup) -> Result<Settings, String> {
     // 先验证目录，失效的外置盘或其他机器路径不会触发部分导入或自动创建目录。
     if let Some(path) = &backup.directories.captures {
         image_io::validate_directory(path)?;
@@ -270,7 +319,11 @@ fn with_rollback(error: String, failures: Vec<String>) -> String {
 
 /// 原生命令只接受窗口，不接受任意文件路径或前端未校验的配置。
 #[tauri::command]
-pub async fn export_settings(app: AppHandle, window: WebviewWindow) -> Result<bool, String> {
+pub async fn export_settings(
+    app: AppHandle,
+    window: WebviewWindow,
+    include_secrets: bool,
+) -> Result<bool, String> {
     require_window(&window, "main")?;
     tauri::async_runtime::spawn_blocking(move || {
         let _operation = TRANSFER
@@ -289,6 +342,7 @@ pub async fn export_settings(app: AppHandle, window: WebviewWindow) -> Result<bo
                 captures: image_io::current_directory(&app)?,
                 recordings: output::configured_directory(&app, remember_recording)?,
             },
+            secrets: if include_secrets { collect_secrets(&settings)? } else { Vec::new() },
             settings,
         };
         let Some(file) = app
@@ -367,7 +421,20 @@ mod tests {
                 captures: None,
                 recordings: None,
             },
+            secrets: Vec::new(),
         }
+    }
+    #[test]
+    fn secrets_are_optional_and_round_trip_only_when_present() {
+        let plain = serde_json::to_value(backup()).unwrap();
+        assert!(plain.get("secrets").is_none());
+        let mut value = plain.clone();
+        value["secrets"] = serde_json::json!([{"serviceId": "a", "keyId": "default", "secret": "test-key"}]);
+        let imported = parse(&serde_json::to_vec(&value).unwrap()).unwrap();
+        assert_eq!(imported.secrets.len(), 1);
+        assert_eq!(imported.secrets[0].secret, "test-key");
+        value["secrets"] = serde_json::json!([{"serviceId": "a", "keyId": "default"}]);
+        assert!(parse(&serde_json::to_vec(&value).unwrap()).is_err());
     }
     #[test]
     fn complete_backup_round_trips_shortcuts_and_directories() {

@@ -1,18 +1,19 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { Check, ChevronDown, Cloud, HardDrive, Server } from 'lucide-vue-next'
+import { Check, ChevronDown, Cloud, HardDrive, Server, Settings2 } from 'lucide-vue-next'
 import { t } from '@/shared/i18n/i18n'
 import type { ConnectionMode } from '../services'
 import { providerIcon } from '../provider-icons'
 /** 引擎下拉：触发按钮显示当前选择，展开后列出全部引擎；只负责选择，配置与保存由所属页面处理。 */
 export interface ProviderMenuItem { value: string; label: string; description?: string; disabled?: boolean; connection?: ConnectionMode; active?: boolean; presetId?: string; endpoint?: string }
-const props = defineProps<{ modelValue: string; options: ProviderMenuItem[]; label: string; disabled?: boolean }>()
-const emit = defineEmits<{ 'update:modelValue': [value: string] }>()
+const props = defineProps<{ modelValue: string; options: ProviderMenuItem[]; label: string; disabled?: boolean; manageLabel?: string }>()
+const emit = defineEmits<{ 'update:modelValue': [value: string]; manage: [] }>()
 const open = ref(false), root = ref<HTMLElement | null>(null)
 const items = computed(() => props.options.map(item => ({ ...item, ...providerIcon(item.value, item.label, item.presetId, item.endpoint) })))
 const current = computed(() => items.value.find(item => item.value === props.modelValue))
 const connectionLabel = (connection?: ConnectionMode) => connection === 'offline' ? t('离线') : connection === 'online' ? t('在线 API') : connection ? t('本机 API') : ''
 function choose(value: string) { open.value = false; emit('update:modelValue', value) }
+function manage() { open.value = false; emit('manage') }
 function outside(event: PointerEvent) { if (open.value && root.value && !root.value.contains(event.target as Node)) open.value = false }
 function key(event: KeyboardEvent) { if (open.value && event.key === 'Escape') { event.stopPropagation(); open.value = false } }
 onMounted(() => { if (typeof document !== 'undefined' && document.addEventListener) document.addEventListener('pointerdown', outside) })
@@ -36,6 +37,7 @@ onUnmounted(() => { if (typeof document !== 'undefined' && document.removeEventL
           <span class="recognition-active-provider"><span v-if="item.active" data-active-provider :title="t('当前使用')"><Check :size="13" aria-hidden="true" /><span class="sr-only">{{ t('当前使用') }}</span></span></span>
         </span>
       </button>
+      <button v-if="manageLabel" type="button" class="recognition-menu-manage" data-provider-manage @click="manage"><Settings2 :size="14" aria-hidden="true" /><span class="recognition-menu-name">{{ manageLabel }}</span></button>
     </nav>
   </div>
 </template>
@@ -59,6 +61,7 @@ onUnmounted(() => { if (typeof document !== 'undefined' && document.removeEventL
 .recognition-provider-menu button[aria-current=page] { background:var(--desk-soft,#eef1fc); color:var(--desk-accent-fg,#3b5bdb); }
 .recognition-provider-menu button:focus-visible { outline:2px solid var(--desk-accent,#3b5bdb); outline-offset:-2px; }
 .recognition-provider-menu button:disabled { opacity:.5; cursor:default; }
+.recognition-provider-menu .recognition-menu-manage { margin-top:3px; border-top:1px solid var(--desk-sep,#eceef1); border-radius:0 0 6px 6px; color:var(--desk-muted,#5f6670); }
 .recognition-menu-name { flex:1; min-width:0; line-height:18px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .recognition-menu-name small { margin-left:6px; font-size:11px; color:var(--desk-muted,#5f6670); }
 .recognition-menu-meta { display:flex; align-items:center; gap:6px; flex:none; white-space:nowrap; }

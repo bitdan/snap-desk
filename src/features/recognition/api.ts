@@ -9,7 +9,9 @@ import { invoke } from '@/services/ipc'
 export const recognitionApi = {
   openRecognitionPortal: (preset: string) => invoke<void>('open_recognition_portal', { preset }),
   recognitionServiceStatus: (serviceId: string) => invoke<boolean>('recognition_service_status', { serviceId }),
-  recognitionServiceCredential: (serviceId: string, expectedEndpoint: string, secret: string | null) => invoke<void>('recognition_service_credential', { serviceId, expectedEndpoint, secret }),
+  recognitionServiceCredential: (serviceId: string, expectedEndpoint: string, keyId: string, secret: string | null) => invoke<void>('recognition_service_credential', { serviceId, expectedEndpoint, keyId, secret }),
+  recognitionServiceKeys: (serviceId: string) => invoke<{ id: string; hint: string | null }[]>('recognition_service_keys', { serviceId }),
+  recognitionServiceTest: (serviceId: string, keyId: string | null = null) => invoke<void>('recognition_service_test', { serviceId, keyId }),
   systemOcrStatus: () => invoke<SystemOcrStatus>('system_ocr_status'),
   wechatOcrStatus: () => invoke<WechatOcrStatus>('wechat_ocr_status'),
   openTranslation: (text: string | null = null) => invoke<void>('open_translation', { text }),

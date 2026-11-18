@@ -446,6 +446,8 @@ pub fn run() {
             recognition::services::open_recognition_portal,
             recognition::services::recognition_service_status,
             recognition::services::recognition_service_credential,
+            recognition::services::recognition_service_test,
+            recognition::services::recognition_service_keys,
             recognition::ocr_config::system_ocr_status,
             recognition::wechat_ocr::wechat_ocr_status,
             commands::app_status,

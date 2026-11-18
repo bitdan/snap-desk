@@ -409,7 +409,7 @@ async fn run_translation(
                     texts.push(crate::recognition::local_translation::translate(&app, &job_id, &settings.target_language, text, settings.timeout_seconds).await.map_err(|error| (error.code, error.message))?);
                 }
                 Ok(texts)
-            } else { providers::translate(&settings, &request).await.map_err(|error| ("TRANSLATION_REQUEST_FAILED", error)) }
+            } else { providers::translate(&settings, &request, &super::services::key_ids(&app, &settings.service_id)).await.map_err(|error| ("TRANSLATION_REQUEST_FAILED", error)) }
         }) => value.unwrap_or_else(|_| Err(("TRANSLATION_TIMEOUT", "翻译超时，请重试或调整超时时间。".into()))).map_err(|(code, error)| {
             log::error!("event=translation.failed module=translation op=tr-{op} provider={provider} engine={engine} code={code} duration_ms={}", started.elapsed().as_millis());
             error
@@ -492,7 +492,7 @@ pub async fn ai_provider_status(app: AppHandle, window: WebviewWindow) -> Result
     if settings.endpoint.is_empty() {
         return Ok(false);
     }
-    Ok(crate::recognition::ai_credentials::read(&super::services::credential_key(&settings.service_id, &settings.endpoint))?.is_some())
+    Ok(!super::services::secrets(&settings.service_id, &settings.endpoint, &super::services::key_ids(&app, &settings.service_id))?.is_empty())
 }
 
 /// 翻译界面只读取非敏感配置，用于确认发送目的地，不暴露密钥。
@@ -536,8 +536,8 @@ pub async fn ai_provider_test(app: AppHandle, window: WebviewWindow) -> Result<(
                 source_language: Some("en".into()),
                 target_language: settings.target_language.clone(),
             },
-        )
-        .await
+            &super::services::key_ids(&app, &settings.service_id),
+        ).await
         .map(|_| ())
     }
 }

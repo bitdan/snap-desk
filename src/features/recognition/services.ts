@@ -15,7 +15,9 @@ export function cloudFirst<T extends { connection?: ConnectionMode; sortPriority
   const rank = (mode?: ConnectionMode) => mode === 'online' ? 0 : mode === 'local-api' ? 2 : mode === 'offline' ? 3 : 1
   return [...items].sort((left, right) => (left.sortPriority ?? rank(left.connection)) - (right.sortPriority ?? rank(right.connection)))
 }
-export interface RecognitionService { id: string; name: string; protocol: ServiceProtocol; endpoint: string; model: string; vision: boolean }
+/** keys 为密钥标识（按使用顺序），密钥本身只在系统凭据库。 */
+export interface RecognitionService { id: string; name: string; protocol: ServiceProtocol; endpoint: string; model: string; vision: boolean; keys: string[] }
+export const maxServiceKeys = 16
 export const paddleJobsEndpoint = 'https://paddleocr.aistudio-app.com/api/v2/ocr/jobs'
 export const paddleModels = ['PP-OCRv6', 'PaddleOCR-VL-1.6', 'PP-StructureV3', 'PP-OCRv5'] as const
 export function isPaddleJobsEndpoint(endpoint: string): boolean {
@@ -52,6 +54,7 @@ export function translationService(settings: AiSettings, service: RecognitionSer
 export function validateService(value: RecognitionService): string | null {
   if (!/^[a-zA-Z0-9-]{1,80}$/.test(value.id) || !value.name.trim() || [...value.name].length > 80 || /\p{Cc}/u.test(value.name)) return '服务名称或标识无效。'
   if (!['openai-compatible', 'ocr-space', 'paddle-ocr', 'deepl'].includes(value.protocol)) return '不支持此服务协议。'
+  if (value.keys.length > maxServiceKeys || new Set(value.keys).size !== value.keys.length || !value.keys.every(key => /^[a-zA-Z0-9-]{1,40}$/.test(key))) return '服务密钥列表无效。'
   try {
     const url = new URL(value.endpoint)
     if (value.endpoint.length > 2048 || url.username || url.password || url.search || url.hash || !['https:', 'http:'].includes(url.protocol)) return '服务地址必须使用 HTTP 或 HTTPS，不能含凭证或查询参数。'
