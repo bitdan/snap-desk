@@ -8,67 +8,54 @@ import { updateSettings } from '@/features/settings/settings-write'
 import { useAutoSave } from '@/shared/ui/use-auto-save'
 import { t, te } from '@/shared/i18n/i18n'
 import { macPlatform } from '@/shared/platform'
-import ServiceSettings from './ServiceSettings.vue'
 import ProviderMenu from './ProviderMenu.vue'
 import type { ProviderMenuItem } from './ProviderMenu.vue'
 import SelectControl from '@/shared/ui/SelectControl.vue'
 import Button from '@/shared/ui/button/Button.vue'
 import SwitchControl from '@/shared/ui/SwitchControl'
 import SettingRow from '@/shared/ui/SettingRow'
-import ResourceSettings from '@/features/resources/components/ResourceSettings.vue'
 
-const editingServiceId = ref('')
-const configuringPreset = ref(''), configuringBusy = ref(false)
+const emit = defineEmits<{ manage: [] }>()
 const services = ref<RecognitionService[]>([])
 const draft = ref(defaultOcrSettings()), ready = ref(false), error = ref('')
 const activeSettings = ref<OcrSettings | null>(null)
 const activeMenu = computed(() => !activeSettings.value ? '' : activeSettings.value.provider === 'service' ? `service:${activeSettings.value.serviceId}` : activeSettings.value.provider)
+const selectedMenu = computed(() => draft.value.provider === 'service' ? `service:${draft.value.serviceId}` : draft.value.provider)
 const wechat = ref<WechatOcrStatus | null>(null), checkingWechat = ref(false), wechatError = ref('')
 const system = ref<SystemOcrStatus | null>(null), checking = ref(false)
-// 有已保存连接时，用连接替代同供应商的添加入口，避免出现两个同名选项。
-const engineOptions = computed(() => {
-  const available = services.value.filter(supportsOcr)
-  const option = (item: RecognitionService): ProviderMenuItem => ({ value: `service:${item.id}`, label: item.name, description: item.model || t(serviceKind(item)), connection: connectionMode(item.endpoint), presetId: servicePresetId(item), endpoint: item.endpoint })
-  const presets = [{ id: 'ocr-space', label: 'OCR.space' }, { id: 'paddle-ocr', label: 'Paddle API' }, { id: 'deepseek', label: 'DeepSeek' }]
-  const cloud = presets.flatMap<ProviderMenuItem>(preset => {
-    const saved = available.filter(item => servicePresetId(item) === preset.id)
-    return saved.length ? saved.map(option) : [{ value: `preset:${preset.id}`, label: preset.label, description: '', connection: 'online' as const }]
-  })
-  return cloudFirst([
-    ...cloud,
-    ...available.filter(item => !presets.some(preset => preset.id === servicePresetId(item))).map(option),
-    { value: 'local-ppocr', label: 'PaddleOCR', description: 'PP-OCRv6', connection: 'offline' as const },
-    { value: 'windows-media', label: macPlatform ? 'Apple Vision' : 'Windows OCR', connection: 'offline' as const, disabled: !system.value?.supported },
-    // 检测未完成或失败时仍允许打开面板查看原因和重试，仅明确不支持的平台禁用。
-    { value: 'wechat-ocr', label: t('WeChat OCR（实验性）'), connection: 'offline' as const, disabled: wechat.value?.supported === false },
-  ]).map(item => ({ ...item, active: item.value === activeMenu.value }))
-})
+const resources = ref<Awaited<ReturnType<typeof api.resourceStatus>> | null>(null)
+// 在线服务统一在服务管理中添加和编辑；此处只列出已保存且支持图片的连接，选择即切换。
+const engineOptions = computed(() => cloudFirst<ProviderMenuItem>([
+  ...services.value.filter(supportsOcr).map(item => ({ value: `service:${item.id}`, label: item.name, description: item.model || t(serviceKind(item)), connection: connectionMode(item.endpoint), presetId: servicePresetId(item), endpoint: item.endpoint })),
+  { value: 'local-ppocr', label: 'PaddleOCR', description: 'PP-OCRv6', connection: 'offline' as const },
+  { value: 'windows-media', label: macPlatform ? 'Apple Vision' : 'Windows OCR', connection: 'offline' as const, disabled: !system.value?.supported },
+  // 检测未完成或失败时仍允许打开面板查看原因和重试，仅明确不支持的平台禁用。
+  { value: 'wechat-ocr', label: t('WeChat OCR（实验性）'), connection: 'offline' as const, disabled: wechat.value?.supported === false },
+]).map(item => ({ ...item, active: item.value === activeMenu.value })))
 const activeLabel = computed(() => {
   const item = engineOptions.value.find(item => item.value === activeMenu.value)
   return item ? [item.label, 'description' in item ? item.description : ''].filter(Boolean).join(' · ') : ''
 })
+const currentService = computed(() => draft.value.provider === 'service' ? services.value.find(item => item.id === draft.value.serviceId) : undefined)
 const engineHint = computed(() => {
-  const selected = configuringPreset.value ? `preset:${configuringPreset.value}` : draft.value.provider === 'service' ? `service:${draft.value.serviceId}` : draft.value.provider
-  const item = engineOptions.value.find(option => option.value === selected)
+  const item = engineOptions.value.find(option => option.value === selectedMenu.value)
   return !item ? '' : item.connection === 'online' ? t('在线服务，图片会上传') : t('离线识别，图片不上传')
 })
-function selectEngine(value: string) {
-  if (configuringBusy.value || !ready.value) return
-  editingServiceId.value = ''
-  if (value.startsWith('preset:')) { configuringPreset.value = value.slice(7); return }
-  configuringPreset.value = ''
-  if (value.startsWith('service:')) editingServiceId.value = value.slice(8)
-  draft.value.provider = value.startsWith('service:') ? 'service' : value as OcrSettings['provider']
-  draft.value.serviceId = value.startsWith('service:') ? value.slice(8) : ''
-  autosave.commit()
+const credential = ref<boolean | null>(null)
+let credentialRevision = 0
+async function refreshCredential() {
+  const revision = ++credentialRevision, service = currentService.value
+  credential.value = null
+  if (!service) return
+  const value = await api.recognitionServiceStatus(service.id).catch(() => null)
+  if (!disposed && revision === credentialRevision) credential.value = value
 }
-/** 表单保存服务与凭据成功后，再独立保存 OCR 绑定；失败沿用自动保存的重试入口。 */
-function serviceSaved(service: RecognitionService) {
-  configuringBusy.value = false
-  editingServiceId.value = ''
-  services.value = services.value.some(item => item.id === service.id) ? services.value.map(item => item.id === service.id ? service : item) : [...services.value, service]
-  configuringPreset.value = ''
-  draft.value = { ...draft.value, provider: 'service', serviceId: service.id }
+function selectEngine(value: string) {
+  if (!ready.value) return
+  const service = value.startsWith('service:')
+  draft.value.provider = service ? 'service' : value as OcrSettings['provider']
+  draft.value.serviceId = service ? value.slice(8) : ''
+  void refreshCredential()
   autosave.commit()
 }
 const windows = computed(() => draft.value.provider === 'windows-media')
@@ -102,9 +89,10 @@ async function refreshWechat() {
   finally { if (!disposed) checkingWechat.value = false }
 }
 onMounted(() => {
-  void api.status().then(value => { if (!disposed) { draft.value = { ...value.settings.ocr }; activeSettings.value = { ...value.settings.ocr }; services.value = value.settings.recognitionServices; ready.value = true } }).catch(e => { if (!disposed) error.value = String(e) })
+  void api.status().then(value => { if (!disposed) { draft.value = { ...value.settings.ocr }; activeSettings.value = { ...value.settings.ocr }; services.value = value.settings.recognitionServices; ready.value = true; void refreshCredential() } }).catch(e => { if (!disposed) error.value = String(e) })
   void refreshSystem()
   void refreshWechat()
+  void api.resourceStatus().then(value => { if (!disposed) resources.value = value }).catch(() => { /* 状态未读取时只少一条提示。 */ })
 })
 onUnmounted(() => { disposed = true })
 </script>
@@ -113,29 +101,25 @@ onUnmounted(() => { disposed = true })
   <div class="ocr-settings">
     <h2 class="section-heading">{{ t('引擎') }}</h2>
     <div class="settings-card recognition-card">
-    <div class="setting-row"><span>{{ t('OCR 引擎') }}<small v-if="engineHint">{{ engineHint }}</small></span><ProviderMenu :model-value="configuringPreset ? `preset:${configuringPreset}` : draft.provider === 'service' ? `service:${draft.serviceId}` : draft.provider" :label="t('OCR 引擎')" :disabled="!ready || autosave.saving.value || configuringBusy" :options="engineOptions" @update:model-value="selectEngine" /></div>
+    <div class="setting-row"><span>{{ t('OCR 引擎') }}<small v-if="engineHint">{{ engineHint }}</small></span><ProviderMenu :model-value="selectedMenu" :label="t('OCR 引擎')" :disabled="!ready || autosave.saving.value" :options="engineOptions" :manage-label="t('服务管理…')" @update:model-value="selectEngine" @manage="emit('manage')" /></div>
     <div class="recognition-detail">
     <!-- 保留生效状态播报，避免与左侧菜单的当前使用标记重复显示。 -->
     <p class="sr-only" role="status" data-current-ocr>{{ activeSettings ? t('当前 OCR：{0}', { 0: activeLabel }) : t('正在读取配置…') }}</p>
-    <ServiceSettings v-if="configuringPreset || editingServiceId" :key="editingServiceId || configuringPreset" embedded :preset-id="configuringPreset || undefined" :service-id="editingServiceId || undefined" @saved="serviceSaved" @close="configuringPreset = ''; editingServiceId = ''" @busy-change="configuringBusy = $event" />
+    <p v-if="currentService" class="engine-status" :class="{ 'status-ok': credential }" role="status"><Check v-if="credential" :size="14" />{{ credential === null ? t('凭据状态未读取') : credential ? t('已配置密钥') : t('未配置密钥，请在服务管理中填写。') }}</p>
     <template v-else-if="windows">
       <label class="ocr-field">{{ t('识别语言') }}<SelectControl v-model="draft.language" :aria-label="t('识别语言')" :options="languageOptions" :disabled="!ready || checking || autosave.saving.value || !system?.supported || !!system?.error" @update:model-value="autosave.commit" /></label>
-      <div class="system-status"><span class="text-xs text-zinc-500" role="status">{{ checking ? t('正在检查系统语言包…') : !system ? t('状态未读取') : !system.supported ? t('Windows 系统 OCR 仅支持 Windows。') : system.error ? te(system.error) : macPlatform ? t('支持 {0} 种识别语言', { 0: system.languages.length }) : system.languages.length ? t('已安装 {0} 个 OCR 语言包', { 0: system.languages.length }) : t('未安装 Windows OCR 语言包，请在 Windows 语言设置中安装。') }}</span><Button variant="outline" :disabled="checking" @click="refreshSystem">{{ t('刷新语言包') }}</Button></div>
+      <p class="engine-status" role="status">{{ checking ? t('正在检查系统语言包…') : !system ? t('状态未读取') : !system.supported ? t('Windows 系统 OCR 仅支持 Windows。') : system.error ? te(system.error) : macPlatform ? t('支持 {0} 种识别语言', { 0: system.languages.length }) : system.languages.length ? t('已安装 {0} 个 OCR 语言包', { 0: system.languages.length }) : t('未安装 Windows OCR 语言包，请在 Windows 语言设置中安装。') }}</p>
     </template>
-    <div v-else-if="draft.provider === 'wechat-ocr'" class="system-status">
-      <span class="text-xs text-zinc-500" role="status">{{ checkingWechat ? t('正在检测 WeChat OCR…') : wechatError ? te(wechatError) : !wechat ? t('状态未读取') : wechat.error ? te(wechat.error) : wechat.detected ? t('已找到 WeChat OCR 组件') : t('未找到 WeChat OCR 组件') }}</span>
-      <Button variant="outline" :disabled="checkingWechat" @click="refreshWechat">{{ t('重新检测') }}</Button>
-    </div>
-    <ResourceSettings v-else-if="ready && draft.provider === 'local-ppocr'" kind="ocr" />
+    <p v-else-if="draft.provider === 'wechat-ocr'" class="engine-status" role="status">{{ checkingWechat ? t('正在检测 WeChat OCR…') : wechatError ? te(wechatError) : !wechat ? t('状态未读取') : wechat.error ? te(wechat.error) : wechat.detected ? t('已找到 WeChat OCR 组件') : t('未找到 WeChat OCR 组件') }}</p>
+    <p v-else-if="draft.provider === 'local-ppocr' && resources" class="engine-status" :class="{ 'status-ok': resources.ocrReady }" role="status"><Check v-if="resources.ocrReady" :size="14" />{{ resources.ocrReady ? t('已就绪') : t('未下载识别资源，请在服务管理中下载。') }}</p>
     </div>
     </div>
-    <!-- 识别后的动作与引擎无关；配置在线服务时让位给服务表单。 -->
-    <h2 v-if="ready && !configuringPreset && !editingServiceId" class="section-heading">{{ t('识别后') }}</h2>
-    <section v-if="ready && !configuringPreset && !editingServiceId" class="settings-card" :aria-label="t('识别后')">
+    <h2 v-if="ready" class="section-heading">{{ t('识别后') }}</h2>
+    <section v-if="ready" class="settings-card" :aria-label="t('识别后')">
       <SettingRow :label="t('识别后自动复制文字')" for="ocr-auto-copy"><SwitchControl id="ocr-auto-copy" v-model="draft.autoCopy" @change="autosave.commit" /></SettingRow>
       <SettingRow :label="t('识别后自动合并换行')" for="ocr-merge-lines"><SwitchControl id="ocr-merge-lines" v-model="draft.mergeLines" @change="autosave.commit" /></SettingRow>
     </section>
-    <div v-if="!configuringPreset && !editingServiceId && (autosave.saving.value || autosave.saved.value)" class="save-status" :class="{ 'status-ok': !autosave.saving.value }" role="status"><Check v-if="!autosave.saving.value" :size="14" />{{ autosave.saving.value ? t('正在保存…') : t('已自动保存') }}</div>
+    <div v-if="autosave.saving.value || autosave.saved.value" class="save-status" :class="{ 'status-ok': !autosave.saving.value }" role="status"><Check v-if="!autosave.saving.value" :size="14" />{{ autosave.saving.value ? t('正在保存…') : t('已自动保存') }}</div>
     <p v-if="autosave.error.value" class="error" role="alert">{{ te(autosave.error.value) }}<Button variant="ghost" @click="autosave.retry">{{ t('重试') }}</Button></p>
     <p v-if="error" class="error" role="alert">{{ te(error) }}</p>
   </div>
@@ -147,6 +131,8 @@ onUnmounted(() => { disposed = true })
 .system-status { display:flex; align-items:center; flex-wrap:wrap; gap:8px; margin:8px 0; }
 .system-status span { overflow-wrap:anywhere; }
 .hint, .save-status { color:var(--desk-muted, #57606a); font-size:12px; line-height:1.6; margin:6px 4px 0; }
+.engine-status { display:flex; align-items:center; gap:4px; margin:4px 0; font-size:12px; color:var(--desk-muted,#57606a); overflow-wrap:anywhere; }
+.engine-status.status-ok { color:var(--ui-success-fg,#24834b); }
 .save-status.status-ok { color:var(--ui-success-fg,#24834b); }
 .error { color:#b91c1c; overflow-wrap:anywhere; }
 </style>

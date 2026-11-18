@@ -19,7 +19,7 @@ export const settingsApi = {
   copyAppDirectory: (kind: AppDirectory) => invoke<void>('copy_app_directory', { kind }),
   copyShortcutExample: () => invoke<void>('copy_shortcut_example'),
   importSettings: () => invoke<Settings | null>('import_settings'),
-  exportSettings: () => invoke<boolean>('export_settings'),
+  exportSettings: (includeSecrets = false) => invoke<boolean>('export_settings', { includeSecrets }),
   openProjectHomepage: () => invoke<void>('open_project_homepage'),
   status: () => invoke<AppStatus>('app_status'),
   mainWindowReady: () => invoke<void>('main_window_ready'),

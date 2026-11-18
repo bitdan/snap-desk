@@ -1,9 +1,3 @@
-<script lang="ts">
-// 只缓存公开的资源状态，不保存密钥或未提交的设置草稿。
-let latestLocalStatus: import('@/features/recognition/ai').LocalTranslationStatus | null = null
-let localStatusRevision = 0
-</script>
-
 <script setup lang="ts">
 import ProviderMenu, { type ProviderMenuItem } from './ProviderMenu.vue'
 import SelectControl from '@/shared/ui/SelectControl.vue'
@@ -12,7 +6,7 @@ import { updateSettings } from '@/features/settings/settings-write'
 import { t, te } from '@/shared/i18n/i18n'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { api } from '@/services/api'
-import { deepLEndpoints, defaultAiSettings, targetLanguages, translationPresets, validateAiSettings } from '@/features/recognition/ai'
+import { defaultAiSettings, targetLanguages, translationPresets, validateAiSettings } from '@/features/recognition/ai'
 import type { AiSettings, LocalTranslationStatus } from '@/features/recognition/ai'
 import { Check } from 'lucide-vue-next'
 import Button from '@/shared/ui/button/Button.vue'
@@ -21,28 +15,28 @@ import SwitchControl from '@/shared/ui/SwitchControl'
 import SettingRow from '@/shared/ui/SettingRow'
 import { cloudFirst, connectionMode, supportsTranslation, translationPresetId, translationService, type RecognitionService } from '@/features/recognition/services'
 
+/** 翻译页只选择引擎和翻译偏好；连接、密钥、本地资源与测试都在服务管理中维护。 */
+const emit = defineEmits<{ manage: [] }>()
 const activeSettings = ref<AiSettings | null>(null)
+// 未能迁移为服务的旧版直接配置只保留一个可切回的入口，不再提供编辑。
+const legacy = ref<AiSettings | null>(null)
 const services = ref<RecognitionService[]>([])
-const draft = ref(defaultAiSettings()), secret = ref(''), configured = ref<boolean | null>(null)
-const localStatus = ref<LocalTranslationStatus | null>(latestLocalStatus)
-const checking = ref(false)
-const preset = ref('custom')
-/** 按当前界面的显示名称排序，切换语言后同步更新，保留平台内部标识。 */
-const serviceOptions = computed(() => [
-  { value: 'custom', label: t('自定义') },
-  ...translationPresets.map(item => ({ value: item.value, label: t(item.label) })),
-  { value: 'deepl', label: 'DeepL' },
-].sort((left, right) => left.label.localeCompare(right.label, 'zh-CN', { sensitivity: 'base' })))
+const draft = ref(defaultAiSettings()), configured = ref<boolean | null>(null)
+const localStatus = ref<LocalTranslationStatus | null>(null)
 let disposed = false, credentialStatusRevision = 0
 const localEndpoint = computed(() => { try { return ['localhost', '127.0.0.1', '[::1]'].includes(new URL(draft.value.endpoint).hostname) } catch { return false } })
 const local = computed(() => draft.value.provider === 'local-ctranslate2')
 const languages = computed(() => local.value ? targetLanguages.slice(0, 2) : targetLanguages)
+const localReady = computed(() => !!localStatus.value?.runtimeReady && !!localStatus.value.models?.some(pack => pack.ready))
 watch(local, value => { if (value && !['zh-CN', 'en'].includes(draft.value.targetLanguage)) draft.value.targetLanguage = 'zh-CN' })
-// 地址切换立即清空未保存密钥，避免把上一服务的输入写入新服务。
-watch(() => [draft.value.endpoint, draft.value.provider, draft.value.serviceId], () => {
-  credentialStatusRevision++; secret.value = ''; configured.value = null
-}, { flush: 'sync' })
-const busy = ref(false), ready = ref(false), error = ref(''), message = ref('')
+watch(() => [draft.value.endpoint, draft.value.provider, draft.value.serviceId], () => { credentialStatusRevision++; configured.value = null }, { flush: 'sync' })
+const ready = ref(false), error = ref('')
+async function refreshCredential() {
+  const revision = credentialStatusRevision
+  if (local.value) return
+  const value = await api.aiProviderStatus().catch(() => null)
+  if (!disposed && revision === credentialStatusRevision) configured.value = value
+}
 async function loadSettings() {
   try {
     const settings = await api.status()
@@ -52,149 +46,56 @@ async function loadSettings() {
     const service = services.value.find(item => item.id === saved.serviceId)
     draft.value = service && saved.provider !== 'local-ctranslate2' ? translationService(saved, service) : { ...saved }; ready.value = true
     activeSettings.value = { ...draft.value }
-    syncPreset()
-    if (!local.value) {
-      const revision = credentialStatusRevision
-      const value = await api.aiProviderStatus()
-      if (!disposed && revision === credentialStatusRevision) configured.value = value
-    }
+    if (!draft.value.serviceId && draft.value.provider !== 'local-ctranslate2') legacy.value = { ...draft.value }
+    await refreshCredential()
   }
   catch (e) { if (!disposed) error.value = String(e) }
-}
-async function refreshLocalStatus() {
-  const revision = ++localStatusRevision
-  checking.value = true
-  try {
-    const next = await api.translationModelStatus()
-    if (revision === localStatusRevision) {
-      latestLocalStatus = next
-      if (!disposed) localStatus.value = next
-    }
-  } catch (e) {
-    if (revision === localStatusRevision) {
-      latestLocalStatus = null
-      if (!disposed) { localStatus.value = null; error.value = String(e) }
-    }
-  } finally { if (!disposed) checking.value = false }
 }
 onMounted(() => {
   // 配置/凭证与引擎校验独立返回，慢校验或失败不能拖住整个表单。
   void loadSettings()
-  void refreshLocalStatus()
+  void api.translationModelStatus().then(value => { if (!disposed) localStatus.value = value }).catch(() => { /* 状态未读取时只少一条提示。 */ })
 })
 onUnmounted(() => { disposed = true })
-/** 只覆盖 AI 字段，读取最新配置以保留其他页面已保存的设置。密钥从不进入 settings。 */
+/** 只覆盖 AI 字段，读取最新配置以保留其他页面已保存的设置。 */
 const autosave = useAutoSave(async () => {
   if (!ready.value) return
-  const ai = { ...draft.value }, key = secret.value, revision = credentialStatusRevision
+  const ai = { ...draft.value }
   const saved = await updateSettings(current => ({ ...current, ai }))
   if (!disposed) activeSettings.value = { ...saved.ai }
-  if (ai.provider !== 'local-ctranslate2' && key) {
-    await api.aiCredentialSet(key, ai.endpoint)
-    // 旧服务写入结束时，不能清空用户已为新服务重新输入的同一段密钥。
-    if (revision === credentialStatusRevision && secret.value === key) secret.value = ''
-  }
-  const status = ai.provider === 'local-ctranslate2' ? false : await api.aiProviderStatus()
-  if (!disposed && revision === credentialStatusRevision && ai.endpoint === draft.value.endpoint && ai.provider === draft.value.provider) configured.value = status
+  await refreshCredential()
 }, () => validateAiSettings(draft.value))
-/** 密钥在结束编辑后保存，避免逐字符写入系统凭据库。 */
-function syncPreset() {
-  preset.value = draft.value.provider === 'deepl' ? 'deepl' : draft.value.provider === 'online-llm'
-    ? translationPresets.find(item => item.endpoint === draft.value.endpoint)?.value ?? 'custom' : 'custom'
-}
-/** 界面只区分本地/在线；平台选择映射回原有协议，兼容已保存的 DeepL 配置。 */
-function modeChanged(mode: string) {
-  draft.value.serviceId = ''
-  draft.value.provider = mode === 'local' ? 'local-ctranslate2'
-    : deepLEndpoints.includes(draft.value.endpoint) ? 'deepl' : 'online-llm'
-  secret.value = ''; configured.value = null; message.value = ''; error.value = ''
-  syncPreset()
-  autosave.commit()
-}
 function selectService(id: string) {
   const service = services.value.find(item => item.id === id)
   if (service) draft.value = translationService(draft.value, service)
   else draft.value.serviceId = ''
-  secret.value = ''; configured.value = null
   autosave.commit()
 }
-function applyPreset() {
-  // 从预设、DeepL 或已保存服务切到自定义时清空地址与模型，避免沿用上一平台的配置；已在自定义中则保留输入。
-  const fromOther = !!draft.value.serviceId || draft.value.provider === 'deepl'
-    || translationPresets.some(item => item.endpoint === draft.value.endpoint)
-  draft.value.serviceId = ''
-  secret.value = ''; configured.value = null
-  if (preset.value === 'deepl') {
-    draft.value.provider = 'deepl'
-    if (!deepLEndpoints.includes(draft.value.endpoint)) draft.value.endpoint = deepLEndpoints[0]!
-    draft.value.model = ''
-  } else {
-    draft.value.provider = 'online-llm'
-    const selected = translationPresets.find(item => item.value === preset.value)
-    if (selected) { draft.value.endpoint = selected.endpoint; draft.value.model = selected.model }
-    else if (fromOther) { draft.value.endpoint = ''; draft.value.model = '' }
-  }
-  autosave.commit()
-}
-/** 二级菜单同时列出离线引擎、平台预设和已保存账号，不再逐层打开下拉框。 */
-const selectedMenu = computed(() => local.value ? 'offline' : draft.value.serviceId ? `service:${draft.value.serviceId}` : `preset:${preset.value}`)
-const providerOptions = computed(() => [{ value: 'offline', label: 'CTranslate2', connection: 'offline' as const }, ...serviceOptions.value.map(item => ({ ...item, label: item.value === 'local' ? t('本机模型') : item.label, value: `preset:${item.value}`, sortPriority: item.value === 'custom' ? 1 : undefined, connection: item.value === 'custom' ? (preset.value === 'custom' && !draft.value.serviceId ? connectionMode(draft.value.endpoint) : undefined) : item.value === 'local' ? 'local-api' as const : 'online' as const }))])
+/** 下拉只做切换：本地引擎、已保存的服务，以及未能迁移的旧版直接配置。 */
+const menuValue = (value: AiSettings) => value.provider === 'local-ctranslate2' ? 'offline' : value.serviceId ? `service:${value.serviceId}` : 'legacy'
+const selectedMenu = computed(() => menuValue(draft.value))
 const savedOptions = computed(() => services.value.filter(supportsTranslation).map(item => ({ value: `service:${item.id}`, label: item.name, description: item.model || item.protocol, connection: connectionMode(item.endpoint), presetId: translationPresetId(item), endpoint: item.endpoint })))
-const activeMenu = computed(() => {
-  const value = activeSettings.value
+const activeMenu = computed(() => activeSettings.value ? menuValue(activeSettings.value) : '')
+const legacyLabel = computed(() => {
+  const value = legacy.value
   if (!value) return ''
-  if (value.provider === 'local-ctranslate2') return 'offline'
-  if (value.serviceId) return `service:${value.serviceId}`
-  return `preset:${value.provider === 'deepl' ? 'deepl' : translationPresets.find(item => item.endpoint === value.endpoint)?.value ?? 'custom'}`
+  const name = value.provider === 'deepl' ? 'DeepL' : t(translationPresets.find(item => item.endpoint === value.endpoint)?.label ?? '自定义')
+  return `${name} · ${t('旧配置')}`
 })
-const menuOptions = computed(() => {
-  const options: ProviderMenuItem[] = []
-  for (const item of providerOptions.value) {
-    const saved = savedOptions.value.filter(service => `preset:${service.presetId}` === item.value)
-    if (!saved.length) options.push(item)
-    else {
-      // 仍在使用旧版直接配置时标明来源，避免把真实生效配置静默映射到另一账号。
-      if (activeMenu.value === item.value) options.push({ ...item, label: `${item.label} · ${t('旧配置')}` })
-      options.push(...saved)
-    }
-  }
-  return cloudFirst(options).map(item => ({ ...item, active: item.value === activeMenu.value }))
-})
+const menuOptions = computed(() => cloudFirst<ProviderMenuItem>([
+  { value: 'offline', label: 'CTranslate2', connection: 'offline' as const },
+  ...(legacy.value ? [{ value: 'legacy', label: legacyLabel.value, description: legacy.value.model, connection: connectionMode(legacy.value.endpoint), presetId: legacy.value.provider === 'deepl' ? 'deepl' : translationPresets.find(item => item.endpoint === legacy.value!.endpoint)?.value, endpoint: legacy.value.endpoint }] : []),
+  ...savedOptions.value,
+]).map(item => ({ ...item, active: item.value === activeMenu.value })))
 const activeLabel = computed(() => {
   const item = menuOptions.value.find(item => item.value === activeMenu.value)
   return [item?.label, activeSettings.value?.provider !== 'local-ctranslate2' ? activeSettings.value?.model : ''].filter(Boolean).join(' · ')
 })
 function selectMenu(value: string) {
-  if (busy.value || !ready.value) return
-  if (value === 'offline') { modeChanged('local'); return }
-  if (value.startsWith('service:')) { selectService(value.slice(8)); return }
-  preset.value = value.slice(7); applyPreset()
-}
-function changed(event: Event) {
-  if ((event.target as HTMLInputElement).type !== 'password') autosave.schedule()
-}
-async function credentialAction(action: 'delete' | 'test') {
-  await autosave.flush()
-  if (autosave.error.value) return
-  busy.value = true; error.value = ''; message.value = ''
-  try {
-    if (action === 'delete') { await api.aiCredentialSet(null, draft.value.endpoint); configured.value = false; message.value = '密钥已删除。' }
-    else { await api.aiProviderTest(); message.value = '翻译测试成功。' }
-  } catch (e) { error.value = String(e) }
-  finally { busy.value = false }
-}
-/** 引擎和语言包均由用户主动下载或导入，状态与 OCR 独立。 */
-async function modelAction(modelId: string, action: 'download' | 'import' | 'delete') {
-  if (busy.value || checking.value) return
-  const revision = ++localStatusRevision
-  busy.value = true; error.value = ''; message.value = modelId === 'runtime' ? '正在安装引擎…' : ''
-  try {
-    const next = await api.translationModelAction(modelId, action)
-    if (revision === localStatusRevision) latestLocalStatus = next
-    if (!disposed) { localStatus.value = next; message.value = modelId === 'runtime' ? '引擎状态已更新。' : '语言包状态已更新。' }
-  }
-  catch (e) { message.value = ''; error.value = String(e) }
-  finally { busy.value = false }
+  if (!ready.value) return
+  if (value === 'offline') { draft.value = { ...draft.value, provider: 'local-ctranslate2', serviceId: '' }; autosave.commit(); return }
+  if (value === 'legacy' && legacy.value) { draft.value = { ...draft.value, ...legacy.value, serviceId: '', targetLanguage: draft.value.targetLanguage, timeoutSeconds: draft.value.timeoutSeconds, autoCopy: draft.value.autoCopy, overlay: draft.value.overlay }; autosave.commit(); return }
+  if (value.startsWith('service:')) selectService(value.slice(8))
 }
 </script>
 
@@ -202,60 +103,28 @@ async function modelAction(modelId: string, action: 'download' | 'import' | 'del
   <section class="ai-settings">
     <!-- 生效变化由读屏播报；视觉状态由菜单勾选统一表达。 -->
     <p class="sr-only" role="status" data-current-translation>{{ activeSettings ? t('当前翻译：{0}', { 0: activeLabel }) : t('正在读取配置…') }}</p>
-    <fieldset :disabled="busy || !ready" @input="changed" @change="autosave.commit" @focusout="autosave.flush">
+    <fieldset :disabled="!ready" @change="autosave.commit" @focusout="autosave.flush">
 
       <h2 class="section-heading">{{ t('引擎') }}</h2>
       <div class="settings-card recognition-card">
-      <div class="setting-row"><span>{{ t('翻译引擎') }}<small>{{ local ? t('离线翻译，文字不上传') : localEndpoint ? t('调用本机兼容接口') : t('在线服务，文字会上传') }}</small></span><ProviderMenu :model-value="selectedMenu" :options="menuOptions" :label="t('翻译引擎')" :disabled="busy || !ready" @update:model-value="selectMenu" /></div>
+      <div class="setting-row"><span>{{ t('翻译引擎') }}<small>{{ local ? t('离线翻译，文字不上传') : localEndpoint ? t('调用本机兼容接口') : t('在线服务，文字会上传') }}</small></span><ProviderMenu :model-value="selectedMenu" :options="menuOptions" :label="t('翻译引擎')" :disabled="!ready" :manage-label="t('服务管理…')" @update:model-value="selectMenu" @manage="emit('manage')" /></div>
       <div class="recognition-detail">
-      <div v-if="local" class="local-resources">
-        <div class="model-row runtime-row">
-          <span class="runtime-status" :class="localStatus?.runtimeReady ? 'status-ok' : 'text-xs text-zinc-500'" role="status"><Check v-if="localStatus?.runtimeReady" :size="14" />{{ !localStatus ? checking ? t("正在检查…") : t("引擎状态未读取") : localStatus.runtimeReady ? t("本地引擎已安装") : t("翻译引擎未安装或校验失败") }}</span>
-          <div class="model-actions">
-            <Button variant="outline" :disabled="checking || !localStatus?.runtimeSupported" @click="modelAction('runtime', 'download')">{{ t("下载引擎") }}</Button>
-            <Button variant="outline" :disabled="checking || !localStatus?.runtimeSupported" @click="modelAction('runtime', 'import')">{{ t("导入引擎 ZIP") }}</Button>
-          </div>
-        </div>
-        <p v-if="localStatus && !localStatus.runtimeSupported" class="hint">{{ t("翻译引擎下载和导入目前仅支持 Windows x64。") }}</p>
-        <div v-for="pack in localStatus?.models" :key="pack.modelId" class="model-row">
-          <span class="model-name">{{ pack.modelId.includes('en-zh') ? t("英语 → 简体中文") : t("中文 → 英语") }}</span>
-          <span :class="pack.ready ? 'status-ok' : 'text-xs text-zinc-500'" role="status"><Check v-if="pack.ready" :size="14" />{{ pack.ready ? t("已校验") : t("未安装或校验失败") }}</span>
-          <div class="model-actions">
-            <Button variant="outline" :disabled="checking || !pack.downloadable" @click="modelAction(pack.modelId, 'download')">{{ t("下载") }}{{ pack.downloadBytes ? `（${Math.ceil(pack.downloadBytes / 1048576)} MiB）` : '' }}</Button>
-            <Button variant="outline" :disabled="checking" @click="modelAction(pack.modelId, 'import')">{{ t("导入语言包") }}</Button>
-            <Button v-if="pack.revision" variant="ghost" :disabled="checking" @click="modelAction(pack.modelId, 'delete')">{{ t("卸载") }}</Button>
-          </div>
-        </div>
-      </div>
-      <div v-else class="online-fields">
-
-        <div v-if="draft.serviceId" class="saved-connection">
-          <dl class="connection-summary"><div><dt>{{ t('服务地址') }}</dt><dd>{{ draft.endpoint }}</dd></div><div v-if="draft.model"><dt>{{ t('模型名称') }}</dt><dd>{{ draft.model }}</dd></div></dl>
-          <div class="credential-status" role="status"><span :class="{ 'status-ok': configured }"><Check v-if="configured" :size="14" />{{ configured === null ? t('凭据状态未读取') : configured ? t('已配置密钥') : localEndpoint ? t('本机服务可不填密钥') : t('未配置密钥') }}</span><InfoTip :text="t('连接与凭据在服务管理中维护。')" /></div>
-        </div>
-        <template v-if="!draft.serviceId">
-
-        <label v-if="draft.provider === 'deepl'">{{ t("服务地址") }}<SelectControl v-model="draft.endpoint" :aria-label="t('服务地址')" :options="deepLEndpoints.map((value, index) => ({ value, label: index === 0 ? 'DeepL API Free' : 'DeepL API Pro' }))" @update:model-value="autosave.commit" /></label>
-        <label v-else>{{ t("完整接口地址") }}<input v-model.trim="draft.endpoint" type="url" :placeholder='t("https://服务域名/v1/chat/completions")' autocomplete="off" /></label>
-        <label v-if="draft.provider === 'online-llm'">{{ t("模型名称") }}<input v-model.trim="draft.model" :placeholder='t("填写服务支持的模型 ID")' /></label>
-        <label>API Key<input v-model="secret" type="password" autocomplete="new-password" :placeholder='t("留空保留现有密钥")' /></label>
-        <p :class="{ 'status-ok': configured }" role="status"><Check v-if="configured" :size="14" />{{ configured === null ? t("正在检查…") : configured ? t("已配置") : t("未配置") }}<InfoTip :text="t('密钥随当前服务地址保存。')" /></p>
-        </template>
-      </div>
+        <p v-if="local && localStatus" class="engine-status" :class="{ 'status-ok': localReady }" role="status"><Check v-if="localReady" :size="14" />{{ localReady ? t('本地引擎已安装') : t('本地引擎或语言包未安装，请在服务管理中安装。') }}</p>
+        <p v-else-if="!local" class="engine-status" :class="{ 'status-ok': configured }" role="status"><Check v-if="configured" :size="14" />{{ configured === null ? t('凭据状态未读取') : configured ? t('已配置密钥') : localEndpoint ? t('本机服务可不填密钥') : t('未配置密钥，请在服务管理中填写。') }}</p>
       </div>
       </div>
       <h2 class="section-heading">{{ t('翻译设置') }}</h2>
       <div class="settings-card"><div class="translation-options">
-        <label>{{ t("默认目标语言") }}<SelectControl v-model="draft.targetLanguage" :disabled="busy || !ready" :aria-label="t('目标语言')" :options="languages.map(item => ({ value: item.value, label: t(item.label) }))" @update:model-value="autosave.commit" /></label>
+        <label>{{ t("默认目标语言") }}<SelectControl v-model="draft.targetLanguage" :disabled="!ready" :aria-label="t('目标语言')" :options="languages.map(item => ({ value: item.value, label: t(item.label) }))" @update:model-value="autosave.commit" /></label>
         <label>{{ t("超时（秒）") }}<input v-model.number="draft.timeoutSeconds" type="number" min="5" max="120" /></label>
         <SettingRow :label='t("翻译后自动复制译文")' for="translation-auto-copy"><SwitchControl id="translation-auto-copy" v-model="draft.autoCopy" @change="autosave.commit" /></SettingRow>
         <SettingRow :label='t("截图翻译覆盖原文")' for="translation-overlay"><SwitchControl id="translation-overlay" v-model="draft.overlay" @change="autosave.commit" /></SettingRow>
         <div v-if="local" class="idle-field"><div class="field-label"><label for="translation-idle-seconds">{{ t("闲置回收（秒）") }}</label><InfoTip :text="t('0 不回收；可设为 30～3600 秒。')" /></div><input id="translation-idle-seconds" v-model.number="draft.localIdleSeconds" type="number" min="0" max="3600" step="1" /></div>
       </div></div>
-      <div class="actions"><span v-if="autosave.saving.value || autosave.saved.value" class="settings-save-status" :class="{ 'status-ok': !autosave.saving.value }" role="status"><Check v-if="!autosave.saving.value" :size="14" />{{ autosave.saving.value ? t("正在保存…") : t("已自动保存") }}</span><Button variant="outline" :disabled="!local && !localEndpoint && !configured" @click="credentialAction('test')">{{ t("测试已保存配置") }}</Button><InfoTip v-if="!local && !localEndpoint" :text="t('测试会发送 Hello，可能产生费用。')" /><Button v-if="!local && !draft.serviceId" variant="ghost" :disabled="!configured" @click="credentialAction('delete')">{{ t("删除已保存密钥") }}</Button></div>
+      <div class="actions"><span v-if="autosave.saving.value || autosave.saved.value" class="settings-save-status" :class="{ 'status-ok': !autosave.saving.value }" role="status"><Check v-if="!autosave.saving.value" :size="14" />{{ autosave.saving.value ? t("正在保存…") : t("已自动保存") }}</span></div>
     </fieldset>
     <p v-if="autosave.error.value" class="notice error" role="alert">{{ te(autosave.error.value) }}<Button variant="ghost" @click="autosave.retry">{{ t("重试") }}</Button></p>
-    <p v-if="message" :class="{ 'status-ok': !busy }" role="status"><Check v-if="!busy" :size="14" />{{ t(message) }}</p><p v-if="error" class="notice error" role="alert">{{ te(error) }}</p>
+    <p v-if="error" class="notice error" role="alert">{{ te(error) }}</p>
   </section>
 </template>
 
@@ -282,7 +151,7 @@ input:focus-visible, select:focus-visible { outline:2px solid var(--desk-accent,
 .idle-field { display:grid; grid-template-columns:124px minmax(0,1fr); gap:12px; align-items:center; }
 .field-label { display:flex; align-items:center; gap:2px; }
 .translation-options .field-label label { display:block; }
-.online-fields { width:100%; }
+.engine-status { display:flex; align-items:center; gap:4px; margin:4px 0; font-size:12px; }
 .credential-status { display:flex; align-items:center; gap:4px; font-size:12px; margin:8px 0; }
 .connection-summary { margin:0; }
 .connection-summary > div { display:grid; grid-template-columns:124px minmax(0,1fr); gap:12px; align-items:start; padding:8px 0; }

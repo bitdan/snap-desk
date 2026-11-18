@@ -634,7 +634,19 @@ pub fn load(path: &Path) -> (Settings, Option<String>) {
 
 pub fn initialize(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     let path = app.path().app_config_dir()?.join("settings.json");
-    let (value, config_warning) = load(&path);
+    let (mut value, config_warning) = load(&path);
+    // 旧版翻译页直接填写的在线配置并入服务管理；密钥复制失败时保留连接，用户可在服务管理中重新填写。
+    if let Some((old, new)) = crate::recognition::services::migrate_legacy_translation(&mut value) {
+        match crate::recognition::ai_credentials::read(&old) {
+            Ok(Some(secret)) => {
+                if crate::recognition::ai_credentials::write(&new, Some(secret)).is_err() {
+                    log::warn!("event=settings.legacy_translation_credential_failed module=settings");
+                }
+            }
+            Ok(None) => (),
+            Err(_) => log::warn!("event=settings.legacy_translation_credential_failed module=settings"),
+        }
+    }
     let mut registered = Vec::new();
     let shortcut_error = if value.shortcuts_enabled {
         apply_settings(

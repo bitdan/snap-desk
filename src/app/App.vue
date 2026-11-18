@@ -322,9 +322,9 @@ onUnmounted(() => { disposed = true; window.removeEventListener('keydown', key);
         </template>
         <template v-else-if="page === '识别与翻译'">
           <div class="page-tabs"><div class="segmented-control" role="tablist" :aria-label="t('识别与翻译')"><button v-for="tab in recognitionTabs" :key="tab.value" type="button" role="tab" :aria-selected="recognitionTab === tab.value" @click="recognitionTab = tab.value">{{ t(tab.label) }}</button></div></div>
-          <OcrSettings v-if="recognitionTab === 'ocr'" />
-          <AiProviderSettings v-else-if="recognitionTab === 'translation'" />
-          <ServiceSettings v-else @open-tab="recognitionTab = $event" />
+          <OcrSettings v-if="recognitionTab === 'ocr'" @manage="recognitionTab = 'services'" />
+          <AiProviderSettings v-else-if="recognitionTab === 'translation'" @manage="recognitionTab = 'services'" />
+          <ServiceSettings v-else />
         </template>
         <SupportPages v-else-if="page === '关于与帮助'" :version="status?.version" :busy="!status || completingOnboarding" @navigate="navigate" @onboarding="onboardingError = ''; onboarding = true" @project="openProject" />
         <RecordingPanel v-else-if="page === '录屏'" :shortcut="status?.settings.shortcutsEnabled ? status.settings.shortcuts.record : ''" />

@@ -10,6 +10,8 @@ import '@/features/settings/settings.css'
 
 const props = defineProps<{ prepareTransfer?: () => Promise<boolean> }>()
 const busy = ref(false), error = ref(''), message = ref('')
+// 默认不导出密钥；勾选后备份文件含明文密钥，导入时写回系统凭据。
+const includeSecrets = ref(false)
 /** 导入导出复用配置队列，先提交其他页面的草稿，再打开原生文件对话框。 */
 async function transfer(kind: 'import' | 'export') {
   if (!desktop || busy.value) return
@@ -17,7 +19,7 @@ async function transfer(kind: 'import' | 'export') {
   try {
     if (props.prepareTransfer && !await props.prepareTransfer()) throw new Error('请先修正未保存的设置，再重试。')
     if (kind === 'export') {
-      if (await queueSettingsOperation(() => api.exportSettings())) message.value = '配置已导出，包含快捷键和截图、录屏保存目录。'
+      if (await queueSettingsOperation(() => api.exportSettings(includeSecrets.value))) message.value = includeSecrets.value ? '配置已导出，包含服务密钥，请妥善保管文件。' : '配置已导出，包含快捷键和截图、录屏保存目录。'
     } else {
       const settings: Settings | null = await queueSettingsOperation(() => api.importSettings())
       // 原生 settings-imported 事件统一更新主页面；取消选择不显示成功。
@@ -39,8 +41,9 @@ async function transfer(kind: 'import' | 'export') {
           <Button variant="outline" :disabled="!desktop || busy" @click="transfer('export')">{{ t('导出配置') }}</Button>
         </div>
       </div>
+      <label class="setting-row" for="export-include-secrets"><span>{{ t('导出时包含服务密钥') }}<small>{{ t('备份文件将含明文密钥，仅在自己的设备间迁移时使用。') }}</small></span><input id="export-include-secrets" v-model="includeSecrets" class="mini-switch" type="checkbox" role="switch" :disabled="busy" /></label>
     </div>
-    <p class="section-note">{{ t('不包含密钥、历史记录和图片视频。') }}</p>
+    <p class="section-note">{{ includeSecrets ? t('导出包含服务密钥；不包含历史记录和图片视频。') : t('默认不包含密钥、历史记录和图片视频。') }}</p>
     <p v-if="error" class="notice error" role="alert">{{ te(error) }}</p>
     <p v-if="message" class="notice status-ok" role="status"><Check :size="14" />{{ t(message) }}</p>
   </section>

@@ -61,6 +61,8 @@ export const ipcCommands = [
   "copy_ocr_text",
   "recognition_service_status",
   "recognition_service_credential",
+  "recognition_service_test",
+  "recognition_service_keys",
   "open_recognition_portal",
   "system_ocr_status",
   "wechat_ocr_status",
