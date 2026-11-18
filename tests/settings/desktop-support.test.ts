@@ -30,9 +30,10 @@ describe('desktop support', () => {
     expect(pageLimitations(support('x11'), '截图')).toEqual([])
   })
 
-  it('offers bindable commands only when global shortcuts are unavailable', () => {
+  it('offers bindable commands on Wayland or when global shortcuts are unavailable', () => {
     const actions = [{ key: 'capture', label: '区域截图' }, { key: 'record', label: '录屏' }]
     expect(shortcutCommands(support('x11'), actions)).toEqual([])
+    expect(shortcutCommands(support('wayland'), actions)).toHaveLength(2)
     expect(shortcutCommands(support('wayland', { globalShortcuts: no('x') }), actions)).toEqual([
       { label: '区域截图', command: "'/home/u/My Apps/Snap.AppImage' --capture" },
       { label: '录屏', command: "'/home/u/My Apps/Snap.AppImage' --record" },

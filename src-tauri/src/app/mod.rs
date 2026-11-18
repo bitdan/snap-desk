@@ -139,6 +139,20 @@ pub fn run() {
                 log::error!("event=app.initialize_failed module=app code=SETTINGS_INIT_FAILED");
                 error
             })?;
+            // Wayland 的全局快捷键经门户绑定；X11 与其他平台仍由快捷键插件注册。
+            #[cfg(target_os = "linux")]
+            {
+                let initial = app
+                    .state::<settings::SettingsState>()
+                    .0
+                    .lock()
+                    .map(|current| current.value.clone());
+                if let Ok(initial) = initial {
+                    settings::portal_shortcuts::start(app.handle().clone(), &initial, |app, action| {
+                        actions::run(app, action)
+                    });
+                }
+            }
             clipboard::initialize(app.handle());
             shelf::initialize(app.handle());
             resource_lifecycle::initialize(app.handle());

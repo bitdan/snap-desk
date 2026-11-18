@@ -1019,5 +1019,9 @@
   "屏幕共享授权的显示器与所选显示器不一致，请重新录屏并在系统对话框中选择同一块显示器。": "Screen sharing was granted for a different display than the one selected. Start the recording again and pick the same display in the system dialog.",
   "屏幕共享已停止，录制已结束。": "Screen sharing stopped, so the recording ended.",
   "屏幕共享画面尺寸与录制来源不一致。": "The shared screen size does not match the recording source.",
-  "Wayland 下无法把标注画布对齐到录制区域，录屏实时标注不可用。": "On Wayland the annotation canvas cannot be aligned with the recording area, so live annotations are unavailable."
+  "Wayland 下无法把标注画布对齐到录制区域，录屏实时标注不可用。": "On Wayland the annotation canvas cannot be aligned with the recording area, so live annotations are unavailable.",
+  "快捷键门户没有回应。": "The shortcuts portal did not respond.",
+  "已取消绑定全局快捷键。": "Binding global shortcuts was cancelled.",
+  "快捷键门户没有返回会话。": "The shortcuts portal returned no session.",
+  "快捷键门户返回了无效的会话。": "The shortcuts portal returned an invalid session."
 }

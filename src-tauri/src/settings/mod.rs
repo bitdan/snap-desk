@@ -2,6 +2,8 @@
 //! 前端只传明确的设置字段，不能指定文件路径。损坏的配置不会在启动时被覆盖。
 pub(crate) mod autostart;
 pub(crate) mod permissions;
+#[cfg(target_os = "linux")]
+pub(crate) mod portal_shortcuts;
 pub(crate) mod shortcut_probe;
 pub(crate) mod storage;
 pub(crate) mod backup;
@@ -578,6 +580,8 @@ pub struct ShortcutMenu(pub tauri::menu::CheckMenuItem<tauri::Wry>);
 
 /// 持锁调用，确保并发保存时托盘勾选状态与磁盘、内存提交顺序一致。
 fn notify_settings(app: &AppHandle, value: &Settings) {
+    #[cfg(target_os = "linux")]
+    portal_shortcuts::sync(value);
     if let Some(menu) = app.try_state::<ShortcutMenu>() {
         if let Err(_error) = menu.0.set_checked(value.shortcuts_enabled) {
             log::error!("event=app.shortcut_menu_failed module=app code=SHORTCUT_MENU_FAILED");

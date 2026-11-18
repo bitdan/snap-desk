@@ -25,8 +25,11 @@ export function pageLimitations(support: DesktopSupport | null | undefined, page
   return [...new Set(reasons)]
 }
 
-/** 无法注册全局快捷键时，供用户在桌面或合成器中绑定的命令（已由原生端按 shell 规则加引号）。 */
+/**
+ * 供用户在桌面或合成器中绑定的命令（已由原生端按 shell 规则加引号）。
+ * Wayland 始终提供：门户绑定可能被桌面拒绝或改键，命令行入口是可靠的后备。
+ */
 export function shortcutCommands(support: DesktopSupport | null | undefined, actions: readonly { key: string; label: string }[]): { label: string; command: string }[] {
-  if (!support || featureAvailable(support, 'globalShortcuts')) return []
+  if (!support || (support.session !== 'wayland' && featureAvailable(support, 'globalShortcuts'))) return []
   return actions.map(action => ({ label: action.label, command: `${support.commandLine} --${action.key}` }))
 }
