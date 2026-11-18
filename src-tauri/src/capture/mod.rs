@@ -642,7 +642,13 @@ pub async fn capture_native_window(
                 .filter(|t| t.kind == "window")
                 .ok_or("请选择已识别窗口。")?;
             (
-                session.desktop.windows[candidate.window_index].clone(),
+                // Wayland 的吸附候选没有原生窗口句柄，只能按选区截图。
+                session
+                    .desktop
+                    .windows
+                    .get(candidate.window_index)
+                    .cloned()
+                    .ok_or("当前桌面不支持原生窗口截图，请按选区截图。")?,
                 candidate.rect,
                 session.desktop.include_cursor,
                 (session.frame.origin_x, session.frame.origin_y),
