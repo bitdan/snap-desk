@@ -38,9 +38,8 @@ export function validateAiSettings(value: AiSettings): string | null {
   if (value.endpoint) {
     try {
       const url = new URL(value.endpoint)
-      const local = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)
       if (value.endpoint.length > 2048 || url.username || url.password || url.search || url.hash
-        || !(url.protocol === 'https:' || (url.protocol === 'http:' && local))) return '请使用 HTTPS 完整接口地址；HTTP 仅限本机，地址不能含凭证或查询参数。'
+        || !['https:', 'http:'].includes(url.protocol)) return '请使用 HTTP / HTTPS 完整接口地址，地址不能含凭证或查询参数。'
     } catch { return '服务地址无效。' }
   }
   if (value.provider === 'deepl' && value.endpoint && !deepLEndpoints.includes(value.endpoint)) return 'DeepL 仅支持官方 Free 或 Pro 的 /v2/translate 地址。'

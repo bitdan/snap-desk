@@ -739,7 +739,7 @@
   "韩语": "Korean",
   "法语": "French",
   "德语": "German",
-  "请使用 HTTPS 完整接口地址；HTTP 仅限本机，地址不能含凭证或查询参数。": "Use a full HTTPS API endpoint; HTTP is allowed only for localhost. Credentials and query parameters are not allowed.",
+  "请使用 HTTP / HTTPS 完整接口地址，地址不能含凭证或查询参数。": "Use a full HTTP / HTTPS API endpoint. Credentials and query parameters are not allowed.",
   "此标注图片过大，请缩小区域。": "Annotated image is too large. Select a smaller region.",
   "文字不能为空。": "Text cannot be empty.",
   "文字超出区域，请减少文字、缩小字号或扩大选区。": "Text exceeds the region. Shorten it, reduce font size or enlarge the region.",

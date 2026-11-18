@@ -143,19 +143,18 @@ impl AiSettings {
     }
 }
 
-/// 禁止 URL 内嵌密码、查询参数和重定向；明文 HTTP 只允许明确的本机地址。
+/// 禁止 URL 内嵌密码、查询参数和重定向；允许 HTTP 以适配内网自建服务（明文传输由用户自行承担）。
 pub(super) fn endpoint_url(value: &str) -> Result<reqwest::Url, String> {
     let url = reqwest::Url::parse(value).map_err(|_| "服务地址无效。")?;
-    let local = matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"));
     if value.len() > 2048
         || !url.username().is_empty()
         || url.password().is_some()
         || url.query().is_some()
         || url.fragment().is_some()
         || url.host_str().is_none()
-        || !(url.scheme() == "https" || (url.scheme() == "http" && local))
+        || !matches!(url.scheme(), "https" | "http")
     {
-        return Err("请使用不含凭证、查询参数的 HTTPS 完整接口地址；HTTP 仅限本机。".into());
+        return Err("请使用不含凭证、查询参数的 HTTP / HTTPS 完整接口地址。".into());
     }
     Ok(url)
 }
@@ -632,7 +631,7 @@ mod tests {
     #[test]
     fn endpoint_rejects_unsafe_addresses() {
         for url in [
-            "http://example.com/v1",
+            "ftp://example.com/v1",
             "https://key@example.com/v1",
             "https://example.com/?key=x",
             "file:///tmp/test",
@@ -640,6 +639,7 @@ mod tests {
             assert!(endpoint_url(url).is_err());
         }
         assert!(endpoint_url("http://127.0.0.1:8080/v1/chat/completions").is_ok());
+        assert!(endpoint_url("http://intranet.example.com:8089/v1").is_ok());
         assert!(endpoint_url("https://example.com/v1/chat/completions").is_ok());
     }
 }

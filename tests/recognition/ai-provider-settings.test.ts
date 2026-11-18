@@ -45,6 +45,21 @@ describe('翻译设置独立加载和快照复用', () => {
     memoryRenderer.render(null, root); mount(); await flushComponent()
     expect(menu('preset:deepseek').props['aria-current']).toBe('page')
   })
+  it('从预设切到自定义时清空地址和模型，已在自定义时保留输入', async () => {
+    let settings = defaultSettings()
+    settings.ai = { ...settings.ai, provider: 'online-llm', endpoint: 'https://api.deepseek.com/chat/completions', model: 'deepseek-flash' }
+    api.status.mockImplementation(async () => ({ settings }))
+    api.saveSettings.mockImplementation(async next => { settings = next; return next })
+    api.translationModelStatus.mockResolvedValue(ready); api.aiProviderStatus.mockResolvedValue(false)
+    mount(); await flushComponent()
+    menu('preset:custom').props.onClick(); await flushComponent()
+    expect(settings.ai).toMatchObject({ provider: 'online-llm', endpoint: '', model: '' })
+    memoryRenderer.render(null, root)
+    settings.ai = { ...settings.ai, endpoint: 'http://intranet.example.com:8089/v1', model: 'my-model' }
+    mount(); await flushComponent()
+    menu('preset:custom').props.onClick(); await flushComponent()
+    expect(settings.ai).toMatchObject({ endpoint: 'http://intranet.example.com:8089/v1', model: 'my-model' })
+  })
   it('Groq 预设自动填写地址和模型，隔离原服务密钥，重新进入仍显示 Groq', async () => {
     let settings = defaultSettings()
     settings.ai = { ...settings.ai, provider: 'online-llm', endpoint: 'https://old.example/v1/chat/completions', model: 'old-model', targetLanguage: 'ja' }

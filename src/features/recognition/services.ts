@@ -54,7 +54,7 @@ export function validateService(value: RecognitionService): string | null {
   if (!['openai-compatible', 'ocr-space', 'paddle-ocr', 'deepl'].includes(value.protocol)) return '不支持此服务协议。'
   try {
     const url = new URL(value.endpoint)
-    if (value.endpoint.length > 2048 || url.username || url.password || url.search || url.hash || !(url.protocol === 'https:' || (url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)))) return '服务地址必须使用 HTTPS；HTTP 仅限本机，不能含凭证或查询参数。'
+    if (value.endpoint.length > 2048 || url.username || url.password || url.search || url.hash || !['https:', 'http:'].includes(url.protocol)) return '服务地址必须使用 HTTP 或 HTTPS，不能含凭证或查询参数。'
   } catch { return '请填写完整接口地址。' }
   if (new TextEncoder().encode(value.model).length > 200 || /\p{Cc}/u.test(value.model) || (value.protocol === 'openai-compatible' && !value.model.trim())) return '请填写有效的模型 ID。'
   if (value.protocol === 'ocr-space' && !['1', '2', '3'].includes(value.model)) return 'OCR.space 引擎只能为 1、2 或 3。'
