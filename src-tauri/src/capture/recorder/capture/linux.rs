@@ -4,6 +4,7 @@
 //! X11 没有“新画面到达”的通知，静态桌面也按帧率取样，由编码端延续画面。
 //! 坐标约定与截图一致：显示器原点与选区都是 RandR 物理像素。窗口录制取窗口外框在根窗口上的
 //! 当前画面，因此跟随窗口移动，但也会录到盖在它上面的其他窗口。
+//! 本应用自己的控制条、边框和标注画布由 `exclude` 从每帧中去掉，标注再由录制管线合成。
 use super::{
     super::frame::{BgraImage, FramePool},
     CaptureBackend, NativeSource, RecorderConfig, VideoFrame,
@@ -17,6 +18,9 @@ use std::{
     time::{Duration, Instant},
 };
 use xcb::{shm, x, xfixes, XidNew};
+
+#[path = "linux_exclude.rs"]
+mod exclude;
 
 /// 录屏时间轴单位为 100 ns，取 CLOCK_MONOTONIC；GStreamer 系统时钟默认同源，音画对齐无需换算。
 pub fn now() -> i64 {
@@ -278,6 +282,7 @@ pub struct Capture {
     pool: Arc<FramePool>,
     interval: Duration,
     due: Option<Instant>,
+    exclusion: exclude::Exclusion,
 }
 
 impl Capture {
@@ -303,6 +308,7 @@ impl Capture {
         let region = config.region;
         let len = region.width as usize * region.height as usize * 4;
         let segment = Segment::attach(&x11, len);
+        let exclusion = exclude::Exclusion::new(&x11, len);
         Ok(Self {
             x11,
             segment,
@@ -314,6 +320,7 @@ impl Capture {
             pool,
             interval: Duration::from_nanos(1_000_000_000 / u64::from(config.fps.max(1))),
             due: None,
+            exclusion,
         })
     }
 
@@ -386,6 +393,9 @@ impl Capture {
             }
             copy_pixels(reply.data(), (width, height), self.msb, &mut image, offset);
         }
+        // 先去掉本应用窗口再叠光标，光标即使停在控制条上也保留在画面里。
+        self.exclusion
+            .apply(&self.x11, self.msb, &mut image, (left, top), part);
         if self.cursor {
             if let Ok(cursor) = self
                 .x11
@@ -448,6 +458,7 @@ impl Drop for Capture {
         if let Some(segment) = self.segment.take() {
             segment.detach(&self.x11);
         }
+        self.exclusion.release(&self.x11);
     }
 }
 
