@@ -58,6 +58,7 @@ pub(crate) fn probe(desktop: &str) -> Probe {
             std::env::var_os("NIRI_SOCKET").is_some(),
             std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_some(),
         ),
+        xwayland: std::env::var_os("DISPLAY").is_some_and(|value| !value.is_empty()),
         ..Probe::default()
     };
     match globals() {

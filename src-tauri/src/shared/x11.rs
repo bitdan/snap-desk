@@ -6,6 +6,14 @@ use xcb::{randr, x, xfixes, Xid, XidNew};
 
 pub(crate) const WAYLAND_HINT: &str = "暂不支持 Wayland 会话，请在登录界面选择 X11（Xorg）会话。";
 
+pub(crate) const NO_XWAYLAND: &str =
+    "当前 Wayland 会话没有 Xwayland（DISPLAY 未设置），无法读取剪贴板与选中文字。";
+
+/// Wayland 会话中 Xwayland 是否可用（GNOME 在首次连接时按需启动 Xwayland）。
+pub(crate) fn xwayland() -> bool {
+    std::env::var_os("DISPLAY").is_some_and(|value| !value.is_empty())
+}
+
 /// 会话识别与 `SNAP_DESK_SESSION` 覆盖见 `desktop_support::session`。
 pub(crate) fn wayland() -> bool {
     crate::shared::desktop_support::session() == crate::shared::desktop_support::Session::Wayland
@@ -40,6 +48,19 @@ impl X11 {
         if wayland() {
             return Err(WAYLAND_HINT.into());
         }
+        Self::open()
+    }
+
+    /// Wayland 会话经 Xwayland 连接：GNOME、KDE 与 wlroots 系合成器会把 Wayland 剪贴板与选中文字
+    /// 同步到 Xwayland 的 CLIPBOARD / PRIMARY 选区。只用于选区读写，前台窗口与按键注入仍不可靠。
+    pub fn connect_selections() -> Result<Self, String> {
+        if wayland() && !xwayland() {
+            return Err(NO_XWAYLAND.into());
+        }
+        Self::open()
+    }
+
+    fn open() -> Result<Self, String> {
         let (conn, index) = xcb::Connection::connect_with_extensions(
             None,
             &[],

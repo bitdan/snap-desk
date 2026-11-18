@@ -8,7 +8,7 @@ function support(session: DesktopSupport['session'], overrides: Partial<DesktopF
   const features = Object.fromEntries(['screenshot', 'screenshotCursor', 'windowSnap', 'scrollCapture', 'recording', 'recordingEffects', 'globalShortcuts', 'clipboardHistory', 'selectedText', 'directPaste', 'pinOnTop'].map(key => [key, yes])) as unknown as DesktopFeatures
   return {
     session, desktop: '', compositor: '', commandLine: "'/home/u/My Apps/Snap.AppImage'",
-    protocols: { kwinScreenshot: false, extImageCopyCapture: false, wlrScreencopy: false, layerShell: false, extDataControl: false, wlrDataControl: false, portalScreenshot: false, portalScreencast: false, portalGlobalShortcuts: false, portalRemoteDesktop: false },
+    protocols: { kwinScreenshot: false, extImageCopyCapture: false, wlrScreencopy: false, layerShell: false, extDataControl: false, wlrDataControl: false, portalScreenshot: false, portalScreencast: false, portalGlobalShortcuts: false, portalRemoteDesktop: false, xwayland: false },
     features: { ...features, ...overrides },
   }
 }

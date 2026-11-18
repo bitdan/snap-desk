@@ -14,7 +14,7 @@ export interface DesktopFeatures {
 }
 export interface DesktopProtocols {
   kwinScreenshot: boolean; extImageCopyCapture: boolean; wlrScreencopy: boolean; layerShell: boolean; extDataControl: boolean
-  wlrDataControl: boolean; portalScreenshot: boolean; portalScreencast: boolean; portalGlobalShortcuts: boolean; portalRemoteDesktop: boolean
+  wlrDataControl: boolean; portalScreenshot: boolean; portalScreencast: boolean; portalGlobalShortcuts: boolean; portalRemoteDesktop: boolean; xwayland: boolean
 }
 /** 会话类型与功能可用性，由原生端在启动时探测（Linux 按实际提供的 Wayland 协议与门户判断）。 */
 export interface DesktopSupport { session: 'windows' | 'macos' | 'x11' | 'wayland'; desktop: string; compositor: string; protocols: DesktopProtocols; features: DesktopFeatures; commandLine: string }
