@@ -112,7 +112,7 @@ jobs:
 
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
-        run: bash scripts/ci/install-linux-deps.sh
+        uses: ./.github/actions/linux-deps
 
       # runner 已安装 rustup；stable 默认使用本机架构的工具链。
       - name: Setup Rust
@@ -121,10 +121,13 @@ jobs:
           rustup default stable
 
       # target 相对 src-tauri 解析，与本地构建脚本固定的缓存目录一致。
+      # 与 CI 共用 shared-key，读取 master 的测试编译缓存；标签上保存的缓存后续标签读不到，因此不保存。
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: "./src-tauri -> target"
+          shared-key: native
+          save-if: false
 
       - name: Install frontend dependencies
         run: npm ci

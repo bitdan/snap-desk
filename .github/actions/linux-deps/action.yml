@@ -1,0 +1,32 @@
+name: Install Linux build dependencies
+description: 安装 Linux 构建依赖，并按周缓存下载的 deb 包；只有 master 推送保存缓存，PR 与标签只读取。
+
+runs:
+  using: composite
+  steps:
+    # 按周轮换 key：同一周内直接命中，下周从上一份缓存恢复后只补下载有更新的包。
+    - name: Compute apt cache key
+      id: key
+      shell: bash
+      run: echo "week=$(date -u +%G-%V)" >> "$GITHUB_OUTPUT"
+
+    - name: Restore apt packages
+      id: restore
+      uses: actions/cache/restore@v4
+      with:
+        path: ~/.cache/snap-desk-apt
+        key: apt-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/ci/install-linux-deps.sh') }}-${{ steps.key.outputs.week }}
+        restore-keys: |
+          apt-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/ci/install-linux-deps.sh') }}-
+          apt-${{ runner.os }}-${{ runner.arch }}-
+
+    - name: Install packages
+      shell: bash
+      run: SNAP_DESK_APT_ARCHIVES="$HOME/.cache/snap-desk-apt" bash scripts/ci/install-linux-deps.sh
+
+    - name: Save apt packages
+      if: github.ref == 'refs/heads/master' && steps.restore.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: ~/.cache/snap-desk-apt
+        key: ${{ steps.restore.outputs.cache-primary-key }}

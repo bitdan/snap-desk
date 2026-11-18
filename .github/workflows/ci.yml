@@ -93,15 +93,19 @@ jobs:
           persist-credentials: false
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
-        run: bash scripts/ci/install-linux-deps.sh
+        uses: ./.github/actions/linux-deps
       - name: Setup Rust
         run: |
           rustup toolchain install stable --profile minimal
           rustup default stable
+      # 只在 master 推送时保存：PR 缓存内容与 master 相同却各占约 1 GB，会挤掉 master 的缓存。
+      # shared-key 与发布流水线一致，标签构建可直接复用 master 的测试编译结果。
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: "./src-tauri -> target"
+          shared-key: native
+          save-if: ${{ github.ref == 'refs/heads/master' }}
       # 与发布流水线使用同一条命令；默认跳过需要实机桌面或模型资源的 ignored 测试。
       - name: Test native library
         working-directory: src-tauri
