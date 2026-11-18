@@ -13,6 +13,7 @@ mod outputs;
 mod pipewire_frame;
 pub(crate) mod portal;
 mod screencopy;
+pub(crate) mod windows;
 
 use image::RgbaImage;
 pub(crate) use outputs::Output;

@@ -30,7 +30,7 @@
 - [ ] 完成本地翻译模型许可的人工复核并更新审核记录。
 - [x] macOS：窗口与控件吸附、截图包含光标、快捷键与环境检测、权限引导、录屏、滚动截图、剪贴板历史和系统密钥存储。
 - [ ] macOS：跨屏框选。
-- [ ] Linux：Wayland 会话支持（已完成会话与协议检测、不可用功能提前标注、`--capture` 等命令行入口，单显示器截图（KWin → ext-image-copy-capture → wlr-screencopy → 屏幕共享门户）、经门户 + PipeWire 的录屏、GlobalShortcuts 门户快捷键，以及经 Xwayland 的剪贴板历史与划词翻译；ext/wlr data-control 尚未接入），以及 X11 截图、滚动截图快捷键、录屏（含排除本应用窗口）、内容拖出、剪贴板历史、划词翻译和系统密钥存储的实机验证。
+- [ ] Linux：Wayland 会话支持（已完成会话与协议检测、不可用功能提前标注、`--capture` 等命令行入口，单显示器截图（KWin → ext-image-copy-capture → wlr-screencopy → 屏幕共享门户）、经门户 + PipeWire 的录屏、GlobalShortcuts 门户快捷键，经 Xwayland 的剪贴板历史与划词翻译，以及 Sway / niri / Hyprland / KWin 窗口吸附；ext/wlr data-control 尚未接入，直接粘贴退化为只复制），以及 X11 截图、滚动截图快捷键、录屏（含排除本应用窗口）、内容拖出、剪贴板历史、划词翻译和系统密钥存储的实机验证。
 - [ ] macOS 开发者证书签名与公证。
 - [ ] 统一中英文长文本、窄窗口和深色主题下的界面布局。
 - [ ] 超大滚动截图接入磁盘分块缓存和流式导出。

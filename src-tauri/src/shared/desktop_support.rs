@@ -253,7 +253,7 @@ pub(crate) fn report(
         xwayland: probe.xwayland,
     };
     let features = if session == Session::Wayland {
-        wayland_features(&protocols)
+        wayland_features(&protocols, probe.compositor)
     } else {
         DesktopFeatures {
             screenshot: DesktopFeature::yes(),
@@ -287,7 +287,7 @@ pub(crate) fn report(
 }
 
 /// Wayland 截图按可用后端判断；尚未接入的功能统一标注，没有截图接口的桌面说明原因。
-fn wayland_features(protocols: &DesktopProtocols) -> DesktopFeatures {
+fn wayland_features(protocols: &DesktopProtocols, compositor: Compositor) -> DesktopFeatures {
     // 除 Screenshot 门户外，其余后端都能把光标合成进画面。
     let cursor_backend = protocols.kwin_screenshot
         || protocols.ext_image_copy_capture
@@ -308,7 +308,15 @@ fn wayland_features(protocols: &DesktopProtocols) -> DesktopFeatures {
         } else {
             no_backend
         },
-        window_snap: DesktopFeature::no(WAYLAND_SNAP),
+        // 只有提供窗口列表 IPC 的合成器能吸附；GNOME 不提供。
+        window_snap: if matches!(
+            compositor,
+            Compositor::Sway | Compositor::Niri | Compositor::Hyprland | Compositor::Kwin
+        ) {
+            DesktopFeature::yes()
+        } else {
+            DesktopFeature::no(WAYLAND_SNAP)
+        },
         scroll_capture: DesktopFeature::no(WAYLAND_SCROLL),
         // Wayland 录屏只走屏幕共享门户 + PipeWire。
         recording: if protocols.portal_screencast {
@@ -556,6 +564,8 @@ mod tests {
         let bridged = report(Session::Wayland, "GNOME", &bridged, "x".into());
         assert!(bridged.features.clipboard_history.available());
         assert!(bridged.features.selected_text.available());
+        assert_eq!(bridged.features.window_snap.reason(), WAYLAND_SNAP);
+        assert!(support.features.window_snap.available());
 
         // 只有 Screenshot 门户时可以截图，但不含光标。
         let portal_only = Probe {

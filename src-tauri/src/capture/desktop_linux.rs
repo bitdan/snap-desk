@@ -325,11 +325,38 @@ fn window_frame(x11: &X11, window: &NativeWindow) -> Option<WindowFrame> {
 
 /// Wayland 只冻结一块显示器：覆盖层无法跨屏定位，只能全屏到该显示器上。
 /// 坐标使用该显示器的物理像素（逻辑位置 × 缩放），前端按视口比例换算，不依赖窗口位置。
-fn capture_wayland(include_cursor: bool) -> Result<Desktop, String> {
+fn capture_wayland(include_cursor: bool, snap: bool) -> Result<Desktop, String> {
     let shot = super::wayland::capture(include_cursor)?;
+    let compositor = crate::shared::desktop_support::current().compositor();
+    let found = if snap {
+        super::wayland::windows::list(compositor, &shot.output)
+    } else {
+        Vec::new()
+    };
     let scale = shot.output.scale();
     let (width, height) = shot.image.dimensions();
     let (x, y) = shot.origin();
+    // 合成器报告逻辑坐标；换算到冻结显示器的物理像素并裁到画面内。Wayland 没有可截图的原生窗口句柄，
+    // 吸附候选只用于框选，window_index 仅用于前端分组。
+    let mut targets = Vec::new();
+    for window in found {
+        let left = x + (f64::from(window.x - shot.output.x) * scale).round() as i32;
+        let top = y + (f64::from(window.y - shot.output.y) * scale).round() as i32;
+        let w = (f64::from(window.width) * scale).round().max(0.0) as u32;
+        let h = (f64::from(window.height) * scale).round().max(0.0) as u32;
+        let Some(rect) = clipped(left, top, w, h, (x, y), (width, height)) else {
+            continue;
+        };
+        targets.push(Target {
+            rect,
+            kind: "window",
+            window_index: targets.len(),
+            recording_only: false,
+            icon: None,
+            title: window.title,
+            app_name: window.app,
+        });
+    }
     Ok(Desktop {
         image: shot.image,
         x,
@@ -342,7 +369,7 @@ fn capture_wayland(include_cursor: bool) -> Result<Desktop, String> {
             primary: true,
             scale,
         }],
-        targets: Vec::new(),
+        targets,
         windows: Vec::new(),
         include_cursor,
     })
@@ -350,7 +377,7 @@ fn capture_wayland(include_cursor: bool) -> Result<Desktop, String> {
 
 pub fn capture(primary_only: bool, include_cursor: bool, snap: bool) -> Result<Desktop, String> {
     if wayland() {
-        return capture_wayland(include_cursor);
+        return capture_wayland(include_cursor, snap && !primary_only);
     }
     let x11 = X11::connect()?;
     // Xft.dpi 是 X11 的全局缩放，仅用于浮窗布局；截图坐标始终是物理像素。

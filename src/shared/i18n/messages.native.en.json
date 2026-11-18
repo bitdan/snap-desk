@@ -1024,5 +1024,8 @@
   "已取消绑定全局快捷键。": "Binding global shortcuts was cancelled.",
   "快捷键门户没有返回会话。": "The shortcuts portal returned no session.",
   "快捷键门户返回了无效的会话。": "The shortcuts portal returned an invalid session.",
-  "当前 Wayland 会话没有 Xwayland（DISPLAY 未设置），无法读取剪贴板与选中文字。": "This Wayland session has no Xwayland (DISPLAY is not set), so the clipboard and selected text cannot be read."
+  "当前 Wayland 会话没有 Xwayland（DISPLAY 未设置），无法读取剪贴板与选中文字。": "This Wayland session has no Xwayland (DISPLAY is not set), so the clipboard and selected text cannot be read.",
+  "当前桌面不支持原生窗口截图，请按选区截图。": "Native window capture is not supported on this desktop. Capture a selected area instead.",
+  "KWin 脚本没有回传窗口列表。": "The KWin script did not return the window list.",
+  "无法运行 KWin 脚本。": "Unable to run the KWin script."
 }
