@@ -142,11 +142,8 @@ pub fn run() {
             // Wayland 的全局快捷键经门户绑定；X11 与其他平台仍由快捷键插件注册。
             #[cfg(target_os = "linux")]
             {
-                let initial = app
-                    .state::<settings::SettingsState>()
-                    .0
-                    .lock()
-                    .map(|current| current.value.clone());
+                let state = app.state::<settings::SettingsState>();
+                let initial = state.0.lock().map(|current| current.value.clone());
                 if let Ok(initial) = initial {
                     settings::portal_shortcuts::start(app.handle().clone(), &initial, |app, action| {
                         actions::run(app, action)
