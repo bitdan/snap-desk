@@ -9,6 +9,7 @@ export const ipcCommands = [
   "check_app_update",
   "download_app_update",
   "install_app_update",
+  "open_app_update_page",
   "replay_capture",
   "finish_html_render",
   "diagnostics_status",

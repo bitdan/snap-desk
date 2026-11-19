@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { defaultSettings, defaultShortcuts, validateRecordingExportSettings, exportFilenamePreview, validateExportSettings, validateShortcuts, captureShortcut, shortcutReleased, needsOnboarding } from '../../src/features/settings/settings'
+import { defaultSettings, defaultShortcuts, validateRecordingExportSettings, exportFilenamePreview, validateExportSettings, validateShortcuts, captureShortcut, shortcutReleased, needsOnboarding, validateUpdateMirror, validateUpdateProxy } from '../../src/features/settings/settings'
 
 describe('导出设置', () => {
   it('草稿与恢复默认的嵌套导出对象互不影响', () => {
@@ -141,5 +141,17 @@ describe('默认快捷键', () => {
     expect(other.history).toBe('Alt+V')
     expect(new Set(Object.values(mac)).size).toBe(7)
     expect(validateShortcuts(mac)).toBeNull()
+  })
+})
+
+describe('更新网络设置', () => {
+  it('默认留空，镜像只接受 https 前缀', () => {
+    expect(defaultSettings().updateNetwork).toEqual({ mirror: '', proxy: '' })
+    for (const value of ['', 'https://mirror.example/', 'https://mirror.example/gh']) expect(validateUpdateMirror(value), value).toBeNull()
+    for (const value of ['http://mirror.example/', 'https://user:pw@mirror.example/', 'https://mirror.example/?a=1', 'https://mirror.example/#x', 'mirror.example', 'https://mirror .example/']) expect(validateUpdateMirror(value), value).not.toBeNull()
+  })
+  it('代理支持 http、https、socks5，SOCKS 必须写端口', () => {
+    for (const value of ['', 'http://127.0.0.1:7890', 'https://proxy.example', 'socks5://127.0.0.1:1080', 'socks5h://user:pw@127.0.0.1:1080']) expect(validateUpdateProxy(value), value).toBeNull()
+    for (const value of ['127.0.0.1:7890', 'ftp://127.0.0.1:21', 'socks5://127.0.0.1', 'http://127.0.0.1:7890/path', 'http://127.0.0.1:7890?x=1', 'socks4://127.0.0.1:1080']) expect(validateUpdateProxy(value), value).not.toBeNull()
   })
 })

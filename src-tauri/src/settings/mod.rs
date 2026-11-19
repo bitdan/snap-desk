@@ -351,6 +351,82 @@ pub struct Appearance {
     pub language: Language,
 }
 
+/// 应用更新的网络选项，均可留空。下载镜像是放在 github.com 地址前的前缀（如 `https://mirror.example/`）；
+/// 镜像不受信任：版本列表仍从 GitHub 接口读取，安装包下载后必须通过签名校验。
+/// 代理只用于检查和下载更新，留空时沿用系统代理。
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields, default)]
+pub struct UpdateNetwork {
+    pub mirror: String,
+    pub proxy: String,
+}
+
+impl UpdateNetwork {
+    pub fn validate(&self) -> Result<(), String> {
+        if !self.mirror.is_empty() {
+            update_mirror(&self.mirror)?;
+        }
+        if !self.proxy.is_empty() {
+            update_proxy(&self.proxy)?;
+        }
+        Ok(())
+    }
+}
+
+/// 镜像前缀必须是 HTTPS，且不带查询、片段或凭证；末尾补 `/` 以便直接拼接 github.com 地址。
+pub fn update_mirror(value: &str) -> Result<reqwest::Url, String> {
+    const INVALID: &str = "下载镜像需填写完整的 https:// 地址，如 https://mirror.example/，不能包含空格、查询参数或账号密码。";
+    let url = reqwest::Url::parse(value).map_err(|_| INVALID)?;
+    if value.len() > 512
+        || value.trim() != value
+        || value.contains(char::is_whitespace)
+        || url.scheme() != "https"
+        || url.host_str().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err(INVALID.into());
+    }
+    let mut url = url;
+    if !url.path().ends_with('/') {
+        let path = format!("{}/", url.path());
+        url.set_path(&path);
+    }
+    Ok(url)
+}
+
+/// 代理支持 http、https、socks5 与 socks5h（SOCKS 必须写端口）；允许账号密码（只保存在本机设置中）。
+pub fn update_proxy(value: &str) -> Result<reqwest::Url, String> {
+    const INVALID: &str = "代理地址格式应为 http://127.0.0.1:7890 或 socks5://127.0.0.1:1080。";
+    let url = reqwest::Url::parse(value).map_err(|_| INVALID)?;
+    if value.len() > 512
+        || value.contains(char::is_whitespace)
+        || !matches!(url.scheme(), "http" | "https" | "socks5" | "socks5h")
+        || url.host_str().is_none_or(str::is_empty)
+        || url.port_or_known_default().is_none()
+        || !matches!(url.path(), "" | "/")
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err(INVALID.into());
+    }
+    Ok(url)
+}
+
+/// 去掉代理地址中的账号密码；空值或无法解析时原样返回。
+pub fn proxy_without_credentials(value: &str) -> String {
+    match reqwest::Url::parse(value) {
+        Ok(mut url) if !url.username().is_empty() || url.password().is_some() => {
+            let _ = url.set_username("");
+            let _ = url.set_password(None);
+            url.as_str().trim_end_matches('/').to_string()
+        }
+        _ => value.to_string(),
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", try_from = "SettingsWire")]
 pub struct Settings {
@@ -359,6 +435,7 @@ pub struct Settings {
     pub receive_prerelease_updates: bool,
     /// 后台复查新版本的间隔（分钟），只允许 UPDATE_CHECK_MINUTES 中的档位；手动检查不受影响。
     pub update_check_minutes: u32,
+    pub update_network: UpdateNetwork,
     pub appearance: Appearance,
     pub recognition_services: Vec<crate::recognition::services::RecognitionService>,
     pub ai: crate::recognition::translation::AiSettings,
@@ -389,6 +466,8 @@ struct SettingsWire {
     receive_prerelease_updates: bool,
     #[serde(default = "hourly_update_check")]
     update_check_minutes: u32,
+    #[serde(default)]
+    update_network: UpdateNetwork,
     #[serde(default)]
     appearance: Appearance,
     #[serde(default)]
@@ -439,6 +518,7 @@ impl TryFrom<SettingsWire> for Settings {
         Ok(Self {
             receive_prerelease_updates: wire.receive_prerelease_updates,
             update_check_minutes: wire.update_check_minutes,
+            update_network: wire.update_network,
             shortcuts,
             shortcuts_enabled: wire.shortcuts_enabled,
             delay_seconds: wire.delay_seconds,
@@ -474,6 +554,7 @@ impl Default for Settings {
         Self {
             receive_prerelease_updates: false,
             update_check_minutes: hourly_update_check(),
+            update_network: UpdateNetwork::default(),
             shortcuts: Shortcuts::default(),
             shortcuts_enabled: true,
             delay_seconds: 0,
@@ -530,6 +611,7 @@ impl Settings {
         if !UPDATE_CHECK_MINUTES.contains(&self.update_check_minutes) {
             return Err("检查更新间隔无效。".into());
         }
+        self.update_network.validate()?;
         if ![0, 3, 5].contains(&self.delay_seconds) {
             return Err("截图延时只能为 0、3 或 5 秒。".into());
         }
@@ -1074,6 +1156,67 @@ pub async fn complete_onboarding(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn update_network_defaults_empty_and_validates_mirror_and_proxy() {
+        let old: Settings = serde_json::from_str("{}").unwrap();
+        assert_eq!(old.update_network, UpdateNetwork::default());
+        let configured: Settings = serde_json::from_str(
+            r#"{"updateNetwork":{"mirror":"https://mirror.example/gh","proxy":"socks5://127.0.0.1:1080"}}"#,
+        )
+        .unwrap();
+        configured.validate().unwrap();
+        assert!(serde_json::from_str::<Settings>(r#"{"updateNetwork":{"other":""}}"#).is_err());
+        // 镜像末尾补 `/`，便于直接拼接 github.com 地址。
+        assert_eq!(
+            update_mirror("https://mirror.example/gh").unwrap().as_str(),
+            "https://mirror.example/gh/"
+        );
+        for bad in [
+            "http://mirror.example/",
+            "https://user:pw@mirror.example/",
+            "https://mirror.example/?a=1",
+            "https://mirror.example/#x",
+            " https://mirror.example/",
+            "mirror.example",
+        ] {
+            assert!(update_mirror(bad).is_err(), "{bad}");
+        }
+        for good in [
+            "http://127.0.0.1:7890",
+            "https://proxy.example",
+            "socks5://127.0.0.1:1080",
+            "socks5h://user:pw@127.0.0.1:1080",
+        ] {
+            assert!(update_proxy(good).is_ok(), "{good}");
+        }
+        for bad in [
+            "127.0.0.1:7890",
+            "ftp://127.0.0.1:21",
+            "socks5://127.0.0.1",
+            "http://127.0.0.1:7890/path",
+            "socks4://127.0.0.1:1080",
+        ] {
+            assert!(update_proxy(bad).is_err(), "{bad}");
+        }
+        let invalid = Settings {
+            update_network: UpdateNetwork {
+                mirror: "http://mirror.example/".into(),
+                proxy: String::new(),
+            },
+            ..Settings::default()
+        };
+        assert!(invalid.validate().is_err());
+        assert_eq!(
+            proxy_without_credentials("socks5h://user:pw@127.0.0.1:1080"),
+            "socks5h://127.0.0.1:1080"
+        );
+        assert_eq!(
+            proxy_without_credentials("http://127.0.0.1:7890"),
+            "http://127.0.0.1:7890"
+        );
+        assert_eq!(proxy_without_credentials(""), "");
+    }
 
     #[test]
     fn appearance_legacy_defaults_roundtrip_and_rejects_unknown_values() {

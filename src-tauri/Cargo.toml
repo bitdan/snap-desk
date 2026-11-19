@@ -47,7 +47,10 @@ printpdf = { version = "=0.7.0", default-features = false, features = ["font_sub
 ab_glyph = "=0.2.32"
 # OAR 复用 ort 的 CPU 推理及 PaddleOCR 前后处理；锁定兼容 Rust 1.95 的组合。
 oar-ocr = { version = "=0.10.0", default-features = false }
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
+# socks：设置中的更新代理可以是 SOCKS5（见 app::updater::download）。
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "socks"] }
+# 更新插件用 reqwest 0.13 读取更新清单；只为它启用 socks 特性，使 SOCKS5 代理也能用于检查更新。代码不直接使用。
+reqwest-updater-socks = { package = "reqwest", version = "0.13", default-features = false, features = ["socks"] }
 sha2 = "0.10"
 tokio = { version = "1", features = ["macros", "sync", "process", "io-util", "time"] }
 gif = "=0.14.2"

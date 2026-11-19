@@ -102,6 +102,26 @@ describe('在线更新设置', () => {
     expect(openWindow).toHaveBeenCalledTimes(2)
     expect(action('退出并安装')).toBeUndefined()
   })
+  it('下载镜像与代理在失焦时校验并保存，去掉空白，未改动不写设置', async () => {
+    const settings = defaultSettings()
+    api.status.mockResolvedValue({ settings })
+    await mount()
+    const input = (id: string) => findNode(root, node => node.type === 'input' && node.props.id === id)!
+    input('update-mirror').props.onInput({ target: { id: 'update-mirror', value: ' https://mirror.example/ ' } })
+    await flushComponent(); await input('update-mirror').props.onChange(); await flushComponent()
+    expect(api.saveSettings).toHaveBeenLastCalledWith({ ...settings, updateNetwork: { mirror: 'https://mirror.example/', proxy: '' } })
+    input('update-proxy').props.onInput({ target: { id: 'update-proxy', value: 'socks5://127.0.0.1:1080' } })
+    await flushComponent(); await input('update-proxy').props.onChange(); await flushComponent()
+    expect(api.saveSettings).toHaveBeenLastCalledWith({ ...settings, updateNetwork: { mirror: 'https://mirror.example/', proxy: 'socks5://127.0.0.1:1080' } })
+    const saves = api.saveSettings.mock.calls.length
+    await input('update-proxy').props.onChange(); await flushComponent()
+    expect(api.saveSettings).toHaveBeenCalledTimes(saves)
+    // 无效地址不保存，保留草稿并提示格式。
+    input('update-mirror').props.onInput({ target: { id: 'update-mirror', value: 'http://mirror.example/' } })
+    await flushComponent(); await input('update-mirror').props.onChange(); await flushComponent()
+    expect(api.saveSettings).toHaveBeenCalledTimes(saves)
+    expect(text(root)).toContain('https://')
+  })
   it('未配置签名或开发版本禁用更新操作', async () => {
     vi.useFakeTimers()
     native.configured = false

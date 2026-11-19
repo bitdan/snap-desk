@@ -1,5 +1,6 @@
 //! 应用更新：按设置选择正式版/测试版，校验签名后升级当前分发形式。
 //! 每个应用 Release 自带不可变清单，模型/引擎的预发布不会参与应用版本选择。
+mod download;
 mod portable;
 
 use crate::{
@@ -125,6 +126,13 @@ fn preview(app: &AppHandle) -> Result<bool, String> {
         .receive_prerelease_updates)
 }
 
+/// 设置中的下载镜像与代理；每次检查或下载时读取，改设置后无需重启。
+fn network(app: &AppHandle) -> Result<download::Network, String> {
+    let settings = app.state::<SettingsState>();
+    let guard = settings.0.lock().map_err(error)?;
+    download::Network::from_settings(&guard.value.update_network)
+}
+
 fn view(app: &AppHandle) -> Result<AppUpdateView, String> {
     let current_preview = preview(app)?;
     let state = app.state::<AppUpdateState>();
@@ -225,11 +233,8 @@ fn candidate(
 }
 
 async fn discover(app: &AppHandle, include_preview: bool) -> Result<Option<Update>, String> {
-    let client = reqwest::Client::builder()
-        .user_agent("Snap-Desk-Updater")
-        .timeout(Duration::from_secs(30))
-        .build()
-        .map_err(error)?;
+    let network = network(app)?;
+    let client = network.client(Some(Duration::from_secs(30)))?;
     let current = &app.package_info().version;
     let mut newest: Option<(Version, String)> = None;
     // GitHub 同仓库还发布模型资源，需要分页，不能依赖 /latest 或列表第一项。
@@ -271,8 +276,16 @@ async fn discover(app: &AppHandle, include_preview: bool) -> Result<Option<Updat
     };
     let platform = PLATFORM.ok_or("在线更新仅支持已发布平台的正式构建。")?;
     let target = format!("{platform}-{}", package_kind());
-    let updater = app
-        .updater_builder()
+    // 清单先直连 GitHub，失败时再经镜像读取；清单内容由下面的地址校验和安装包签名把关。
+    let endpoint: reqwest::Url = endpoint.parse().map_err(error)?;
+    let endpoints: Vec<_> = std::iter::once(endpoint.clone())
+        .chain(network.mirrored(&endpoint))
+        .collect();
+    let mut builder = app.updater_builder();
+    if let Some(proxy) = &network.proxy {
+        builder = builder.proxy(proxy.clone());
+    }
+    let updater = builder
         .pubkey(PUBLIC_KEY.trim())
         .target(&target)
         .timeout(Duration::from_secs(300))
@@ -285,7 +298,7 @@ async fn discover(app: &AppHandle, include_preview: bool) -> Result<Option<Updat
                 super::prepare_installer_exit(&app);
             }
         })
-        .endpoints(vec![endpoint.parse().map_err(error)?])
+        .endpoints(endpoints)
         .map_err(error)?
         .build()
         .map_err(error)?;
@@ -294,9 +307,9 @@ async fn discover(app: &AppHandle, include_preview: bool) -> Result<Option<Updat
         .await
         .map_err(error)?
         .ok_or("更新清单未提供所选版本。")?;
-    // 插件的检查超时不自动传递给下载，单独为安装包设置总下载时限。
-    update.timeout = Some(Duration::from_secs(300));
-    // 清单不能借另一个 tag 发布不同版本，也不能切换包类型或仓库。
+    // 安装包由 download 模块下载（无总时限、断点续传）；插件的下载时限不再使用。
+    update.timeout = None;
+    // 清单不能借另一个 tag 发布不同版本，也不能切换包类型或仓库；经镜像读到的清单同样受此约束。
     let expected_suffix = package_suffix();
     let prefix = format!("https://github.com/{REPOSITORY}/releases/download/v{version}/");
     if update.version != version.to_string()
@@ -405,18 +418,26 @@ pub(super) async fn download_app_update(
         update
     };
     let result = async {
-        let bytes = update
-            .download(
-                |chunk, total| {
-                    if let Ok(mut session) = state.session.lock() {
-                        session.downloaded += chunk as u64;
-                        session.total = total;
-                    }
-                },
-                || {},
-            )
-            .await
-            .map_err(error)?;
+        let network = network(&app)?;
+        let client = network.client(None)?;
+        let routes = network.routes(&update.download_url);
+        let bytes = download::download(
+            &client,
+            &routes,
+            &download::RETRY_WAITS,
+            download::STALL_AFTER,
+            |downloaded, total| {
+                if let Ok(mut session) = state.session.lock() {
+                    session.downloaded = downloaded;
+                    session.total = total;
+                }
+            },
+        )
+        .await?;
+        // 镜像与直连下载的字节一样不受信任：必须通过插件的签名与版本校验才保存。
+        update
+            .verify(&bytes)
+            .map_err(|e| format!("安装包签名校验失败，已丢弃（{e}）。请重试或在浏览器中下载。"))?;
         let mut session = state.session.lock().map_err(error)?;
         session.bytes = Some(Arc::new(bytes));
         session.phase = "ready".into();
@@ -424,6 +445,29 @@ pub(super) async fn download_app_update(
     }
     .await;
     failed(&app, result)
+}
+
+/// 候选版本的发布页；没有候选版本时打开最新发布。版本号来自已校验的清单，只含 SemVer 字符。
+fn release_page(version: Option<&str>) -> String {
+    match version {
+        Some(version) => format!("https://github.com/{REPOSITORY}/releases/tag/v{version}"),
+        None => format!("https://github.com/{REPOSITORY}/releases/latest"),
+    }
+}
+
+/// 自动下载失败时让用户在浏览器中下载；地址只由原生端拼出，不接受前端传入。
+#[tauri::command]
+pub(super) fn open_app_update_page(app: AppHandle, window: WebviewWindow) -> Result<(), String> {
+    require_window(&window, "main")?;
+    let version = app
+        .state::<AppUpdateState>()
+        .session
+        .lock()
+        .map_err(error)?
+        .update
+        .as_ref()
+        .map(|update| update.version.clone());
+    open::that(release_page(version.as_deref())).map_err(|e| format!("打开发布页失败：{e}"))
 }
 
 #[tauri::command]
@@ -563,6 +607,18 @@ mod tests {
                 ),
             }],
         }
+    }
+
+    #[test]
+    fn release_page_points_at_the_candidate_or_latest_release() {
+        assert_eq!(
+            release_page(Some("0.2.6-beta.2")),
+            format!("https://github.com/{REPOSITORY}/releases/tag/v0.2.6-beta.2")
+        );
+        assert_eq!(
+            release_page(None),
+            format!("https://github.com/{REPOSITORY}/releases/latest")
+        );
     }
 
     #[test]

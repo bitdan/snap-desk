@@ -455,6 +455,7 @@ pub fn run() {
             updater::check_app_update,
             updater::download_app_update,
             updater::install_app_update,
+            updater::open_app_update_page,
             shelf::commands::shelf_snapshot,
             shelf::commands::shelf_configure,
             shelf::commands::shelf_visibility,
