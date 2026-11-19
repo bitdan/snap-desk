@@ -10,8 +10,8 @@ const top = ref(0), height = ref(500)
 const width = ref(0)
 const measured = shallowRef(new Map<number, number>())
 // 单列卡片按行虚拟化，只挂载视口附近的条目；未测量的行按类型估算高度（含 6px 行距）。
-const offsets = computed(() => rowOffsets(props.items.map(item => measured.value.get(item.id)
-  ?? (item.kind === 'image' ? 170 : item.kind === 'file' ? 140 : 76))))
+const rowHeight = (item: ClipboardItem) => measured.value.get(item.id) ?? (item.kind === 'image' ? 170 : item.kind === 'file' ? 140 : 76)
+const offsets = computed(() => rowOffsets(props.items.map(rowHeight)))
 const range = computed(() => visibleRows(offsets.value, top.value, height.value))
 const rows = computed(() => props.items.slice(range.value.start, range.value.end))
 /** 按虚拟列表的完整高度判断剩余距离；追加或窗口变大后也补足视口。 */
@@ -85,9 +85,24 @@ async function focusIndex(index: number) {
   row?.focus({ preventScroll: true }); row?.scrollIntoView({ block: 'nearest' }); scroll()
 }
 function resetScroll() { if (viewport.value) viewport.value.scrollTop = 0; top.value = 0 }
-watch(() => props.items, items => {
+/** 列表向下滚动时顶部插入新记录：按原视口首行重新定位，正在看的内容不被挤走。
+ *  停在顶部或调用方随后 resetScroll 时 top 为 0，新记录直接出现在顶部。 */
+watch(() => props.items, (items, previous) => {
+  let anchor: { id: number; inset: number } | null = null
+  if (previous?.length && top.value > 0) {
+    const old = rowOffsets(previous.map(rowHeight)), index = rowAt(old, top.value)
+    if (previous[index]) anchor = { id: previous[index].id, inset: top.value - old[index] }
+  }
   const ids = new Set(items.map(item => item.id))
   measured.value = new Map([...measured.value].filter(([id]) => ids.has(id)))
+  const index = anchor ? items.findIndex(item => item.id === anchor.id) : -1
+  if (!anchor || index < 0) return
+  const adjusted = offsets.value[index] + anchor.inset
+  if (Math.abs(adjusted - top.value) <= 0.5) return
+  top.value = adjusted
+  void nextTick(() => {
+    if (!disposed && viewport.value && top.value === adjusted) { viewport.value.scrollTop = adjusted; scroll() }
+  })
 })
 onMounted(() => {
   observer = new ResizeObserver(scheduleMeasure)

@@ -105,8 +105,15 @@ it('mounts a bounded range and focuses an unmounted item', async () => {
     expect(nearEnd).toHaveBeenCalledOnce()
     hasMore.value = false; loading.value = false; await nextTick()
     expect(nearEnd).toHaveBeenCalledOnce()
+    // 向下浏览时顶部插入新记录：视口按原首行平移插入高度，正在看的条目保持原位。
+    const before = viewport.scrollTop
+    expect(before).toBeGreaterThan(0)
+    const added = [-3, -2, -1].map(id => ({ id, kind: 'text' } as ClipboardItem))
+    items.value = [...added, ...items.value]
+    await nextTick(); await nextTick()
+    expect(viewport.scrollTop).toBe(before + virtualList.rowOffsets([76, 76, 76]).at(-1)!)
     list.value!.resetScroll()
-    items.value = items.value.slice(0, 40)
+    items.value = items.value.slice(added.length, added.length + 40)
     await nextTick()
     expect(viewport.scrollTop).toBe(0)
     expect(rows()[0].dataset.historyId).toBe('0')
