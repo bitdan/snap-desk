@@ -154,16 +154,11 @@ const disposers: (() => void)[] = []
 function applyStatus(value: ClipboardStatus, errors: number) {
   status.value = errors === clipboardErrorRevision ? value : { ...value, error: latestClipboardError }
 }
-/** 停在列表顶部时自动刷新（已有选择会保留）；向下浏览、翻页或有弹层与操作进行中时保留现场，只提示更新。 */
+/** 后台更新自动合并（已有选择与浏览位置都保留）；只有预览、导出、确认、帮助或操作进行中时暂缓，只提示更新。 */
 function canRefreshInBackground() {
-  return !loadedMore && !listScrolled && !previewItem.value
-    && !busy.value && !confirm.value && !exportOpen.value && !helpOpen.value
+  return !previewItem.value && !busy.value && !confirm.value && !exportOpen.value && !helpOpen.value
 }
-/** 滚回顶部时补上浏览期间积压的更新。 */
-function listScroll(event: Event) {
-  listScrolled = (event.target as HTMLElement).scrollTop > 0
-  if (!listScrolled && updatesPending.value) queueBackgroundRefresh()
-}
+function listScroll(event: Event) { listScrolled = (event.target as HTMLElement).scrollTop > 0 }
 /** 滚动和视口补齐共用入口；失败后等用户重试，避免持续自动重发失败请求。 */
 function loadMore(retry = false) {
   if (!cursor.value || loading.value || busy.value || searchTimer || loadMoreFailed.value && !retry) return
@@ -187,10 +182,19 @@ async function refresh(append = false, background = false) {
     if (disposed || request !== revision) return
     // 请求在途期间也可能开始选择或翻页，迟到的后台结果不能覆盖新的浏览现场。
     if (background && !canRefreshInBackground()) return
-    const seen = new Set(append ? items.value.map(item => item.id) : [])
-    items.value = [...(append ? items.value : []), ...page.items.filter(item => !seen.has(item.id))]
-    cursor.value = page.nextCursor; applyStatus(state, errors)
-    loadedMore = append
+    // 向下浏览或已翻页时，后台结果并到顶部并保留已加载的后续记录与游标（虚拟列表按原首行保持位置）；
+    // 停在顶部且未翻页时直接替换首页，列表不会无限增长。
+    const merge = background && (loadedMore || listScrolled)
+    if (merge) {
+      const fresh = new Set(page.items.map(item => item.id))
+      items.value = [...page.items, ...items.value.filter(item => !fresh.has(item.id))]
+    } else {
+      const seen = new Set(append ? items.value.map(item => item.id) : [])
+      items.value = [...(append ? items.value : []), ...page.items.filter(item => !seen.has(item.id))]
+      cursor.value = page.nextCursor
+      loadedMore = append
+    }
+    applyStatus(state, errors)
     const available = itemsById.value
     // 后台刷新只换首页，被新记录挤出首页的所选条目仍存在，保留其选择与快照；主动刷新才移除不可见的选择。
     if (!background) selected.value = selected.value.filter(id => available.has(id))

@@ -340,23 +340,23 @@ it('加载中搜索与剪贴板事件交错时仍按输入查询，并忽略迟�
   expect(updatedNotice()).toBeUndefined()
 })
 
-it('浏览后续分页时后台变更保留列表和游标，主动刷新后移除不可见选择', async () => {
+it('浏览后续分页时后台变更并到顶部，保留已加载记录和游标，主动刷新后移除不可见选择', async () => {
   api.clipboardList.mockResolvedValueOnce({ items: [{ id: 1, kind: 'text' }], nextCursor: 'page-2' })
   await refreshButton().props.onClick(); await flushComponent()
   api.clipboardList.mockResolvedValueOnce({ items: [{ id: 5, kind: 'image' }], nextCursor: 'page-3' })
   nearEnd(); await flushComponent()
   vi.useFakeTimers()
-  const requests = api.clipboardList.mock.calls.length
+  const resets = listControls.resetScroll.mock.calls.length
+  api.clipboardList.mockResolvedValueOnce({ items: [{ id: 7, kind: 'text' }, { id: 1, kind: 'text' }], nextCursor: 'page-x' })
   clipboardEvents.changed()
   await vi.advanceTimersByTimeAsync(500); await flushComponent()
-  expect(api.clipboardList).toHaveBeenCalledTimes(requests)
-  expect(findNode(root, node => node.props['data-id'] === 1)).toBeDefined()
-  expect(findNode(root, node => node.props['data-id'] === 5)).toBeDefined()
-  expect(updatedNotice()).toBeDefined()
+  const ids = viewport().children.filter(node => node.props['data-id'] !== undefined).map(node => node.props['data-id'])
+  expect(ids).toEqual([7, 1, 5])
+  expect(updatedNotice()).toBeUndefined()
+  expect(listControls.resetScroll).toHaveBeenCalledTimes(resets)
   api.clipboardList.mockResolvedValueOnce({ items: [{ id: 6, kind: 'text' }], nextCursor: null })
   nearEnd(); await flushComponent()
   expect(api.clipboardList).toHaveBeenLastCalledWith(expect.objectContaining({ cursor: 'page-3' }))
-  expect(updatedNotice()).toBeDefined()
   await select(5)
   api.clipboardList.mockResolvedValueOnce({ items: [{ id: 9, kind: 'text' }], nextCursor: null })
   await refreshButton().props.onClick(); await flushComponent()
@@ -398,37 +398,30 @@ it('弹层打开期间只提示更新，关闭后自动补上刷新', async () =
   expect(updatedNotice()).toBeUndefined()
 })
 
-it('向下浏览时提示可点击，点击或滚回顶部都会刷新', async () => {
+it('向下浏览时也自动合并新记录，不重置滚动位置', async () => {
   vi.useFakeTimers()
-  const list = () => findNode(root, node => node.props['aria-label'] === '历史记录列表')!
-  list().props.onScroll({ target: { scrollTop: 100 } })
-  const requests = api.clipboardList.mock.calls.length
+  viewport().props.onScroll({ target: { scrollTop: 100 } })
+  const resets = listControls.resetScroll.mock.calls.length
+  api.clipboardList.mockResolvedValueOnce({ items: [{ id: 9, kind: 'text' }, { id: 1, kind: 'text' }], nextCursor: 'later' })
   clipboardEvents.changed()
   await vi.advanceTimersByTimeAsync(500); await flushComponent()
-  expect(api.clipboardList).toHaveBeenCalledTimes(requests)
-  api.clipboardList.mockResolvedValueOnce({ items: [{ id: 9, kind: 'text' }], nextCursor: null })
-  list().props.onScroll({ target: { scrollTop: 0 } })
-  await vi.advanceTimersByTimeAsync(500); await flushComponent()
-  expect(api.clipboardList).toHaveBeenCalledTimes(requests + 1)
+  const ids = viewport().children.filter(node => node.props['data-id'] !== undefined).map(node => node.props['data-id'])
+  expect(ids).toEqual([9, 1, 2, 3, 4])
   expect(updatedNotice()).toBeUndefined()
-  list().props.onScroll({ target: { scrollTop: 100 } })
+  expect(listControls.resetScroll).toHaveBeenCalledTimes(resets)
+})
+
+it('暂缓期间的提示可以点击刷新', async () => {
+  vi.useFakeTimers()
+  findNode(root, node => node.type === 'button' && node.props['aria-label'] === '帮助')!.props.onClick()
+  await flushComponent()
   clipboardEvents.changed()
   await vi.advanceTimersByTimeAsync(500); await flushComponent()
   api.clipboardList.mockResolvedValueOnce({ items: [{ id: 10, kind: 'text' }], nextCursor: null })
   findNode(updatedNotice()!, node => node.type === 'button')!.props.onClick()
   await flushComponent()
   expect(findNode(root, node => node.props['data-id'] === 10)).toBeDefined()
-})
-
-it('列表向下滚动后只提示更新，不自动替换正在浏览的记录', async () => {
-  vi.useFakeTimers()
-  findNode(root, node => node.props['aria-label'] === '历史记录列表')!.props.onScroll({ target: { scrollTop: 100 } })
-  const requests = api.clipboardList.mock.calls.length
-  clipboardEvents.changed()
-  await vi.advanceTimersByTimeAsync(500); await flushComponent()
-  expect(api.clipboardList).toHaveBeenCalledTimes(requests)
-  expect(findNode(root, node => node.props['data-id'] === 1)).toBeDefined()
-  expect(updatedNotice()).toBeDefined()
+  expect(updatedNotice()).toBeUndefined()
 })
 
 it('剪贴板恢复事件同时清除提示与状态快照中的旧错误', async () => {
