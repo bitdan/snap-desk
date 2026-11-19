@@ -16,6 +16,10 @@ export const clipboardApi = {
   clipboardRestore: (id: number) => invoke<void>('clipboard_restore', { id }),
   /** 写回剪贴板并粘贴到唤出前的窗口；返回 false 表示没有可粘贴的外部窗口，内容仅已复制。 */
   clipboardPaste: (id: number, keepOpen: boolean) => invoke<boolean>('clipboard_paste', { id, keepOpen }),
+  /** 多选复制：文本按选择顺序逐行合并，图片与文件合并为一组文件引用；文本与图片/文件混选时报错。 */
+  clipboardRestoreMany: (ids: number[]) => invoke<void>('clipboard_restore_many', { ids }),
+  /** 多选粘贴：合并写回后粘贴到唤出前的窗口，返回值同 clipboardPaste。 */
+  clipboardPasteMany: (ids: number[], keepOpen: boolean) => invoke<boolean>('clipboard_paste_many', { ids, keepOpen }),
   clipboardPin: (id: number) => invoke<void>('clipboard_pin_item', { id }),
   clipboardFavorite: (id: number, favorite: boolean) => invoke<void>('clipboard_set_favorite', { id, favorite }),
   clipboardDelete: (ids: number[]) => invoke<void>('clipboard_delete', { ids }),

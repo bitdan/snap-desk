@@ -1,3 +1,4 @@
+import { linuxPlatform, macPlatform } from '@/shared/platform'
 /** 与 Rust clipboard/model.rs、export.rs 的受限 IPC 契约一致。 */
 export interface ClipboardSettings {
   enabled: boolean; maxItems: number; maxStorageMb: number; maxTextBytes: number;
@@ -15,6 +16,10 @@ export function parseExcludedApps(text: string): string[] {
     if (!name || seen.has(key)) return false
     seen.add(key); return true
   })
+}
+/** 排除名单的示例：原生端在 Windows 比较 .exe 文件名，macOS 比较 .app 内的可执行文件名，Linux 比较进程名。 */
+export function excludedAppsExample(platform: 'windows' | 'macos' | 'linux' = macPlatform ? 'macos' : linuxPlatform ? 'linux' : 'windows'): string {
+  return platform === 'macos' ? 'KeePassXC, 1Password' : platform === 'linux' ? 'keepassxc, 1password' : 'KeePass.exe, 1Password.exe'
 }
 /** 与 Rust ClipboardSettings::validate 的名单规则一致，返回错误文案或 null。 */
 export function validateExcludedApps(names: string[]): string | null {

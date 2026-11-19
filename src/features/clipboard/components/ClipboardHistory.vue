@@ -7,7 +7,8 @@ import ConfirmDialog from '@/shared/ui/ConfirmDialog.vue'
 import { api, desktop, onClipboardChanged, onClipboardError, onClipboardState, onClipboardOpen, onClipboardBlur } from '@/services/api'
 import { selectClipboardItems, type ClipboardSelectionGesture, type ClipboardItem as Item, type ClipboardStatus, type ClipboardKind, type ClipboardTextCategory, type ClipboardExportOptions } from '@/features/clipboard/clipboard'
 import ClipboardComposer from '@/features/clipboard/components/ClipboardComposer.vue'
-import { Search, X, Download, Pin, PinOff, Trash2, LoaderCircle, RefreshCw, CircleHelp } from 'lucide-vue-next'
+import { Search, X, Copy, Download, Pin, PinOff, Trash2, LoaderCircle, RefreshCw, CircleHelp } from 'lucide-vue-next'
+import { macPlatform } from '@/shared/platform'
 import ClipboardItem from '@/features/clipboard/components/ClipboardItem.vue'
 import VirtualClipboardList from '@/features/clipboard/components/VirtualClipboardList.vue'
 import ClipboardPreview from '@/features/clipboard/components/ClipboardPreview.vue'
@@ -44,6 +45,13 @@ const textCategory = computed(() => ['link', 'color', 'path'].includes(category.
 const kind = computed(() => textCategory.value ? 'text' : category.value === 'favorites' ? undefined : category.value as ClipboardKind | '')
 const favorites = computed(() => category.value === 'favorites')
 const categoryOptions = [{ value: '' as const, label: '全部' }, { value: 'text' as const, label: '文本' }, { value: 'link' as const, label: '链接' }, { value: 'color' as const, label: '颜色' }, { value: 'path' as const, label: '文件路径' }, { value: 'image' as const, label: '图片' }, { value: 'file' as const, label: '文件' }, { value: 'favorites' as const, label: '收藏' }]
+/** macOS 的 Ctrl+点击是右键菜单，提示里的修饰键按平台显示 ⌘ 或 Ctrl。 */
+const modifier = macPlatform ? '⌘' : 'Ctrl'
+/** 文本与图片/文件不能一起复制（原生端同样拒绝）；按钮提前置灰并说明原因。 */
+const canCopySelected = computed(() => {
+  const kinds = new Set<string | undefined>(selected.value.map(id => selectedItems.value[id]?.kind))
+  return selected.value.length > 0 && !kinds.has(undefined) && (!kinds.has('text') || kinds.size === 1)
+})
 const canExport = computed(() => selected.value.length > 0 && selected.value.every(id => ['text', 'image'].includes(selectedItems.value[id]?.kind)))
 const busy = ref(false), loading = ref(false), error = ref(''), message = ref('')
 const categoryOrder = useCategoryOrder(() => busy.value || !desktop, value => { category.value = value })
@@ -102,7 +110,7 @@ function navigate(event: KeyboardEvent) {
   // Ctrl+1～9 直接取当前列表的第 N 条，不必先移动焦点；在搜索框里同样生效。
   if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && /^[1-9]$/.test(event.key)) {
     const item = items.value[Number(event.key) - 1]
-    if (item) { event.preventDefault(); void activate(item) }
+    if (item) { event.preventDefault(); void activate(item, false) }
     return
   }
   if (event.key === 'Escape') {
@@ -229,14 +237,40 @@ async function run(action: () => Promise<unknown>, success = '') {
 }
 /** 回车、双击或 Ctrl+数字：默认直接粘贴到唤出前的窗口（由后端交还焦点并收起）；
  *  设置里关闭直接粘贴，或没有可粘贴的外部窗口时，只写回系统剪贴板再收起。固定时保留窗口。 */
-async function activate(item: Item) {
+async function activate(item: Item, group = true) {
   if (busy.value) return
+  if (group && inSelection(item)) return activateSelected()
   let pasted = false
   if (status.value?.pasteOnActivate) await run(async () => { pasted = await api.clipboardPaste(item.id, keepOpen.value) })
   else await run(() => api.clipboardRestore(item.id))
   if (error.value) return
   message.value = pasted ? '已粘贴。' : '已复制。'
   if (!pasted && !keepOpen.value) await hideWindow()
+}
+/** 焦点在多选中的条目上按回车或 Ctrl/⌘+C 时作用于整组选择；双击的首次单击会先改为单选，
+ *  Ctrl/⌘+1～9 始终只取第 N 条。 */
+function inSelection(item: Item) { return selected.value.length > 1 && selectedIds.value.has(item.id) }
+/** 多选回车：按选择顺序合并后粘贴或复制，收起时清除选择，下次唤出回到最新记录。 */
+async function activateSelected() {
+  if (busy.value) return
+  const ids = [...selected.value]
+  let pasted = false
+  if (status.value?.pasteOnActivate) await run(async () => { pasted = await api.clipboardPasteMany(ids, keepOpen.value) })
+  else await run(() => api.clipboardRestoreMany(ids))
+  if (error.value) return
+  message.value = pasted ? '已粘贴。' : '已复制。'
+  if (!keepOpen.value) clearSelection()
+  if (!pasted && !keepOpen.value) await hideWindow()
+}
+/** Ctrl/⌘+C、复制按钮与右键复制：只写回剪贴板，不收起窗口。 */
+async function copyItem(item: Item) {
+  if (inSelection(item)) await copySelected()
+  else await run(() => api.clipboardRestore(item.id), '已复制。')
+}
+async function copySelected() {
+  if (!canCopySelected.value) return
+  const ids = [...selected.value]
+  await run(() => api.clipboardRestoreMany(ids), '已复制。')
 }
 /** 收藏只更新本地一条记录，避免整页刷新丢掉滚动位置；收藏分类下仍需重查以移除条目。 */
 async function toggleFavorite(item: Item) {
@@ -344,7 +378,7 @@ onUnmounted(() => { disposed = true; revision++; window.removeEventListener('key
   <section class="clipboard-history" @keydown="navigate">
     <header class="history-topbar" @pointerdown="dragWindow">
       <form class="history-search" role="search" @submit.prevent="applyFilter">
-        <Search :size="16" aria-hidden="true" /><input ref="searchInput" v-model="keyword" :aria-label='t("搜索文本或文件路径")' :placeholder='t("搜索文本或文件路径（Ctrl+F）")' maxlength="200" /><button v-if="keyword" type="button" :aria-label='t("清除搜索")' @click="keyword = ''; focusSearch()"><X :size="16" /></button>
+        <Search :size="16" aria-hidden="true" /><input ref="searchInput" v-model="keyword" :aria-label='t("搜索文本或文件路径")' :placeholder='t("搜索文本或文件路径（{0}+F）", { 0: modifier })' maxlength="200" /><button v-if="keyword" type="button" :aria-label='t("清除搜索")' @click="keyword = ''; focusSearch()"><X :size="16" /></button>
       </form>
       <button type="button" class="history-icon-button" :aria-pressed="keepOpen" :aria-label="t('固定窗口，失去焦点时不收起')" :title="t('固定窗口，失去焦点时不收起')" @click="toggleKeepOpen"><Pin v-if="keepOpen" :size="16" /><PinOff v-else :size="16" /></button>
       <button type="button" class="history-icon-button" :aria-label="t('收起')" :title="t('收起（Esc）')" @click="hideWindow"><X :size="16" /></button>
@@ -359,7 +393,7 @@ onUnmounted(() => { disposed = true; revision++; window.removeEventListener('key
     <p v-if="orderError" class="history-notice" role="status">{{ t(orderError) }}</p>
     <VirtualClipboardList ref="list" :items="items" :has-more="!!cursor && !loadMoreFailed" :loading="loading || busy" role="region" :aria-label='t("历史记录列表")' :aria-busy="foregroundLoading" @scroll="listScroll" @near-end="loadMore">
       <template #default="{ item }">
-      <ClipboardItem :item="item" :selected="selectedIds.has(item.id)" :busy="busy" :shelf-kept="shelfIds ? shelfIds.has(item.id) : null" @select="selectItem(item, $event)" @activate="activate(item)" @preview="previewItem = item" @restore="run(() => api.clipboardRestore(item.id), '已复制。')" @delete="selected = [item.id]; selectedItems = { [item.id]: item }; requestDelete('delete')" @pin="run(() => api.clipboardPin(item.id))" @favorite="toggleFavorite(item)" @shelf="toggleShelf(item)" />
+      <ClipboardItem :item="item" :selected="selectedIds.has(item.id)" :busy="busy" :shelf-kept="shelfIds ? shelfIds.has(item.id) : null" @select="selectItem(item, $event)" @activate="activate(item)" @preview="previewItem = item" @restore="copyItem(item)" @delete="selected = [item.id]; selectedItems = { [item.id]: item }; requestDelete('delete')" @pin="run(() => api.clipboardPin(item.id))" @favorite="toggleFavorite(item)" @shelf="toggleShelf(item)" />
       </template>
       <template #footer>
       <p v-if="!items.length" class="history-empty">{{ foregroundLoading ? t("正在加载…") : keyword || category ? t("没有匹配的记录，试试其他关键词或分类。") : status?.enabled === false ? t("暂无记录。") : t("暂无记录，复制文字或图片后会显示在这里。") }}</p>
@@ -376,6 +410,7 @@ onUnmounted(() => { disposed = true; revision++; window.removeEventListener('key
       <span v-else class="history-count">{{ status?.count ?? 0 }} {{ t("条 ·") }} {{ ((status?.byteSize ?? 0) / 1048576).toFixed(1) }} MiB</span>
       <div class="history-footer-actions" role="group" :aria-label='selected.length ? t("所选条目操作") : undefined'>
         <template v-if="selected.length">
+          <Button class="history-action" variant="ghost" :disabled="busy || !canCopySelected" :title="canCopySelected ? t('复制所选') : t('文本不能与图片或文件一起复制，请分开选择。')" :aria-label='t("复制所选条目")' @click="copySelected"><Copy :size="16" /></Button>
           <Button class="history-action" variant="ghost" :disabled="busy || !canExport" :title="canExport ? t('组合导出') : t('组合导出仅支持文本和图片，文件引用请复制后粘贴')" :aria-label='t("组合导出所选条目")' @click="openComposer"><Download :size="16" /></Button>
           <Button class="history-action" variant="ghost" :disabled="busy" :title='t("悬浮贴图")' :aria-label='t("将所选内容贴图")' @click="pinSelected"><Pin :size="16" /></Button>
           <Button class="history-action history-delete" variant="ghost" :disabled="busy" :title='t("删除所选")' :aria-label='t("删除所选条目")' @click="requestDelete('delete')"><Trash2 :size="16" /></Button>
@@ -389,7 +424,7 @@ onUnmounted(() => { disposed = true; revision++; window.removeEventListener('key
     </footer>
     <DetachedWindow :open="helpOpen" :title="t('帮助')" :width="480" :height="220" @close="helpOpen = false">
       <section class="history-help-popup" :aria-label='t("帮助")' @keydown.stop="helpKey">
-        <p>{{ status?.pasteOnActivate ? t("回车或双击粘贴到原窗口 · Ctrl+1～9 粘贴第 N 条 · 单击选中 · Ctrl 多选 · Shift 连选 · Ctrl+C 仅复制 · 右键更多操作") : t("回车或双击复制并收起 · Ctrl+1～9 复制第 N 条 · 单击选中 · Ctrl 多选 · Shift 连选 · Ctrl+C 仅复制 · 右键更多操作") }}</p>
+        <p>{{ status?.pasteOnActivate ? t("回车或双击粘贴到原窗口 · {0}+1～9 粘贴第 N 条 · 单击选中 · {0} 多选 · Shift 连选 · 多选后回车一起粘贴 · {0}+C 仅复制 · 右键更多操作", { 0: modifier }) : t("回车或双击复制并收起 · {0}+1～9 复制第 N 条 · 单击选中 · {0} 多选 · Shift 连选 · 多选后回车一起复制 · {0}+C 仅复制 · 右键更多操作", { 0: modifier }) }}</p>
         <p v-if="category === 'file'">{{ t("仅记录文件路径，原文件移动或删除后失效。") }}</p>
       </section>
     </DetachedWindow>

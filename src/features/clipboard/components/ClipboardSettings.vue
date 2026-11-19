@@ -4,7 +4,7 @@ import { t, te } from '@/shared/i18n/i18n'
 import { onMounted, onUnmounted, ref } from 'vue'
 import { useAutoSave } from '@/shared/ui/use-auto-save'
 import { api, desktop, onClipboardState } from '@/services/api'
-import { defaultClipboardSettings, parseExcludedApps, validateExcludedApps, type ClipboardStatus } from '@/features/clipboard/clipboard'
+import { defaultClipboardSettings, excludedAppsExample, parseExcludedApps, validateExcludedApps, type ClipboardStatus } from '@/features/clipboard/clipboard'
 import Button from '@/shared/ui/button/Button.vue'
 import ToolHero from '@/shared/ui/ToolHero.vue'
 import SwitchControl from '@/shared/ui/SwitchControl'
@@ -16,6 +16,8 @@ const settings = ref(defaultClipboardSettings())
 const ready = ref(false), busy = ref(false), error = ref('')
 // 名单以文本草稿编辑，保存时再解析；避免输入到一半的逗号被立即规整掉。
 const excludedText = ref('')
+/** 原生端按可执行文件名匹配：Windows 带 .exe，macOS 是 .app 内的程序名，Linux 是 /proc 中的进程名。 */
+const excludedExample = excludedAppsExample()
 // null 表示状态尚未读取，不能把未知状态显示成“已暂停”。
 const status = ref<ClipboardStatus | null>(null)
 let disposed = false, offState: (() => void) | undefined
@@ -95,7 +97,7 @@ onUnmounted(() => { disposed = true; offState?.() })
       <h2 class="section-heading">{{ t("使用") }}</h2>
       <fieldset class="settings-card" :disabled="disabled || busy || !ready || !desktop">
         <SettingRow :label='t("回车或双击后直接粘贴到原窗口")' for="history-paste"><SwitchControl id="history-paste" v-model="settings.pasteOnActivate" @change="autosave.commit" /></SettingRow>
-        <SettingRow :label='t("不记录这些程序复制的内容")' for="history-excluded"><input id="history-excluded" v-model="excludedText" class="w-60" type="text" autocomplete="off" spellcheck="false" :placeholder='t("程序文件名，用逗号分隔，如 KeePass.exe, 1Password.exe")' /></SettingRow>
+        <SettingRow :label='t("不记录这些程序复制的内容")' for="history-excluded"><input id="history-excluded" v-model="excludedText" class="w-60" type="text" autocomplete="off" spellcheck="false" :placeholder='t("程序文件名，用逗号分隔，如 {0}", { 0: excludedExample })' /></SettingRow>
       </fieldset>
       <p class="settings-save-status" role="status" v-if="autosave.saving.value || autosave.saved.value" :class="{ 'status-ok': !autosave.saving.value }"><Check v-if="!autosave.saving.value" :size="14" class="status-check" />{{ autosave.saving.value ? t("正在保存…") : t("已自动保存") }}</p>
     </form>

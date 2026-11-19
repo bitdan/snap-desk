@@ -269,8 +269,97 @@ fn restore(app: &AppHandle, s: &Service, id: i64) -> Result<(), String> {
         let _guard = d.operation.lock().map_err(|_| "历史存储忙碌。")?;
         d.content(id)?
     };
+    write_back(app, s, &content)
+}
+
+/// 多选最多 100 条，与前端选择上限一致。
+const MAX_SELECTION: usize = 100;
+const MIXED_SELECTION: &str = "文本不能与图片或文件一起复制，请分开选择。";
+const TOO_MANY_FILES: &str = "一次最多复制 100 个文件或图片，请减少选择。";
+
+/// 多选复制的合并规则：只有一条时原样写回；全是文本时按选择顺序逐行拼接；
+/// 全是图片或文件时合并为一组文件引用（重复路径只保留一次，图片由 `image_file` 写成临时 PNG），
+/// 因为各平台剪贴板都没有通用的“多张图片”格式，而文件列表在资源管理器、Finder、文件管理器及聊天软件里都能粘贴。
+/// 文本与图片/文件混选时拒绝，避免静默丢掉其中一类内容。
+fn combine(
+    contents: Vec<Content>,
+    mut image_file: impl FnMut(&image::RgbaImage) -> Result<String, String>,
+) -> Result<Content, String> {
+    if contents.len() <= 1 {
+        return contents
+            .into_iter()
+            .next()
+            .ok_or_else(|| "请先选择要复制的条目。".to_string());
+    }
+    let texts = contents
+        .iter()
+        .filter(|content| matches!(content, Content::Text(_)))
+        .count();
+    if texts == contents.len() {
+        let separator = if cfg!(windows) { "\r\n" } else { "\n" };
+        let lines: Vec<String> = contents
+            .into_iter()
+            .filter_map(|content| match content {
+                Content::Text(text) => Some(text),
+                _ => None,
+            })
+            .collect();
+        return Ok(Content::Text(lines.join(separator)));
+    }
+    if texts > 0 {
+        return Err(MIXED_SELECTION.into());
+    }
+    // 先按条目数核对上限，再生成临时图片，避免超限时白写一批文件。
+    let count: usize = contents
+        .iter()
+        .map(|content| match content {
+            Content::Files(paths) => paths.len(),
+            _ => 1,
+        })
+        .sum();
+    if count > MAX_SELECTION {
+        return Err(TOO_MANY_FILES.into());
+    }
+    let mut paths: Vec<String> = Vec::with_capacity(count);
+    for content in contents {
+        match content {
+            Content::Files(list) => {
+                for path in list {
+                    if !paths.contains(&path) {
+                        paths.push(path);
+                    }
+                }
+            }
+            Content::Image(image) => paths.push(image_file(&image)?),
+            Content::Text(_) => unreachable!("文本已在上方处理"),
+        }
+    }
+    files::validate(&paths)?;
+    Ok(Content::Files(paths))
+}
+
+/// 按选择顺序读取多条历史并合并后写回剪贴板。
+fn restore_many(app: &AppHandle, s: &Service, ids: &[i64]) -> Result<(), String> {
+    if ids.is_empty() || ids.len() > MAX_SELECTION {
+        return Err("请选择 1～100 条记录。".into());
+    }
+    let contents = {
+        let d = s.data()?;
+        let _guard = d.operation.lock().map_err(|_| "历史存储忙碌。")?;
+        ids.iter()
+            .map(|id| d.content(*id))
+            .collect::<Result<Vec<_>, _>>()?
+    };
+    let content = combine(contents, |image| {
+        crate::shared::native_drag::image_file(app, image)
+    })?;
+    write_back(app, s, &content)
+}
+
+/// 写回系统剪贴板，并记下序号与哈希，监听线程据此跳过这次自写入（合并结果同样不再记成新条目）。
+fn write_back(app: &AppHandle, s: &Service, content: &Content) -> Result<(), String> {
     let _gate = s.write_gate.lock().map_err(|_| "剪贴板写入状态不可用。")?;
-    match &content {
+    match content {
         Content::Text(t) => app
             .clipboard()
             .write_text(t.clone())
@@ -295,19 +384,51 @@ pub async fn clipboard_paste(
     crate::capture::require_window(&window, window::LABEL)?;
     work(app, window, move |app, s| {
         restore(app, s, id)?;
-        let target = window::target();
-        if target == 0 {
-            return Ok(false);
-        }
-        // 先交还焦点再收起：收起后本程序不再是前台进程，系统可能拒绝切换前台窗口。
-        platform::activate(target)?;
-        if !keep_open {
-            window::hide(app)?;
-        }
-        platform::send_paste(target)?;
-        Ok(true)
+        paste_into_target(app, keep_open)
     })
     .await
+}
+
+/// 多选复制：按选择顺序合并后写回剪贴板，规则见 [`combine`]。
+#[tauri::command]
+pub async fn clipboard_restore_many(
+    app: AppHandle,
+    window: WebviewWindow,
+    ids: Vec<i64>,
+) -> Result<(), String> {
+    crate::capture::require_window(&window, window::LABEL)?;
+    work(app, window, move |app, s| restore_many(app, s, &ids)).await
+}
+
+/// 多选粘贴：合并写回后与单条一样交还焦点并发送一次粘贴键。
+#[tauri::command]
+pub async fn clipboard_paste_many(
+    app: AppHandle,
+    window: WebviewWindow,
+    ids: Vec<i64>,
+    keep_open: bool,
+) -> Result<bool, String> {
+    crate::capture::require_window(&window, window::LABEL)?;
+    work(app, window, move |app, s| {
+        restore_many(app, s, &ids)?;
+        paste_into_target(app, keep_open)
+    })
+    .await
+}
+
+/// 返回 false 表示没有可粘贴的外部窗口，内容只是已复制。
+fn paste_into_target(app: &AppHandle, keep_open: bool) -> Result<bool, String> {
+    let target = window::target();
+    if target == 0 {
+        return Ok(false);
+    }
+    // 先交还焦点再收起：收起后本程序不再是前台进程，系统可能拒绝切换前台窗口。
+    platform::activate(target)?;
+    if !keep_open {
+        window::hide(app)?;
+    }
+    platform::send_paste(target)?;
+    Ok(true)
 }
 #[tauri::command]
 pub async fn clipboard_pin_item(
@@ -573,4 +694,75 @@ pub async fn clipboard_drag_item(
         native_drag::start(&source, payload)
     })
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn text(value: &str) -> Content {
+        Content::Text(value.into())
+    }
+    fn files(paths: &[&str]) -> Content {
+        Content::Files(paths.iter().map(|p| p.to_string()).collect())
+    }
+    fn image() -> Content {
+        Content::Image(image::RgbaImage::new(1, 1))
+    }
+    fn no_images(_: &image::RgbaImage) -> Result<String, String> {
+        panic!("不应生成临时图片")
+    }
+
+    #[test]
+    fn single_selection_is_written_back_unchanged() {
+        assert!(matches!(combine(vec![image()], no_images), Ok(Content::Image(_))));
+        assert!(combine(Vec::new(), no_images).is_err());
+    }
+
+    #[test]
+    fn texts_join_in_selection_order_with_platform_line_breaks() {
+        let separator = if cfg!(windows) { "\r\n" } else { "\n" };
+        let Ok(Content::Text(joined)) = combine(vec![text("b"), text("a"), text("c")], no_images)
+        else {
+            panic!("应合并为文本");
+        };
+        assert_eq!(joined, ["b", "a", "c"].join(separator));
+    }
+
+    #[test]
+    fn files_and_images_merge_into_one_deduplicated_file_list() {
+        let mut made = 0;
+        let result = combine(
+            vec![
+                files(&["C:\\a.txt", "C:\\b.txt"]),
+                image(),
+                files(&["C:\\b.txt", "C:\\c.txt"]),
+            ],
+            |_| {
+                made += 1;
+                Ok(format!("C:\\tmp\\{made}.png"))
+            },
+        );
+        let Ok(Content::Files(paths)) = result else {
+            panic!("应合并为文件列表");
+        };
+        assert_eq!(
+            paths,
+            ["C:\\a.txt", "C:\\b.txt", "C:\\tmp\\1.png", "C:\\c.txt"]
+        );
+    }
+
+    #[test]
+    fn mixed_text_and_over_limit_selections_are_rejected_before_writing_images() {
+        assert_eq!(
+            combine(vec![text("a"), image()], no_images).err().as_deref(),
+            Some(MIXED_SELECTION)
+        );
+        let many: Vec<String> = (0..100).map(|i| format!("C:\\{i}.txt")).collect();
+        let refs: Vec<&str> = many.iter().map(String::as_str).collect();
+        assert_eq!(
+            combine(vec![files(&refs), image()], no_images).err().as_deref(),
+            Some(TOO_MANY_FILES)
+        );
+    }
 }
