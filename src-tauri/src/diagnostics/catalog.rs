@@ -186,6 +186,8 @@ pub const COMMANDS: &[&str] = &[
     "clipboard_pin_item",
     "clipboard_restore",
     "clipboard_paste",
+    "clipboard_restore_many",
+    "clipboard_paste_many",
     "clipboard_set_favorite",
     "shelf_snapshot",
     "shelf_configure",

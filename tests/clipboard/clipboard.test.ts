@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { defaultSettings, validateShortcuts } from '../../src/features/settings/settings'
-import { defaultClipboardSettings, parseExcludedApps, validateExcludedApps, reorderSelection, toggleSelection, selectClipboardItems } from '../../src/features/clipboard/clipboard'
+import { defaultClipboardSettings, excludedAppsExample, parseExcludedApps, validateExcludedApps, reorderSelection, toggleSelection, selectClipboardItems } from '../../src/features/clipboard/clipboard'
 const mocks = vi.hoisted(() => ({ invoke: vi.fn(), listen: vi.fn() }))
 vi.mock('@tauri-apps/api/core', () => ({ invoke: mocks.invoke, isTauri: () => true, convertFileSrc: (path: string, scheme: string) => `http://${scheme}.localhost/${path}` }))
 vi.mock('@tauri-apps/api/event', () => ({ listen: mocks.listen }))
@@ -95,5 +95,20 @@ describe("直接粘贴与排除应用", () => {
     mocks.invoke.mockResolvedValueOnce(true)
     await expect(api.clipboardPaste(7, false)).resolves.toBe(true)
     expect(mocks.invoke).toHaveBeenLastCalledWith("clipboard_paste", { id: 7, keepOpen: false })
+  })
+  it("多选复制与粘贴按选择顺序提交 ID", async () => {
+    await api.clipboardRestoreMany([9, 2, 5])
+    expect(mocks.invoke).toHaveBeenLastCalledWith("clipboard_restore_many", { ids: [9, 2, 5] })
+    mocks.invoke.mockResolvedValueOnce(false)
+    await expect(api.clipboardPasteMany([2, 9], true)).resolves.toBe(false)
+    expect(mocks.invoke).toHaveBeenLastCalledWith("clipboard_paste_many", { ids: [2, 9], keepOpen: true })
+  })
+  it("排除名单示例按平台给出可匹配的程序名", () => {
+    expect(excludedAppsExample("windows")).toBe("KeePass.exe, 1Password.exe")
+    for (const platform of ["macos", "linux"] as const) {
+      const example = excludedAppsExample(platform)
+      expect(example).not.toContain(".exe")
+      expect(validateExcludedApps(parseExcludedApps(example))).toBeNull()
+    }
   })
 })
