@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { defaultSettings, defaultShortcuts, validateRecordingExportSettings, exportFilenamePreview, validateExportSettings, validateShortcuts, captureShortcut, needsOnboarding } from '../../src/features/settings/settings'
+import { defaultSettings, defaultShortcuts, validateRecordingExportSettings, exportFilenamePreview, validateExportSettings, validateShortcuts, captureShortcut, shortcutReleased, needsOnboarding } from '../../src/features/settings/settings'
 
 describe('导出设置', () => {
   it('草稿与恢复默认的嵌套导出对象互不影响', () => {
@@ -63,6 +63,24 @@ describe('全局快捷键动作映射与录入', () => {
     expect(captureShortcut(event('S', 'KeyS', { ctrlKey: true, shiftKey: true }))).toEqual({ value: 'Ctrl+Shift+S' })
     expect(captureShortcut(event('!', 'Digit1', { shiftKey: true }))).toEqual({ value: 'Shift+1' })
     for (let n = 1; n <= 24; n++) expect(captureShortcut(event(`F${n}`))).toEqual({ value: `F${n}` })
+  })
+  it('macOS Fn 键与 Option 组合：Fn 只预览，Option 产生的字符按物理键录入', () => {
+    expect(captureShortcut(event('Fn', '', {}))).toEqual({ preview: '' })
+    expect(captureShortcut(event('Fn', '', { shiftKey: true }))).toEqual({ preview: 'Shift' })
+    expect(captureShortcut(event('å', 'KeyA', { altKey: true }))).toEqual({ value: 'Alt+A' })
+    expect(captureShortcut(event('Dead', 'KeyE', { altKey: true, metaKey: true }))).toEqual({ value: 'Alt+Super+E' })
+  })
+  it('含 ⌘ 的组合以松开 ⌘ 视为全部松开，其余组合仍等主键 keyup', () => {
+    const up = (key: string, modifiers: Partial<KeyboardEvent> = {}) =>
+      ({ key, ctrlKey: false, altKey: false, shiftKey: false, metaKey: false, ...modifiers })
+    // WebKit 按住 ⌘ 时不派发 A 的 keyup：主键未标记松开也应在 ⌘ 抬起时完成。
+    expect(shortcutReleased({ value: 'Shift+Super+A', released: false }, up('Meta', { shiftKey: true }))).toBe(false)
+    expect(shortcutReleased({ value: 'Shift+Super+A', released: false }, up('Meta'))).toBe(true)
+    expect(shortcutReleased({ value: 'Shift+Super+A', released: false }, up('Shift'))).toBe(false)
+    expect(shortcutReleased({ value: 'Ctrl+Shift+S', released: false }, up('Control'))).toBe(false)
+    expect(shortcutReleased({ value: 'Ctrl+Shift+S', released: true }, up('Shift', { ctrlKey: true }))).toBe(false)
+    expect(shortcutReleased({ value: 'Ctrl+Shift+S', released: true }, up('Control'))).toBe(true)
+    expect(shortcutReleased({ value: 'F2', released: true }, up('F2'))).toBe(true)
   })
   it('裸按取消和清除键保留编辑语义，带修饰键可直接录入', () => {
     expect(captureShortcut(event('Escape'))).toEqual({ cancel: true })

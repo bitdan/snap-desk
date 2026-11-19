@@ -59,6 +59,7 @@ pub(crate) fn attach<'a, M: Manager<Wry>>(
             .skip_taskbar(true)
             .on_navigation(move |url| {
                 if url.as_str() == CLOSE_URL {
+                    log::debug!("event=app.dialog_window_close_requested module=app label={close_label}");
                     // JS 关闭可能仅释放 WebView 子窗口，必须销毁拥有标题栏的 Tauri 窗口。
                     // 固定信号只作用于捕获的当前窗口，不授予空白页 IPC 或跨窗口控制权限。
                     if let Some(window) = close_app.get_webview_window(&close_label) {
@@ -83,8 +84,11 @@ pub(crate) fn attach<'a, M: Manager<Wry>>(
                 if let Ok(mut owners) = OWNERS.lock() {
                     owners.insert(label.clone(), owner.clone());
                 }
+                // 只记录窗口标签与所有者，便于诊断包定位“已创建 / 已收到关闭信号 / 已销毁”的阶段。
+                log::debug!("event=app.dialog_window_created module=app label={label} owner={owner}");
                 window.on_window_event(move |event| {
                     if matches!(event, WindowEvent::Destroyed) {
+                        log::debug!("event=app.dialog_window_destroyed module=app label={label}");
                         if let Ok(mut owners) = OWNERS.lock() {
                             owners.remove(&label);
                         }

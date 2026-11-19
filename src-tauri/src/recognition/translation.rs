@@ -409,7 +409,7 @@ async fn run_translation(
                     texts.push(crate::recognition::local_translation::translate(&app, &job_id, &settings.target_language, text, settings.timeout_seconds).await.map_err(|error| (error.code, error.message))?);
                 }
                 Ok(texts)
-            } else { providers::translate(&settings, &request, &super::services::key_ids(&app, &settings.service_id)).await.map_err(|error| ("TRANSLATION_REQUEST_FAILED", error)) }
+            } else { providers::translate(&settings, &request, &super::services::key_ids(&app, &settings.service_id)).await.map_err(|error| (failure_code(&error), error)) }
         }) => value.unwrap_or_else(|_| Err(("TRANSLATION_TIMEOUT", "翻译超时，请重试或调整超时时间。".into()))).map_err(|(code, error)| {
             log::error!("event=translation.failed module=translation op=tr-{op} provider={provider} engine={engine} code={code} duration_ms={}", started.elapsed().as_millis());
             error
@@ -641,5 +641,51 @@ mod tests {
         assert!(endpoint_url("http://127.0.0.1:8080/v1/chat/completions").is_ok());
         assert!(endpoint_url("http://intranet.example.com:8089/v1").is_ok());
         assert!(endpoint_url("https://example.com/v1/chat/completions").is_ok());
+    }
+}
+
+/// 按失败阶段给出诊断码：错误正文只送界面，日志只记录固定码，便于区分“未配置密钥 / 钥匙串读取 /
+/// 认证 / 额度 / 网络 / 服务返回”，而不必根据耗时猜测原因。
+fn failure_code(error: &str) -> &'static str {
+    let has = |words: &[&str]| words.iter().any(|word| error.contains(word));
+    if has(&["请先在服务管理中保存"]) {
+        "TRANSLATION_KEY_MISSING"
+    } else if has(&["钥匙串", "凭据", "凭证", "Secret Service", "密钥环"]) {
+        "TRANSLATION_CREDENTIAL_READ_FAILED"
+    } else if has(&["拒绝认证"]) {
+        "TRANSLATION_AUTH_REJECTED"
+    } else if has(&["额度", "受限"]) {
+        "TRANSLATION_QUOTA_EXCEEDED"
+    } else if has(&["连接翻译服务失败", "翻译超时"]) {
+        "TRANSLATION_NETWORK_FAILED"
+    } else if has(&["HTTP"]) {
+        "TRANSLATION_HTTP_ERROR"
+    } else if has(&["地址", "语言", "不支持", "无效"]) {
+        "TRANSLATION_CONFIG_INVALID"
+    } else {
+        "TRANSLATION_REQUEST_FAILED"
+    }
+}
+
+#[cfg(test)]
+mod failure_code_tests {
+    use super::failure_code;
+
+    #[test]
+    fn translation_failures_map_to_stage_codes() {
+        for (error, code) in [
+            ("请先在服务管理中保存此服务的 API Key。", "TRANSLATION_KEY_MISSING"),
+            ("无法读取 macOS 钥匙串，请确认已允许 Snap Desk 访问。", "TRANSLATION_CREDENTIAL_READ_FAILED"),
+            ("服务拒绝认证，请检查密钥与模型权限。", "TRANSLATION_AUTH_REJECTED"),
+            ("DeepL 翻译额度已用尽，请检查账户用量。", "TRANSLATION_QUOTA_EXCEEDED"),
+            ("服务请求受限或额度不足，请稍后重试。", "TRANSLATION_QUOTA_EXCEEDED"),
+            ("连接翻译服务失败，请检查网络与服务地址。", "TRANSLATION_NETWORK_FAILED"),
+            ("翻译服务返回 HTTP 500，请检查地址和模型。", "TRANSLATION_HTTP_ERROR"),
+            ("不支持该目标语言。", "TRANSLATION_CONFIG_INVALID"),
+            ("意外错误", "TRANSLATION_REQUEST_FAILED"),
+        ] {
+            assert_eq!(failure_code(error), code, "{error}");
+            assert!(crate::diagnostics::catalog::CODES.contains(&code), "{code}");
+        }
     }
 }

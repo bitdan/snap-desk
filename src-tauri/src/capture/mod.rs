@@ -454,6 +454,10 @@ fn hide_remaining(hidden: Option<Instant>, now: Instant) -> Duration {
         .unwrap_or_default()
 }
 
+/// 系统设置中已开启却仍提示未授权，通常是应用更新后签名变化，旧授权记录不再匹配当前程序。
+#[cfg(target_os = "macos")]
+pub(crate) const SCREEN_CAPTURE_DENIED: &str = "截图需要“屏幕录制”权限。请在“系统设置 → 隐私与安全性 → 屏幕录制”中允许 Snap Desk 后退出并重新打开应用；如果已开启仍无效，请先移除 Snap Desk 再重新添加。";
+
 fn prepare(
     app: &AppHandle,
     recording: bool,
@@ -462,6 +466,14 @@ fn prepare(
     mut latency: Latency,
 ) -> Result<(), String> {
     let started = latency.started;
+    // 未授权时系统只返回壁纸或黑屏；不能把它冻结成全屏蒙层，必须在隐藏任何窗口之前拒绝。
+    #[cfg(target_os = "macos")]
+    if !crate::shared::macos::screen_capture_granted() {
+        // 首次调用让应用出现在系统授权列表中；之后不会重复弹窗。
+        let _ = crate::shared::macos::request_screen_capture();
+        log::warn!("event=capture.permission_denied module=capture code=SCREEN_CAPTURE_NOT_GRANTED");
+        return Err(SCREEN_CAPTURE_DENIED.into());
+    }
     let hide_started = Instant::now();
     recording::live_annotations::remember_desktop_focus(app);
     if let Some(window) = app.get_webview_window("capture") {
@@ -907,7 +919,27 @@ pub fn cancel_capture(app: AppHandle, window: WebviewWindow, id: u64) -> Result<
     require_window(&window, "capture")?;
     let state = app.state::<CaptureState>();
     let _operation = Operation::acquire(&state.operation)?;
-    close_session(&app, id)
+    match close_session(&app, id) {
+        Ok(()) => Ok(()),
+        Err(_) if orphaned_overlay(&app)? => {
+            // 会话已被超时、失败路径或另一入口释放，但蒙层仍可见：Esc / 取消必须能退出。
+            log::warn!("event=capture.orphan_overlay_closed module=capture op=cap-{id} code=CAPTURE_STALE_SESSION");
+            cleanup(&app)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+/// 蒙层可见却没有任何截图、滚动或录屏会话持有它时，视为遗留蒙层。
+fn orphaned_overlay(app: &AppHandle) -> Result<bool, String> {
+    let state = app.state::<CaptureState>();
+    let idle = state.session.lock().map_err(err)?.is_none()
+        && state.scroll.lock().map_err(err)?.is_none()
+        && !recording::is_active(app);
+    Ok(idle
+        && app
+            .get_webview_window("capture")
+            .is_some_and(|window| window.is_visible().unwrap_or(true)))
 }
 
 /// 复制、保存与贴图共用合成入口，保证输出都包含相同标注。

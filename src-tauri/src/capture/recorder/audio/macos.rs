@@ -423,6 +423,20 @@ impl Drop for SystemAudio {
     }
 }
 
+/// 诊断用的麦克风授权状态：只读查询，不弹出系统授权框。
+pub fn microphone_status() -> &'static str {
+    // AVAuthorizationStatus：0 未决定、1 受限、2 已拒绝、3 已授权。
+    let status: isize =
+        unsafe { msg_send![class!(AVCaptureDevice), authorizationStatusForMediaType: AVMediaTypeAudio] };
+    match status {
+        AUTH_AUTHORIZED => "granted",
+        AUTH_NOT_DETERMINED => "not_determined",
+        1 => "restricted",
+        2 => "denied",
+        _ => "unknown",
+    }
+}
+
 /// 麦克风授权：首次使用时弹出系统对话框并等待用户选择。
 unsafe fn microphone_permission() -> Result<(), String> {
     let denied = "麦克风权限未开启：请在“系统设置 → 隐私与安全性 → 麦克风”中允许 Snap Desk，然后重试。";

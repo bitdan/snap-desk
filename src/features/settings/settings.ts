@@ -119,9 +119,22 @@ export function captureShortcut(event: Pick<KeyboardEvent, 'key' | 'code' | 'ctr
   const modifiers = [event.ctrlKey && 'Ctrl', event.altKey && 'Alt', event.shiftKey && 'Shift', event.metaKey && 'Super'].filter(Boolean) as string[]
   if (!modifiers.length && event.key === 'Escape') return { cancel: true }
   if (!modifiers.length && (event.key === 'Backspace' || event.key === 'Delete')) return { value: '' }
-  if (['Control', 'Alt', 'Shift', 'Meta'].includes(event.key)) return { preview: modifiers.join(' + ') }
+  // macOS 的 Fn / 地球仪键只是辅助键：单独按下不作为主键，等待真正的主键。
+  if (['Control', 'Alt', 'Shift', 'Meta', 'Fn', 'FnLock', 'Hyper', 'Super'].includes(event.key)) return { preview: modifiers.join(' + ') }
   const physical = /^(Key[A-Z]|Digit[0-9])$/.test(event.code) ? event.code.replace(/^(Key|Digit)/, '') : event.code
   const key = supportedShortcutKey(physical) ? physical : event.key === ' ' ? 'Space' : /^[a-z]$/.test(event.key) ? event.key.toUpperCase() : event.key
   if (!supportedShortcutKey(key)) return { error: '不支持此按键，请使用其他按键。' }
   return { value: [...modifiers, key].join('+') }
+}
+
+/**
+ * 录入的组合是否已全部松开。macOS 的 WebKit 在按住 ⌘ 时不派发主键的 keyup，
+ * 含 Super 的组合以 ⌘ 松开代替主键松开，否则录入会一直停在“请按快捷键…”。
+ */
+export function shortcutReleased(
+  candidate: { value: string; released: boolean },
+  event: Pick<KeyboardEvent, 'key' | 'ctrlKey' | 'altKey' | 'shiftKey' | 'metaKey'>,
+): boolean {
+  if (event.ctrlKey || event.altKey || event.shiftKey || event.metaKey) return false
+  return candidate.released || (event.key === 'Meta' && candidate.value.split('+').includes('Super'))
 }

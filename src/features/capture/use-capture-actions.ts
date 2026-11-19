@@ -51,7 +51,15 @@ export function useCaptureActions({
   }
 
   async function cancel() {
-    if (!frame.value || busy.value || editorPending()) return
+    if (busy.value) return
+    // 会话已被超时或失败路径释放、蒙层却仍可见时，后端按“遗留蒙层”收起窗口；
+    // 编号 0 不会匹配任何真实会话，仍有其他会话持有蒙层时后端拒绝且不影响它。
+    if (!frame.value) {
+      if (scroll.value) return
+      try { await api.cancel(0) } catch { /* 没有遗留蒙层时无需提示 */ }
+      return
+    }
+    if (editorPending()) return
     const id = frame.value.id
     busy.value = true
     try { await api.cancel(id); releaseFrame(id) } catch (e) { error.value = String(e) }

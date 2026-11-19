@@ -1,5 +1,5 @@
 //! 主窗口专属的本地诊断入口：读取、导出与清理走阻塞线程，不授予前端文件权限。
-mod catalog;
+pub(crate) mod catalog;
 mod export;
 mod logs;
 pub(crate) mod logger;

@@ -1358,5 +1358,6 @@
   "仅用此密钥发送一次测试请求，可能产生少量费用。": "Sends one test request using only this key. May incur a small charge.",
   "保存后可测试。": "Save the service to test it.",
   "测试连接": "Test connection",
-  "密钥不存在。": "Key not found."
+  "密钥不存在。": "Key not found.",
+  "若系统设置中已开启“屏幕录制”但这里仍显示未授权，通常是应用更新后旧授权记录失效：请在系统设置中移除 Snap Desk 后重新添加并重启应用。": "If Screen Recording is enabled in System Settings but still shows as not granted here, the old permission entry usually stopped matching after an update. Remove Snap Desk in System Settings, add it again, then restart the app."
 }

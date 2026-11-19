@@ -12,7 +12,7 @@ pub use windows::Worker;
 #[cfg(target_os = "macos")]
 mod macos;
 #[cfg(target_os = "macos")]
-pub use macos::Worker;
+pub use macos::{microphone_status, Worker};
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "linux")]

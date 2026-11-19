@@ -1,0 +1,64 @@
+name: macOS test build
+run-name: macOS 测试包 · ${{ github.head_ref || github.ref_name }}
+
+# 不发布 Release、不生成更新包：只为任意分支构建 ad-hoc 签名的 DMG 供实机测试。
+# 手动触发：Actions → macOS test build → Run workflow；PR 上添加 mac-build 标签也会触发。
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [labeled]
+
+concurrency:
+  group: macos-test-build-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build macOS arm64 DMG
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'mac-build'
+    # macos-15 为 Apple 芯片 runner，与 Release 的 macOS 构建一致。
+    runs-on: macos-15
+    timeout-minutes: 90
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Setup Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      # 读取 CI 在 master 上保存的编译缓存；测试包不写回缓存。
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+          shared-key: native
+          save-if: false
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      # 不注入更新签名密钥：bundleConfig 因此关闭更新包，并使用 ad-hoc 签名。
+      - name: Build application and DMG
+        run: npm run desktop:package
+
+      - name: Upload DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: snap-desk-macos-arm64-${{ github.sha }}
+          path: src-tauri/target/release/bundle/dmg/*.dmg
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0

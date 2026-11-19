@@ -172,6 +172,15 @@ fn active(phase: Phase) -> bool {
     )
 }
 
+/// 是否存在未结束的录屏会话；截图蒙层兜底清理时用来避免误关录屏画布。
+pub fn is_active(app: &AppHandle) -> bool {
+    app.state::<RecordingState>()
+        .0
+        .lock()
+        .map(|guard| guard.as_ref().is_some_and(|s| active(s.view.phase)))
+        .unwrap_or(true)
+}
+
 /// 托盘、录屏快捷键和退出入口只发停止信号，清理由录屏工作线程完成。
 pub fn request_stop(app: &AppHandle, cancel: bool) -> bool {
     let state = app.state::<RecordingState>();
@@ -625,8 +634,47 @@ pub async fn start_recording(
 }
 
 /// 诊断不触发试录/编码器探测，不采集视频或音频。
+/// 声音分三层报告：后端是否内置（audioBackend）、系统授权（*Permission）、设备是否实际可用
+/// （audioProbed=false 表示未打开设备检测，不能据此认为设备不可用）。
 pub(crate) fn diagnostic_summary() -> serde_json::Value {
-    serde_json::json!({"backend":std::env::consts::OS,"captureSupported":capture::supported().is_ok(),"encoderProbed":false,"audioBackend":if cfg!(target_os = "windows") { "wasapi" } else if cfg!(target_os = "linux") { "pulseaudio" } else { "unsupported" },"audioProbed":false})
+    let (system_audio_permission, microphone_permission) = audio_permissions();
+    serde_json::json!({
+        "backend": std::env::consts::OS,
+        "captureSupported": capture::supported().is_ok(),
+        "encoderProbed": false,
+        "audioBackend": audio_backend(),
+        "audioBackendSupported": audio_backend() != "unsupported",
+        "systemAudioPermission": system_audio_permission,
+        "microphonePermission": microphone_permission,
+        "audioProbed": false,
+    })
+}
+
+/// 与 `audio::Worker` 的编译目标一一对应。
+fn audio_backend() -> &'static str {
+    if cfg!(target_os = "windows") {
+        "wasapi"
+    } else if cfg!(target_os = "linux") {
+        "pulseaudio"
+    } else if cfg!(target_os = "macos") {
+        // 系统声音走 ScreenCaptureKit 音频流，麦克风走 AVCaptureSession。
+        "screencapturekit+avfoundation"
+    } else {
+        "unsupported"
+    }
+}
+
+/// 只读系统授权状态，不弹出授权框；不需要应用内授权的平台报告 not_required。
+fn audio_permissions() -> (&'static str, &'static str) {
+    #[cfg(target_os = "macos")]
+    {
+        let system = if crate::shared::macos::screen_capture_granted() { "granted" } else { "not_granted" };
+        (system, audio::microphone_status())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        ("not_required", "not_required")
+    }
 }
 
 /// 单次取样在状态锁外计时；空取样也统计耗时，不包含 wait_for_frame 的空闲等待。
@@ -660,3 +708,23 @@ fn wayland_session() -> bool {
     false
 }
 
+
+#[cfg(test)]
+mod diagnostic_tests {
+    #[test]
+    fn audio_backend_reflects_compiled_worker() {
+        let summary = super::diagnostic_summary();
+        let expected = if cfg!(target_os = "windows") {
+            "wasapi"
+        } else if cfg!(target_os = "macos") {
+            "screencapturekit+avfoundation"
+        } else {
+            "pulseaudio"
+        };
+        assert_eq!(summary["audioBackend"], expected);
+        assert_eq!(summary["audioBackendSupported"], true);
+        // 未打开设备检测时不能把设备报告成不可用。
+        assert_eq!(summary["audioProbed"], false);
+        assert!(summary["microphonePermission"].is_string());
+    }
+}

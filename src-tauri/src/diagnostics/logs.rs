@@ -399,6 +399,7 @@ pub fn sanitize(line: &str) -> Option<Entry> {
                 if event.starts_with("capture.") => value.len() <= 20 && value.parse::<f64>().is_ok_and(|n| n.is_finite() && n >= 0.0),
             "compose_ms" | "png_ms" | "clipboard_ms" if event == "scroll.export" => value.len() <= 20 && value.parse::<f64>().is_ok_and(|n| n.is_finite() && n >= 0.0),
             "rgba_bytes" if event == "scroll.export" => value.parse::<u64>().is_ok(),
+            "actual_width" | "actual_height" | "offset_x" | "offset_y" if event == "capture.frame_mismatch" => value.len() <= 10 && value.parse::<u32>().is_ok(),
             "paint_source" if event == "capture.interactive" => ["raf", "timeout"].contains(&value),
             "revision" | "monitors" | "png_bytes" if event.starts_with("capture.") => value.parse::<u64>().is_ok(),
             "cold" if event.starts_with("capture.") => ["0", "1"].contains(&value),

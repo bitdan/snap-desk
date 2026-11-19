@@ -51,7 +51,14 @@ export function openDetachedWindow(owner: Window, options: DetachedWindowOptions
   /** WebView 的首次导航可能替换同步取得的空白文档；保留 Teleport 容器并迁移到新文档。 */
   function mountDocument() {
     if (released || popup.closed) return
-    const current = popup.document
+    let current: Document
+    try { current = popup.document }
+    catch (error) {
+      // 新文档若不再与打开者同源（例如系统改用独立进程加载），按钮事件和关闭信号都无法送达；
+      // 立即收起并交给调用方显示“打开窗口”重试，而不是留下一个点不动的窗口。
+      console.warn('detached window document is not accessible', error)
+      dispose(); closed(); return
+    }
     if (!current.body) return
     if (current === doc && target.parentNode === current.body) return
     doc.removeEventListener('keydown', key)
@@ -80,8 +87,11 @@ export function openDetachedWindow(owner: Window, options: DetachedWindowOptions
     owner.removeEventListener('pagehide', dispose)
     if (!popup.closed) {
       // WebView 的 window.close() 不可靠地销毁外层系统窗口；固定导航由原生拦截并销毁自身。
-      if (isTauri()) popup.location.replace(dialogWindowCloseUrl)
-      else popup.close()
+      // 导航被拒绝（跨源等）时退回 close()，至少不让取消按钮完全无效。
+      try {
+        if (isTauri()) popup.location.replace(dialogWindowCloseUrl)
+        else popup.close()
+      } catch { popup.close() }
     }
     if (focused?.isConnected) focused.focus()
   }
