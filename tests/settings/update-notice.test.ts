@@ -4,7 +4,7 @@ import { h } from 'vue'
 import { clientComponent, findNode, MemoryNode, memoryRenderer, flushComponent } from '../helpers/component-host'
 import type { AppUpdateView } from '../../src/features/settings/types'
 
-const api = vi.hoisted(() => ({ appUpdateStatus: vi.fn(), downloadAppUpdate: vi.fn(), installAppUpdate: vi.fn() }))
+const api = vi.hoisted(() => ({ appUpdateStatus: vi.fn(), downloadAppUpdate: vi.fn(), installAppUpdate: vi.fn(), openAppUpdatePage: vi.fn() }))
 const events = vi.hoisted(() => ({ receive: (_view: AppUpdateView) => {}, off: vi.fn(), open: () => {}, offRequest: vi.fn() }))
 vi.mock('../../src/services/api', () => ({ api, desktop: true }))
 vi.mock('../../src/features/settings/events', () => ({ onUpdateWindowRequested: (fn: () => void) => { events.open = fn; return events.offRequest }, onAppUpdate: async (fn: typeof events.receive) => { events.receive = fn; return events.off } }))
@@ -84,5 +84,17 @@ describe('独立更新窗口', () => {
     expect(text(root)).toContain('更新签名校验失败')
     expect(action('下载更新')!.props.disabled).toBe(false)
     expect(action('退出并安装')).toBeUndefined()
+  })
+  it('下载失败时可在浏览器中打开发布页，正常状态不显示该入口', async () => {
+    await mount()
+    expect(findNode(root, node => node.props['data-update-browser'] !== undefined)).toBeUndefined()
+    api.downloadAppUpdate.mockImplementation(async () => {
+      native.phase = 'error'; native.error = '下载更新失败：连接中断（github.com）。'
+      throw new Error(native.error)
+    })
+    await action('下载更新')!.props.onClick(); await flushComponent()
+    expect(text(root)).toContain('代理或下载镜像')
+    await action('在浏览器中下载')!.props.onClick(); await flushComponent()
+    expect(api.openAppUpdatePage).toHaveBeenCalledOnce()
   })
 })

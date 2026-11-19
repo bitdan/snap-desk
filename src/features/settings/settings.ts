@@ -37,10 +37,35 @@ export const shortcutActions: { key: ShortcutAction; label: string; description:
 export const ONBOARDING_VERSION = 1
 export function needsOnboarding(version: number): boolean { return version < ONBOARDING_VERSION }
 /** 后台检查更新间隔的可选档位（分钟），与原生端 UPDATE_CHECK_MINUTES 保持一致。 */
+/** 与 Rust settings::UpdateNetwork 一致：均可留空；镜像是放在 github.com 地址前的 https:// 前缀，代理只用于检查和下载更新。 */
+export interface UpdateNetwork { mirror: string; proxy: string }
+/** 与 Rust settings::update_mirror 的规则一致，返回错误文案或 null。 */
+export function validateUpdateMirror(value: string): string | null {
+  if (!value) return null
+  try {
+    const url = new URL(value)
+    if (value.length <= 512 && !/\s/.test(value) && url.protocol === 'https:' && url.hostname && !url.username && !url.password && !url.search && !url.hash) return null
+  } catch { /* 下方统一提示 */ }
+  return '下载镜像需填写完整的 https:// 地址，如 https://mirror.example/，不能包含空格、查询参数或账号密码。'
+}
+/** 与 Rust settings::update_proxy 的规则一致：http、https、socks5、socks5h，SOCKS 必须写端口。 */
+export function validateUpdateProxy(value: string): string | null {
+  if (!value) return null
+  const invalid = '代理地址格式应为 http://127.0.0.1:7890 或 socks5://127.0.0.1:1080。'
+  const scheme = /^([a-z0-9]+):\/\//i.exec(value)?.[1]?.toLowerCase()
+  if (!scheme || !['http', 'https', 'socks5', 'socks5h'].includes(scheme) || value.length > 512 || /\s/.test(value)) return invalid
+  try {
+    // URL 不识别 socks 协议的端口语义，换成 http 解析主机、端口与路径。
+    const url = new URL(value.replace(/^[a-z0-9]+:/i, 'http:'))
+    const port = /:(\d+)(\/)?$/.test(value.replace(/^[a-z0-9]+:\/\/[^@/]*@/i, ''))
+    if (!url.hostname || !['', '/'].includes(url.pathname) || url.search || url.hash || (scheme.startsWith('socks') && !port)) return invalid
+    return null
+  } catch { return invalid }
+}
 export const updateCheckIntervals = [
   { value: 30, label: '30 分钟' }, { value: 60, label: '1 小时' }, { value: 360, label: '6 小时' }, { value: 1440, label: '24 小时' },
 ]
-export interface Settings { recognitionServices: RecognitionService[]; receivePrereleaseUpdates: boolean; updateCheckMinutes: number; appearance: Appearance; ai: AiSettings; ocr: OcrSettings; onboardingVersion: number; shortcuts: Shortcuts; shortcutsEnabled: boolean; delaySeconds: 0 | 3 | 5; screenshotCursor: boolean; screenshotSnap: boolean; screenshotReuseLast: boolean; screenshotAfter: 'none' | 'copy' | 'pin' | 'save'; export: ExportSettings; pinAppearance: PinAppearance; recordingExport: RecordingExportSettings; clipboard: ClipboardSettings }
+export interface Settings { recognitionServices: RecognitionService[]; receivePrereleaseUpdates: boolean; updateCheckMinutes: number; updateNetwork: UpdateNetwork; appearance: Appearance; ai: AiSettings; ocr: OcrSettings; onboardingVersion: number; shortcuts: Shortcuts; shortcutsEnabled: boolean; delaySeconds: 0 | 3 | 5; screenshotCursor: boolean; screenshotSnap: boolean; screenshotReuseLast: boolean; screenshotAfter: 'none' | 'copy' | 'pin' | 'save'; export: ExportSettings; pinAppearance: PinAppearance; recordingExport: RecordingExportSettings; clipboard: ClipboardSettings }
 
 /** 每次返回独立对象，避免编辑草稿时改动“恢复默认”的值。 */
 /** 与 Rust `Shortcuts::for_platform` 一致，只在应用状态读取前兜底；“恢复默认”使用状态中的 defaultShortcuts。
@@ -51,7 +76,7 @@ export function defaultShortcuts(mac = macPlatform): Settings['shortcuts'] {
 }
 
 export function defaultSettings(): Settings {
-  return { recognitionServices: [], receivePrereleaseUpdates: false, updateCheckMinutes: 60, pinAppearance: defaultPinAppearance(), recordingExport: defaultRecordingExportSettings(), appearance: { theme: 'system', language: 'zh-CN' }, ai: defaultAiSettings(), ocr: defaultOcrSettings(), clipboard: defaultClipboardSettings(), onboardingVersion: 0, shortcuts: defaultShortcuts(), shortcutsEnabled: true, delaySeconds: 0, screenshotCursor: false, screenshotSnap: true, screenshotReuseLast: false, screenshotAfter: 'none', export: {
+  return { recognitionServices: [], receivePrereleaseUpdates: false, updateCheckMinutes: 60, updateNetwork: { mirror: '', proxy: '' }, pinAppearance: defaultPinAppearance(), recordingExport: defaultRecordingExportSettings(), appearance: { theme: 'system', language: 'zh-CN' }, ai: defaultAiSettings(), ocr: defaultOcrSettings(), clipboard: defaultClipboardSettings(), onboardingVersion: 0, shortcuts: defaultShortcuts(), shortcutsEnabled: true, delaySeconds: 0, screenshotCursor: false, screenshotSnap: true, screenshotReuseLast: false, screenshotAfter: 'none', export: {
     format: 'png', jpegQuality: 90, filenamePrefix: 'SnapDesk', includeDimensions: false, rememberDirectory: true,
   } }
 }

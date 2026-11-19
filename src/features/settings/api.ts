@@ -10,6 +10,8 @@ export const settingsApi = {
   checkAppUpdate: () => updatePreview ? previewUpdater.check() : invoke<AppUpdateView>('check_app_update'),
   downloadAppUpdate: () => updatePreview ? previewUpdater.download() : invoke<AppUpdateView>('download_app_update'),
   installAppUpdate: () => updatePreview ? previewUpdater.install() : invoke<void>('install_app_update'),
+  /** 自动下载失败时在浏览器中打开候选版本的发布页；地址由原生端决定。 */
+  openAppUpdatePage: () => invoke<void>('open_app_update_page'),
   autostartEnabled: () => invoke<boolean>('autostart_enabled'),
   setAutostartEnabled: (enabled: boolean) => invoke<boolean>('set_autostart_enabled', { enabled }),
   completeOnboarding: () => invoke<Settings>('complete_onboarding'),

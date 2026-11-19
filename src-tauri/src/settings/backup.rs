@@ -330,11 +330,16 @@ pub async fn export_settings(
             .try_lock()
             .map_err(|_| "请先完成当前配置导入或导出。".to_string())?;
         // 设置快照在短锁内完成；目录读取可能触盘，放到锁外避免阻塞其他设置入口。
-        let (settings, remember_recording) = {
+        let (mut settings, remember_recording) = {
             let state = app.state::<SettingsState>();
             let current = state.0.lock().map_err(|e| e.to_string())?;
             (current.value.clone(), current.value.recording_export.remember_directory)
         };
+        // 不含密钥的导出同样不带更新代理里的账号密码，只保留地址。
+        if !include_secrets {
+            settings.update_network.proxy =
+                crate::settings::proxy_without_credentials(&settings.update_network.proxy);
+        }
         let value = Backup {
             schema_version: VERSION,
             platform: Some(Platform::current().id().into()),

@@ -40,6 +40,9 @@ async function run(action: () => Promise<AppUpdateView | void>) {
   catch (e) { if (!disposed) error.value = String(e) }
   finally { busy.value = false; await refresh() }
 }
+async function openPage() {
+  try { await api.openAppUpdatePage() } catch (e) { if (!disposed) error.value = String(e) }
+}
 onMounted(async () => {
   if (!desktop && !updatePreview) return
   try {
@@ -55,7 +58,7 @@ onUnmounted(() => { disposed = true; offRequest(); unsubscribe?.(); if (timer) c
 
 <template>
   <div v-if="showTrigger && visible" class="update-trigger"><Button variant="outline" @click="openWindow"><span class="update-dot" aria-hidden="true" />{{ t('有更新') }}</Button></div>
-  <DetachedWindow ref="dialog" :open="windowOpen" :title="t('应用更新')" :width="480" :height="260" @close="windowOpen = false">
+  <DetachedWindow ref="dialog" :open="windowOpen" :title="t('应用更新')" :width="480" :height="300" @close="windowOpen = false">
   <section v-if="view" class="update-notice" :aria-label="t('应用更新')">
     <div class="update-line" role="status">
       <span class="update-copy"><Check v-if="['ready', 'latest'].includes(view.phase)" :size="14" class="status-check" />{{ t(view.phase === 'latest' ? '当前渠道暂无更新' : view.phase === 'ready' ? '更新已下载并通过校验' : view.phase === 'downloading' ? '正在下载更新…' : view.phase === 'installing' ? '正在退出并安装…' : '发现新版本') }}<template v-if="view.availableVersion"> · v{{ view.availableVersion }}</template><small v-if="updatePreview">{{ t('模拟更新') }}</small></span>
@@ -67,6 +70,11 @@ onUnmounted(() => { disposed = true; offRequest(); unsubscribe?.(); if (timer) c
     <progress v-if="view.phase === 'downloading'" :value="progress ?? undefined" max="100" :aria-label="t('下载进度')" />
     <p v-if="view.phase === 'ready'" class="update-hint">{{ t(updatePreview ? '模拟更新，不会下载文件或退出应用。' : '安装会退出应用，请先保存工作并结束录屏。') }}</p>
     <p v-if="error || view.error" class="update-error" role="alert">{{ te(error || view.error) }}</p>
+    <!-- 自动下载失败（多为无法直连 GitHub）时提供手动下载入口；发布页地址由原生端决定。 -->
+    <div v-if="view.phase === 'error' && view.availableVersion && !updatePreview" class="update-fallback">
+      <Button variant="outline" data-update-browser @click="openPage">{{ t('在浏览器中下载') }}</Button>
+      <span>{{ t('也可以在“设置 → 应用更新”中填写代理或下载镜像后重试。') }}</span>
+    </div>
   </section>
   </DetachedWindow>
 </template>
@@ -81,4 +89,5 @@ onUnmounted(() => { disposed = true; offRequest(); unsubscribe?.(); if (timer) c
 .update-hint, .update-error { margin-top:8px; }
 .update-error { color:#b91c1c; overflow-wrap:anywhere; }
 progress { display:block; width:100%; height:4px; margin-top:8px; }
+.update-fallback { display:flex; align-items:center; flex-wrap:wrap; gap:8px; margin-top:10px; color:var(--desk-muted); font-size:12px; }
 </style>
