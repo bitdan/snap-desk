@@ -61,7 +61,7 @@ it('在线服务只列出已添加的连接；从添加面板选择 DeepSeek，�
   expect(row('preset:deepseek')).toBeUndefined()
   expect(text()).toContain('尚未添加在线服务')
   await pick('deepseek')
-  expect(input('完整接口地址').value).toBe('https://api.deepseek.com/chat/completions')
+  expect(input('接口地址').value).toBe('https://api.deepseek.com/chat/completions')
   expect(input('模型名称').value).toBe('deepseek-flash')
   button('获取 API Key / Token').props.onClick(); await flushComponent()
   expect(api.openRecognitionPortal).toHaveBeenCalledWith('deepseek')
@@ -114,7 +114,7 @@ it('修改地址后保存会按旧地址清除原密钥，不把原密钥送往�
   settings.recognitionServices = [service()]
   api.recognitionServiceKeys.mockResolvedValue([{ id: 'default', hint: 'gsk_…abcd' }])
   await mount(); await manage('service:groq-text')
-  const endpoint = input('完整接口地址')
+  const endpoint = input('接口地址')
   endpoint.props['onUpdate:modelValue']('https://other.example/v1/chat/completions'); endpoint.props.onInput(); await flushComponent()
   expect(text()).toContain('地址已修改')
   expect(text()).not.toContain('gsk_…abcd')
@@ -145,10 +145,47 @@ it('管理窗口内测试已保存的服务，成功和失败都在窗口内提�
   api.recognitionServiceTest.mockRejectedValueOnce(new Error('服务拒绝认证，请检查密钥与模型权限。'))
   await testButton().props.onClick(); await flushComponent()
   expect(text()).toContain('服务拒绝认证')
-  // 新建尚未保存的服务测试按钮禁用，保存后才能测试。
-  button('取消').props.onClick(); await flushComponent(); await pick('groq')
-  expect(testButton().props.disabled).toBe(true)
+  // 已保存服务改了模型后，按钮变为“保存并测试”，先保存再测，不会测到旧配置。
+  input('模型名称').props['onUpdate:modelValue']?.('openai/gpt-oss-20b')
+  await flushComponent()
+  expect(text(testButton()).trim()).toBe('保存并测试')
+  await testButton().props.onClick(); await flushComponent(); await flushComponent()
+  expect(settings.recognitionServices[0]!.model).toBe('openai/gpt-oss-20b')
+  expect(api.recognitionServiceTest).toHaveBeenLastCalledWith('groq-text')
+  expect(text(testButton()).trim()).toBe('测试连接')
+})
+
+it('自定义兼容服务提供地址与模型示例，平台预设不显示', async () => {
+  await mount(); await pick('custom')
+  const examples = findNode(root, node => node.props['data-field-examples'] !== undefined)!
+  expect(text(examples)).toContain('http://127.0.0.1:11434/v1')
+  expect(text(examples)).toContain('自动补全 /chat/completions')
+  expect(input('模型名称').props.placeholder).toContain('gpt-4o-mini')
+  button('取消').props.onClick(); await flushComponent(); await pick('deepseek')
+  expect(findNode(root, node => node.props['data-field-examples'] !== undefined)).toBeUndefined()
+})
+
+it('新建服务可直接保存并测试，测试后对话框保持打开', async () => {
+  await mount(); await pick('groq')
   expect(findNode(root, node => node.props['data-key-test'] !== undefined)).toBeUndefined()
+  const testButton = () => findNode(root, node => node.type === 'button' && node.props['data-service-test'] !== undefined)!
+  expect(testButton().props.disabled).toBe(false)
+  expect(text(testButton()).trim()).toBe('保存并测试')
+  newKey().props['onUpdate:modelValue']('groq-test-key')
+  await testButton().props.onClick(); await flushComponent(); await flushComponent()
+  const saved = settings.recognitionServices[0]!
+  expect(api.recognitionServiceCredential).toHaveBeenCalledWith(saved.id, saved.endpoint, saved.keys[0], 'groq-test-key')
+  expect(api.recognitionServiceTest).toHaveBeenCalledWith(saved.id)
+  expect(text()).toContain('测试成功，服务可用。')
+  expect(text()).toContain('管理服务')
+  expect(text(testButton()).trim()).toBe('测试连接')
+  // 校验失败时不保存也不发测试请求。
+  api.recognitionServiceTest.mockClear()
+  input('模型名称').props['onUpdate:modelValue']?.('')
+  await flushComponent()
+  await testButton().props.onClick(); await flushComponent()
+  expect(api.recognitionServiceTest).not.toHaveBeenCalled()
+  expect(text()).toContain('请填写有效的模型 ID。')
 })
 
 it('逐个测试密钥，只用该密钥请求并在对应行显示结果', async () => {

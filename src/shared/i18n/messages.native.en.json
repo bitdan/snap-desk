@@ -636,6 +636,7 @@
   "翻译超时，请重试或调整超时时间。": "Translation timed out. Retry or adjust the timeout.",
   "连接翻译服务失败，请检查网络与服务地址。": "Could not connect to translation service. Check network and endpoint.",
   "翻译响应格式不兼容。": "Incompatible translation response format.",
+  "模型未按要求返回译文，请重试或换用其他模型。": "The model did not return translations in the expected format. Try again or use another model.",
   "服务未返回翻译。": "Service returned no translation.",
   "服务未完整生成译文，请缩小选区或检查模型限制。": "Service did not complete the translation. Select a smaller region or check model limits.",
   "服务返回空译文。": "Service returned an empty translation.",
