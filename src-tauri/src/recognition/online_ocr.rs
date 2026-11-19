@@ -36,7 +36,12 @@ fn recognize_inner(image: &image::RgbaImage, service: &RecognitionService, op: u
     if !service.supports_ocr() {
         return Err("所选服务不支持图片识别。".into());
     }
-    let endpoint = super::translation::endpoint_url(&service.endpoint)?;
+    // OpenAI 兼容服务允许只填基础地址（如 /v1），请求时补全为 Chat Completions 地址。
+    let endpoint = if service.protocol == "openai-compatible" {
+        super::translation::chat_endpoint(&service.endpoint)?
+    } else {
+        super::translation::endpoint_url(&service.endpoint)?
+    };
     let local = matches!(
         endpoint.host_str(),
         Some("localhost" | "127.0.0.1" | "[::1]")

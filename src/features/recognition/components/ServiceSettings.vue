@@ -176,14 +176,22 @@ function endpointChanged() {
   if (draft.value?.protocol === 'paddle-ocr' && !isPaddleJobsEndpoint(draft.value.endpoint) && !['PP-OCRv5', 'PP-OCRv6'].includes(draft.value.model)) draft.value.model = 'PP-OCRv6'
 }
 function active(id: string) { return (settings.value.ocr.provider === 'service' && settings.value.ocr.serviceId === id) || (settings.value.ai.provider !== 'local-ctranslate2' && settings.value.ai.serviceId === id) }
-async function save() {
-  if (!draft.value || busy.value) return
+/** 草稿与已保存配置不同（含新填的密钥）时，测试前需要先保存，否则会测到旧配置。 */
+const draftDirty = computed(() => {
+  const value = draft.value, saved = savedService.value
+  if (!value) return false
+  if (!saved || newSecrets.value.some(Boolean)) return true
+  return (['name', 'protocol', 'endpoint', 'model', 'vision'] as const).some(key => value[key] !== saved[key])
+})
+/** keepOpen：“保存并测试”保存后留在对话框，草稿换成已保存的配置并重新读取密钥列表。返回是否已保存当前草稿。 */
+async function save(keepOpen = false): Promise<boolean> {
+  if (!draft.value || busy.value) return false
   const previous = savedService.value, moved = endpointMoved.value, version = revision
   const added = newSecrets.value.filter(Boolean).map(secret => ({ id: `k-${crypto.randomUUID().slice(0, 8)}`, secret }))
   const service = { ...draft.value, keys: [...(moved ? [] : draft.value.keys), ...added.map(item => item.id)] }
   const invalid = validateService(service)
-  if (invalid) { error.value = invalid; return }
-  if (added.some(item => item.secret.length > 2048 || /\p{Cc}/u.test(item.secret))) { error.value = '密钥过长或含控制字符。'; return }
+  if (invalid) { error.value = invalid; return false }
+  if (added.some(item => item.secret.length > 2048 || /\p{Cc}/u.test(item.secret))) { error.value = '密钥过长或含控制字符。'; return false }
   busy.value = true; error.value = ''; message.value = ''
   try {
     // 地址变更时先按旧地址清除原密钥，避免凭据库中残留无法管理的条目。
@@ -192,14 +200,24 @@ async function save() {
     if (!disposed) settings.value = saved
     for (const item of added) await api.recognitionServiceCredential(service.id, service.endpoint, item.id, item.secret)
     const configured = await api.recognitionServiceStatus(service.id)
-    if (!disposed && version === revision) { statuses.value[service.id] = configured; cancel(); message.value = '服务已保存。' }
-  } catch (e) { if (!disposed) error.value = String(e) }
+    if (disposed || version !== revision) return false
+    statuses.value[service.id] = configured
+    if (keepOpen) {
+      draft.value = { ...service, keys: [...service.keys] }; newSecrets.value = []
+      keyInfos.value = service.keys.map(id => ({ id, hint: null })); keyTests.value = {}
+      void loadKeys(service.id, ++revision)
+    } else { cancel(); message.value = '服务已保存。' }
+    return true
+  } catch (e) { if (!disposed) error.value = String(e); return false }
   finally { if (!disposed) busy.value = false }
 }
 // 测试使用已保存的连接与密钥：翻译服务发送 Hello，仅 OCR 的服务上传一张空白小图。
+// 新服务或有未保存的修改时先保存（不关闭对话框）再测试，密钥仍只经凭据命令写入。
 const testing = ref(false), testResult = ref('')
 async function testService() {
-  if (!draft.value || !draftSaved.value || busy.value || testing.value) return
+  if (!draft.value || busy.value || testing.value) return
+  if (draftDirty.value && !await save(true)) return
+  if (!draft.value || !draftSaved.value) return
   testing.value = true; error.value = ''; testResult.value = ''
   try { await api.recognitionServiceTest(draft.value.id); if (!disposed) testResult.value = '测试成功，服务可用。' }
   catch (e) { if (!disposed) error.value = String(e) }
@@ -332,7 +350,7 @@ async function portal() {
             <span class="service-mono" :class="{ logo: draftIcon.icon }" :style="draftIcon.icon ? undefined : { background: draftIcon.tile }" aria-hidden="true"><span v-if="draftIcon.icon" class="service-logo" v-html="draftIcon.icon" /><template v-else>{{ draftIcon.mono }}</template></span>
             <h2>{{ dialogTitle }}</h2>
           </header>
-          <form class="editor" @submit.prevent="save">
+          <form class="editor" @submit.prevent="save()">
             <fieldset class="settings-card" :disabled="busy">
               <label class="setting-row dialog-field"><span>{{ t('服务名称') }}</span><input v-model.trim="draft.name" maxlength="80" /></label>
               <template v-if="draft.protocol === 'paddle-ocr'">
@@ -341,8 +359,8 @@ async function portal() {
                 <label class="setting-row dialog-field"><span>{{ t('模型名称') }}</span><SelectControl v-model="draft.model" :aria-label="t('Paddle 模型')" :options="paddleModelOptions" /></label>
               </template>
               <label v-else-if="draft.protocol === 'deepl'" class="setting-row dialog-field"><span>{{ t('完整接口地址') }}</span><SelectControl v-model="draft.endpoint" :aria-label="t('服务地址')" :options="[{ value: 'https://api-free.deepl.com/v2/translate', label: 'DeepL API Free' }, { value: 'https://api.deepl.com/v2/translate', label: 'DeepL API Pro' }]" @update:model-value="endpointChanged" /></label>
-              <label v-else class="setting-row dialog-field"><span>{{ t('完整接口地址') }}</span><input v-model.trim="draft.endpoint" type="url" autocomplete="off" @input="endpointChanged" /></label>
-              <label v-if="draft.protocol !== 'deepl' && draft.protocol !== 'paddle-ocr'" class="setting-row dialog-field"><span>{{ draft.protocol === 'ocr-space' ? t('OCR.space 引擎（1 / 2 / 3）') : t('模型名称') }}</span><input v-model.trim="draft.model" maxlength="200" /></label>
+              <label v-else class="setting-row dialog-field"><span>{{ draft.protocol === 'openai-compatible' ? t('接口地址') : t('完整接口地址') }}</span><input v-model.trim="draft.endpoint" type="url" autocomplete="off" :placeholder="draft.protocol === 'openai-compatible' ? t('https://服务域名/v1') : undefined" :title="draft.protocol === 'openai-compatible' ? t('可填到 /v1 等基础地址，请求时自动补全 /chat/completions；其他路径按原样请求。') : undefined" @input="endpointChanged" /></label>
+              <label v-if="draft.protocol !== 'deepl' && draft.protocol !== 'paddle-ocr'" class="setting-row dialog-field"><span>{{ draft.protocol === 'ocr-space' ? t('OCR.space 引擎（1 / 2 / 3）') : t('模型名称') }}</span><input v-model.trim="draft.model" maxlength="200" :placeholder="draft.protocol === 'openai-compatible' ? t('服务商提供的模型 ID，如 gpt-4o-mini') : undefined" /></label>
               <div class="setting-row dialog-field key-field"><span>API Key / Token</span>
                 <div class="key-list">
                   <div v-for="(item, index) in visibleKeys" :key="item.id" class="key-row" data-key-row>
@@ -359,6 +377,23 @@ async function portal() {
               </div>
               <label v-if="draft.protocol === 'openai-compatible'" class="setting-row dialog-switch"><span>{{ t('此模型支持图片输入，可用于 OCR') }}</span><input v-model="draft.vision" class="mini-switch" type="checkbox" role="switch" /></label>
             </fieldset>
+            <!-- 自定义兼容服务没有预设可参考；示例默认折叠，不挤占对话框高度。 -->
+            <details v-if="draft.protocol === 'openai-compatible' && preset === 'custom'" class="field-examples" data-field-examples>
+              <summary>{{ t('填写示例') }}</summary>
+              <dl>
+                <dt>{{ t('接口地址') }}</dt>
+                <dd>{{ t('填到 /v1 这一层即可，会自动补全 /chat/completions。') }}</dd>
+                <dd><span>{{ t('兼容网关 / 中转') }}</span><code>https://api.example.com/v1</code></dd>
+                <dd><span>OpenAI</span><code>https://api.openai.com/v1</code></dd>
+                <dd><span>{{ t('火山方舟') }}</span><code>https://ark.cn-beijing.volces.com/api/v3</code></dd>
+                <dd><span>Ollama</span><code>http://127.0.0.1:11434/v1</code></dd>
+                <dd><span>LM Studio</span><code>http://127.0.0.1:1234/v1</code></dd>
+                <dt>{{ t('模型名称') }}</dt>
+                <dd>{{ t('填服务商控制台或网关里的模型 ID，例如 gpt-4o-mini、deepseek-chat；Ollama 填 ollama list 中的名称，如 qwen2.5:7b。') }}</dd>
+                <dt>API Key / Token</dt>
+                <dd>{{ t('本机服务（127.0.0.1 / localhost）可以不填。') }}</dd>
+              </dl>
+            </details>
             <p v-if="connectionMode(draft.endpoint) === 'online'" class="section-note">{{ t('用途：{0}', { 0: uses(draft) }) }} · {{ supportsOcr(draft) ? t('OCR 会将选区图片发送到此服务，可能产生费用。') : t('在线翻译会发送原文，可能产生费用。') }}</p>
             <p v-if="visibleKeys.length + newSecrets.filter(Boolean).length > 1" class="section-note">{{ t('请求先用第一个密钥，认证失败或额度用尽时依次换下一个。') }}</p>
             <p v-if="endpointMoved && keyInfos.length" class="section-note">{{ t('地址已修改，保存后原有密钥会被清除，请重新填写。') }}</p>
@@ -368,7 +403,7 @@ async function portal() {
               <button v-if="preset !== 'custom'" type="button" class="dialog-link" :title="t('当前通过 API Key / Token 接入；浏览器登录用于获取凭据，不会自动授权 Snap Desk。')" @click="portal">{{ t('获取 API Key / Token') }}</button>
               <button v-if="draftSaved" type="button" class="dialog-link danger" :disabled="busy" @click="requestRemoveDraft">{{ t('删除服务') }}</button>
               <span class="actions-spacer" />
-              <Button type="button" variant="outline" data-service-test :disabled="!draftSaved || endpointMoved || busy || testing" :title="draftSaved && !endpointMoved ? t('使用已保存的配置发送一次测试请求，可能产生少量费用。') : t('保存后可测试。')" @click="testService"><Zap :size="14" aria-hidden="true" />{{ testing ? t('正在测试…') : t('测试连接') }}</Button>
+              <Button type="button" variant="outline" data-service-test :disabled="busy || testing" :title="draftDirty ? t('先保存当前配置，再发送一次测试请求，可能产生少量费用。') : t('使用已保存的配置发送一次测试请求，可能产生少量费用。')" @click="testService"><Zap :size="14" aria-hidden="true" />{{ testing ? t('正在测试…') : draftDirty ? t('保存并测试') : t('测试连接') }}</Button>
               <Button type="button" variant="outline" :disabled="busy" @click="closeDialog">{{ t('取消') }}</Button>
               <Button type="submit" :disabled="busy">{{ busy ? t('正在保存…') : t('保存服务') }}</Button>
             </div>
@@ -413,6 +448,14 @@ async function portal() {
 .dialog-field > span { flex:none; width:104px; color:var(--desk-text,#1f2328); }
 .dialog-field > :is(input, .select-trigger) { flex:1; min-width:0; }
 .dialog-field, .dialog-switch { flex-wrap:nowrap; margin:0; }
+.field-examples { margin:0; font-size:12px; color:var(--desk-muted,#57606a); }
+.field-examples summary { width:max-content; cursor:pointer; color:var(--desk-accent,#2563eb); }
+.field-examples dl { display:grid; gap:2px; margin:6px 0 0; padding:8px 10px; border-radius:6px; background:var(--desk-soft,#f3f5f8); }
+.field-examples dt { margin-top:4px; color:var(--desk-text,#1f2328); font-weight:600; }
+.field-examples dt:first-child { margin-top:0; }
+.field-examples dd { display:flex; flex-wrap:wrap; gap:4px 8px; margin:0; line-height:1.5; }
+.field-examples dd > span { min-width:96px; }
+.field-examples code { overflow-wrap:anywhere; user-select:all; }
 .service-dialog .actions { margin-top:16px; }
 .actions-spacer { flex:1; }
 .dialog-link { padding:0; border:0; background:transparent; font:inherit; font-size:12px; color:var(--desk-accent-fg,#3b5bdb); cursor:pointer; }

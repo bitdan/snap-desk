@@ -159,6 +159,30 @@ pub(super) fn endpoint_url(value: &str) -> Result<reqwest::Url, String> {
     Ok(url)
 }
 
+/// OpenAI 兼容服务的 Chat Completions 地址。很多服务与网关只给出基础地址（如 `https://host/v1`、
+/// 火山方舟的 `/api/v3`、Gemini 的 `/v1beta/openai`），这里补上 `/chat/completions`；
+/// 只有主机名时按 `/v1/chat/completions`。其他自定义路径原样使用，已保存的地址与密钥索引不变。
+pub(super) fn chat_endpoint(value: &str) -> Result<reqwest::Url, String> {
+    let mut url = endpoint_url(value)?;
+    let path = url.path().trim_end_matches('/').to_string();
+    let last = path.rsplit('/').next().unwrap_or_default();
+    let version = last.len() > 1
+        && last.starts_with('v')
+        && last[1..].starts_with(|c: char| c.is_ascii_digit())
+        && last[1..].chars().all(|c| c.is_ascii_alphanumeric());
+    let next = if path.ends_with("/chat/completions") {
+        return Ok(url);
+    } else if path.is_empty() {
+        "/v1/chat/completions".to_string()
+    } else if version || last == "openai" {
+        format!("{path}/chat/completions")
+    } else {
+        return Ok(url);
+    };
+    url.set_path(&next);
+    Ok(url)
+}
+
 /// 全应用最多一个翻译请求；请求 ID 加入原生窗口归属，窗口间不能互相取消。Notify 的 permit 保留取消信号，避免开始前取消丢失。
 #[derive(Default)]
 pub struct TranslationState(Mutex<Jobs>);
@@ -641,6 +665,25 @@ mod tests {
         assert!(endpoint_url("http://127.0.0.1:8080/v1/chat/completions").is_ok());
         assert!(endpoint_url("http://intranet.example.com:8089/v1").is_ok());
         assert!(endpoint_url("https://example.com/v1/chat/completions").is_ok());
+    }
+
+    #[test]
+    fn chat_endpoint_completes_base_urls_and_keeps_custom_paths() {
+        for (input, expected) in [
+            ("http://intranet.example.com:8089/v1", "http://intranet.example.com:8089/v1/chat/completions"),
+            ("http://intranet.example.com:8089/v1/", "http://intranet.example.com:8089/v1/chat/completions"),
+            ("https://ark.cn-beijing.volces.com/api/v3", "https://ark.cn-beijing.volces.com/api/v3/chat/completions"),
+            ("https://generativelanguage.googleapis.com/v1beta/openai", "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"),
+            ("https://api.groq.com/openai/v1", "https://api.groq.com/openai/v1/chat/completions"),
+            ("http://127.0.0.1:11434", "http://127.0.0.1:11434/v1/chat/completions"),
+            ("https://api.deepseek.com/chat/completions", "https://api.deepseek.com/chat/completions"),
+            ("https://example.com/v1/chat/completions/", "https://example.com/v1/chat/completions/"),
+            ("https://example.com/proxy/llm", "https://example.com/proxy/llm"),
+            ("https://example.com/video", "https://example.com/video"),
+        ] {
+            assert_eq!(chat_endpoint(input).unwrap().as_str(), expected, "{input}");
+        }
+        assert!(chat_endpoint("https://example.com/v1?key=x").is_err());
     }
 }
 

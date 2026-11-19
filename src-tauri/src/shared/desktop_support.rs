@@ -71,7 +71,9 @@ pub(crate) struct Probe {
     pub xwayland: bool,
 }
 
+/// 只有 Linux 的 Wayland 探测会构造具体合成器；其他平台只用到默认值。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub(crate) enum Compositor {
     Kwin,
     Gnome,
@@ -99,6 +101,8 @@ impl Compositor {
 }
 
 /// `XDG_CURRENT_DESKTOP` 是冒号分隔列表（如 `ubuntu:GNOME`）；合成器专用套接字变量优先。
+/// 由 Linux 的 Wayland 探测调用；其他平台只在测试中使用。
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub(crate) fn compositor(desktop: &str, sway: bool, niri: bool, hyprland: bool) -> Compositor {
     if niri {
         return Compositor::Niri;
