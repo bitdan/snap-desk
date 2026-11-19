@@ -5,6 +5,7 @@
 //! 不引入额外框架绑定，所有 NSWindow 调用都必须在主线程执行。
 use objc2::{
     class,
+    encode::Encode,
     msg_send,
     runtime::{AnyObject, Bool},
 };
@@ -26,6 +27,36 @@ struct CGPoint {
     x: f64,
     y: f64,
 }
+unsafe impl objc2::encode::Encode for CGPoint {
+    const ENCODING: objc2::encode::Encoding = objc2::encode::Encoding::Struct(
+        "CGPoint",
+        &[f64::ENCODING, f64::ENCODING],
+    );
+}
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct CGSize {
+    width: f64,
+    height: f64,
+}
+unsafe impl objc2::encode::Encode for CGSize {
+    const ENCODING: objc2::encode::Encoding = objc2::encode::Encoding::Struct(
+        "CGSize",
+        &[f64::ENCODING, f64::ENCODING],
+    );
+}
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct CGRect {
+    origin: CGPoint,
+    size: CGSize,
+}
+unsafe impl objc2::encode::Encode for CGRect {
+    const ENCODING: objc2::encode::Encoding = objc2::encode::Encoding::Struct(
+        "CGRect",
+        &[CGPoint::ENCODING, CGSize::ENCODING],
+    );
+}
 
 #[link(name = "CoreGraphics", kind = "framework")]
 extern "C" {
@@ -41,6 +72,8 @@ extern "C" {
     fn CGEventSetFlags(event: *mut c_void, flags: u64);
     fn CGEventPost(tap: u32, event: *mut c_void);
     fn CGWindowListCopyWindowInfo(option: u32, relative_to: u32) -> *const c_void;
+    fn CGMainDisplayID() -> u32;
+    fn CGDisplayBounds(display: u32) -> CGRect;
     static kCGWindowLayer: *const c_void;
     static kCGWindowNumber: *const c_void;
 }
@@ -132,6 +165,91 @@ pub fn raise_overlay(window: &WebviewWindow) -> Result<(), String> {
             }
         })
         .map_err(|e| e.to_string())
+}
+
+extern "C" {
+    fn pthread_main_np() -> i32;
+}
+
+/// 当前线程是否为 Cocoa 主线程。
+pub(crate) fn is_main_thread() -> bool {
+    unsafe { pthread_main_np() != 0 }
+}
+
+/// 在主线程同步设置窗口外框，并在同一次主线程调用中读回 NSWindow 的实际 frame。
+///
+/// `requested` 为左上角原点、向下为正的全局物理像素 `(x, y, width, height)`，
+/// 与 Tauri 的显示器坐标一致；`scale` 为目标屏的 backing scale。返回值同样是物理像素。
+/// tao 的 set_size / set_position 会经 GCD 主队列异步执行，不能用来做“设置后立即校验”。
+pub(crate) fn set_window_frame_sync(
+    window: &WebviewWindow,
+    requested: (i32, i32, u32, u32),
+    scale: f64,
+) -> Result<(i32, i32, u32, u32), String> {
+    if !(scale.is_finite() && scale > 0.0) {
+        return Err(format!("显示器缩放比例无效：{scale}。"));
+    }
+    let target = window.clone();
+    let apply = move || -> Result<(i32, i32, u32, u32), String> {
+        let pointer = target.ns_window().map_err(|e| e.to_string())?;
+        if pointer.is_null() {
+            return Err("窗口原生句柄不可用。".into());
+        }
+        // SAFETY: 指针来自 Tauri 管理的存活 NSWindow，且当前位于主线程。
+        unsafe {
+            let ns_window = &*(pointer as *mut AnyObject);
+            // Cocoa 全局坐标以主屏左下角为原点、向上为正。
+            let primary = CGDisplayBounds(CGMainDisplayID()).size.height;
+            let (x, y, width, height) = requested;
+            let frame = cocoa_frame(requested, scale, primary);
+            let _: () = msg_send![ns_window, setFrame: frame, display: Bool::YES];
+            let actual: CGRect = msg_send![ns_window, frame];
+            let result = top_left_pixels(actual, scale, primary);
+            if result != (x, y, width, height) {
+                log::warn!(
+                    "event=capture.frame_mismatch module=capture code=CAPTURE_FRAME_MISMATCH width={width} height={height} actual_width={} actual_height={} offset_x={} offset_y={}",
+                    result.2, result.3, (result.0 - x).unsigned_abs(), (result.1 - y).unsigned_abs()
+                );
+            }
+            Ok(result)
+        }
+    };
+    if is_main_thread() {
+        return apply();
+    }
+    let (sender, receiver) = mpsc::sync_channel(1);
+    window
+        .run_on_main_thread(move || {
+            let _ = sender.send(apply());
+        })
+        .map_err(|e| e.to_string())?;
+    // 主线程卡住时给出明确失败，而不是无限等待；正常情况下同一轮事件循环内完成。
+    receiver
+        .recv_timeout(Duration::from_secs(3))
+        .map_err(|_| "等待窗口尺寸生效超时：主线程未响应。".to_string())?
+}
+
+fn cocoa_frame(requested: (i32, i32, u32, u32), scale: f64, primary: f64) -> CGRect {
+    let (x, y, width, height) = requested;
+    let width = f64::from(width) / scale;
+    let height = f64::from(height) / scale;
+    CGRect {
+        origin: CGPoint {
+            x: f64::from(x) / scale,
+            y: primary - f64::from(y) / scale - height,
+        },
+        size: CGSize { width, height },
+    }
+}
+
+fn top_left_pixels(frame: CGRect, scale: f64, primary: f64) -> (i32, i32, u32, u32) {
+    let top = primary - frame.origin.y - frame.size.height;
+    (
+        (frame.origin.x * scale).round() as i32,
+        (top * scale).round() as i32,
+        (frame.size.width * scale).round().max(0.0) as u32,
+        (frame.size.height * scale).round().max(0.0) as u32,
+    )
 }
 
 /// 系统设置“隐私与安全性”中的权限面板。
@@ -485,3 +603,27 @@ pub(crate) fn completed(
 /// 跨线程传回 Objective-C 对象：只在接收方线程内使用，传递期间不访问。
 pub(crate) struct Handoff(pub Retained<AnyObject>);
 unsafe impl Send for Handoff {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn frame_conversion_round_trips_retina_pixels() {
+        for scale in [1.0, 2.0, 3.0] {
+            for requested in [(0, 0, 2, 2), (120, 80, 2228, 4), (-1728, 40, 4, 1300), (3456, 0, 640, 96)] {
+                let frame = cocoa_frame(requested, scale, 1117.0);
+                assert_eq!(top_left_pixels(frame, scale, 1117.0), requested);
+            }
+        }
+    }
+
+    #[test]
+    fn frame_origin_is_bottom_left_of_primary_screen() {
+        let frame = cocoa_frame((200, 100, 400, 60), 2.0, 900.0);
+        assert_eq!(frame.origin.x, 100.0);
+        assert_eq!(frame.size.height, 30.0);
+        // 顶边 50pt，主屏高 900pt，底边位于 900-50-30。
+        assert_eq!(frame.origin.y, 820.0);
+    }
+}

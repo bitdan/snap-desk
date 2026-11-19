@@ -105,6 +105,8 @@ onBeforeUnmount(() => globalThis.removeEventListener?.('focus', onFocus))
         </SettingRow>
       </div>
       <p v-if="restartHint && (!permissions.screenCapture || !permissions.inputMonitoring)" class="notice" role="status">{{ t('在系统设置中允许 Snap Desk 后，请退出并重新打开应用。') }}</p>
+      <!-- 状态来自系统实时查询；系统设置里已勾选却仍未授权，通常是更新后签名变化导致旧授权记录不再匹配。 -->
+      <p v-if="!permissions.screenCapture" class="notice" role="status">{{ t('若系统设置中已开启“屏幕录制”但这里仍显示未授权，通常是应用更新后旧授权记录失效：请在系统设置中移除 Snap Desk 后重新添加并重启应用。') }}</p>
       <p v-if="permissionError" class="notice error" role="alert">{{ te(permissionError) }}</p>
     </template>
     <h2 class="section-heading">{{ t('导出字体') }}</h2>

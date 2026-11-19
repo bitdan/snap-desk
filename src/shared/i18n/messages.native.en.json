@@ -1028,5 +1028,8 @@
   "当前桌面不支持原生窗口截图，请按选区截图。": "Native window capture is not supported on this desktop. Capture a selected area instead.",
   "KWin 脚本没有回传窗口列表。": "The KWin script did not return the window list.",
   "无法运行 KWin 脚本。": "Unable to run the KWin script.",
-  "复制失败，请重试或保存图片。": "Copy failed. Try again or save the image."
+  "复制失败，请重试或保存图片。": "Copy failed. Try again or save the image.",
+  "截图需要“屏幕录制”权限。请在“系统设置 → 隐私与安全性 → 屏幕录制”中允许 Snap Desk 后退出并重新打开应用；如果已开启仍无效，请先移除 Snap Desk 再重新添加。": "Screenshots require Screen Recording permission. Allow Snap Desk in System Settings → Privacy & Security → Screen Recording, then quit and reopen the app. If it is already enabled but still not working, remove Snap Desk and add it again.",
+  "等待窗口尺寸生效超时：主线程未响应。": "Timed out waiting for the window size to apply: the main thread is not responding.",
+  "窗口原生句柄不可用。": "The native window handle is unavailable."
 }

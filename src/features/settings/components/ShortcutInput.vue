@@ -2,7 +2,7 @@
 import { t, te } from '@/shared/i18n/i18n'
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { api } from '@/services/api'
-import { captureShortcut } from '@/features/settings/settings'
+import { captureShortcut, shortcutReleased } from '@/features/settings/settings'
 import { shortcutKeys, shortcutText } from '@/shared/ui/shortcut-label'
 
 const props = defineProps<{ modelValue: string; disabled?: boolean; label: string; validate: (value: string) => string | null }>()
@@ -16,6 +16,9 @@ let candidate: { value: string; code: string; released: boolean } | null = null
 /** 注销成功后才捕获；等待时失焦也要恢复。 */
 async function begin() {
   if (props.disabled || busy.value || editing.value) return
+  // WebKit（macOS WKWebView）点击按钮不会让它获得焦点；不主动聚焦时下面的焦点校验会静默放弃录入，
+  // 按键事件也到不了按钮。Windows / Linux 点击后已聚焦，重复调用无副作用。
+  button.value?.focus()
   busy.value = true; canceled = false; candidate = null; error.value = ''; emit('editing', true)
   try {
     await api.setShortcutEditing(true)
@@ -62,7 +65,7 @@ function keyup(event: KeyboardEvent) {
   event.preventDefault(); event.stopPropagation()
   if (!candidate) return
   if (event.code === candidate.code) candidate.released = true
-  if (candidate.released && !event.ctrlKey && !event.altKey && !event.shiftKey && !event.metaKey) void finish(candidate.value)
+  if (shortcutReleased(candidate, event)) void finish(candidate.value)
 }
 function cancel() { void finish() }
 onMounted(() => window.addEventListener('blur', cancel))

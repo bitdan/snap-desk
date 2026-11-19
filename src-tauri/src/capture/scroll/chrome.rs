@@ -303,44 +303,19 @@ fn place_windows(
                 clip_edge(&window, position.w, position.h)?;
             }
         }
-        window
-            .set_size(PhysicalSize::new(position.w, position.h))
-            .map_err(err)?;
-        window
-            .set_position(PhysicalPosition::new(
-                screen.x + position.x,
-                screen.y + position.y,
-            ))
-            .map_err(err)?;
-        let actual_size = window.outer_size().map_err(err)?;
-        let actual_position = window.outer_position().map_err(err)?;
-        // Windows 以裁剪区域为准，外框允许更大，但不能小于需要绘制的区域。
-        // 其他平台没有原生裁剪兜底，仍要求外框尺寸完全相等。
-        let invalid_edge_size = if cfg!(target_os = "windows") {
-            actual_size.width < position.w || actual_size.height < position.h
-        } else {
-            actual_size.width != position.w || actual_size.height != position.h
-        };
-        if edge && invalid_edge_size {
-            hide(app);
+        let actual = apply_geometry(&window, screen, *position)?;
+        if edge && !edge_size_valid(*position, actual) {
+            hide_labels(app, labels);
             return Err(format!(
                 "选区边框尺寸异常：期望 {}×{}，实际 {}×{}。",
-                position.w, position.h, actual_size.width, actual_size.height
+                position.w, position.h, actual.w, actual.h
             ));
         }
-        let actual = BoxRect {
-            x: actual_position.x - screen.x,
-            y: actual_position.y - screen.y,
-            w: if edge && cfg!(target_os = "windows") {
-                position.w
-            } else {
-                actual_size.width
-            },
-            h: if edge && cfg!(target_os = "windows") {
-                position.h
-            } else {
-                actual_size.height
-            },
+        // Windows 以裁剪区域为准，外框可能被系统撑大，避让按实际需要绘制的细条计算。
+        let actual = if edge && cfg!(target_os = "windows") {
+            BoxRect { w: position.w, h: position.h, ..actual }
+        } else {
+            actual
         };
         // 避让依据实际窗口矩形，而不是请求尺寸，避免系统调整尺寸后辅助界面被截入图片。
         if actual.overlaps(rect) {
@@ -348,6 +323,54 @@ fn place_windows(
         }
     }
     Ok(overlaps)
+}
+
+/// Windows 以裁剪区域为准，外框允许更大，但不能小于需要绘制的区域。
+/// 其他平台没有原生裁剪兜底，仍要求外框尺寸完全相等。
+fn edge_size_valid(expected: BoxRect, actual: BoxRect) -> bool {
+    if cfg!(target_os = "windows") {
+        actual.w >= expected.w && actual.h >= expected.h
+    } else {
+        actual.w == expected.w && actual.h == expected.h
+    }
+}
+
+fn hide_labels(app: &AppHandle, labels: &[&str]) {
+    for label in labels {
+        if let Some(w) = window(app, label) {
+            let _ = w.hide();
+        }
+    }
+}
+
+/// 设置辅助窗口外框并读回系统实际生效的矩形（相对屏幕原点的物理像素）。
+///
+/// macOS 上 tao 的 set_size / set_position 投递到 GCD 主队列异步执行，紧接着读取
+/// outer_size 只能拿到旧值（新建边框为 1pt，即 Retina 下 2×2）。这里改在主线程同步
+/// 设置 NSWindow frame 后立即读回，校验的是真实结果，不依赖固定延时。
+/// 点与像素按目标屏的 backing scale 换算，窗口当前位于其他缩放的屏幕时也不会错位。
+#[cfg(target_os = "macos")]
+fn apply_geometry(window: &Window, screen: &Screen, b: BoxRect) -> Result<BoxRect, String> {
+    let scale = f64::from_bits(screen.scale);
+    let requested = (screen.x + b.x, screen.y + b.y, b.w, b.h);
+    let (x, y, w, h) = crate::shared::macos::set_window_frame_sync(window, requested, scale)?;
+    Ok(BoxRect { x: x - screen.x, y: y - screen.y, w, h })
+}
+
+#[cfg(not(target_os = "macos"))]
+fn apply_geometry(window: &Window, screen: &Screen, b: BoxRect) -> Result<BoxRect, String> {
+    window.set_size(PhysicalSize::new(b.w, b.h)).map_err(err)?;
+    window
+        .set_position(PhysicalPosition::new(screen.x + b.x, screen.y + b.y))
+        .map_err(err)?;
+    let size = window.outer_size().map_err(err)?;
+    let position = window.outer_position().map_err(err)?;
+    Ok(BoxRect {
+        x: position.x - screen.x,
+        y: position.y - screen.y,
+        w: size.width,
+        h: size.height,
+    })
 }
 
 /// 已排除的窗口只读校验，避免 WebView2 初始化后重复设置触发系统错误。
@@ -398,9 +421,8 @@ pub(in crate::capture) fn place_recording_controls(app: &AppHandle, screen: &Scr
     let base = layout_with_controls(screen, rect, 640.0)[1];
     let h = (48.0 * f64::from_bits(screen.scale)).round() as u32;
     let h = h.min(screen.height).max(1);
-    controls.set_size(PhysicalSize::new(base.w, h)).map_err(err)?;
-    controls.set_position(PhysicalPosition::new(screen.x + base.x, screen.y + base.y.min((screen.height-h) as i32))).map_err(err)?;
-    Ok(())
+    let target = BoxRect { x: base.x, y: base.y.min((screen.height - h) as i32), w: base.w, h };
+    apply_geometry(&controls, screen, target).map(|_| ())
 }
 
 /// 标注工具量取布局后，把独立控制窗对齐到它上方；两行共享屏幕避让及拖动位置。
