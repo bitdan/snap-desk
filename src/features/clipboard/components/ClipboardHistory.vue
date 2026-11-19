@@ -154,12 +154,16 @@ const disposers: (() => void)[] = []
 function applyStatus(value: ClipboardStatus, errors: number) {
   status.value = errors === clipboardErrorRevision ? value : { ...value, error: latestClipboardError }
 }
-/** 浏览旧记录或操作所选内容时保留现场，后台更新交给用户主动刷新。 */
+/** 停在列表顶部时自动刷新（已有选择会保留）；向下浏览、翻页或有弹层与操作进行中时保留现场，只提示更新。 */
 function canRefreshInBackground() {
-  return !loadedMore && !listScrolled && !selected.value.length && !previewItem.value
+  return !loadedMore && !listScrolled && !previewItem.value
     && !busy.value && !confirm.value && !exportOpen.value && !helpOpen.value
 }
-function listScroll(event: Event) { listScrolled = (event.target as HTMLElement).scrollTop > 0 }
+/** 滚回顶部时补上浏览期间积压的更新。 */
+function listScroll(event: Event) {
+  listScrolled = (event.target as HTMLElement).scrollTop > 0
+  if (!listScrolled && updatesPending.value) queueBackgroundRefresh()
+}
 /** 滚动和视口补齐共用入口；失败后等用户重试，避免持续自动重发失败请求。 */
 function loadMore(retry = false) {
   if (!cursor.value || loading.value || busy.value || searchTimer || loadMoreFailed.value && !retry) return
@@ -188,9 +192,10 @@ async function refresh(append = false, background = false) {
     cursor.value = page.nextCursor; applyStatus(state, errors)
     loadedMore = append
     const available = itemsById.value
-    selected.value = selected.value.filter(id => available.has(id))
-    selectedItems.value = Object.fromEntries(selected.value.map(id => [id, available.get(id)!]))
-    if (selectionAnchor !== null && !available.has(selectionAnchor)) selectionAnchor = null
+    // 后台刷新只换首页，被新记录挤出首页的所选条目仍存在，保留其选择与快照；主动刷新才移除不可见的选择。
+    if (!background) selected.value = selected.value.filter(id => available.has(id))
+    selectedItems.value = Object.fromEntries(selected.value.map(id => [id, available.get(id) ?? selectedItems.value[id]]))
+    if (!background && selectionAnchor !== null && !available.has(selectionAnchor)) selectionAnchor = null
     if (!append) {
       updatesPending.value = changes !== changeRevision
       if (!background) { list.value?.resetScroll(); listScrolled = false }
@@ -228,6 +233,10 @@ watch(keyword, () => {
   searchTimer = setTimeout(() => { searchTimer = undefined; applyFilter() }, 250)
 })
 watch(category, applyFilter)
+// 预览、导出、确认或操作结束后，补上期间积压的更新。
+watch(() => !!previewItem.value || busy.value || !!confirm.value || exportOpen.value || helpOpen.value, occupiedNow => {
+  if (!occupiedNow && updatesPending.value) queueBackgroundRefresh()
+})
 async function run(action: () => Promise<unknown>, success = '') {
   if (busy.value) return
   busy.value = true; error.value = ''; message.value = ''
@@ -387,7 +396,7 @@ onUnmounted(() => { disposed = true; revision++; window.removeEventListener('key
       <button v-for="tab in categories" :key="tab.value" :class="{ active: category === tab.value, 'sorting-source': sorting === tab.value, 'sorting-target': sortingTarget === tab.value && sorting !== tab.value }" :data-clipboard-category="tab.value" :title="t('{0}（拖动排序，Alt+←/→调整顺序）', { 0: t(tab.label) })" :aria-pressed="category === tab.value" :disabled="busy || !desktop" @pointerdown="categoryOrder.start($event, tab.value)" @pointermove="categoryOrder.move" @pointerup="categoryOrder.finish" @pointercancel="categoryOrder.cancel" @lostpointercapture="categoryOrder.cancel" @dragstart.prevent @keydown="categoryOrder.key($event, tab.value)" @click="categoryOrder.choose($event, tab.value)">{{ t(tab.label) }}</button>
     </nav>
     <div v-if="status && status.supported && !status.enabled" class="history-notice history-paused" role="status"><span>{{ t("记录已暂停，新复制的内容不会保存。") }}</span><Button variant="ghost" :disabled="busy || !desktop" @click="setRecording(true)">{{ t("继续记录") }}</Button></div>
-    <p v-if="updatesPending" class="history-notice" role="status">{{ t("内容已更新，点击刷新。") }}</p>
+    <p v-if="updatesPending" class="history-notice" role="status"><button type="button" class="history-notice-action" :disabled="busy || foregroundLoading" @click="refresh()">{{ t("内容已更新，点击刷新。") }}</button></p>
     <p v-if="status && !status.supported" class="history-notice">{{ t("当前平台尚未支持自动监听；现有手动贴图不受影响。") }}</p>
     <p v-if="error || status?.error" class="history-notice error" role="alert">{{ te(error || status?.error) }}</p>
     <p v-if="orderError" class="history-notice" role="status">{{ t(orderError) }}</p>
@@ -464,6 +473,9 @@ onUnmounted(() => { disposed = true; revision++; window.removeEventListener('key
 .history-categories button:focus-visible { outline:2px solid var(--clip-accent); outline-offset:-2px; }
 .history-notice { display:flex; align-items:center; justify-content:space-between; gap:8px; margin:0 10px 8px; padding:6px 10px; border-radius:6px; background:var(--clip-notice, #eef4fc); color:var(--clip-notice-text, #315a86); font-size:12px; line-height:1.5; overflow-wrap:anywhere; user-select:text; }
 .history-notice.error { background:var(--history-danger-bg, #fff1f0); color:var(--history-danger, #b42318); }
+.history-notice-action { flex:1; padding:0; border:0; background:none; color:inherit; font:inherit; text-align:left; cursor:pointer; }
+.history-notice-action:hover:not(:disabled) { text-decoration:underline; }
+.history-notice-action:disabled { cursor:default; }
 .history-paused button { flex-shrink:0; height:24px; padding:0 8px; font-size:12px; }
 .clipboard-history .history-list { flex:1 1 0; min-height:0; padding:0 10px; overflow-y:auto; overscroll-behavior:contain; scrollbar-width:thin; }
 .history-list .history-virtual-row { padding-bottom:6px; }

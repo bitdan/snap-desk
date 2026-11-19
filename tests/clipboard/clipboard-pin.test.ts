@@ -367,7 +367,7 @@ it('浏览后续分页时后台变更保留列表和游标，主动刷新后移�
   expect(listControls.resetScroll).toHaveBeenCalled()
 })
 
-it('后台查询在途时开始选择，迟到结果保留当前记录与选择', async () => {
+it('停在顶部时有选择也自动刷新，被挤出首页的所选条目仍保留选择', async () => {
   vi.useFakeTimers()
   let complete!: (value: { items: { id: number; kind: string }[]; nextCursor: null }) => void
   api.clipboardList.mockImplementationOnce(() => new Promise(resolve => { complete = resolve }))
@@ -375,11 +375,49 @@ it('后台查询在途时开始选择，迟到结果保留当前记录与选择'
   await vi.advanceTimersByTimeAsync(100)
   await select(2)
   complete({ items: [{ id: 9, kind: 'text' }], nextCursor: null }); await flushComponent()
-  expect(findNode(root, node => node.props['data-id'] === 2)).toBeDefined()
-  expect(findNode(root, node => node.props['data-id'] === 9)).toBeUndefined()
-  expect(updatedNotice()).toBeDefined()
+  expect(findNode(root, node => node.props['data-id'] === 9)).toBeDefined()
+  expect(updatedNotice()).toBeUndefined()
   await pinButton().props.onClick(); await flushComponent()
   expect(api.clipboardPin).toHaveBeenCalledExactlyOnceWith(2)
+})
+
+it('弹层打开期间只提示更新，关闭后自动补上刷新', async () => {
+  vi.useFakeTimers()
+  findNode(root, node => node.type === 'button' && node.props['aria-label'] === '帮助')!.props.onClick()
+  await flushComponent()
+  expect(findNode(root, node => node.props['data-window'] === '帮助')).toBeDefined()
+  const requests = api.clipboardList.mock.calls.length
+  clipboardEvents.changed()
+  await vi.advanceTimersByTimeAsync(500); await flushComponent()
+  expect(api.clipboardList).toHaveBeenCalledTimes(requests)
+  expect(updatedNotice()).toBeDefined()
+  api.clipboardList.mockResolvedValueOnce({ items: [{ id: 9, kind: 'text' }], nextCursor: null })
+  findNode(root, node => node.props['data-window'] === '帮助')!.props.onClose()
+  await vi.advanceTimersByTimeAsync(500); await flushComponent()
+  expect(api.clipboardList).toHaveBeenCalledTimes(requests + 1)
+  expect(updatedNotice()).toBeUndefined()
+})
+
+it('向下浏览时提示可点击，点击或滚回顶部都会刷新', async () => {
+  vi.useFakeTimers()
+  const list = () => findNode(root, node => node.props['aria-label'] === '历史记录列表')!
+  list().props.onScroll({ target: { scrollTop: 100 } })
+  const requests = api.clipboardList.mock.calls.length
+  clipboardEvents.changed()
+  await vi.advanceTimersByTimeAsync(500); await flushComponent()
+  expect(api.clipboardList).toHaveBeenCalledTimes(requests)
+  api.clipboardList.mockResolvedValueOnce({ items: [{ id: 9, kind: 'text' }], nextCursor: null })
+  list().props.onScroll({ target: { scrollTop: 0 } })
+  await vi.advanceTimersByTimeAsync(500); await flushComponent()
+  expect(api.clipboardList).toHaveBeenCalledTimes(requests + 1)
+  expect(updatedNotice()).toBeUndefined()
+  list().props.onScroll({ target: { scrollTop: 100 } })
+  clipboardEvents.changed()
+  await vi.advanceTimersByTimeAsync(500); await flushComponent()
+  api.clipboardList.mockResolvedValueOnce({ items: [{ id: 10, kind: 'text' }], nextCursor: null })
+  findNode(updatedNotice()!, node => node.type === 'button')!.props.onClick()
+  await flushComponent()
+  expect(findNode(root, node => node.props['data-id'] === 10)).toBeDefined()
 })
 
 it('列表向下滚动后只提示更新，不自动替换正在浏览的记录', async () => {
