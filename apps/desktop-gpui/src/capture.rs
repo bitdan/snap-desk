@@ -6,12 +6,12 @@
 //! 2. 每个显示器开一个置顶 PopUp 浮层窗口，背景是该屏的冻结画面（`RenderImage`，BGRA，直接交给 GPU，
 //!    不经文件或自定义协议）。所有浮层共享一个 [`Session`] 实体，选区存于虚拟桌面物理像素坐标，
 //!    任一浮层修改后其他浮层通过 `observe` 重绘。
-//! 3. 复制/保存时在后台线程用 `snap_core::capture::compose` 裁剪合成，再写剪贴板或文件；
+//! 3. 复制/保存/贴图时在后台线程用 `snap_core::capture::compose` 裁剪合成，再写剪贴板或文件；
 //!    结束或取消时关闭全部浮层并丢弃会话，冻结画面随之释放。
 //!
 //! 坐标：浮层事件位置是窗口内逻辑像素；乘以该屏 `Display::scale` 再加上该屏在截图中的偏移，
-//! 即得到截图物理像素。限制：新建选区只在按下时所在的屏幕内（跨屏选区留待后续）；标注、贴图、
-//! 取色、倒计时界面尚未接入。
+//! 即得到截图物理像素。限制：新建选区只在按下时所在的屏幕内（跨屏选区留待后续）；标注、
+//! 取色、倒计时界面尚未接入。贴图窗口见 `pins.rs`。
 use crate::selection::{self, Handle};
 use gpui_kit::*;
 use image::RgbaImage;
@@ -51,7 +51,7 @@ pub struct Session {
     hover: Option<Rect>,
     drag: Option<Drag>,
     export: ExportSettings,
-    /// 设置“框选完成后的动作”：none / copy / save / pin（贴图未接入，按 none 处理）。
+    /// 设置“框选完成后的动作”：none / copy / save / pin。
     after: String,
     language: Language,
     windows: Vec<AnyWindowHandle>,
@@ -206,14 +206,7 @@ fn open_overlays(cx: &mut App, session: &Entity<Session>) {
             point(px(display.x as f32 / scale), px(display.y as f32 / scale)),
             size(px(display.width as f32 / scale), px(display.height as f32 / scale)),
         );
-        let near = |a: Pixels, b: Pixels| (f32::from(a) - f32::from(b)).abs() <= 2.0;
-        let matched = platform_displays.iter().find(|candidate| {
-            let bounds = candidate.bounds();
-            near(bounds.origin.x, logical.origin.x)
-                && near(bounds.origin.y, logical.origin.y)
-                && near(bounds.size.width, logical.size.width)
-                && near(bounds.size.height, logical.size.height)
-        });
+        let matched = match_display(&platform_displays, logical);
         let options = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(
                 matched.map(|d| d.bounds()).unwrap_or(logical),
@@ -245,6 +238,21 @@ fn open_overlays(cx: &mut App, session: &Entity<Session>) {
         let _ = first.update(cx, |_, window, _| window.activate_window());
     }
     session.update(cx, |s, _| s.windows = handles);
+}
+
+/// 按逻辑边界（物理像素 ÷ 该屏缩放）找到对应的 GPUI 显示器。
+fn match_display(
+    displays: &[std::rc::Rc<dyn PlatformDisplay>],
+    logical: Bounds<Pixels>,
+) -> Option<&std::rc::Rc<dyn PlatformDisplay>> {
+    let near = |a: Pixels, b: Pixels| (f32::from(a) - f32::from(b)).abs() <= 2.0;
+    displays.iter().find(|candidate| {
+        let bounds = candidate.bounds();
+        near(bounds.origin.x, logical.origin.x)
+            && near(bounds.origin.y, logical.origin.y)
+            && near(bounds.size.width, logical.size.width)
+            && near(bounds.size.height, logical.size.height)
+    })
 }
 
 /// 关闭全部浮层。延后到当前事件处理结束再执行：正在分发事件的窗口此时不能被 update。
@@ -290,7 +298,7 @@ fn begin_export(cx: &mut App) -> Option<(Entity<Session>, Arc<RgbaImage>, Rect)>
     Some((session, image, rect))
 }
 
-fn png(image: &RgbaImage) -> Result<Vec<u8>, String> {
+pub(crate) fn png(image: &RgbaImage) -> Result<Vec<u8>, String> {
     use image::{codecs::png, ImageEncoder};
     let mut bytes = Vec::new();
     // 剪贴板用快速压缩：体积略大但编码快，粘贴目标不在乎压缩率。
@@ -334,15 +342,72 @@ fn copy(cx: &mut App, owner: isize) {
 }
 
 #[cfg(windows)]
-fn write_clipboard(_cx: &App, owner: isize, image: &RgbaImage, png: Vec<u8>) -> Result<(), String> {
+pub(crate) fn write_clipboard(_cx: &App, owner: isize, image: &RgbaImage, png: Vec<u8>) -> Result<(), String> {
     // 与 Tauri 版一致：同时写 PNG 与保留 alpha 的 DIBV5，兼容只认位图的老程序。
     snap_core::clipboard::windows_image::copy_png(owner, image, &png)
 }
 
 #[cfg(not(windows))]
-fn write_clipboard(cx: &App, _owner: isize, _image: &RgbaImage, png: Vec<u8>) -> Result<(), String> {
+pub(crate) fn write_clipboard(cx: &App, _owner: isize, _image: &RgbaImage, png: Vec<u8>) -> Result<(), String> {
     cx.write_to_clipboard(ClipboardItem::new_image(&Image::from_bytes(ImageFormat::Png, png)));
     Ok(())
+}
+
+/// 把选区贴到屏幕上：图片首像素对准选区原位置，然后结束截图。
+/// 截图中按全局贴图键、工具栏“贴图”或“截图后动作 = 贴图”都走这里。
+pub fn pin(cx: &mut App) {
+    let Some((session, image, rect)) = begin_export(cx) else {
+        return;
+    };
+    let (origin, scale, logical) = {
+        let s = session.read(cx);
+        let global = (s.origin.0 + rect.x as i32, s.origin.1 + rect.y as i32);
+        // 选区所在屏：包含选区左上角的那块（新建选区不跨屏）。
+        let display = s
+            .displays
+            .iter()
+            .find(|d| {
+                global.0 >= d.x
+                    && global.1 >= d.y
+                    && global.0 < d.x + d.width as i32
+                    && global.1 < d.y + d.height as i32
+            })
+            .or(s.displays.first())
+            .cloned();
+        let scale = display.as_ref().map(|d| d.scale).unwrap_or(1.0);
+        let logical = display.map(|d| {
+            let k = d.scale as f32;
+            Bounds::new(
+                point(px(d.x as f32 / k), px(d.y as f32 / k)),
+                size(px(d.width as f32 / k), px(d.height as f32 / k)),
+            )
+        });
+        (global, scale, logical)
+    };
+    let displays = cx.displays();
+    let display = logical.and_then(|logical| match_display(&displays, logical).map(|d| d.id()));
+    cx.spawn(async move |cx| {
+        let composed = cx
+            .background_executor()
+            .spawn(async move { snap_core::capture::compose(&image, rect, &[]) })
+            .await;
+        cx.update(|cx| {
+            let result = composed.and_then(|image| {
+                crate::pins::create(cx, image, crate::pins::Placement::Source { origin, scale, display })
+            });
+            match result {
+                Ok(()) => {
+                    log::info!("event=gpui.capture_pinned width={} height={}", rect.width, rect.height);
+                    finish(cx);
+                }
+                Err(error) => {
+                    log::error!("event=gpui.capture_pin_failed message={error}");
+                    session.update(cx, |s, _| s.busy = false);
+                }
+            }
+        });
+    })
+    .detach();
 }
 
 /// 保存选区。置顶浮层会挡住系统保存对话框，因此先关闭浮层但保留会话；取消或失败时重新打开浮层，
@@ -444,21 +509,6 @@ fn reopen(cx: &mut App, session: &Entity<Session>) {
     open_overlays(cx, session);
 }
 
-/// Windows 剪贴板所有者：当前浮层的 HWND。其他平台不需要。
-fn owner(window: &Window) -> isize {
-    #[cfg(windows)]
-    {
-        use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-        if let Ok(handle) = HasWindowHandle::window_handle(window) {
-            if let RawWindowHandle::Win32(handle) = handle.as_raw() {
-                return handle.hwnd.get();
-            }
-        }
-    }
-    let _ = window;
-    0
-}
-
 /// 单个显示器上的浮层视图。
 struct Overlay {
     session: Entity<Session>,
@@ -511,7 +561,7 @@ impl Overlay {
             false
         });
         if copy_now {
-            copy(cx, owner(window));
+            copy(cx, crate::native::hwnd(window));
         }
     }
 
@@ -563,8 +613,9 @@ impl Overlay {
                 .flatten()
         });
         match after.as_deref() {
-            Some("copy") => copy(cx, owner(window)),
+            Some("copy") => copy(cx, crate::native::hwnd(window)),
             Some("save") => save(cx),
+            Some("pin") => pin(cx),
             _ => {}
         }
     }
@@ -588,8 +639,8 @@ impl Overlay {
         let command = keystroke.modifiers.control || keystroke.modifiers.platform;
         match keystroke.key.as_str() {
             "escape" => cancel(cx),
-            "enter" => copy(cx, owner(window)),
-            "c" if command => copy(cx, owner(window)),
+            "enter" => copy(cx, crate::native::hwnd(window)),
+            "c" if command => copy(cx, crate::native::hwnd(window)),
             "s" if command => save(cx),
             // 方向键微调选区 1 像素，Shift 为 10 像素。
             key @ ("left" | "right" | "up" | "down") => {
@@ -622,7 +673,7 @@ impl Overlay {
             .text_color(rgb(0xf4f4f5))
             .hover(|style| style.bg(rgb(0x3f3f46)))
             .child(label)
-            .on_click(cx.listener(move |_, _: &ClickEvent, window, cx| action(cx, owner(window))))
+            .on_click(cx.listener(move |_, _: &ClickEvent, window, cx| action(cx, crate::native::hwnd(window))))
     }
 }
 
@@ -662,7 +713,7 @@ impl Render for Overlay {
                 s.selection,
                 s.hover,
                 s.drag.is_some(),
-                [s.text("复制"), s.text("保存"), s.text("取消")],
+                [s.text("复制"), s.text("保存"), s.text("取消"), s.text("贴图")],
             )
         };
         let mut root = div()
@@ -759,7 +810,7 @@ impl Render for Overlay {
                 i64::from(rect.y + rect.height) - 1,
             );
             if !dragging && selection::contains(region, corner) {
-                const WIDTH: f32 = 200.0;
+                const WIDTH: f32 = 260.0;
                 const HEIGHT: f32 = 34.0;
                 let right = b.origin.x + b.size.width;
                 let bottom = b.origin.y + b.size.height;
@@ -769,7 +820,7 @@ impl Render for Overlay {
                 } else {
                     (bottom - px(HEIGHT + 6.0)).max(px(4.0))
                 };
-                let [copy_label, save_label, cancel_label] = labels;
+                let [copy_label, save_label, cancel_label, pin_label] = labels;
                 root = root.child(
                     div()
                         .id("capture-toolbar")
@@ -790,6 +841,7 @@ impl Render for Overlay {
                         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                         .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
                         .child(self.button("capture-cancel", cancel_label, cx, |cx, _| cancel(cx)))
+                        .child(self.button("capture-pin", pin_label, cx, |cx, _| pin(cx)))
                         .child(self.button("capture-save", save_label, cx, |cx, _| save(cx)))
                         .child(self.button("capture-copy", copy_label, cx, copy)),
                 );

@@ -255,7 +255,12 @@ fn handle(cx: &mut App, event: ShellEvent) {
     }
 }
 
-/// 托盘、快捷键与命令行共用的动作入口。截图已接入浮层；贴图、录屏等在后续迁移步骤接入，目前只记录触发。
+/// 当前设置快照（截图、贴图读取外观与导出偏好）。
+pub fn settings(cx: &App) -> Settings {
+    cx.global::<Shell>().settings.clone()
+}
+
+/// 托盘、快捷键与命令行共用的动作入口。截图、贴图已接入；录屏等在后续迁移步骤接入，目前只记录触发。
 pub fn run_action(cx: &mut App, action: ShortcutAction, source: &str) {
     match action {
         ShortcutAction::Capture => {
@@ -273,6 +278,15 @@ pub fn run_action(cx: &mut App, action: ShortcutAction, source: &str) {
             };
             let settings = cx.global::<Shell>().settings.clone();
             crate::capture::start(cx, &settings, delay);
+        }
+        ShortcutAction::Pin => {
+            log::info!("event=gpui.action action=pin source={source}");
+            // 与 Tauri 版一致：截图中贴当前选区；否则先恢复穿透中的贴图，没有时才贴剪贴板。
+            if crate::capture::active(cx) {
+                crate::capture::pin(cx);
+            } else if !crate::pins::restore_click_through(cx) {
+                crate::pins::from_clipboard(cx);
+            }
         }
         _ => log::info!(
             "event=gpui.action action={} source={source} status=not_implemented",

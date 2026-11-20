@@ -9202,6 +9202,7 @@ dependencies = [
 name = "snap-desk-gpui"
 version = "0.0.0"
 dependencies = [
+ "ab_glyph",
  "chrono",
  "futures",
  "global-hotkey",

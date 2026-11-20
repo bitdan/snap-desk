@@ -140,8 +140,9 @@ crates/snap-core/src/  # 与界面无关的核心，Tauri 版和 GPUI 版共用
   annotations.rs       # 标注校验与渲染
   text_image.rs        # 文字转图片
   platform.rs · desktop_support.rs · x11.rs · wayland_probe.rs · macos.rs  # 平台设施
-  pins.rs · i18n.rs · paths.rs
-apps/desktop-gpui/src/ # GPUI 版（迁移中）：托盘、快捷键、单实例、日志、截图浮层（capture.rs、selection.rs）
+  pins/                # 贴图布局、像素预算、缩放步进、变换、图片文件解码与文字贴图
+  i18n.rs · paths.rs
+apps/desktop-gpui/src/ # GPUI 版（迁移中）：托盘、快捷键、单实例、日志、截图浮层（capture.rs、selection.rs）、贴图（pins.rs、native.rs）
 tests/<功能>/          # 前端测试
 ```
 
