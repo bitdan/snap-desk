@@ -1051,5 +1051,7 @@
   "文本不能与图片或文件一起复制，请分开选择。": "Text can't be copied together with images or files. Select them separately.",
   "一次最多复制 100 个文件或图片，请减少选择。": "You can copy up to 100 files or images at once. Select fewer items.",
   "请选择 1～100 条记录。": "Select 1–100 entries.",
-  "请先选择要复制的条目。": "Select the entries to copy first."
+  "请先选择要复制的条目。": "Select the entries to copy first.",
+  "Ctrl+Enter 或点击输入框外完成；Esc 取消；双击文字重新编辑": "Ctrl+Enter or click outside the box to finish; Esc to cancel; double-click text to edit",
+  "再次按截图快捷键取消": "Press the screenshot shortcut again to cancel"
 }
