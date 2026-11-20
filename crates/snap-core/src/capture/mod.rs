@@ -261,6 +261,22 @@ pub fn display_intersection(
 /// 其他平台暂沿用主屏路径，避免将 macOS 点坐标与 Retina 像素直接混合。
 #[cfg(windows)]
 pub fn capture(primary_only: bool, include_cursor: bool, snap: bool) -> Result<Desktop, String> {
+    let (mut desktop, request) = capture_deferred(primary_only, include_cursor, snap)?;
+    if let Some(request) = request {
+        let found = request.collect();
+        windows::merge_accessibility(&mut desktop.targets, found);
+    }
+    Ok(desktop)
+}
+
+/// 与 [`capture`] 相同，但不立即枚举 UI Automation 控件候选，而是返回采集请求，
+/// 让调用方先显示截图浮层、再在后台补充（控件枚举常占拍屏总耗时的大半）。
+#[cfg(windows)]
+pub fn capture_deferred(
+    primary_only: bool,
+    include_cursor: bool,
+    snap: bool,
+) -> Result<(Desktop, Option<windows::AccessibilityRequest>), String> {
     let _dpi = windows::PhysicalDpi::enter()?;
     let monitors = xcap::Monitor::all().map_err(|e| e.to_string())?;
     let mut displays = Vec::new();
@@ -390,9 +406,11 @@ pub fn capture(primary_only: bool, include_cursor: bool, snap: bool) -> Result<D
             }
             desktop.windows.push(window);
         }
-        windows::accessibility_elements(&desktop.windows, &mut desktop.targets, (x, y), (width, height));
+        let request =
+            windows::accessibility_request(&desktop.windows, &desktop.targets, (x, y), (width, height));
+        return Ok((desktop, Some(request)));
     }
-    Ok(desktop)
+    Ok((desktop, None))
 }
 
 #[cfg(target_os = "macos")]

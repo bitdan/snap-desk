@@ -370,13 +370,28 @@ pub fn elements(
     state.targets
 }
 
-/// 只传窗口身份与几何给辅助线程，不跨 COM apartment 传递系统接口。
-pub fn accessibility_elements(
-    windows: &[AppWindow],
-    targets: &mut Vec<Target>,
+/// UI Automation 控件候选的采集请求：只含窗口身份与几何（可跨线程），不持有系统接口。
+/// 截图浮层可先用不含控件的候选显示，再在后台执行 [`AccessibilityRequest::collect`] 补充。
+#[derive(Clone, Debug)]
+pub struct AccessibilityRequest {
+    roots: Vec<(u32, usize, crate::capture::Rect)>,
     origin: (i32, i32),
     size: (u32, u32),
-) {
+}
+
+impl AccessibilityRequest {
+    /// 枚举控件（较慢，通常数百毫秒）；结果用 [`merge_accessibility`] 合并进已有候选。
+    pub fn collect(self) -> Vec<Target> {
+        accessibility::collect(self.roots, self.origin, self.size)
+    }
+}
+
+pub fn accessibility_request(
+    windows: &[AppWindow],
+    targets: &[Target],
+    origin: (i32, i32),
+    size: (u32, u32),
+) -> AccessibilityRequest {
     let roots = targets
         .iter()
         .filter(|target| target.kind == "window")
@@ -386,7 +401,12 @@ pub fn accessibility_elements(
                 .map(|window| (window.id, target.window_index, target.rect))
         })
         .collect();
-    for target in accessibility::collect(roots, origin, size) {
+    AccessibilityRequest { roots, origin, size }
+}
+
+/// 去掉与同一窗口已有候选重合的控件，总数不超过 4096。
+pub fn merge_accessibility(targets: &mut Vec<Target>, found: Vec<Target>) {
+    for target in found {
         if targets.len() >= 4096 {
             break;
         }
