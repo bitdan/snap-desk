@@ -1071,5 +1071,12 @@
   "Wayland 会话暂不支持鼠标穿透。": "Click-through is not supported in Wayland sessions yet.",
   "Wayland 会话暂不支持切换置顶。": "Always-on-top is not supported in Wayland sessions yet.",
   "窗口管理器不支持置顶。": "The window manager does not support always-on-top.",
-  "窗口管理器拒绝了置顶请求。": "The window manager rejected the always-on-top request."
+  "窗口管理器拒绝了置顶请求。": "The window manager rejected the always-on-top request.",
+  "贴图管理": "Pin manager",
+  "关闭全部贴图": "Close all pins",
+  "显示全部贴图": "Show all pins",
+  "隐藏全部贴图": "Hide all pins",
+  "当前没有贴图。": "No pins are open.",
+  "定位": "Show",
+  "当前贴图：": "Open pins:"
 }
