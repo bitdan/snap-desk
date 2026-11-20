@@ -25,6 +25,10 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 log = "0.4"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 futures = "0.3"
+# 保存对话框（异步：在独立线程弹出，不阻塞 GPUI 主线程）；与 Tauri dialog 插件同一版本。
+rfd = "0.16"
+# 取浮层窗口的原生句柄，作为 Windows 剪贴板所有者。
+raw-window-handle = "0.6"
 
 [target.'cfg(windows)'.dependencies]
 # 单实例：命名互斥量判断首个实例，命名管道把第二次启动的参数转交过来。

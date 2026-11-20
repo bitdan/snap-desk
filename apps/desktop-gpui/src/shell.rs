@@ -255,13 +255,30 @@ fn handle(cx: &mut App, event: ShellEvent) {
     }
 }
 
-/// 托盘、快捷键与命令行共用的动作入口。截图浮层、贴图等窗口在后续迁移步骤接入，
-/// 目前只记录触发，便于验证托盘与快捷键链路。
-pub fn run_action(_cx: &mut App, action: ShortcutAction, source: &str) {
-    log::info!(
-        "event=gpui.action action={} source={source} status=not_implemented",
-        action.id()
-    );
+/// 托盘、快捷键与命令行共用的动作入口。截图已接入浮层；贴图、录屏等在后续迁移步骤接入，目前只记录触发。
+pub fn run_action(cx: &mut App, action: ShortcutAction, source: &str) {
+    match action {
+        ShortcutAction::Capture => {
+            // 截图中再按截图键：与 Tauri 版一致视为取消。
+            if crate::capture::active(cx) {
+                crate::capture::cancel(cx);
+                return;
+            }
+            log::info!("event=gpui.action action=capture source={source}");
+            // 托盘菜单点击后菜单还在淡出，稍等再拍屏，避免把菜单收进截图。
+            let delay = if source == "menu" {
+                std::time::Duration::from_millis(150)
+            } else {
+                std::time::Duration::ZERO
+            };
+            let settings = cx.global::<Shell>().settings.clone();
+            crate::capture::start(cx, &settings, delay);
+        }
+        _ => log::info!(
+            "event=gpui.action action={} source={source} status=not_implemented",
+            action.id()
+        ),
+    }
 }
 
 /// 与 Tauri 版托盘共用同一张 32×32 图标。

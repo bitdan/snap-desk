@@ -1,12 +1,14 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 //! Snap Desk 的 GPUI 版入口（迁移中，正式发布仍是 `src-tauri`）。
 //!
-//! 当前能力：单实例、日志、托盘菜单、读取与 Tauri 版相同的 `settings.json` 并注册全局快捷键。
-//! 截图浮层、贴图等窗口在后续步骤接入 `shell::run_action`。
+//! 当前能力：单实例、日志、托盘菜单、读取与 Tauri 版相同的 `settings.json` 并注册全局快捷键，
+//! 截图浮层（框选、吸附、复制、保存）。贴图、录屏等窗口在后续步骤接入 `shell::run_action`。
 //!
 //! 命令行与 Tauri 版一致：`--action <名称>`、`--action=<名称>` 或 `--<名称>`（如 `--capture`）。
 //! 已有实例运行时，参数经单实例通道转交给它，本进程随即退出。
+mod capture;
 mod logging;
+mod selection;
 mod shell;
 mod single_instance;
 
