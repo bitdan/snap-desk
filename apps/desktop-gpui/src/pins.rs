@@ -9,7 +9,7 @@
 //! 图片四周保留 (padding + border) 的透明边距，按物理像素取整后再换算成窗口逻辑像素。
 //! 像素预算、变换、文字排版同样来自 core。识别文字/二维码/翻译图片打开独立结果窗口（`recognition.rs`）。
 //! 按住 Ctrl（macOS 为 ⌥）拖动把内容拖到其他应用：文字贴图拖出文字，其余拖出合成后的 PNG
-//! （系统拖出目前只实现 Windows，`snap_core::drag`）。
+//! （系统拖出目前只实现 Windows，`snap_core::drag`）。托盘“打开图片贴图”从文件创建贴图。
 //! 未接入：HTML 贴图。
 //!
 //! 标注：空格（或右键菜单“显示工具栏”）在图片下方展开工具栏，窗口随之加高、加宽；选择标注工具后
@@ -273,6 +273,32 @@ pub fn from_clipboard(cx: &mut App) {
         cx.update(|cx| match image.and_then(|(image, drag)| create(cx, image, Vec::new(), Placement::Centered, drag)) {
             Ok(()) => log::info!("event=gpui.pin_created source=clipboard"),
             Err(error) => log::error!("event=gpui.pin_failed source=clipboard message={error}"),
+        });
+    })
+    .detach();
+}
+
+/// 托盘“打开图片贴图”：选择 PNG / JPEG / WebP，解码与像素上限检查同 Tauri 版（core `read_image`），居中显示。
+/// 取消不创建贴图。
+pub fn open_file(cx: &mut App) {
+    let language = crate::shell::settings(cx).appearance.language;
+    let text = |key: &'static str| snap_core::i18n::for_language(&language, key).to_owned();
+    let dialog = rfd::AsyncFileDialog::new()
+        .set_title(text("打开图片贴图"))
+        .add_filter(text("图片（PNG / JPEG / WebP）"), &["png", "jpg", "jpeg", "webp"]);
+    cx.spawn(async move |cx| {
+        let Some(file) = dialog.pick_file().await else {
+            log::info!("event=gpui.pin_file_cancelled");
+            return;
+        };
+        let path = file.path().to_path_buf();
+        let image = cx
+            .background_executor()
+            .spawn(async move { core_pins::content::read_image(&path) })
+            .await;
+        cx.update(|cx| match image.and_then(|image| create(cx, image, Vec::new(), Placement::Centered, None)) {
+            Ok(()) => log::info!("event=gpui.pin_created source=file"),
+            Err(error) => log::error!("event=gpui.pin_failed source=file message={error}"),
         });
     })
     .detach();
