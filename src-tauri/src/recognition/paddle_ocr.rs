@@ -3,20 +3,10 @@ use super::services::RecognitionService;
 use serde_json::{json, Value};
 use std::time::{Duration, Instant};
 
-const JOB_PATH: &str = "/api/v2/ocr/jobs";
 const MAX_TEXT: usize = 1024 * 1024;
 
-pub(super) fn is_jobs_endpoint(endpoint: &str) -> bool {
-    reqwest::Url::parse(endpoint).is_ok_and(|url| url.path().trim_end_matches('/') == JOB_PATH)
-}
-
-pub(super) fn supports_model(endpoint: &str, model: &str) -> bool {
-    match model {
-        "PP-OCRv5" | "PP-OCRv6" => true,
-        "PaddleOCR-VL-1.6" | "PP-StructureV3" => is_jobs_endpoint(endpoint),
-        _ => false,
-    }
-}
+/// 地址与模型白名单在 core，服务配置校验与识别请求共用。
+pub(super) use snap_core::recognition::ocr_config::paddle_is_jobs_endpoint as is_jobs_endpoint;
 
 /// 整个任务最多两分钟，单次网络请求也受剩余时间约束，避免服务一直 pending 导致无限等待。
 fn remaining(deadline: Instant) -> Result<Duration, String> {
@@ -239,6 +229,7 @@ fn parse_jsonl(bytes: &[u8]) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use snap_core::recognition::ocr_config::paddle_supports_model as supports_model;
     #[test]
     fn jobs_models_and_upload_contract() {
         let endpoint = "https://paddleocr.aistudio-app.com/api/v2/ocr/jobs";

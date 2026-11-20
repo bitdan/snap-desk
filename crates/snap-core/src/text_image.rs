@@ -3,12 +3,12 @@ use ab_glyph::{point, Font, FontRef, ScaleFont};
 use image::{Rgba, RgbaImage};
 
 /// 排版前校验字体，导出和贴图使用相同字形度量。
-pub(crate) fn font(bytes: &[u8]) -> Result<FontRef<'_>, String> {
+pub fn font(bytes: &[u8]) -> Result<FontRef<'_>, String> {
     FontRef::try_from_slice(bytes).map_err(|_| "导出字体不可用，请在通用设置重新选择。".into())
 }
 
 /// CJK 按字换行，保留空行；不支持的字形明确报错，不能静默导出方框。
-pub(crate) fn lines_with_font(
+pub fn lines_with_font(
     text: &str,
     width: f32,
     size: f32,
@@ -49,7 +49,7 @@ pub(crate) fn lines_with_font(
     Ok(lines)
 }
 /// 按目标宽度生成白底文字图片；分配像素缓冲前检查调用方的容量限制。
-pub(crate) fn render(
+pub fn render(
     text: &str,
     font_bytes: &[u8],
     width: u32,
@@ -102,7 +102,7 @@ pub(crate) fn render(
 mod tests {
     use super::*;
     // 复用导出测试字体，覆盖中英文与排版；不将测试字体嵌入发布程序。
-    const FONT: &[u8] = include_bytes!("../../tests/fixtures/export-test.ttf");
+    const FONT: &[u8] = include_bytes!("../../../src-tauri/tests/fixtures/export-test.ttf");
 
     #[test]
     fn text_pins_preserve_lines_wrap_and_draw_visible_pixels() {

@@ -59,24 +59,6 @@ pub(crate) fn copy_png(app: &AppHandle, image: &RgbaImage, png: &[u8]) -> Result
     }
 }
 
-impl ExportFormat {
-    fn extension(self) -> &'static str {
-        match self {
-            Self::Png => "png",
-            Self::Jpeg => "jpg",
-            Self::Webp => "webp",
-        }
-    }
-
-    fn filter(self) -> (&'static str, &'static [&'static str]) {
-        match self {
-            Self::Png => ("PNG 图片（无损）", &["png"]),
-            Self::Jpeg => ("JPEG 图片（白底）", &["jpg", "jpeg"]),
-            Self::Webp => ("WebP 图片（无损）", &["webp"]),
-        }
-    }
-}
-
 /// 不自动重写用户指定的扩展名，避免绕过系统对话框对实际目标文件的覆盖确认。
 fn validate_extension(path: &Path, format: ExportFormat) -> Result<(), String> {
     if path

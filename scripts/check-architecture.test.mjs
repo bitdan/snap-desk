@@ -57,3 +57,17 @@ test('阻止原生根目录堆积、旧 crate 路径与失效内嵌资源', t =>
   assert.ok(issues.some(issue => issue.includes('内嵌资源不存在')))
   assert.ok(issues.some(issue => issue.includes('子模块路径不存在')))
 })
+
+test('core crate 不依赖界面框架且内嵌资源存在', t => {
+  assert.deepEqual(fixture(t, {
+    'crates/snap-core/Cargo.toml': '[dependencies]\nserde = "1"\n# 不依赖 tauri = 或 gpui = 的注释不算\n',
+    'crates/snap-core/src/lib.rs': '//! 与 tauri:: 无关的说明不算\npub mod settings;',
+  }), [])
+  const issues = fixture(t, {
+    'crates/snap-core/Cargo.toml': '[dependencies]\ntauri = "2"\n',
+    'crates/snap-core/src/lib.rs': 'use gpui_kit::App;\nconst X: &str = include_str!("missing.sql");',
+  })
+  assert.ok(issues.some(issue => issue.startsWith('crates/snap-core/Cargo.toml') && issue.includes('不得依赖 Tauri 或 GPUI')))
+  assert.ok(issues.some(issue => issue.startsWith('crates/snap-core/src/lib.rs') && issue.includes('不得依赖 Tauri 或 GPUI')))
+  assert.ok(issues.some(issue => issue.includes('内嵌资源不存在 missing.sql')))
+})

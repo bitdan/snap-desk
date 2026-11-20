@@ -135,7 +135,7 @@ jobs:
       # 测试失败时停止发布；Rust 默认跳过需要实机桌面或模型资源的 ignored 测试。
       - name: Test native library
         working-directory: src-tauri
-        run: cargo test --locked --lib
+        run: cargo test --locked --lib -p snap-desk -p snap-core
 
       # 复用本地脚本的 --ci、--locked 和 src-tauri/target 输出目录。
       - name: Build application and installers

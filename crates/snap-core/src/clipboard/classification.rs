@@ -23,7 +23,7 @@ fn is_link(text: &str) -> bool {
 }
 
 /// 浏览器打开与分类使用相同校验，拒绝本地文件和可执行协议。
-pub(super) fn link_url(text: &str) -> Option<String> {
+pub fn link_url(text: &str) -> Option<String> {
     let text = text.trim();
     if text.is_empty() || text.chars().any(|c| c.is_whitespace() || c.is_control()) {
         return None;
@@ -33,7 +33,7 @@ pub(super) fn link_url(text: &str) -> Option<String> {
     } else {
         text.to_owned()
     };
-    let url = reqwest::Url::parse(&candidate).ok()?;
+    let url = url::Url::parse(&candidate).ok()?;
     (matches!(url.scheme(), "http" | "https" | "ftp") && url.host_str().is_some())
         .then(|| url.to_string())
 }
@@ -44,7 +44,7 @@ fn is_path(text: &str) -> bool {
 }
 
 /// 返回移除首尾空白和成对引号后的绝对路径文本；不读取或执行文件。
-pub(super) fn file_path(text: &str) -> Option<&str> {
+pub fn file_path(text: &str) -> Option<&str> {
     let text = text.trim();
     if text.is_empty() || text.chars().any(char::is_control) {
         return None;

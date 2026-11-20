@@ -1,9 +1,9 @@
 //! 剪贴板历史的受限入口；历史管理限剪贴板窗口与主窗口，暂存架只复用单条读取、复制、贴图和拖出。
+/// 存储模型、分类、文件引用校验与 SQLite 仓库在 core；这里保留原路径供平台读写与命令使用。
+use snap_core::clipboard::{classification, files, repository};
 mod blob_store;
-mod classification;
 pub mod export;
-mod files;
-pub mod model;
+pub use snap_core::clipboard::model;
 mod platform;
 
 /// X11 图片写入（PNG + BMP 目标），供共享的图片复制入口调用。
@@ -12,7 +12,6 @@ pub(crate) fn write_x11_image(image: &image::RgbaImage) -> Result<(), String> {
     platform::write_image(image)
 }
 mod reader;
-mod repository;
 mod service;
 #[cfg(test)]
 mod transport_bench;

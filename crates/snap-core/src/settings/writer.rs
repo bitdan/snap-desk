@@ -15,14 +15,14 @@ struct WriteJob {
     reply: mpsc::SyncSender<Result<(), String>>,
 }
 
-pub(crate) struct SettingsWriter {
+pub struct SettingsWriter {
     jobs: mpsc::Sender<WriteJob>,
     gate: Mutex<()>,
 }
 
 impl SettingsWriter {
     /// 写线程随进程退出；通道关闭后循环自然结束，不额外持有 AppHandle 或设置状态。
-    pub(crate) fn new() -> Result<Self, String> {
+    pub fn new() -> Result<Self, String> {
         let (jobs, receiver) = mpsc::channel::<WriteJob>();
         std::thread::Builder::new()
             .name("settings-writer".into())
@@ -42,12 +42,12 @@ impl SettingsWriter {
 
     /// 快捷键注册/释放可能调度主线程；串行化整笔事务，避免两个保存互相回滚。
     /// 持有此闸门时不得再获取设置数据锁等待磁盘，否则会重新把 I/O 带回锁内。
-    pub(crate) fn gate(&self) -> Result<MutexGuard<'_, ()>, String> {
+    pub fn gate(&self) -> Result<MutexGuard<'_, ()>, String> {
         self.gate.lock().map_err(|e| e.to_string())
     }
 
     /// 提交快照并等待写线程完成；只用于设置变更路径，不持有 `SettingsState.0`。
-    pub(crate) fn persist(&self, path: &Path, value: &Settings) -> Result<(), String> {
+    pub fn persist(&self, path: &Path, value: &Settings) -> Result<(), String> {
         let (reply, wait) = mpsc::sync_channel(1);
         self.jobs
             .send(WriteJob {
@@ -63,7 +63,7 @@ impl SettingsWriter {
 
 /// 先完整写入同目录临时文件，再替换正式文件，避免中途失败留下半份 JSON。
 /// 该函数只在写线程或单元测试中直接调用；命令路径应使用 `SettingsWriter::persist`。
-pub(crate) fn persist(path: &Path, value: &Settings) -> Result<(), String> {
+pub fn persist(path: &Path, value: &Settings) -> Result<(), String> {
     let parent = path.parent().ok_or("配置路径无效。")?;
     fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     let mut file = tempfile::NamedTempFile::new_in(parent).map_err(|e| e.to_string())?;

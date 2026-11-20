@@ -1,10 +1,10 @@
-import { readFileSync, readdirSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import ts from 'typescript'
 
 const root = fileURLToPath(new URL('../', import.meta.url))
-const files = directory => readdirSync(directory, { withFileTypes: true }).flatMap(entry => entry.isDirectory() ? files(join(directory, entry.name)) : [join(directory, entry.name)])
+const files = directory => !existsSync(directory) ? [] : readdirSync(directory, { withFileTypes: true }).flatMap(entry => entry.isDirectory() ? files(join(directory, entry.name)) : [join(directory, entry.name)])
 const read = file => readFileSync(file, 'utf8')
 const camel = name => name.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase())
 function balanced(source, start, open = '(', close = ')') {
@@ -32,7 +32,8 @@ function parity(expected, actual, label, issues) {
 /** 比较注册、调用、审计名单、参数名和关键结构字段，不依赖 Rust 编译或新增生成器。 */
 export function checkIpcContracts(project = root) {
   const issues = [], invoked = [], methods = [], commandArgs = new Map(), tsTypes = new Map(), rustTypes = new Map()
-  const nativeFiles = files(join(project, 'src-tauri/src')).filter(file => file.endsWith('.rs'))
+  // 设置、识别配置等通信结构已移入与界面无关的 core crate，字段比对同时扫描两处。
+  const nativeFiles = [...files(join(project, 'src-tauri/src')), ...files(join(project, 'crates/snap-core/src'))].filter(file => file.endsWith('.rs'))
   for (const file of nativeFiles) {
     const source = read(file).replace(/\/\/[^\n]*/g, '')
     const commands = /#\[tauri::command(?:\([^]*?\))?\]\s*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+(\w+)\s*\(/g

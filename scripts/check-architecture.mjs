@@ -84,6 +84,17 @@ export function checkArchitecture(root = projectRoot) {
       if (!existsSync(resolve(dirname(file), match[1]))) report(name, `子模块路径不存在 ${match[1]}`)
     }
   }
+  // core crate 由 Tauri 版与 GPUI 版共用，不得依赖任一界面框架；内嵌资源同样必须存在。
+  for (const file of files(join(root, 'crates/snap-core'))) {
+    const name = slash(relative(root, file))
+    if (!/\.(rs|toml)$/.test(file)) continue
+    // 去掉 Rust `//` 与 TOML `#` 注释，说明文字里提到框架名不算依赖。
+    const source = readFileSync(file, 'utf8').replace(/\/\/[^\n]*|#[^\n]*/g, '')
+    if (/\b(tauri|gpui)[\w-]*\s*(::|=)/.test(source)) report(name, 'snap-core 不得依赖 Tauri 或 GPUI，界面能力由调用方以闭包或 trait 注入')
+    for (const match of source.matchAll(/include_(?:str|bytes)!\(\s*"([^"]+)"/g)) {
+      if (!existsSync(resolve(dirname(file), match[1]))) report(name, `内嵌资源不存在 ${match[1]}`)
+    }
+  }
   return [...new Set(issues)]
 }
 

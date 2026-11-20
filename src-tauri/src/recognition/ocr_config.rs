@@ -1,47 +1,8 @@
 //! OCR 配置与系统语言包查询；引擎选择独立于文本翻译设置，不做自动回退。
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use tauri::{AppHandle, WebviewWindow};
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields, default)]
-pub struct OcrSettings {
-    pub provider: String,
-    /// 空值保留旧本地配置；在线识别通过服务 ID 解析连接。
-    pub service_id: String,
-    /// auto 使用 Windows 用户语言优先级；其他值是系统已安装 OCR 语言的 BCP-47 标签。
-    pub language: String,
-    /// 识别完成后的整理动作由前端执行；这里只保存开关，随识别结果下发给截图和贴图窗口。
-    pub auto_copy: bool,
-    pub merge_lines: bool,
-}
-impl Default for OcrSettings {
-    fn default() -> Self {
-        Self {
-            provider: "local-ppocr".into(),
-            service_id: String::new(),
-            language: "auto".into(),
-            auto_copy: false,
-            merge_lines: false,
-        }
-    }
-}
-impl OcrSettings {
-    pub fn validate(&self) -> Result<(), String> {
-        if !["local-ppocr", "windows-media", "wechat-ocr", "service"].contains(&self.provider.as_str()) {
-            return Err("此 OCR 引擎尚未接入。".into());
-        }
-        if self.language.is_empty()
-            || self.language.len() > 85
-            || !self
-                .language
-                .bytes()
-                .all(|c| c.is_ascii_alphanumeric() || c == b'-')
-        {
-            return Err("OCR 语言标签无效。".into());
-        }
-        Ok(())
-    }
-}
+/// 配置模型在 core，设置校验与识别调度共用。
+pub use snap_core::recognition::ocr_config::OcrSettings;
 
 #[derive(Serialize)]
 pub struct OcrLanguage {

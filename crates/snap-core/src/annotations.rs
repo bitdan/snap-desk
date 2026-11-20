@@ -61,7 +61,7 @@ fn opaque() -> f64 {
 }
 
 /// 字形/滤镜只允许受限 PNG；先检查解码尺寸再分配 RGBA，防止压缩图片导致巨量内存分配。
-pub(crate) fn raster(s: &Annotation) -> Result<RgbaImage, String> {
+pub fn raster(s: &Annotation) -> Result<RgbaImage, String> {
     let value = s.raster.as_deref().ok_or("标注缺少像素数据。")?;
     if value.len() > 2_000_000 {
         return Err("单个标注像素数据过大。".into());
@@ -83,7 +83,7 @@ pub fn validate(shapes: &[Annotation], width: u32, height: u32) -> Result<(), St
 }
 
 /// 录制滤镜只接受几何和样式，由编码帧实时取样；文字/序号仍必须提供受限字形 PNG。
-pub(crate) fn validate_live(shapes: &[Annotation], width: u32, height: u32) -> Result<(), String> {
+pub fn validate_live(shapes: &[Annotation], width: u32, height: u32) -> Result<(), String> {
     validate_impl(shapes, width, height, true)
 }
 fn validate_impl(shapes: &[Annotation], width: u32, height: u32, live: bool) -> Result<(), String> {
@@ -277,11 +277,11 @@ pub fn render(image: &mut RgbaImage, shapes: &[Annotation], origin: Point) -> Re
     render_layer(image, shapes, origin, None)
 }
 
-pub(crate) fn dynamic_filter(shape: &Annotation) -> bool {
+pub fn dynamic_filter(shape: &Annotation) -> bool {
     matches!(shape.kind, Kind::Mosaic | Kind::Blur | Kind::Magnify)
 }
 /// 以当前干净视频帧为滤镜来源，保持图层顺序和橡皮擦语义，不把某一帧截图冻结进视频。
-pub(crate) fn render_live(image: &mut RgbaImage, shapes: &[Annotation]) -> Result<(), String> {
+pub fn render_live(image: &mut RgbaImage, shapes: &[Annotation]) -> Result<(), String> {
     let mut layer = RgbaImage::new(image.width(), image.height());
     render_layer(&mut layer, shapes, Point { x: 0.0, y: 0.0 }, Some(image))?;
     image::imageops::overlay(image, &layer, 0, 0);
@@ -289,7 +289,7 @@ pub(crate) fn render_live(image: &mut RgbaImage, shapes: &[Annotation]) -> Resul
 }
 
 /// 滤镜临时图最长边限制为 1024；只在实际使用滤镜时分配，不影响普通线条标注的快速路径。
-pub(crate) fn live_filter(frame: &RgbaImage, s: &Annotation) -> Result<RgbaImage, String> {
+pub fn live_filter(frame: &RgbaImage, s: &Annotation) -> Result<RgbaImage, String> {
     use image::imageops::{self, FilterType};
     let x = (s.start.x.floor().max(0.0) as u32).min(frame.width() - 1);
     let y = (s.start.y.floor().max(0.0) as u32).min(frame.height() - 1);

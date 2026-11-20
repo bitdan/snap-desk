@@ -1,0 +1,24 @@
+[package]
+name = "snap-core"
+version = "0.0.0"
+license = "GPL-3.0-only"
+description = "Snap Desk UI-independent core shared by the Tauri and GPUI shells"
+edition = "2021"
+rust-version = "1.95"
+publish = false
+# workspace 根在 src-tauri（沿用其 Cargo.lock 与 target 目录，发版脚本和 CI 路径不变）。
+workspace = "../../src-tauri"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+log = "0.4"
+tempfile = "3"
+base64 = "0.22"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "bmp"] }
+ab_glyph = "=0.2.32"
+rusqlite = { version = "=0.37.0", features = ["bundled"] }
+url = "2"
+dirs = "6"
+# 只用其中的 HotKey 解析与比较；Tauri 全局快捷键插件也用同一版本，两边类型一致。
+global-hotkey = { version = "0.8", features = ["serde"] }

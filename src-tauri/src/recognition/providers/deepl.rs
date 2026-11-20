@@ -3,17 +3,8 @@ use super::{language, send, TranslationRequest};
 use crate::recognition::translation::AiSettings;
 use serde::Deserialize;
 
-pub fn endpoint(value: &str) -> Result<reqwest::Url, String> {
-    if ![
-        "https://api-free.deepl.com/v2/translate",
-        "https://api.deepl.com/v2/translate",
-    ]
-    .contains(&value)
-    {
-        return Err("DeepL 仅支持官方 Free 或 Pro 的 /v2/translate 地址。".into());
-    }
-    reqwest::Url::parse(value).map_err(|_| "服务地址无效。".into())
-}
+/// 官方地址白名单在 core，设置校验与发送请求共用。
+pub use snap_core::recognition::translation::deepl_endpoint as endpoint;
 
 pub(super) async fn translate(
     client: &reqwest::Client,

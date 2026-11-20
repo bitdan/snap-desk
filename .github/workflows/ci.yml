@@ -106,7 +106,7 @@ jobs:
           workspaces: "./src-tauri -> target"
           shared-key: native
           save-if: ${{ github.ref == 'refs/heads/master' }}
-      # 与发布流水线使用同一条命令；默认跳过需要实机桌面或模型资源的 ignored 测试。
+      # 与发布流水线使用同一条命令（Tauri 包与共用的 snap-core）；默认跳过需要实机桌面或模型资源的 ignored 测试。
       - name: Test native library
         working-directory: src-tauri
-        run: cargo test --locked --lib
+        run: cargo test --locked --lib -p snap-desk -p snap-core

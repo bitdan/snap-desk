@@ -10,7 +10,7 @@ use std::{
 use tauri::{AppHandle, Manager, WebviewWindow};
 use tauri_plugin_dialog::DialogExt;
 
-const IDS: [&str; 2] = ["opus-mt-en-zh-int8", "opus-mt-zh-en-int8"];
+use snap_core::recognition::translation::LOCAL_MODEL_IDS as IDS;
 // 两个语言包各自缓存；安装/删除一个方向不触发另一个模型的整文件摘要。
 static MODEL_STATUS: [resources::status_cache::StatusCache<ModelStatus>; IDS.len()] =
     [const { resources::status_cache::StatusCache::new() }; IDS.len()];
@@ -106,13 +106,8 @@ impl PackFile {
         }
     }
 }
-pub fn model_id(target: &str) -> Result<&'static str, String> {
-    match target {
-        "zh-CN" => Ok(IDS[0]),
-        "en" => Ok(IDS[1]),
-        _ => Err("本地翻译仅支持英译中和中译英。".into()),
-    }
-}
+/// 目标语言到语言包的映射在 core，设置校验与此处下载共用。
+pub use snap_core::recognition::translation::local_model_id as model_id;
 fn root(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(resources::directory(app)?.join("translation"))
 }
