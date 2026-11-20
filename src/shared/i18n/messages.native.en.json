@@ -1053,5 +1053,6 @@
   "请选择 1～100 条记录。": "Select 1–100 entries.",
   "请先选择要复制的条目。": "Select the entries to copy first.",
   "Ctrl+Enter 或点击输入框外完成；Esc 取消；双击文字重新编辑": "Ctrl+Enter or click outside the box to finish; Esc to cancel; double-click text to edit",
-  "再次按截图快捷键取消": "Press the screenshot shortcut again to cancel"
+  "再次按截图快捷键取消": "Press the screenshot shortcut again to cancel",
+  "展开全部工具": "Show all tools"
 }
