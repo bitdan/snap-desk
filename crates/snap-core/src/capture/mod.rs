@@ -46,6 +46,20 @@ impl Rect {
     }
 }
 
+/// 主显示器的缩放比例（物理像素 / 逻辑像素），读不到时为 1。只查询显示器属性，不截图；
+/// 居中贴图在建窗前据此按物理像素计算尺寸。
+pub fn primary_scale() -> f64 {
+    #[cfg(windows)]
+    let _dpi = windows::PhysicalDpi::enter().ok();
+    xcap::Monitor::all()
+        .ok()
+        .and_then(|monitors| monitors.into_iter().find(|m| m.is_primary().unwrap_or(false)))
+        .and_then(|monitor| monitor.scale_factor().ok())
+        .map(f64::from)
+        .filter(|scale| scale.is_finite() && *scale > 0.0)
+        .unwrap_or(1.0)
+}
+
 /// 复制、保存与贴图共用的合成：校验选区与标注，裁剪后按选区原点绘制标注，保证各出口像素一致。
 pub fn compose(
     source: &RgbaImage,

@@ -1,9 +1,8 @@
 //! 将纯文字转换成现有图片贴图；不执行 HTML，也不修改系统剪贴板。
 use image::RgbaImage;
-use tauri::AppHandle;
 
 /// 颜色贴图拖出标准 HEX，普通文本（包括多行文件路径）保留原始内容。
-pub(super) fn drag_text(text: &str) -> String {
+pub fn drag_text(text: &str) -> String {
     color_hex(text.trim()).unwrap_or_else(|| text.to_owned())
 }
 
@@ -119,9 +118,10 @@ mod drag_tests {
     }
 }
 
-/// 优先复用用户选择的字体；未下载时使用本机中文字体，让普通复制文字可以直接贴图。
-fn font_bytes(app: &AppHandle) -> Result<Vec<u8>, String> {
-    if let Ok(bytes) = crate::resources::font_bytes(app) {
+/// 优先使用调用方传入的用户字体（Tauri 版为“通用设置”中下载或选择并校验过的字体）；
+/// 没有时回退到本机中文字体，让普通复制文字也能直接贴图。
+pub fn font_bytes(preferred: Option<Vec<u8>>) -> Result<Vec<u8>, String> {
+    if let Some(bytes) = preferred {
         return Ok(bytes);
     }
     #[cfg(target_os = "windows")]
@@ -149,12 +149,12 @@ fn font_bytes(app: &AppHandle) -> Result<Vec<u8>, String> {
 }
 
 /// 历史全文和当前剪贴板使用同一排版，限制输入字节与输出像素，避免过大文本占满内存。
-pub(super) fn render(app: &AppHandle, text: &str) -> Result<RgbaImage, String> {
+pub fn render(text: &str, font: &[u8]) -> Result<RgbaImage, String> {
     if text.trim().is_empty() {
         return Err("没有可贴图的文字。".into());
     }
     if text.len() > 1024 * 1024 {
         return Err("文字贴图最多支持 1 MiB 文本，请分段贴图。".into());
     }
-    crate::shared::text_image::render(text, &font_bytes(app)?, 640, super::MAX_IMAGE_PIXELS)
+    crate::text_image::render(text, font, 640, super::MAX_IMAGE_PIXELS)
 }

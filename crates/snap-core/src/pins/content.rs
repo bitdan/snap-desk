@@ -9,7 +9,7 @@ use std::{
 const MAX_FILE_BYTES: u64 = 64 * 1024 * 1024;
 
 /// 路径仅来自原生打开对话框。限制读取字节数及解码尺寸，避免小压缩文件占用大量内存。
-pub(crate) fn read_image(path: &Path) -> Result<RgbaImage, String> {
+pub fn read_image(path: &Path) -> Result<RgbaImage, String> {
     let file = File::open(path).map_err(|e| format!("无法打开图片：{e}"))?;
     let metadata = file.metadata().map_err(|e| e.to_string())?;
     if !metadata.is_file() || metadata.len() > MAX_FILE_BYTES {
@@ -26,7 +26,7 @@ pub(crate) fn read_image(path: &Path) -> Result<RgbaImage, String> {
 }
 
 /// 根据文件内容识别格式，不信任扩展名；动画 WebP 仅读取首帧作为静态贴图。
-pub(super) fn decode_image(bytes: &[u8]) -> Result<RgbaImage, String> {
+pub fn decode_image(bytes: &[u8]) -> Result<RgbaImage, String> {
     let format =
         image::guess_format(bytes).map_err(|_| "文件不是有效的 PNG、JPEG 或 WebP 图片。")?;
     if !matches!(
