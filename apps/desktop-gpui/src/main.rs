@@ -9,6 +9,7 @@
 mod annotate;
 mod capture;
 mod logging;
+mod magnifier;
 mod native;
 mod pins;
 mod selection;

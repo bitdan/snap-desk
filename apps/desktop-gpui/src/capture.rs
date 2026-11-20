@@ -11,11 +11,12 @@
 //!
 //! 坐标：浮层事件位置是窗口内逻辑像素；乘以该屏 `Display::scale` 再加上该屏在截图中的偏移，
 //! 即得到截图物理像素。限制：新建选区只在按下时所在的屏幕内（跨屏选区留待后续）；
-//! 取色、倒计时界面尚未接入。贴图窗口见 `pins.rs`。
+//! 取色放大镜见 `magnifier.rs`。贴图窗口见 `pins.rs`。
 //!
 //! 标注（`annotate.rs`）：选区下方工具栏选择工具后，选区内的按下交给编辑器；标注坐标与截图同为
 //! 物理像素，导出时随选区一起交给 `compose`。已有标注时选区不能再移动或缩放（避免标注被裁掉）。
 use crate::annotate::{self, Action, Editor, Job, Layers, Tool, ToolbarProps};
+use crate::magnifier::{self, Picker};
 use crate::selection::{self, Handle};
 use gpui_kit::{
     component::input::{Textarea, TextareaState},
@@ -71,6 +72,7 @@ pub struct Session {
     annotating: bool,
     /// 文字输入框所在的浮层与输入状态。
     text_input: Option<(usize, Entity<TextareaState>)>,
+    picker: Picker,
 }
 
 impl Session {
@@ -103,6 +105,23 @@ impl Session {
             height: f64::from(crop.height),
         };
         self.layers.update(&self.editor);
+    }
+
+    /// 取色放大镜只在调整选区模式、没有标注且不在导出时显示（与 Vue 版一致）。
+    fn picking(&self) -> bool {
+        !self.busy && !self.annotating && self.editor.shapes().is_empty() && !self.editor.interacting()
+    }
+
+    /// 复制光标处色值；保留截图会话，可继续取色或框选。
+    fn copy_color(&mut self, cx: &mut App) {
+        let Some((_, x, y)) = self.picker.at else {
+            return;
+        };
+        if let Some(text) = magnifier::color_text(&self.image, x, y, self.picker.hex) {
+            cx.write_to_clipboard(ClipboardItem::new_string(text));
+            self.picker.copied = true;
+            log::info!("event=gpui.capture_color_copied");
+        }
     }
 
     /// 已有标注或正在编辑时锁定选区。
@@ -243,6 +262,7 @@ pub fn start(cx: &mut App, settings: &Settings, delay: Duration) {
                         layers: Layers::default(),
                         annotating: false,
                         text_input: None,
+                        picker: Picker::default(),
                     });
                     session.update(cx, |s, _| s.sync());
                     cx.global_mut::<CaptureState>().session = Some(session.clone());
@@ -771,6 +791,21 @@ impl Overlay {
     fn motion(&mut self, event: &MouseMoveEvent, window: &mut Window, cx: &mut Context<Self>) {
         let p = self.to_image(event.position, cx);
         let point = self.to_point(event.position, cx);
+        let index = self.index;
+        self.session.update(cx, |s, cx| {
+            let pixel = (
+                (point.x.floor().max(0.0) as u32).min(s.image.width().saturating_sub(1)),
+                (point.y.floor().max(0.0) as u32).min(s.image.height().saturating_sub(1)),
+            );
+            let at = Some((index, pixel.0, pixel.1));
+            if s.picker.at != at {
+                s.picker.at = at;
+                s.picker.copied = false;
+                if s.picking() {
+                    cx.notify();
+                }
+            }
+        });
         let edited = self.session.update(cx, |s, cx| {
             let pressed = event.pressed_button == Some(MouseButton::Left);
             if pressed && s.drag.is_none() && s.editor.draft.is_some() {
@@ -897,6 +932,18 @@ impl Overlay {
             }
             return;
         }
+        // 取色快捷键：C 复制色值、P 切换全局/相对坐标（Shift 切换格式见 modifiers）。
+        if !command && !keystroke.modifiers.alt && matches!(key, "c" | "p") && self.session.read(cx).picking() {
+            self.session.update(cx, |s, cx| {
+                if key == "c" {
+                    s.copy_color(cx);
+                } else {
+                    s.picker.relative = !s.picker.relative;
+                }
+                cx.notify();
+            });
+            return;
+        }
         let mut job = None;
         let mut handled = true;
         self.session.update(cx, |s, cx| {
@@ -957,6 +1004,19 @@ impl Overlay {
             }
             _ => {}
         }
+    }
+
+    /// 单独按下 Shift 切换色值格式。
+    fn modifiers(&mut self, event: &ModifiersChangedEvent, _: &mut Window, cx: &mut Context<Self>) {
+        let shift = event.modifiers.shift;
+        let only_shift = shift && !event.modifiers.control && !event.modifiers.alt && !event.modifiers.platform;
+        self.session.update(cx, |s, cx| {
+            if only_shift && s.picking() && s.drag.is_none() {
+                s.picker.hex = !s.picker.hex;
+                s.picker.copied = false;
+                cx.notify();
+            }
+        });
     }
 
     /// 工具栏与样式条的操作。
@@ -1069,6 +1129,7 @@ impl Render for Overlay {
             .overflow_hidden()
             .cursor_crosshair()
             .on_key_down(cx.listener(Self::key))
+            .on_modifiers_changed(cx.listener(Self::modifiers))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::press))
             .on_mouse_move(cx.listener(Self::motion))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::release))
@@ -1106,8 +1167,27 @@ impl Render for Overlay {
             }
         }
 
+        // 取色放大镜画在最上层（工具栏之后追加），光标在本屏时才显示。
+        let picker = s.picker;
+        let loupe = picker.at.filter(|(owner, _, _)| *owner == self.index && s.picking()).map(|(_, x, y)| {
+            let pointer = (
+                (x as f32 + 0.5 - region.x as f32) / scale,
+                (y as f32 + 0.5 - region.y as f32) / scale,
+            );
+            let origin = selection.map_or((0, 0), |r| (r.x, r.y));
+            let text = |key: &'static str| s.text(key);
+            magnifier::element(
+                &s.image,
+                &picker,
+                (x, y),
+                pointer,
+                (f32::from(viewport.width), f32::from(viewport.height)),
+                origin,
+                &text,
+            )
+        });
         let Some(rect) = selection.filter(|_| visible.is_some()) else {
-            return root;
+            return root.children(loupe);
         };
         let b = local(rect, region, scale);
         // 标注预览：底层与草稿图层都在截图物理像素坐标中，按本屏缩放换算后叠在冻结画面上。
@@ -1208,7 +1288,7 @@ impl Render for Overlay {
         // 工具栏只画在选区右下角所在的屏幕上；下方放不下时放到选区上方，再不行贴着底边放在内侧。
         let corner = (i64::from(rect.x + rect.width) - 1, i64::from(rect.y + rect.height) - 1);
         if dragging || !selection::contains(region, corner) {
-            return root;
+            return root.children(loupe);
         }
         let text = |key: &'static str| s.text(key);
         let props = ToolbarProps { editor: &s.editor, active: s.annotating, disabled: s.busy, compact: false, text: &text };
@@ -1262,6 +1342,6 @@ impl Render for Overlay {
         } else {
             toolbar.left(px(4.0)).items_start()
         };
-        root.child(toolbar)
+        root.child(toolbar).children(loupe)
     }
 }
