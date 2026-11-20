@@ -68,7 +68,13 @@ fn render_image(image: &RgbaImage) -> Arc<RenderImage> {
 }
 
 /// 新建贴图。容量不足、窗口创建失败时返回错误，不留下半个窗口。
-pub fn create(cx: &mut App, image: RgbaImage, placement: Placement) -> Result<(), String> {
+pub fn create(
+    cx: &mut App,
+    image: RgbaImage,
+    annotations: Vec<snap_core::annotations::Annotation>,
+    placement: Placement,
+) -> Result<(), String> {
+    let _ = annotations;
     let pins = alive(cx);
     let used = pins.iter().map(|(_, pin)| retained(pin.read(cx))).sum();
     core_pins::validate_capacity(image.width(), image.height(), pins.len(), used)?;
@@ -234,7 +240,7 @@ pub fn from_clipboard(cx: &mut App) {
                 }
             })
             .await;
-        cx.update(|cx| match image.and_then(|image| create(cx, image, Placement::Centered)) {
+        cx.update(|cx| match image.and_then(|image| create(cx, image, Vec::new(), Placement::Centered)) {
             Ok(()) => log::info!("event=gpui.pin_created source=clipboard"),
             Err(error) => log::error!("event=gpui.pin_failed source=clipboard message={error}"),
         });

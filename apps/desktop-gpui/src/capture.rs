@@ -10,12 +10,20 @@
 //!    结束或取消时关闭全部浮层并丢弃会话，冻结画面随之释放。
 //!
 //! 坐标：浮层事件位置是窗口内逻辑像素；乘以该屏 `Display::scale` 再加上该屏在截图中的偏移，
-//! 即得到截图物理像素。限制：新建选区只在按下时所在的屏幕内（跨屏选区留待后续）；标注、
+//! 即得到截图物理像素。限制：新建选区只在按下时所在的屏幕内（跨屏选区留待后续）；
 //! 取色、倒计时界面尚未接入。贴图窗口见 `pins.rs`。
+//!
+//! 标注（`annotate.rs`）：选区下方工具栏选择工具后，选区内的按下交给编辑器；标注坐标与截图同为
+//! 物理像素，导出时随选区一起交给 `compose`。已有标注时选区不能再移动或缩放（避免标注被裁掉）。
+use crate::annotate::{self, Action, Editor, Job, Layers, Tool, ToolbarProps};
 use crate::selection::{self, Handle};
-use gpui_kit::*;
+use gpui_kit::{
+    component::input::{Textarea, TextareaState},
+    *,
+};
 use image::RgbaImage;
 use snap_core::{
+    annotations::{Annotation, Point as ImagePoint, edit::Bounds as ImageBounds},
     capture::{Display, Rect},
     settings::{ExportSettings, Language, Settings},
 };
@@ -57,6 +65,12 @@ pub struct Session {
     windows: Vec<AnyWindowHandle>,
     /// 复制或保存进行中，忽略重复触发。
     busy: bool,
+    editor: Editor,
+    layers: Layers,
+    /// 选择了标注工具：选区内的按下交给编辑器；否则为调整选区模式。
+    annotating: bool,
+    /// 文字输入框所在的浮层与输入状态。
+    text_input: Option<(usize, Entity<TextareaState>)>,
 }
 
 impl Session {
@@ -77,6 +91,66 @@ impl Session {
 
     fn text(&self, message: &'static str) -> String {
         snap_core::i18n::for_language(&self.language, message).to_owned()
+    }
+
+    /// 编辑范围跟随选区，然后刷新预览图层。每次修改选区或编辑器后调用。
+    fn sync(&mut self) {
+        let crop = self.selection.unwrap_or(self.area());
+        self.editor.crop = ImageBounds {
+            x: f64::from(crop.x),
+            y: f64::from(crop.y),
+            width: f64::from(crop.width),
+            height: f64::from(crop.height),
+        };
+        self.layers.update(&self.editor);
+    }
+
+    /// 已有标注或正在编辑时锁定选区。
+    fn selection_locked(&self) -> bool {
+        !self.editor.shapes().is_empty() || self.editor.interacting()
+    }
+}
+
+/// 在后台线程栅格化文字/序号/滤镜，完成后写回编辑器。
+fn run_job(cx: &mut App, session: Entity<Session>, job: Job) {
+    let image = session.read(cx).image.clone();
+    cx.spawn(async move |cx| {
+        let result = cx
+            .background_executor()
+            .spawn({
+                let job = job.clone();
+                async move { job.run(&image, annotate::user_font()) }
+            })
+            .await;
+        if let Err(error) = &result {
+            log::warn!("event=gpui.annotation_raster_failed message={error}");
+        }
+        cx.update(|cx| {
+            session.update(cx, |s, cx| {
+                s.editor.complete(job, result);
+                s.sync();
+                cx.notify();
+            });
+            flush(&session, None, cx);
+        });
+    })
+    .detach();
+}
+
+/// 释放被替换的预览图层纹理。在某个窗口的事件处理中调用时必须传入该窗口（它此时不在应用的窗口表里）。
+fn flush(session: &Entity<Session>, window: Option<&mut Window>, cx: &mut App) {
+    let retired = session.update(cx, |s, _| s.layers.take_retired());
+    match window {
+        Some(window) => {
+            for image in retired {
+                cx.drop_image(image, Some(&mut *window));
+            }
+        }
+        None => {
+            for image in retired {
+                cx.drop_image(image, None);
+            }
+        }
     }
 }
 
@@ -165,7 +239,12 @@ pub fn start(cx: &mut App, settings: &Settings, delay: Duration) {
                         language,
                         windows: Vec::new(),
                         busy: false,
+                        editor: Editor::new(ImageBounds { x: 0.0, y: 0.0, width: 0.0, height: 0.0 }, Vec::new()),
+                        layers: Layers::default(),
+                        annotating: false,
+                        text_input: None,
                     });
+                    session.update(cx, |s, _| s.sync());
                     cx.global_mut::<CaptureState>().session = Some(session.clone());
                     open_overlays(cx, &session);
                     log::info!(
@@ -284,18 +363,23 @@ fn current(cx: &App) -> Option<Entity<Session>> {
     cx.try_global::<CaptureState>()?.session.clone()
 }
 
-/// 取出待导出的选区与源图并标记忙碌；没有选区或已在导出时返回 None。
-fn begin_export(cx: &mut App) -> Option<(Entity<Session>, Arc<RgbaImage>, Rect)> {
+/// 取出待导出的选区、源图与标注并标记忙碌；没有选区、已在导出、文字输入或栅格化未完成时返回 None。
+fn begin_export(cx: &mut App) -> Option<(Entity<Session>, Arc<RgbaImage>, Rect, Vec<Annotation>)> {
     let session = current(cx)?;
-    let (image, rect) = {
+    let (image, rect, shapes) = {
         let s = session.read(cx);
-        if s.busy {
+        if s.busy || s.editor.pending || s.editor.text.is_some() {
             return None;
         }
-        (s.image.clone(), s.selection?)
+        (s.image.clone(), s.selection?, s.editor.shapes().to_vec())
     };
-    session.update(cx, |s, _| s.busy = true);
-    Some((session, image, rect))
+    session.update(cx, |s, _| {
+        // 未完成的笔画不导出。
+        s.editor.abort();
+        s.sync();
+        s.busy = true;
+    });
+    Some((session, image, rect, shapes))
 }
 
 pub(crate) fn png(image: &RgbaImage) -> Result<Vec<u8>, String> {
@@ -310,14 +394,14 @@ pub(crate) fn png(image: &RgbaImage) -> Result<Vec<u8>, String> {
 
 /// 复制选区到剪贴板。`owner` 是 Windows 剪贴板所有者窗口（当前浮层），复制完成后才关闭浮层。
 fn copy(cx: &mut App, owner: isize) {
-    let Some((session, image, rect)) = begin_export(cx) else {
+    let Some((session, image, rect, shapes)) = begin_export(cx) else {
         return;
     };
     cx.spawn(async move |cx| {
         let encoded = cx
             .background_executor()
             .spawn(async move {
-                let image = snap_core::capture::compose(&image, rect, &[])?;
+                let image = snap_core::capture::compose(&image, rect, &shapes)?;
                 let png = png(&image)?;
                 Ok::<_, String>((image, png))
             })
@@ -356,9 +440,20 @@ pub(crate) fn write_clipboard(cx: &App, _owner: isize, _image: &RgbaImage, png: 
 /// 把选区贴到屏幕上：图片首像素对准选区原位置，然后结束截图。
 /// 截图中按全局贴图键、工具栏“贴图”或“截图后动作 = 贴图”都走这里。
 pub fn pin(cx: &mut App) {
-    let Some((session, image, rect)) = begin_export(cx) else {
+    let Some((session, image, rect, shapes)) = begin_export(cx) else {
         return;
     };
+    // 贴图保留可编辑的标注：底图不合成，标注坐标换算到贴图图像（减去选区原点）。
+    let (ox, oy) = (f64::from(rect.x), f64::from(rect.y));
+    let shapes: Vec<Annotation> = shapes
+        .iter()
+        .map(|s| {
+            snap_core::annotations::edit::map_shape(s, |p| ImagePoint {
+                x: p.x - ox,
+                y: p.y - oy,
+            })
+        })
+        .collect();
     let (origin, scale, logical) = {
         let s = session.read(cx);
         let global = (s.origin.0 + rect.x as i32, s.origin.1 + rect.y as i32);
@@ -393,7 +488,7 @@ pub fn pin(cx: &mut App) {
             .await;
         cx.update(|cx| {
             let result = composed.and_then(|image| {
-                crate::pins::create(cx, image, crate::pins::Placement::Source { origin, scale, display })
+                crate::pins::create(cx, image, shapes, crate::pins::Placement::Source { origin, scale, display })
             });
             match result {
                 Ok(()) => {
@@ -413,7 +508,7 @@ pub fn pin(cx: &mut App) {
 /// 保存选区。置顶浮层会挡住系统保存对话框，因此先关闭浮层但保留会话；取消或失败时重新打开浮层，
 /// 选区保持不变。文件名、格式、目录记忆与 Tauri 版共用 `snap_core::export`。
 fn save(cx: &mut App) {
-    let Some((session, image, rect)) = begin_export(cx) else {
+    let Some((session, image, rect, shapes)) = begin_export(cx) else {
         return;
     };
     let (export, title, label) = {
@@ -425,7 +520,7 @@ fn save(cx: &mut App) {
     cx.spawn(async move |cx| {
         let composed = cx
             .background_executor()
-            .spawn(async move { snap_core::capture::compose(&image, rect, &[]) })
+            .spawn(async move { snap_core::capture::compose(&image, rect, &shapes) })
             .await;
         let image = match composed {
             Ok(image) => image,
@@ -505,6 +600,11 @@ fn reopen(cx: &mut App, session: &Entity<Session>) {
     session.update(cx, |s, _| {
         s.busy = false;
         s.drag = None;
+        // 输入框属于已关闭的浮层窗口，随之丢弃；旧窗口的纹理已随窗口释放，图层需重建。
+        s.text_input = None;
+        s.layers.clear();
+        let _ = s.layers.take_retired();
+        s.sync();
     });
     open_overlays(cx, session);
 }
@@ -531,22 +631,124 @@ impl Overlay {
 
     /// 窗口内逻辑坐标 → 截图物理像素。
     fn to_image(&self, position: Point<Pixels>, cx: &App) -> selection::Point {
+        let p = self.to_point(position, cx);
+        (p.x.round() as i64, p.y.round() as i64)
+    }
+
+    /// 窗口内逻辑坐标 → 截图物理像素（浮点，供标注使用）。
+    fn to_point(&self, position: Point<Pixels>, cx: &App) -> ImagePoint {
         let s = self.session.read(cx);
         let region = s.region(self.index);
         let scale = s.displays[self.index].scale;
-        (
-            i64::from(region.x) + (f64::from(f32::from(position.x)) * scale).round() as i64,
-            i64::from(region.y) + (f64::from(f32::from(position.y)) * scale).round() as i64,
-        )
+        ImagePoint {
+            x: f64::from(region.x) + f64::from(f32::from(position.x)) * scale,
+            y: f64::from(region.y) + f64::from(f32::from(position.y)) * scale,
+        }
+    }
+
+    /// 编辑器状态变化后：释放旧纹理，按需创建或移除文字输入框。
+    fn after_edit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        flush(&self.session, Some(window), cx);
+        let (wanted, has, initial) = {
+            let s = self.session.read(cx);
+            (
+                s.editor.text.as_ref().map(|t| t.shape.text.clone().unwrap_or_default()),
+                s.text_input.is_some(),
+                (),
+            )
+        };
+        let _ = initial;
+        match (wanted, has) {
+            (Some(value), false) => {
+                let state = cx.new(|cx| {
+                    let mut state = TextareaState::new(window, cx);
+                    state.set_auto_grow(1, 20, cx);
+                    state.set_value(value, window, cx);
+                    state
+                });
+                state.update(cx, |state, cx| state.focus(window, cx));
+                let index = self.index;
+                self.session.update(cx, |s, _| s.text_input = Some((index, state)));
+            }
+            (None, true) => {
+                self.session.update(cx, |s, _| s.text_input = None);
+                window.focus(&self.focus, cx);
+            }
+            _ => {}
+        }
+    }
+
+    fn run(&self, job: Option<Job>, cx: &mut App) {
+        if let Some(job) = job {
+            run_job(cx, self.session.clone(), job);
+        }
+    }
+
+    /// 完成文字输入：读取输入框内容交给编辑器栅格化。
+    fn commit_text(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let value = self
+            .session
+            .read(cx)
+            .text_input
+            .as_ref()
+            .map(|(_, state)| state.read(cx).value().to_string())
+            .unwrap_or_default();
+        let job = self.session.update(cx, |s, cx| {
+            let job = s.editor.finish_text(&value);
+            s.sync();
+            cx.notify();
+            job
+        });
+        self.run(job, cx);
+        self.after_edit(window, cx);
     }
 
     fn press(&mut self, event: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if self.session.read(cx).editor.text.is_some() {
+            // 点击输入框外完成文字。
+            self.commit_text(window, cx);
+            return;
+        }
         let p = self.to_image(event.position, cx);
+        let point = self.to_point(event.position, cx);
         let tolerance = (HANDLE_HIT * self.scale(cx)).round() as i64;
         let index = self.index;
+        let alt = event.modifiers.alt;
         let copy_now = self.session.update(cx, |s, cx| {
-            if event.click_count >= 2 && s.selection.is_some_and(|r| selection::contains(r, p)) {
+            let inside = s.selection.is_some_and(|r| selection::contains(r, p));
+            let t = tolerance as f64;
+            // 标注：选中图形的手柄 → 缩放；标注模式下选区内 → 编辑器（绘制或选中移动）。
+            if s.annotating && inside {
+                if event.click_count >= 2 {
+                    if let Some(i) = s.editor.hit(point, t).filter(|&i| {
+                        s.editor.shapes()[i].kind == snap_core::annotations::Kind::Text
+                    }) {
+                        s.editor.edit_text(i);
+                        s.sync();
+                        cx.notify();
+                        return false;
+                    }
+                }
+                let handle = s.editor.handle_at(point, t);
+                s.editor.begin(point, t, handle, alt);
+                s.sync();
+                cx.notify();
+                return false;
+            }
+            if let Some(handle) = s.editor.handle_at(point, t) {
+                s.editor.begin(point, t, Some(handle), false);
+                s.sync();
+                cx.notify();
+                return false;
+            }
+            if event.click_count >= 2 && inside {
                 return true;
+            }
+            if s.selection_locked() {
+                // 已有标注：选区固定，单击只取消选中。
+                s.editor.select(None);
+                cx.notify();
+                return false;
             }
             let area = s.region(index);
             s.drag = Some(match s.selection {
@@ -560,20 +762,28 @@ impl Overlay {
             cx.notify();
             false
         });
+        self.after_edit(window, cx);
         if copy_now {
             copy(cx, crate::native::hwnd(window));
         }
     }
 
-    fn motion(&mut self, event: &MouseMoveEvent, _window: &mut Window, cx: &mut Context<Self>) {
+    fn motion(&mut self, event: &MouseMoveEvent, window: &mut Window, cx: &mut Context<Self>) {
         let p = self.to_image(event.position, cx);
-        self.session.update(cx, |s, cx| {
+        let point = self.to_point(event.position, cx);
+        let edited = self.session.update(cx, |s, cx| {
             let pressed = event.pressed_button == Some(MouseButton::Left);
+            if pressed && s.drag.is_none() && s.editor.draft.is_some() {
+                s.editor.drag(point);
+                s.layers.update(&s.editor);
+                cx.notify();
+                return true;
+            }
             match (pressed, s.drag) {
                 (true, Some(Drag::Create { anchor, moved, area })) => {
                     let far = (p.0 - anchor.0).abs().max((p.1 - anchor.1).abs()) >= CLICK_SLOP;
                     if !moved && !far {
-                        return;
+                        return false;
                     }
                     s.drag = Some(Drag::Create { anchor, moved: true, area });
                     s.selection = selection::from_points(anchor, p, area);
@@ -590,28 +800,43 @@ impl Overlay {
                 _ if s.selection.is_none() => {
                     let hover = selection::snap_target(&s.targets, p);
                     if hover == s.hover {
-                        return;
+                        return false;
                     }
                     s.hover = hover;
                 }
-                _ => return,
+                _ => return false,
             }
+            s.sync();
             cx.notify();
+            false
         });
+        if edited {
+            flush(&self.session, Some(window), cx);
+        }
     }
 
     fn release(&mut self, _event: &MouseUpEvent, window: &mut Window, cx: &mut Context<Self>) {
-        let after = self.session.update(cx, |s, cx| {
+        let (after, job) = self.session.update(cx, |s, cx| {
+            if s.drag.is_none() && s.editor.draft.is_some() {
+                let job = s.editor.finish(false);
+                s.sync();
+                cx.notify();
+                return (None, job);
+            }
             let drag = s.drag.take();
             // 单击（没有拖动）选中鼠标下的窗口或控件。
             if let Some(Drag::Create { moved: false, .. }) = drag {
                 s.selection = s.hover;
             }
+            s.sync();
             cx.notify();
-            matches!(drag, Some(Drag::Create { .. }))
+            let after = matches!(drag, Some(Drag::Create { .. }))
                 .then(|| s.selection.map(|_| s.after.clone()))
-                .flatten()
+                .flatten();
+            (after, None)
         });
+        self.run(job, cx);
+        self.after_edit(window, cx);
         match after.as_deref() {
             Some("copy") => copy(cx, crate::native::hwnd(window)),
             Some("save") => save(cx),
@@ -620,15 +845,29 @@ impl Overlay {
         }
     }
 
-    /// 右键：有选区时清除选区重新框选，否则退出截图。
-    fn right_click(&mut self, _: &MouseDownEvent, _: &mut Window, cx: &mut Context<Self>) {
+    /// 右键：放弃未完成的笔画 → 退出标注模式 → 清除选区重新框选 → 退出截图。
+    fn right_click(&mut self, _: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let cleared = self.session.update(cx, |s, cx| {
-            let had = s.selection.is_some() || s.drag.is_some();
-            s.selection = None;
-            s.drag = None;
             cx.notify();
-            had
+            if s.editor.text.is_some() {
+                s.editor.cancel_text();
+            } else if s.editor.interacting() {
+                s.editor.abort();
+            } else if s.annotating {
+                s.annotating = false;
+                s.editor.set_tool(Tool::Edit);
+            } else {
+                let had = s.selection.is_some() || s.drag.is_some();
+                s.selection = None;
+                s.drag = None;
+                s.editor.reset(Vec::new());
+                s.sync();
+                return had;
+            }
+            s.sync();
+            true
         });
+        self.after_edit(window, cx);
         if !cleared {
             cancel(cx);
         }
@@ -637,13 +876,67 @@ impl Overlay {
     fn key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let keystroke = &event.keystroke;
         let command = keystroke.modifiers.control || keystroke.modifiers.platform;
-        match keystroke.key.as_str() {
+        let key = keystroke.key.as_str();
+        if self.session.read(cx).editor.text.is_some() {
+            // 输入中只处理取消与完成，其余按键交给输入框。
+            match key {
+                "escape" => {
+                    self.session.update(cx, |s, cx| {
+                        s.editor.cancel_text();
+                        s.sync();
+                        cx.notify();
+                    });
+                    self.after_edit(window, cx);
+                    cx.stop_propagation();
+                }
+                "enter" if command => {
+                    self.commit_text(window, cx);
+                    cx.stop_propagation();
+                }
+                _ => {}
+            }
+            return;
+        }
+        let mut job = None;
+        let mut handled = true;
+        self.session.update(cx, |s, cx| {
+            let e = &mut s.editor;
+            match key {
+                "z" if command && keystroke.modifiers.shift => e.redo(),
+                "z" if command => e.undo(),
+                "y" if command => e.redo(),
+                "delete" | "backspace" => e.remove(),
+                "escape" if e.interacting() => e.abort(),
+                "enter" if e.tool == Tool::Polyline && e.draft.is_some() => job = e.finish(true),
+                "left" | "right" | "up" | "down" if e.selected.is_some() => {
+                    let step = if keystroke.modifiers.shift { 10.0 } else { 1.0 };
+                    let (dx, dy) = match key {
+                        "left" => (-step, 0.0),
+                        "right" => (step, 0.0),
+                        "up" => (0.0, -step),
+                        _ => (0.0, step),
+                    };
+                    job = e.nudge(dx, dy).1;
+                }
+                _ => handled = false,
+            }
+            if handled {
+                s.sync();
+                cx.notify();
+            }
+        });
+        self.run(job, cx);
+        self.after_edit(window, cx);
+        if handled {
+            return;
+        }
+        match key {
             "escape" => cancel(cx),
             "enter" => copy(cx, crate::native::hwnd(window)),
             "c" if command => copy(cx, crate::native::hwnd(window)),
             "s" if command => save(cx),
-            // 方向键微调选区 1 像素，Shift 为 10 像素。
-            key @ ("left" | "right" | "up" | "down") => {
+            // 方向键微调选区 1 像素，Shift 为 10 像素（已有标注时选区固定）。
+            "left" | "right" | "up" | "down" => {
                 let step = if keystroke.modifiers.shift { 10 } else { 1 };
                 let (dx, dy) = match key {
                     "left" => (-step, 0),
@@ -652,8 +945,12 @@ impl Overlay {
                     _ => (0, step),
                 };
                 self.session.update(cx, |s, cx| {
+                    if s.selection_locked() {
+                        return;
+                    }
                     if let Some(rect) = s.selection {
                         s.selection = Some(selection::moved(rect, dx, dy, s.area()));
+                        s.sync();
                         cx.notify();
                     }
                 });
@@ -662,18 +959,54 @@ impl Overlay {
         }
     }
 
-    fn button(&self, id: &'static str, label: String, cx: &mut Context<Self>, action: fn(&mut App, isize)) -> Stateful<Div> {
-        div()
-            .id(id)
-            .px_3()
-            .py_1()
-            .rounded_sm()
-            .cursor_pointer()
-            .text_sm()
-            .text_color(rgb(0xf4f4f5))
-            .hover(|style| style.bg(rgb(0x3f3f46)))
-            .child(label)
-            .on_click(cx.listener(move |_, _: &ClickEvent, window, cx| action(cx, crate::native::hwnd(window))))
+    /// 工具栏与样式条的操作。
+    fn action(this: &mut Self, action: Action, window: &mut Window, cx: &mut Context<Self>) {
+        let job = this.session.update(cx, |s, cx| {
+            let e = &mut s.editor;
+            let job = match action {
+                Action::Tool(tool) => {
+                    s.annotating = true;
+                    e.set_tool(tool);
+                    None
+                }
+                Action::Undo => {
+                    e.undo();
+                    None
+                }
+                Action::Redo => {
+                    e.redo();
+                    None
+                }
+                Action::Delete => {
+                    e.remove();
+                    None
+                }
+                Action::Clear => {
+                    e.clear();
+                    None
+                }
+                Action::Style(patch) => e.style(patch),
+            };
+            s.sync();
+            cx.notify();
+            job
+        });
+        this.run(job, cx);
+        this.after_edit(window, cx);
+    }
+
+    /// 回到调整选区模式（不再把选区内的按下交给编辑器）。
+    fn select_mode(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
+        self.session.update(cx, |s, cx| {
+            if s.editor.interacting() || s.editor.pending {
+                return;
+            }
+            s.annotating = false;
+            s.editor.set_tool(Tool::Edit);
+            s.sync();
+            cx.notify();
+        });
+        self.after_edit(window, cx);
     }
 }
 
@@ -698,6 +1031,23 @@ fn shade(bounds: Bounds<Pixels>) -> Div {
         .bg(rgba(MASK))
 }
 
+/// 导出动作按钮（取消、贴图、保存、复制），在工具行末尾。
+fn export_button(
+    id: &'static str,
+    icon: &'static [u8],
+    label: String,
+    primary: bool,
+    action: fn(&mut App, isize),
+) -> AnyElement {
+    let mut button = annotate::icon_button(id, icon, label, false, false);
+    if primary {
+        button = button.bg(rgb(0x2563eb));
+    }
+    button
+        .on_click(move |_, window, cx| action(cx, crate::native::hwnd(window)))
+        .into_any_element()
+}
+
 impl Render for Overlay {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if !self.focused {
@@ -705,17 +1055,12 @@ impl Render for Overlay {
             self.focused = true;
         }
         let viewport = window.viewport_size();
-        let (region, scale, selection, hover, dragging, labels) = {
-            let s = self.session.read(cx);
-            (
-                s.region(self.index),
-                s.displays[self.index].scale as f32,
-                s.selection,
-                s.hover,
-                s.drag.is_some(),
-                [s.text("复制"), s.text("保存"), s.text("取消"), s.text("贴图")],
-            )
-        };
+        let view = cx.entity();
+        let session = self.session.clone();
+        let s = session.read(cx);
+        let region = s.region(self.index);
+        let scale = s.displays[self.index].scale as f32;
+        let (selection, hover, dragging) = (s.selection, s.hover, s.drag.is_some());
         let mut root = div()
             .id("capture-overlay")
             .track_focus(&self.focus)
@@ -761,32 +1106,59 @@ impl Render for Overlay {
             }
         }
 
-        if let (Some(rect), Some(_)) = (selection, visible) {
-            let b = local(rect, region, scale);
-            root = root.child(
-                div()
-                    .absolute()
-                    .left(b.origin.x)
-                    .top(b.origin.y)
-                    .w(b.size.width)
-                    .h(b.size.height)
-                    .border_1()
-                    .border_color(rgb(ACCENT)),
+        let Some(rect) = selection.filter(|_| visible.is_some()) else {
+            return root;
+        };
+        let b = local(rect, region, scale);
+        // 标注预览：底层与草稿图层都在截图物理像素坐标中，按本屏缩放换算后叠在冻结画面上。
+        for layer in [s.layers.base(), s.layers.draft()].into_iter().flatten() {
+            let lb = local(
+                Rect { x: layer.x.max(0) as u32, y: layer.y.max(0) as u32, width: layer.width, height: layer.height },
+                region,
+                scale,
             );
-            // 尺寸标签显示物理像素，与导出图片一致；顶部放不下时放进选区内。
-            let label_top = if b.origin.y > px(24.0) { b.origin.y - px(24.0) } else { b.origin.y + px(4.0) };
             root = root.child(
-                div()
+                img(layer.image.clone())
                     .absolute()
-                    .left(b.origin.x)
-                    .top(label_top)
-                    .px_1()
-                    .rounded_sm()
-                    .bg(rgba(0x000000b0))
-                    .text_xs()
-                    .text_color(rgb(0xffffff))
-                    .child(format!("{} × {}", rect.width, rect.height)),
+                    .left(lb.origin.x)
+                    .top(lb.origin.y)
+                    .w(lb.size.width)
+                    .h(lb.size.height)
+                    .object_fit(ObjectFit::Fill),
             );
+        }
+        let map = |p: ImagePoint| {
+            point(
+                px((p.x as f32 - region.x as f32) / scale),
+                px((p.y as f32 - region.y as f32) / scale),
+            )
+        };
+        root = root.children(annotate::selection_overlay(&s.editor, &map));
+        root = root.child(
+            div()
+                .absolute()
+                .left(b.origin.x)
+                .top(b.origin.y)
+                .w(b.size.width)
+                .h(b.size.height)
+                .border_1()
+                .border_color(rgb(ACCENT)),
+        );
+        // 尺寸标签显示物理像素，与导出图片一致；顶部放不下时放进选区内。
+        let label_top = if b.origin.y > px(24.0) { b.origin.y - px(24.0) } else { b.origin.y + px(4.0) };
+        root = root.child(
+            div()
+                .absolute()
+                .left(b.origin.x)
+                .top(label_top)
+                .px_1()
+                .rounded_sm()
+                .bg(rgba(0x000000b0))
+                .text_xs()
+                .text_color(rgb(0xffffff))
+                .child(format!("{} × {}", rect.width, rect.height)),
+        );
+        if !s.selection_locked() {
             for handle in Handle::ALL {
                 let (x, y) = selection::handle_point(rect, handle);
                 let center = point(
@@ -804,49 +1176,92 @@ impl Render for Overlay {
                         .border_color(rgb(ACCENT)),
                 );
             }
-            // 工具栏只画在选区右下角所在的屏幕上；下方放不下时贴着选区底边放在内侧。
-            let corner = (
-                i64::from(rect.x + rect.width) - 1,
-                i64::from(rect.y + rect.height) - 1,
-            );
-            if !dragging && selection::contains(region, corner) {
-                const WIDTH: f32 = 260.0;
-                const HEIGHT: f32 = 34.0;
-                let right = b.origin.x + b.size.width;
-                let bottom = b.origin.y + b.size.height;
-                let left = (right - px(WIDTH)).max(px(4.0)).min(viewport.width - px(WIDTH + 4.0));
-                let top = if bottom + px(HEIGHT + 8.0) <= viewport.height {
-                    bottom + px(6.0)
-                } else {
-                    (bottom - px(HEIGHT + 6.0)).max(px(4.0))
-                };
-                let [copy_label, save_label, cancel_label, pin_label] = labels;
+        }
+        // 文字输入框：放在文字起点，宽度到选区右边缘，与最终排版的换行宽度一致。
+        if let (Some(text), Some((owner, state))) = (s.editor.text.as_ref(), s.text_input.as_ref()) {
+            if *owner == self.index {
+                let at = map(text.shape.start);
+                let crop = s.editor.crop;
+                let width = ((crop.x + crop.width - text.shape.start.x).min(2048.0) as f32 / scale).max(40.0);
+                let font = text.shape.font_size.unwrap_or(24.0) as f32 / scale;
+                let color = u32::from_str_radix(text.shape.color.trim_start_matches('#'), 16).unwrap_or(0xef4444);
                 root = root.child(
                     div()
-                        .id("capture-toolbar")
                         .absolute()
-                        .left(left)
-                        .top(top)
-                        .h(px(HEIGHT))
-                        .px_1()
-                        .flex()
-                        .items_center()
-                        .justify_end()
-                        .gap_1()
-                        .rounded_md()
-                        .bg(rgb(0x18181b))
-                        .shadow_lg()
-                        .cursor_default()
-                        // 工具栏上的按下不能冒泡到浮层，否则会被当作新建选区。
+                        .left(at.x)
+                        .top(at.y)
+                        .w(px(width))
+                        .border_1()
+                        .border_dashed()
+                        .border_color(rgb(ACCENT))
+                        .bg(rgba(0xffffff18))
                         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                        .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
-                        .child(self.button("capture-cancel", cancel_label, cx, |cx, _| cancel(cx)))
-                        .child(self.button("capture-pin", pin_label, cx, |cx, _| pin(cx)))
-                        .child(self.button("capture-save", save_label, cx, |cx, _| save(cx)))
-                        .child(self.button("capture-copy", copy_label, cx, copy)),
+                        .child(
+                            Textarea::new(state)
+                                .appearance(false)
+                                .text_size(px(font))
+                                .text_color(rgb(color)),
+                        ),
                 );
             }
         }
-        root
+        // 工具栏只画在选区右下角所在的屏幕上；下方放不下时放到选区上方，再不行贴着底边放在内侧。
+        let corner = (i64::from(rect.x + rect.width) - 1, i64::from(rect.y + rect.height) - 1);
+        if dragging || !selection::contains(region, corner) {
+            return root;
+        }
+        let text = |key: &'static str| s.text(key);
+        let props = ToolbarProps { editor: &s.editor, active: s.annotating, disabled: s.busy, text: &text };
+        let host = annotate::Host { view: &view, window, dispatch: Self::action };
+        let leading = vec![
+            annotate::icon_button("capture-select", annotate::icons::MOVE, s.text("调整选区"), !s.annotating, false)
+                .on_click(window.listener_for(&view, Self::select_mode))
+                .into_any_element(),
+            annotate::divider().into_any_element(),
+        ];
+        let trailing = vec![
+            export_button("capture-cancel", annotate::icons::CLOSE, s.text("取消"), false, |cx, _| cancel(cx)),
+            export_button("capture-pin", annotate::icons::PIN, s.text("贴图"), false, |cx, _| pin(cx)),
+            export_button("capture-save", annotate::icons::SAVE, s.text("保存"), false, |cx, _| save(cx)),
+            export_button("capture-copy", annotate::icons::COPY, s.text("复制"), true, copy),
+        ];
+        let tools = annotate::tool_row(&props, leading, trailing, &host);
+        let options = annotate::options_row(&props, &host);
+        let error = s.editor.error.clone();
+        let height = annotate::ROW_HEIGHT
+            + options.as_ref().map_or(0.0, |_| annotate::OPTIONS_HEIGHT + 6.0)
+            + error.as_ref().map_or(0.0, |_| 30.0);
+        let right = b.origin.x + b.size.width;
+        let bottom = b.origin.y + b.size.height;
+        let top = if bottom + px(height + 8.0) <= viewport.height {
+            bottom + px(6.0)
+        } else if b.origin.y - px(height + 8.0) >= px(0.0) {
+            b.origin.y - px(height + 6.0)
+        } else {
+            (bottom - px(height + 6.0)).max(px(4.0))
+        };
+        // 右对齐到选区右边；选区太靠左时改为从屏幕左边起排，避免工具栏被挤出屏幕。
+        const MIN_WIDTH: f32 = 900.0;
+        let mut toolbar = div()
+            .id("capture-toolbar")
+            .absolute()
+            .top(top)
+            .flex()
+            .flex_col()
+            .items_end()
+            .gap(px(6.0))
+            .cursor_default()
+            // 工具栏上的按下不能冒泡到浮层，否则会被当作新建选区或绘制。
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
+            .child(tools)
+            .children(options)
+            .children(error.map(annotate::error_row));
+        toolbar = if right >= px(MIN_WIDTH) {
+            toolbar.right((viewport.width - right).max(px(4.0)))
+        } else {
+            toolbar.left(px(4.0)).items_start()
+        };
+        root.child(toolbar)
     }
 }
