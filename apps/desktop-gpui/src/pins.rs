@@ -148,6 +148,7 @@ pub fn create(
                 layers: Layers::default(),
                 annotating: false,
                 toolbar: false,
+                toolbar_above: false,
                 text_input: None,
                 image,
                 frame,
@@ -351,6 +352,8 @@ pub struct Pin {
     annotating: bool,
     /// 外置工具栏是否显示（空格切换）。
     toolbar: bool,
+    /// 工具栏放在图片上方（图片下方超出屏幕可见区域时；窗口向上扩展，图片不动）。
+    toolbar_above: bool,
     text_input: Option<Entity<TextareaState>>,
     image: Arc<RgbaImage>,
     frame: Arc<RenderImage>,
@@ -377,6 +380,18 @@ impl Pin {
         snap_core::i18n::for_language(&self.language, message).to_owned()
     }
 
+    /// 工具栏区域高度（逻辑像素）。
+    fn band() -> f32 {
+        let layout = PinLayout::load();
+        (layout.gap + layout.toolbar_height) as f32
+    }
+
+    /// 图片左上角距窗口顶边（逻辑像素）：透明边距，工具栏在上方时再加工具栏区域。
+    fn image_top(&self, scale: f32) -> f32 {
+        let inset = PinLayout::load().image_inset(f64::from(scale)) as f32 / scale;
+        inset + if self.toolbar && self.toolbar_above { Self::band() } else { 0.0 }
+    }
+
     fn base_size(&self, scale: f32) -> Size<Pixels> {
         window_size(self.image.width(), self.image.height(), self.zoom, f64::from(scale))
     }
@@ -389,7 +404,7 @@ impl Pin {
             let layout = PinLayout::load();
             let inset = layout.image_inset(f64::from(scale)) as f32 / scale;
             size.width = size.width.max(px(inset + TOOLBAR_WIDTH + 4.0));
-            size.height += px((layout.gap + layout.toolbar_height) as f32);
+            size.height += px(Self::band());
         }
         if let Some(at) = self.menu {
             size.width = size.width.max(at.x + px(MENU_WIDTH + 4.0));
@@ -650,9 +665,10 @@ impl Pin {
         let inset = layout.image_inset(f64::from(scale)) as f32 / scale;
         let (w, h) = layout.displayed(self.image.width(), self.image.height(), self.zoom);
         let (w, h) = (w as f32 / scale, h as f32 / scale);
+        let top = self.image_top(scale);
         ImagePoint {
             x: f64::from((f32::from(position.x) - inset) * self.image.width() as f32 / w),
-            y: f64::from((f32::from(position.y) - inset) * self.image.height() as f32 / h),
+            y: f64::from((f32::from(position.y) - top) * self.image.height() as f32 / h),
         }
     }
 
@@ -727,12 +743,27 @@ impl Pin {
         if self.editor.pending || self.editor.interacting() {
             return;
         }
+        let scale = window.scale_factor();
+        let band = (Self::band() * scale).round() as i32;
         self.toolbar = !self.toolbar;
-        if !self.toolbar {
+        if self.toolbar {
+            // 图片下方放不下工具栏时翻到上方：窗口先加高再整体上移，图片在屏幕上不动。
+            let bottom = window.bounds().bottom();
+            let limit = window.display(cx).map(|d| d.visible_bounds().bottom());
+            self.toolbar_above = limit.is_some_and(|limit| bottom + px(Self::band()) > limit);
+            self.fit_window(window);
+            if self.toolbar_above && !crate::native::offset_window(window, -band) {
+                self.toolbar_above = false;
+            }
+        } else {
             self.annotating = false;
             self.editor.select(None);
+            let was_above = std::mem::take(&mut self.toolbar_above);
+            if was_above {
+                crate::native::offset_window(window, band);
+            }
+            self.fit_window(window);
         }
-        self.fit_window(window);
         self.after_edit(window, cx);
     }
 
@@ -996,6 +1027,7 @@ impl Render for Pin {
         let scale = window.scale_factor();
         let layout = PinLayout::load();
         let inset = layout.image_inset(f64::from(scale)) as f32 / scale;
+        let top = self.image_top(scale);
         let (w, h) = layout.displayed(self.image.width(), self.image.height(), self.zoom);
         let (w, h) = (w as f32 / scale, h as f32 / scale);
         let border = layout.border as f32;
@@ -1022,7 +1054,7 @@ impl Render for Pin {
         let mut stage = div()
             .absolute()
             .left(px(inset - border))
-            .top(px(inset - border))
+            .top(px(top - border))
             .w(px(w + border * 2.0))
             .h(px(h + border * 2.0))
             .border_1()
@@ -1061,7 +1093,7 @@ impl Render for Pin {
                 div()
                     .absolute()
                     .left(px(inset) + at.x)
-                    .top(px(inset) + at.y)
+                    .top(px(top) + at.y)
                     .w(px(width))
                     .border_1()
                     .border_dashed()
@@ -1084,14 +1116,14 @@ impl Render for Pin {
                 .child(text)
         };
         if let Some(text) = self.badge.clone() {
-            root = root.child(badge(text, inset + 8.0));
+            root = root.child(badge(text, top + 8.0));
         }
         if self.click_through {
             let hint = self.text("鼠标穿透中 · 用全局贴图快捷键或托盘恢复");
-            root = root.child(badge(hint, (inset + h - 24.0).max(inset + 8.0)));
+            root = root.child(badge(hint, (top + h - 24.0).max(top + 8.0)));
         }
         if self.toolbar {
-            root = root.child(self.toolbar(inset, h, window, cx));
+            root = root.child(self.toolbar(inset, top, h, window, cx));
         }
         if let Some(at) = self.menu {
             let mut menu = div()
@@ -1141,11 +1173,11 @@ impl Render for Pin {
 
 impl Pin {
     /// 图片下方的外置工具栏：移动、标注工具、撤销重做 + 缩放比例、图片处理、置顶、保存、关闭、复制。
-    fn toolbar(&self, inset: f32, image_height: f32, window: &Window, cx: &mut Context<Self>) -> Stateful<Div> {
+    fn toolbar(&self, inset: f32, image_top: f32, image_height: f32, window: &Window, cx: &mut Context<Self>) -> Stateful<Div> {
         let view = cx.entity();
         let text = |key: &'static str| self.text(key);
         let disabled = self.locked || self.busy;
-        let props = ToolbarProps { editor: &self.editor, active: self.annotating, disabled, compact: true, grouped: true, collapsible: false, popover_up: true, text: &text };
+        let props = ToolbarProps { editor: &self.editor, active: self.annotating, disabled, compact: true, grouped: true, collapsible: false, popover_up: !self.toolbar_above, text: &text };
         let host = annotate::Host { view: &view, window, dispatch: Self::action };
         let leading = vec![
             annotate::icon_button("pin-move", annotate::icons::MOVE, self.text("移动贴图"), !self.annotating, disabled)
@@ -1216,7 +1248,8 @@ impl Pin {
             .id("pin-toolbar")
             .absolute()
             .left(px(inset))
-            .top(px(inset + image_height + layout.gap as f32))
+            // 上方时工具栏在窗口顶部、图片之上；否则在图片下方。
+            .top(px(if self.toolbar_above { inset } else { image_top + image_height + layout.gap as f32 }))
             .flex()
             .flex_col()
             .items_start()

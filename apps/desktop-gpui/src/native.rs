@@ -121,3 +121,37 @@ pub fn consume_startup_show_state() {
 
 #[cfg(not(windows))]
 pub fn consume_startup_show_state() {}
+
+/// 平移窗口（物理像素）；贴图工具栏翻到图片上方时窗口向上扩展，图片在屏幕上的位置不变。
+/// 其他平台不支持时返回 false，调用方保持工具栏在下方。
+pub fn offset_window(window: &Window, dy: i32) -> bool {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::{Foundation::RECT, UI::WindowsAndMessaging::*};
+        let hwnd = hwnd(window) as windows_sys::Win32::Foundation::HWND;
+        if hwnd.is_null() {
+            return false;
+        }
+        // SAFETY: hwnd 来自仍然存活的 GPUI 窗口，只移动位置，不改尺寸与层级。
+        unsafe {
+            let mut rect: RECT = std::mem::zeroed();
+            if GetWindowRect(hwnd, &mut rect) == 0 {
+                return false;
+            }
+            SetWindowPos(
+                hwnd,
+                std::ptr::null_mut(),
+                rect.left,
+                rect.top + dy,
+                0,
+                0,
+                SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+            ) != 0
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (window, dy);
+        false
+    }
+}
