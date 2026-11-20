@@ -4,23 +4,23 @@
 use std::time::{Duration, Instant};
 use xcb::{randr, x, xfixes, Xid, XidNew};
 
-pub(crate) const WAYLAND_HINT: &str = "暂不支持 Wayland 会话，请在登录界面选择 X11（Xorg）会话。";
+pub const WAYLAND_HINT: &str = "暂不支持 Wayland 会话，请在登录界面选择 X11（Xorg）会话。";
 
-pub(crate) const NO_XWAYLAND: &str =
+pub const NO_XWAYLAND: &str =
     "当前 Wayland 会话没有 Xwayland（DISPLAY 未设置），无法读取剪贴板与选中文字。";
 
 /// Wayland 会话中 Xwayland 是否可用（GNOME 在首次连接时按需启动 Xwayland）。
-pub(crate) fn xwayland() -> bool {
+pub fn xwayland() -> bool {
     std::env::var_os("DISPLAY").is_some_and(|value| !value.is_empty())
 }
 
 /// 会话识别与 `SNAP_DESK_SESSION` 覆盖见 `desktop_support::session`。
-pub(crate) fn wayland() -> bool {
-    crate::shared::desktop_support::session() == crate::shared::desktop_support::Session::Wayland
+pub fn wayland() -> bool {
+    crate::desktop_support::session() == crate::desktop_support::Session::Wayland
 }
 
 /// X keysym（与键盘布局无关的按键符号）。
-pub(crate) mod keysym {
+pub mod keysym {
     pub const C: u32 = 0x63;
     pub const V: u32 = 0x76;
     pub const RETURN: u32 = 0xff0d;
@@ -38,7 +38,7 @@ pub(crate) mod keysym {
     pub const ISO_LEVEL3_SHIFT: u32 = 0xfe03;
 }
 
-pub(crate) struct X11 {
+pub struct X11 {
     pub conn: xcb::Connection,
     pub root: x::Window,
 }
@@ -388,20 +388,20 @@ fn bytes(reply: &x::GetPropertyReply) -> Result<&[u8], ReadError> {
     }
 }
 
-pub(crate) fn pressed(keys: &[u8], code: u8) -> bool {
+pub fn pressed(keys: &[u8], code: u8) -> bool {
     keys.get(usize::from(code / 8))
         .is_some_and(|byte| byte & (1 << (code % 8)) != 0)
 }
 
 /// `_XKB_RULES_NAMES` 为 NUL 分隔的 规则、型号、布局、变体、选项；返回布局（如 `us,ru`）。
-pub(crate) fn xkb_layout(rules: &[u8]) -> Option<String> {
+pub fn xkb_layout(rules: &[u8]) -> Option<String> {
     let layout = rules.split(|b| *b == 0).nth(2)?;
     let layout = std::str::from_utf8(layout).ok()?.trim();
     (!layout.is_empty()).then(|| layout.to_string())
 }
 
 /// 窗口中心所在显示器是否被窗口完全覆盖；中心不在任何显示器上时为 None。
-pub(crate) fn covers_monitor(
+pub fn covers_monitor(
     window: (i32, i32, u32, u32),
     monitors: &[(i32, i32, u32, u32)],
 ) -> Option<bool> {
@@ -423,7 +423,7 @@ pub(crate) fn covers_monitor(
 }
 
 /// 进程可执行文件名（不含目录），用于剪贴板排除名单；读不到 exe 链接时退回 comm。
-pub(crate) fn process_name(pid: u32) -> Option<String> {
+pub fn process_name(pid: u32) -> Option<String> {
     if let Ok(path) = std::fs::read_link(format!("/proc/{pid}/exe")) {
         if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
             // 被替换的可执行文件会带“ (deleted)”后缀，名单比较时去掉。
@@ -437,14 +437,14 @@ pub(crate) fn process_name(pid: u32) -> Option<String> {
 
 /// 选区读取失败的原因：拒绝转换、超限或超时分开报告，调用方据此决定提示文字。
 #[derive(Debug, PartialEq)]
-pub(crate) enum ReadError {
+pub enum ReadError {
     TooLarge,
     Timeout,
     Failed,
 }
 
 /// 选区请求方：自己的隐藏窗口接收数据，属性每次读取后删除。大数据按 ICCCM INCR 分段接收，累计超过上限立即放弃。
-pub(crate) struct SelectionReader<'a> {
+pub struct SelectionReader<'a> {
     x: &'a X11,
     window: x::Window,
     property: x::Atom,

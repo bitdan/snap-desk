@@ -4,7 +4,7 @@ use std::process::{Command, Stdio};
 
 /// 逻辑坐标下的显示器；`physical` 为该显示器的像素尺寸（已考虑旋转），用于计算缩放比例。
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Output {
+pub struct Output {
     pub name: String,
     pub x: i32,
     pub y: i32,

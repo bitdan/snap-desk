@@ -1,15 +1,13 @@
 //! Windows 图片复制：编码在打开剪贴板之前完成，缩短系统资源占用时间。
+//! 同时写入 PNG 与 CF_DIBV5（保留 alpha）。剪贴板必须有所有者窗口（空所有者会让写入失败），
+//! 由外壳传入其常驻窗口的 HWND：Tauri 版用主窗口，GPUI 版用截图浮层窗口。
 use image::{ImageFormat, RgbaImage};
 use std::{io::Cursor, sync::Mutex, time::Duration};
-use tauri::{AppHandle, Manager};
 
 static WRITER: Mutex<()> = Mutex::new(());
 
-#[cfg(test)]
-pub(super) fn benchmark_dib(image: &RgbaImage) -> Result<Vec<u8>, String> { dib(image) }
-
 /// CF_DIBV5 使用正高度、从底向上的 BGRA；保留 alpha，兼容常见图片粘贴目标。
-fn dib(image: &RgbaImage) -> Result<Vec<u8>, String> {
+pub fn dib(image: &RgbaImage) -> Result<Vec<u8>, String> {
     let (width, height) = image.dimensions();
     let size = width
         .checked_mul(height)
@@ -46,22 +44,18 @@ fn dib(image: &RgbaImage) -> Result<Vec<u8>, String> {
 }
 
 /// 从现有后台截图/贴图线程调用；Open、Empty、Set、Close 始终发生于同一线程。
-pub fn copy(app: &AppHandle, image: &RgbaImage) -> Result<(), String> {
+pub fn copy(owner: isize, image: &RgbaImage) -> Result<(), String> {
     let mut png = Cursor::new(Vec::new());
     image
         .write_to(&mut png, ImageFormat::Png)
         .map_err(|e| e.to_string())?;
-    copy_png(app, image, png.get_ref())
+    copy_png(owner, image, png.get_ref())
 }
 
 /// 保存和复制同一张图片时复用已编码 PNG；像素仅用于兼容性 DIB，不再次编码。
-pub(super) fn copy_png(app: &AppHandle, image: &RgbaImage, png: &[u8]) -> Result<(), String> {
+pub fn copy_png(owner: isize, image: &RgbaImage, png: &[u8]) -> Result<(), String> {
     let bitmap = dib(image)?;
     let format = clipboard_win::register_format("PNG").ok_or("无法注册 PNG 剪贴板格式。")?;
-    let window = app
-        .get_webview_window("main")
-        .ok_or("主窗口不可用，无法复制图片。")?;
-    let hwnd = window.hwnd().map_err(|e| e.to_string())?;
     let _writer = WRITER.lock().map_err(|e| e.to_string())?;
     let mut last = String::new();
     for delay in [0, 40, 80, 160] {
@@ -71,7 +65,7 @@ pub(super) fn copy_png(app: &AppHandle, image: &RgbaImage, png: &[u8]) -> Result
         // 每次重试重新打开。RAII 在成功和所有错误路径上都关闭剪贴板。
         let attempt = (|| -> Result<(), String> {
             let _clipboard =
-                clipboard_win::Clipboard::new_for(hwnd.0 as _).map_err(|e| e.to_string())?;
+                clipboard_win::Clipboard::new_for(owner as _).map_err(|e| e.to_string())?;
             clipboard_win::raw::empty().map_err(|e| e.to_string())?;
             clipboard_win::raw::set_without_clear(format.get(), png)
                 .map_err(|e| e.to_string())?;

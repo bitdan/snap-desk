@@ -19,6 +19,29 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 ab_glyph = "=0.2.32"
 rusqlite = { version = "=0.37.0", features = ["bundled"] }
 url = "2"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 dirs = "6"
 # 只用其中的 HotKey 解析与比较；Tauri 全局快捷键插件也用同一版本，两边类型一致。
 global-hotkey = { version = "0.8", features = ["serde"] }
+# 屏幕与窗口采集；版本与 Tauri 版锁定的一致。
+xcap = "=0.9.8"
+
+# Windows：物理像素拼接、窗口与 UIA 控件候选、光标合成。版本与 src-tauri 锁定的 windows 0.62.2 一致。
+[target.'cfg(windows)'.dependencies]
+clipboard-win = "=5.4.1"
+windows = { version = "=0.62.2", features = ["Win32_Foundation", "Win32_Graphics_Dwm", "Win32_Graphics_Gdi", "Win32_System_Threading", "Win32_System_Com", "Win32_System_Variant", "Win32_UI_HiDpi", "Win32_UI_WindowsAndMessaging", "Win32_UI_Accessibility", "Win32_UI_Shell", "Win32_Storage_FileSystem"] }
+
+# macOS：光标、窗口层级、隐私授权与辅助功能控件候选；版本与 Tauri/native-tls 已锁定的一致。
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "=0.6.5"
+block2 = "=0.6.2"
+
+# Linux：X11（RandR/XFixes/XTest/SHM/XInput）、Wayland 采集与合成器探测、PipeWire 帧经 GStreamer 读取。
+[target.'cfg(target_os = "linux")'.dependencies]
+xcb = { version = "=1.7.1", features = ["randr", "xfixes", "xtest", "shm", "xinput"] }
+gstreamer = "=0.21.3"
+libc = "0.2"
+wayland-client = "=0.31.15"
+zbus = "=5.19.0"
+wayland-protocols = { version = "=0.32.13", features = ["client", "staging"] }
+libwayshot-xcap = "=0.3.3"

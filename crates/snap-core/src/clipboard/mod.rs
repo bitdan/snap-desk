@@ -4,3 +4,5 @@ pub mod classification;
 pub mod files;
 pub mod model;
 pub mod repository;
+#[cfg(windows)]
+pub mod windows_image;

@@ -170,7 +170,7 @@ impl X11 {
 }
 
 pub(super) fn wayland() -> bool {
-    crate::shared::x11::wayland()
+    crate::x11::wayland()
 }
 
 /// ZPixmap 32 位像素按服务器字节序为 BGRX（LSB）或 XRGB（MSB），扫描线无额外填充。
@@ -271,8 +271,8 @@ pub(super) fn frame_rect(
 }
 
 /// 录屏按窗口 ID 读取外框，与吸附候选同样计入装饰并去掉 GTK 阴影，两处换算保持一致。
-pub(crate) fn window_frame_of(
-    x11: &crate::shared::x11::X11,
+pub fn window_frame_of(
+    x11: &crate::x11::X11,
     window: x::Window,
 ) -> Option<(i32, i32, u32, u32)> {
     let extents = |name: &str| {
@@ -327,7 +327,7 @@ fn window_frame(x11: &X11, window: &NativeWindow) -> Option<WindowFrame> {
 /// 坐标使用该显示器的物理像素（逻辑位置 × 缩放），前端按视口比例换算，不依赖窗口位置。
 fn capture_wayland(include_cursor: bool, snap: bool) -> Result<Desktop, String> {
     let shot = super::wayland::capture(include_cursor)?;
-    let compositor = crate::shared::desktop_support::current().compositor();
+    let compositor = crate::desktop_support::current().compositor();
     let found = if snap {
         super::wayland::windows::list(compositor, &shot.output)
     } else {

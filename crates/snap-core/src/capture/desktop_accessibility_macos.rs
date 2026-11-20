@@ -178,7 +178,7 @@ pub(super) fn collect(
     size: (u32, u32),
     scale: f64,
 ) {
-    if !crate::shared::macos::accessibility_trusted() {
+    if !crate::macos::accessibility_trusted() {
         return;
     }
     let mut roots: Vec<Root> = targets
@@ -207,7 +207,7 @@ pub(super) fn collect(
         return;
     }
     // 先查鼠标所在的最上层窗口，其余保持原先的前后顺序。
-    if let Some((cx, cy)) = crate::shared::macos::cursor_point() {
+    if let Some((cx, cy)) = crate::macos::cursor_point() {
         let x = (cx * scale).round() as i64 - i64::from(origin.0);
         let y = (cy * scale).round() as i64 - i64::from(origin.1);
         if let Some(position) = roots.iter().position(|root| {

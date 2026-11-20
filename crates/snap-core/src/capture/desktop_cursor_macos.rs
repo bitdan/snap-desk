@@ -1,6 +1,6 @@
 //! macOS 截图光标：系统截图接口不包含鼠标指针，这里读取当前系统光标的图像与热点，
 //! 按截图所在屏的像素缩放渲染为位图，再由调用方叠加到截图上。
-use crate::shared::macos::{ns_string, Id};
+use crate::macos::{ns_string, Id};
 use image::RgbaImage;
 use objc2::{
     class,
@@ -53,7 +53,7 @@ pub struct Cursor {
 /// `origin` 为截图左上角的全局点坐标，`scale` 为截图像素/点之比。
 /// 读不到鼠标位置或光标图像（例如光标被隐藏）时返回 None，截图照常进行、不含光标。
 pub fn current(origin: (f64, f64), scale: f64) -> Option<Cursor> {
-    let (cx, cy) = crate::shared::macos::cursor_point()?;
+    let (cx, cy) = crate::macos::cursor_point()?;
     let (image, hot_x, hot_y) = bitmap(scale)?;
     Some(Cursor {
         image,

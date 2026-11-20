@@ -6,7 +6,7 @@ use std::sync::OnceLock;
 
 /// 会话类型；`SNAP_DESK_SESSION=x11|wayland` 可覆盖自动识别（环境变量从别的会话泄漏时使用）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Session {
+pub enum Session {
     Windows,
     Macos,
     X11,
@@ -25,7 +25,7 @@ impl Session {
 }
 
 /// Linux 会话识别：Wayland 会话即使有 `DISPLAY`（Xwayland）也按 Wayland 处理，Xwayland 拿不到 Wayland 画面。
-pub(crate) fn linux_session(
+pub fn linux_session(
     override_value: Option<&str>,
     session_type: Option<&str>,
     wayland_display: bool,
@@ -42,7 +42,7 @@ pub(crate) fn linux_session(
     }
 }
 
-pub(crate) fn session() -> Session {
+pub fn session() -> Session {
     if cfg!(windows) {
         return Session::Windows;
     }
@@ -58,7 +58,7 @@ pub(crate) fn session() -> Session {
 
 /// 探测结果：Wayland 全局对象接口名与门户/KWin 接口是否存在。X11、Windows、macOS 下全部为默认值。
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct Probe {
+pub struct Probe {
     /// `XDG_CURRENT_DESKTOP` 等环境变量识别出的合成器。
     pub compositor: Compositor,
     pub globals: Vec<String>,
@@ -74,7 +74,7 @@ pub(crate) struct Probe {
 /// 只有 Linux 的 Wayland 探测会构造具体合成器；其他平台只用到默认值。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-pub(crate) enum Compositor {
+pub enum Compositor {
     Kwin,
     Gnome,
     Sway,
@@ -103,7 +103,7 @@ impl Compositor {
 /// `XDG_CURRENT_DESKTOP` 是冒号分隔列表（如 `ubuntu:GNOME`）；合成器专用套接字变量优先。
 /// 由 Linux 的 Wayland 探测调用；其他平台只在测试中使用。
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-pub(crate) fn compositor(desktop: &str, sway: bool, niri: bool, hyprland: bool) -> Compositor {
+pub fn compositor(desktop: &str, sway: bool, niri: bool, hyprland: bool) -> Compositor {
     if niri {
         return Compositor::Niri;
     }
@@ -137,17 +137,17 @@ const WLR_DATA_CONTROL: &str = "zwlr_data_control_manager_v1";
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct DesktopProtocols {
-    pub(crate) kwin_screenshot: bool,
-    pub(crate) ext_image_copy_capture: bool,
-    pub(crate) wlr_screencopy: bool,
-    pub(crate) layer_shell: bool,
-    pub(crate) ext_data_control: bool,
-    pub(crate) wlr_data_control: bool,
-    pub(crate) portal_screenshot: bool,
-    pub(crate) portal_screencast: bool,
-    pub(crate) portal_global_shortcuts: bool,
-    pub(crate) portal_remote_desktop: bool,
-    pub(crate) xwayland: bool,
+    pub kwin_screenshot: bool,
+    pub ext_image_copy_capture: bool,
+    pub wlr_screencopy: bool,
+    pub layer_shell: bool,
+    pub ext_data_control: bool,
+    pub wlr_data_control: bool,
+    pub portal_screenshot: bool,
+    pub portal_screencast: bool,
+    pub portal_global_shortcuts: bool,
+    pub portal_remote_desktop: bool,
+    pub xwayland: bool,
 }
 
 /// 单项功能是否可用；不可用时 `reason` 是中文消息键，前端经词典显示。
@@ -212,15 +212,15 @@ pub struct DesktopSupport {
 
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 impl DesktopSupport {
-    pub(crate) fn protocols(&self) -> &DesktopProtocols {
+    pub fn protocols(&self) -> &DesktopProtocols {
         &self.protocols
     }
-    pub(crate) fn compositor(&self) -> &'static str {
+    pub fn compositor(&self) -> &'static str {
         self.compositor
     }
 }
 
-pub(crate) const WAYLAND_SHORTCUTS: &str =
+pub const WAYLAND_SHORTCUTS: &str =
     "Wayland 下应用无法直接注册全局快捷键，请在桌面或合成器的快捷键设置中绑定下方命令。";
 const WAYLAND_INPUT: &str = "Wayland 不允许应用监听全局键鼠，录屏键鼠特效不可用。";
 const WAYLAND_PASTE: &str =
@@ -233,10 +233,10 @@ const NO_XWAYLAND: &str =
 const NO_SCREENCAST: &str =
     "当前 Wayland 桌面没有屏幕共享门户（xdg-desktop-portal ScreenCast），无法录屏。";
 const WAYLAND_SCROLL: &str = "Wayland 下无法连续读取屏幕画面，滚动截图不可用。";
-pub(crate) const NO_CAPTURE_BACKEND: &str =
+pub const NO_CAPTURE_BACKEND: &str =
     "当前 Wayland 桌面没有可用的截图接口（KWin、ext-image-copy-capture、wlr-screencopy 或屏幕共享门户）。";
 
-pub(crate) fn report(
+pub fn report(
     session: Session,
     desktop: &str,
     probe: &Probe,
@@ -356,7 +356,7 @@ fn wayland_features(protocols: &DesktopProtocols, compositor: Compositor) -> Des
 }
 
 /// 绑定到桌面快捷键的可执行文件：AppImage 必须写镜像路径（`$APPIMAGE`），挂载点每次启动都会变。
-pub(crate) fn command_line(
+pub fn command_line(
     appimage: Option<std::path::PathBuf>,
     exe: Option<std::path::PathBuf>,
 ) -> String {
@@ -409,13 +409,13 @@ fn detect() -> DesktopSupport {
 }
 
 /// 首次调用时探测并缓存；探测含 D-Bus 往返，调用方应在阻塞线程中调用（启动时已在后台预热）。
-pub(crate) fn current() -> &'static DesktopSupport {
+pub fn current() -> &'static DesktopSupport {
     static SUPPORT: OnceLock<DesktopSupport> = OnceLock::new();
     SUPPORT.get_or_init(detect)
 }
 
 /// 启动时在后台预热，主窗口首次读取状态时无需等待 D-Bus。
-pub(crate) fn warm_up() {
+pub fn warm_up() {
     if let Err(error) = std::thread::Builder::new()
         .name("desktop-support".into())
         .spawn(|| {

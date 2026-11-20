@@ -11,25 +11,25 @@ mod image_copy;
 mod kwin;
 mod outputs;
 mod pipewire_frame;
-pub(crate) mod portal;
+pub mod portal;
 mod screencopy;
-pub(crate) mod windows;
+pub mod windows;
 
 use image::RgbaImage;
-pub(crate) use outputs::Output;
+pub use outputs::Output;
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Mutex,
 };
 
 /// 一次截图的结果：所在显示器的逻辑几何与该显示器的物理像素画面。
-pub(crate) struct Shot {
+pub struct Shot {
     pub output: Output,
     pub image: RgbaImage,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Backend {
+pub enum Backend {
     Kwin,
     ImageCopy,
     Screencopy,
@@ -68,8 +68,8 @@ impl Backend {
 }
 
 /// 当前桌面公布的后端，按优先顺序。
-pub(crate) fn available(
-    protocols: &crate::shared::desktop_support::DesktopProtocols,
+pub fn available(
+    protocols: &crate::desktop_support::DesktopProtocols,
 ) -> Vec<Backend> {
     Backend::ALL
         .into_iter()
@@ -84,7 +84,7 @@ pub(crate) fn available(
 }
 
 /// 从上次成功的后端开始，依次尝试其余后端；全部失败时返回每个后端的原因。
-pub(crate) fn run_chain<T>(
+pub fn run_chain<T>(
     candidates: &[Backend],
     remembered: &AtomicUsize,
     mut attempt: impl FnMut(Backend) -> Result<T, String>,
@@ -119,7 +119,7 @@ pub(crate) fn run_chain<T>(
     Err(CAPTURE_FAILED.into())
 }
 
-const NO_BACKEND: &str = crate::shared::desktop_support::NO_CAPTURE_BACKEND;
+const NO_BACKEND: &str = crate::desktop_support::NO_CAPTURE_BACKEND;
 const CAPTURE_FAILED: &str = "Wayland 截图失败，请确认已允许屏幕共享，详情见日志。";
 
 /// 上次截图所在显示器的逻辑几何，覆盖层据此全屏到同一块显示器。
@@ -127,23 +127,23 @@ static LAST_OUTPUT: Mutex<Option<Frozen>> = Mutex::new(None);
 
 /// 上次冻结的显示器：逻辑几何（覆盖层全屏定位）与物理原点、尺寸（截图坐标与录屏来源）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct Frozen {
+pub struct Frozen {
     pub logical: (i32, i32, i32, i32),
     pub origin: (i32, i32),
     pub size: (u32, u32),
 }
 
-pub(crate) fn last_output() -> Option<(i32, i32, i32, i32)> {
+pub fn last_output() -> Option<(i32, i32, i32, i32)> {
     last_frozen().map(|frozen| frozen.logical)
 }
 
-pub(crate) fn last_frozen() -> Option<Frozen> {
+pub fn last_frozen() -> Option<Frozen> {
     LAST_OUTPUT.lock().ok().and_then(|value| *value)
 }
 
 impl Shot {
     /// 物理原点 = 逻辑位置 × 该显示器缩放；同一会话内截图、选区与录屏来源都使用它。
-    pub(crate) fn origin(&self) -> (i32, i32) {
+    pub fn origin(&self) -> (i32, i32) {
         let scale = self.output.scale();
         (
             (f64::from(self.output.x) * scale).round() as i32,
@@ -152,8 +152,8 @@ impl Shot {
     }
 }
 
-pub(crate) fn capture(include_cursor: bool) -> Result<Shot, String> {
-    let support = crate::shared::desktop_support::current();
+pub fn capture(include_cursor: bool) -> Result<Shot, String> {
+    let support = crate::desktop_support::current();
     let candidates = available(support.protocols());
     let layout = outputs::layout()?;
     let target = outputs::target(&layout, support.compositor());

@@ -50,7 +50,7 @@ fn has_interface(
     proxy.call_method("Get", &(interface, property)).is_ok()
 }
 
-pub(crate) fn probe(desktop: &str) -> Probe {
+pub fn probe(desktop: &str) -> Probe {
     let mut found = Probe {
         compositor: compositor(
             desktop,

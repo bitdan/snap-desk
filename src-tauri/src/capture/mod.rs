@@ -19,7 +19,8 @@ pub mod history;
 pub(crate) mod latency;
 pub mod preview;
 use latency::{elapsed_ms, Latency};
-pub(crate) mod desktop;
+/// 桌面采集、窗口候选与坐标换算在 core（三平台，GPUI 版共用），沿用 `capture::desktop` 路径。
+pub(crate) use snap_core::capture as desktop;
 
 /// PNG 原始字节留在会话中，由只读协议传输；元信息事件不再携带整屏 Base64。
 fn preview_png(image: &RgbaImage) -> Result<Arc<Vec<u8>>, String> {
@@ -86,35 +87,8 @@ pub struct Frame {
     layout_key: String,
 }
 
-#[derive(Clone, Copy, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct Rect {
-    pub(crate) x: u32,
-    pub(crate) y: u32,
-    pub(crate) width: u32,
-    pub(crate) height: u32,
-}
-
-impl Rect {
-    fn validate(self, width: u32, height: u32) -> Result<Self, String> {
-        if self.width == 0
-            || self.height == 0
-            || self
-                .x
-                .checked_add(self.width)
-                .filter(|right| *right <= width)
-                .is_none()
-            || self
-                .y
-                .checked_add(self.height)
-                .filter(|bottom| *bottom <= height)
-                .is_none()
-        {
-            return Err("选区为空或超出截图边界，请重新框选。".into());
-        }
-        Ok(self)
-    }
-}
+/// 选区几何在 core（截图合成、GPUI 版共用）。
+pub use snap_core::capture::Rect;
 
 fn err(error: impl std::fmt::Display) -> String {
     error.to_string()

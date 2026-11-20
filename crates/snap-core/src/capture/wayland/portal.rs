@@ -17,7 +17,7 @@ const SCREENCAST: &str = "org.freedesktop.portal.ScreenCast";
 /// 授权对话框等待用户操作的上限。
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(120);
 
-pub(crate) fn connect() -> Result<Connection, String> {
+pub fn connect() -> Result<Connection, String> {
     zbus::blocking::connection::Builder::session()
         .map(|builder| builder.method_timeout(Duration::from_secs(30)))
         .and_then(|builder| builder.build())
@@ -82,7 +82,7 @@ where
     }
 }
 
-pub(crate) const CANCELLED: &str = "已取消屏幕共享授权。";
+pub const CANCELLED: &str = "已取消屏幕共享授权。";
 
 type Results = HashMap<String, OwnedValue>;
 
@@ -120,7 +120,7 @@ struct Screenshot {
 
 /// 授权后的屏幕共享会话；析构时关闭，避免系统继续显示“正在共享屏幕”。
 /// 持有连接的克隆（zbus 连接为引用计数），会话可以随录制来源跨线程长期保存。
-pub(crate) struct Session {
+pub struct Session {
     conn: Connection,
     pub handle: OwnedObjectPath,
     pub streams: Vec<(u32, Option<(i32, i32)>, Option<(i32, i32)>)>,
@@ -163,7 +163,7 @@ fn cursor_modes(conn: &Connection) -> u32 {
 }
 
 /// 创建会话、选择显示器并开始共享；`restore` 为上次保存的令牌。
-pub(crate) fn start(
+pub fn start(
     conn: &Connection,
     restore: Option<&str>,
     cursor: bool,
@@ -228,7 +228,7 @@ pub(crate) fn start(
 }
 
 /// 恢复令牌存放在 `$XDG_STATE_HOME/snap-desk/`（默认 `~/.local/state/snap-desk/`），仅当前用户可读写。
-pub(crate) fn token_path(name: &str) -> Option<std::path::PathBuf> {
+pub fn token_path(name: &str) -> Option<std::path::PathBuf> {
     let base = std::env::var_os("XDG_STATE_HOME")
         .map(std::path::PathBuf::from)
         .filter(|path| path.is_absolute())
@@ -238,13 +238,13 @@ pub(crate) fn token_path(name: &str) -> Option<std::path::PathBuf> {
     Some(base.join("snap-desk").join(name))
 }
 
-pub(crate) fn read_token(name: &str) -> Option<String> {
+pub fn read_token(name: &str) -> Option<String> {
     let value = std::fs::read_to_string(token_path(name)?).ok()?;
     let value = value.trim();
     (!value.is_empty() && value.len() <= 512).then(|| value.to_owned())
 }
 
-pub(crate) fn write_token(name: &str, value: &str) {
+pub fn write_token(name: &str, value: &str) {
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
     let Some(path) = token_path(name) else {
@@ -267,17 +267,17 @@ pub(crate) fn write_token(name: &str, value: &str) {
     }
 }
 
-pub(crate) fn forget_token(name: &str) {
+pub fn forget_token(name: &str) {
     if let Some(path) = token_path(name) {
         let _ = std::fs::remove_file(path);
     }
 }
 
 /// 截图与录屏共用同一份授权：GNOME 上选过一次显示器后两者都不再弹窗。
-pub(crate) const SCREENCAST_TOKEN: &str = "screencast-token";
+pub const SCREENCAST_TOKEN: &str = "screencast-token";
 
 /// 带令牌的授权失败（显示器变化或令牌被撤销）时清除令牌，再请求一次完整授权。
-pub(crate) fn start_with_token(
+pub fn start_with_token(
     conn: &Connection,
     name: &str,
     cursor: bool,

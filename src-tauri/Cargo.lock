@@ -9091,15 +9091,28 @@ version = "0.0.0"
 dependencies = [
  "ab_glyph",
  "base64 0.22.1",
+ "block2 0.6.2",
+ "chrono",
+ "clipboard-win",
  "dirs 6.0.0",
  "global-hotkey",
+ "gstreamer",
  "image",
+ "libc",
+ "libwayshot-xcap",
  "log",
+ "objc2 0.6.5",
  "rusqlite",
  "serde",
  "serde_json",
  "tempfile",
  "url",
+ "wayland-client",
+ "wayland-protocols",
+ "windows 0.62.2",
+ "xcap",
+ "xcb",
+ "zbus 5.19.0",
 ]
 
 [[package]]

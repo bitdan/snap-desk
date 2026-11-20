@@ -9,7 +9,7 @@ use std::time::Duration;
 
 /// 逻辑坐标（合成器全局布局）中的可吸附窗口。
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct Window {
+pub struct Window {
     pub x: i32,
     pub y: i32,
     pub width: i32,
@@ -45,7 +45,7 @@ fn int(value: &serde_json::Value) -> Option<i32> {
     value.as_f64().map(|v| v.round() as i32)
 }
 
-pub(crate) fn list(compositor: &str, output: &Output) -> Vec<Window> {
+pub fn list(compositor: &str, output: &Output) -> Vec<Window> {
     let windows = match compositor {
         "sway" => json("swaymsg", &["-t", "get_tree", "-r"]).map(|tree| sway(&tree)),
         "niri" => niri(output),
@@ -60,7 +60,7 @@ pub(crate) fn list(compositor: &str, output: &Output) -> Vec<Window> {
 }
 
 /// Sway 树：只取可见的普通与浮动容器；浮动窗口在平铺窗口之上。
-pub(crate) fn sway(tree: &serde_json::Value) -> Vec<Window> {
+pub fn sway(tree: &serde_json::Value) -> Vec<Window> {
     fn walk(
         node: &serde_json::Value,
         floating: bool,
@@ -116,7 +116,7 @@ fn niri(output: &Output) -> Option<Vec<Window>> {
     Some(niri_windows(&workspaces, &windows, output))
 }
 
-pub(crate) fn niri_windows(
+pub fn niri_windows(
     workspaces: &serde_json::Value,
     windows: &serde_json::Value,
     output: &Output,
@@ -178,7 +178,7 @@ fn hyprland(output: &Output) -> Option<Vec<Window>> {
     Some(hyprland_windows(&monitors, &clients, output))
 }
 
-pub(crate) fn hyprland_windows(
+pub fn hyprland_windows(
     monitors: &serde_json::Value,
     clients: &serde_json::Value,
     output: &Output,
@@ -248,7 +248,7 @@ impl Snapshot {
     }
 }
 
-pub(crate) fn kwin_records(records: &str) -> Vec<Window> {
+pub fn kwin_records(records: &str) -> Vec<Window> {
     let Ok(serde_json::Value::Array(items)) = serde_json::from_str::<serde_json::Value>(records)
     else {
         return Vec::new();

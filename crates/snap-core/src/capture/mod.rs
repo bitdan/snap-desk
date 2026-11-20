@@ -1,39 +1,70 @@
-//! 截图与录屏选区共用物理桌面坐标、窗口候选及原生窗口身份。
+//! 截图与录屏选区共用的物理桌面坐标、窗口候选，以及 Windows 桌面采集。
+//!
+//! 坐标约定：`Rect` 相对虚拟桌面截图左上角，单位为物理像素；`Display` 的 x/y 为全局物理像素，
+//! `scale` 只用于界面布局，不参与像素换算。Windows 按物理像素拼接所有显示器；macOS 截取鼠标所在屏
+//! （Display 换算见 macOS `capture` 的说明）；Linux 区分 X11 与 Wayland（`desktop_linux.rs`、`wayland/`）。
 use image::RgbaImage;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 #[cfg(windows)]
 #[path = "desktop_windows.rs"]
-mod windows;
+pub mod windows;
 #[cfg(windows)]
-pub use windows::AppWindow as NativeWindow;
-#[cfg(windows)]
-pub(crate) use windows::PhysicalDpi;
+pub use windows::{AppWindow as NativeWindow, PhysicalDpi};
 #[cfg(not(windows))]
 pub type NativeWindow = xcap::Window;
-#[cfg(target_os = "macos")]
-#[path = "desktop_cursor_macos.rs"]
-mod cursor;
-#[cfg(target_os = "macos")]
-#[path = "desktop_accessibility_macos.rs"]
-mod accessibility;
-#[cfg(not(any(windows, target_os = "macos")))]
-#[path = "desktop_linux.rs"]
-mod linux;
-#[cfg(not(any(windows, target_os = "macos")))]
-pub use linux::capture;
-#[cfg(target_os = "linux")]
-#[path = "wayland/mod.rs"]
-pub(crate) mod wayland;
-#[cfg(not(any(windows, target_os = "macos")))]
-pub(crate) use linux::window_frame_of as linux_window_frame;
 
-/// 把当前光标叠加到截图上；`origin` 为截图左上角的全局点坐标。读不到光标时保持原图。
-#[cfg(target_os = "macos")]
-fn draw_cursor(image: &mut RgbaImage, origin: (f64, f64), scale: f64) {
-    if let Some(cursor) = cursor::current(origin, scale) {
-        image::imageops::overlay(image, &cursor.image, cursor.left, cursor.top);
+/// 虚拟桌面截图内的选区（物理像素）；字段公开，供外壳与序列化直接构造。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Rect {
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
+}
+
+impl Rect {
+    /// 选区必须非空且完全位于 `width × height` 的截图内。
+    pub fn validate(self, width: u32, height: u32) -> Result<Self, String> {
+        if self.width == 0
+            || self.height == 0
+            || self
+                .x
+                .checked_add(self.width)
+                .filter(|right| *right <= width)
+                .is_none()
+            || self
+                .y
+                .checked_add(self.height)
+                .filter(|bottom| *bottom <= height)
+                .is_none()
+        {
+            return Err("选区为空或超出截图边界，请重新框选。".into());
+        }
+        Ok(self)
     }
+}
+
+/// 复制、保存与贴图共用的合成：校验选区与标注，裁剪后按选区原点绘制标注，保证各出口像素一致。
+pub fn compose(
+    source: &RgbaImage,
+    rect: Rect,
+    annotations: &[crate::annotations::Annotation],
+) -> Result<RgbaImage, String> {
+    let rect = rect.validate(source.width(), source.height())?;
+    crate::annotations::validate(annotations, source.width(), source.height())?;
+    let mut image =
+        image::imageops::crop_imm(source, rect.x, rect.y, rect.width, rect.height).to_image();
+    crate::annotations::render(
+        &mut image,
+        annotations,
+        crate::annotations::Point {
+            x: f64::from(rect.x),
+            y: f64::from(rect.y),
+        },
+    )?;
+    Ok(image)
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -51,7 +82,7 @@ pub struct Display {
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Target {
-    pub rect: crate::capture::Rect,
+    pub rect: Rect,
     pub kind: &'static str,
     pub window_index: usize,
     /// 仅用于录屏来源选择，在本机界面显示，不写入日志；子控件为空。
@@ -81,12 +112,12 @@ pub fn clipped(
     height: u32,
     origin: (i32, i32),
     size: (u32, u32),
-) -> Option<crate::capture::Rect> {
+) -> Option<Rect> {
     let left = (i64::from(x) - i64::from(origin.0)).max(0);
     let top = (i64::from(y) - i64::from(origin.1)).max(0);
     let right = (i64::from(x) - i64::from(origin.0) + i64::from(width)).min(i64::from(size.0));
     let bottom = (i64::from(y) - i64::from(origin.1) + i64::from(height)).min(i64::from(size.1));
-    (right > left && bottom > top).then(|| crate::capture::Rect {
+    (right > left && bottom > top).then(|| Rect {
         x: left as u32,
         y: top as u32,
         width: (right - left) as u32,
@@ -97,10 +128,10 @@ pub fn clipped(
 /// 某个窗口内的控件候选：边界先换算为截图像素，再裁剪到父窗口并去重。
 /// Windows（Win32 子窗口、UIA）与 macOS（辅助功能）共用这套规则。
 #[cfg(any(windows, target_os = "macos"))]
-pub(crate) struct Elements {
+pub struct Elements {
     pub targets: Vec<Target>,
     pub index: usize,
-    pub parent: crate::capture::Rect,
+    pub parent: Rect,
     pub origin: (i32, i32),
     pub size: (u32, u32),
 }
@@ -154,7 +185,7 @@ impl Elements {
 }
 
 #[cfg(any(windows, target_os = "macos"))]
-pub(crate) fn same_bounds(a: crate::capture::Rect, b: crate::capture::Rect) -> bool {
+pub fn same_bounds(a: Rect, b: Rect) -> bool {
     a.x.abs_diff(b.x) <= 2
         && a.y.abs_diff(b.y) <= 2
         && (a.x + a.width).abs_diff(b.x + b.width) <= 2
@@ -163,10 +194,10 @@ pub(crate) fn same_bounds(a: crate::capture::Rect, b: crate::capture::Rect) -> b
 
 /// 将虚拟桌面选区转换为单屏局部像素，跨屏或空选区必须拒绝。
 pub fn within_display(
-    rect: crate::capture::Rect,
+    rect: Rect,
     origin: (i32, i32),
     display: &Display,
-) -> Option<crate::capture::Rect> {
+) -> Option<Rect> {
     let x = i64::from(rect.x) + i64::from(origin.0) - i64::from(display.x);
     let y = i64::from(rect.y) + i64::from(origin.1) - i64::from(display.y);
     if rect.width == 0
@@ -178,7 +209,7 @@ pub fn within_display(
     {
         return None;
     }
-    Some(crate::capture::Rect {
+    Some(Rect {
         x: x as u32,
         y: y as u32,
         ..rect
@@ -188,10 +219,10 @@ pub fn within_display(
 /// 跨屏窗口的控制条放在可见面积最大的显示器上；返回虚拟桌面图片内的交集。
 /// 该裁剪仅用于辅助窗口布局，WGC 仍采集完整窗口，不能据此裁剪视频。
 pub fn display_intersection(
-    rect: crate::capture::Rect,
+    rect: Rect,
     origin: (i32, i32),
     displays: &[Display],
-) -> Option<crate::capture::Rect> {
+) -> Option<Rect> {
     displays
         .iter()
         .filter_map(|d| {
@@ -201,7 +232,7 @@ pub fn display_intersection(
                 .min(i64::from(d.x) - i64::from(origin.0) + i64::from(d.width));
             let bottom = (i64::from(rect.y) + i64::from(rect.height))
                 .min(i64::from(d.y) - i64::from(origin.1) + i64::from(d.height));
-            (right > left && bottom > top).then(|| crate::capture::Rect {
+            (right > left && bottom > top).then(|| Rect {
                 x: left as u32,
                 y: top as u32,
                 width: (right - left) as u32,
@@ -349,15 +380,40 @@ pub fn capture(primary_only: bool, include_cursor: bool, snap: bool) -> Result<D
     Ok(desktop)
 }
 
+#[cfg(target_os = "macos")]
+#[path = "desktop_cursor_macos.rs"]
+mod cursor;
+#[cfg(target_os = "macos")]
+#[path = "desktop_accessibility_macos.rs"]
+mod accessibility;
+#[cfg(not(any(windows, target_os = "macos")))]
+#[path = "desktop_linux.rs"]
+mod linux;
+#[cfg(not(any(windows, target_os = "macos")))]
+pub use linux::capture;
+#[cfg(target_os = "linux")]
+#[path = "wayland/mod.rs"]
+pub mod wayland;
+#[cfg(not(any(windows, target_os = "macos")))]
+pub use linux::window_frame_of as linux_window_frame;
+
+/// 把当前光标叠加到截图上；`origin` 为截图左上角的全局点坐标。读不到光标时保持原图。
+#[cfg(target_os = "macos")]
+fn draw_cursor(image: &mut RgbaImage, origin: (f64, f64), scale: f64) {
+    if let Some(cursor) = cursor::current(origin, scale) {
+        image::imageops::overlay(image, &cursor.image, cursor.left, cursor.top);
+    }
+}
+
 /// macOS 截取鼠标所在的那块屏幕（无鼠标位置时回退主屏）。
 /// 一个蒙层窗口不能跨越多块各自拥有桌面空间的显示器，因此先按屏截取，跨屏框选另行实现。
 /// Display 的 x/y 为“点坐标 × 该屏实际缩放”，宽高为 Retina 像素，scale 为像素/点之比；
 /// 调用方据此把蒙层放到点坐标 (x/scale, y/scale)，不依赖窗口当前所在屏的缩放。
 #[cfg(target_os = "macos")]
 pub fn capture(primary_only: bool, include_cursor: bool, snap: bool) -> Result<Desktop, String> {
-    let monitors = xcap::Monitor::all().map_err(crate::shared::platform::capture_error)?;
+    let monitors = xcap::Monitor::all().map_err(crate::platform::capture_error)?;
     let cursor = (!primary_only)
-        .then(crate::shared::macos::cursor_point)
+        .then(crate::macos::cursor_point)
         .flatten();
     // 点坐标的屏幕边界；任一属性读取失败的显示器直接跳过，不影响其余屏幕。
     let bounds = |m: &xcap::Monitor| -> Option<(f64, f64, f64, f64)> {
@@ -380,7 +436,7 @@ pub fn capture(primary_only: bool, include_cursor: bool, snap: bool) -> Result<D
     let (x, y, width, _) = bounds(monitor).ok_or("读取显示器位置失败。")?;
     let mut image = monitor
         .capture_image()
-        .map_err(crate::shared::platform::capture_error)?;
+        .map_err(crate::platform::capture_error)?;
     // 以实际像素宽度反推缩放，比系统报告的 scale_factor 更贴合截图位图（含缩放分辨率模式）。
     let scale = if width > 0.0 {
         f64::from(image.width()) / width
@@ -434,7 +490,7 @@ fn snap_windows(desktop: &mut Desktop, scale: f64, size: (u32, u32)) {
     let Ok(windows) = xcap::Window::all() else {
         return;
     };
-    let normal = crate::shared::macos::normal_window_ids();
+    let normal = crate::macos::normal_window_ids();
     let own = std::process::id();
     for window in windows.into_iter().take(256) {
         let eligible = window.id().is_ok_and(|id| normal.contains(&id))
@@ -606,7 +662,7 @@ mod tests {
                 scale: 1.5,
             },
         ];
-        let window = crate::capture::Rect {
+        let window = Rect {
             x: 1800,
             y: 100,
             width: 600,
@@ -619,7 +675,7 @@ mod tests {
         );
         assert!(within_display(placement, (-1920, -200), &displays[1]).is_some());
         assert!(display_intersection(
-            crate::capture::Rect {
+            Rect {
                 x: 2100,
                 y: 0,
                 width: 40,
@@ -640,7 +696,7 @@ mod tests {
             primary: false,
             scale: 1.25,
         };
-        let rect = crate::capture::Rect {
+        let rect = Rect {
             x: 80,
             y: 40,
             width: 400,
@@ -652,7 +708,7 @@ mod tests {
             (80, 40, 400, 300)
         );
         assert!(within_display(
-            crate::capture::Rect { x: 1800, ..rect },
+            Rect { x: 1800, ..rect },
             (-1920, -200),
             &display
         )
@@ -684,7 +740,7 @@ mod tests {
             primary: true,
             scale: 1.5,
         };
-        let rect = crate::capture::Rect {
+        let rect = Rect {
             x: 2000,
             y: 200,
             width: 400,
@@ -696,13 +752,13 @@ mod tests {
             (80, 100, 400, 300)
         );
         assert!(within_display(
-            crate::capture::Rect { x: 1800, ..rect },
+            Rect { x: 1800, ..rect },
             (-1920, -100),
             &display
         )
         .is_none());
         assert!(within_display(
-            crate::capture::Rect {
+            Rect {
                 width: 3000,
                 ..rect
             },

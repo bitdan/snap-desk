@@ -1,6 +1,6 @@
 //! 在独立 MTA 线程读取控件几何；不读取名称、文本或值，不让外部无响应控件阻塞截图。
 use super::Elements;
-use crate::capture::{desktop::Target, Rect};
+use crate::capture::{Rect, Target};
 use std::{
     collections::VecDeque,
     sync::{
