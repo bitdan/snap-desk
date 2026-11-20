@@ -13,6 +13,7 @@ mod logging;
 mod magnifier;
 mod native;
 mod pins;
+mod recognition;
 mod selection;
 mod shell;
 mod single_instance;

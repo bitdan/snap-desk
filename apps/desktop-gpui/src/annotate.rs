@@ -197,6 +197,9 @@ pub mod icons {
     icon!(SAVE, "save");
     icon!(CLOSE, "x");
     icon!(COPY, "copy");
+    icon!(SCAN_TEXT, "scan-text");
+    icon!(LANGUAGES, "languages");
+    icon!(QR_CODE, "qr-code");
 }
 
 /// 当前样式；选中图形时同步为该图形的样式。

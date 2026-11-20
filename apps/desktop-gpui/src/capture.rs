@@ -17,6 +17,7 @@
 //! 物理像素，导出时随选区一起交给 `compose`。已有标注时选区不能再移动或缩放（避免标注被裁掉）。
 use crate::annotate::{self, Action, Editor, Job, Layers, Tool, ToolbarProps};
 use crate::magnifier::{self, Picker};
+use crate::recognition::Mode as RecognitionMode;
 use crate::selection::{self, Handle};
 use gpui_kit::{
     component::input::{Textarea, TextareaState},
@@ -76,6 +77,8 @@ pub struct Session {
     /// 最近一次成功导出的选区（R 恢复；设置“沿用上次选区”时打开即预选）与当前显示器布局键。
     recent: Option<RecentSelection>,
     layout_key: String,
+    /// 由“截图识字”快捷键发起：框选完成后直接识别，不执行“截图后动作”。
+    purpose: Option<RecognitionMode>,
 }
 
 impl Session {
@@ -257,7 +260,7 @@ pub fn active(cx: &App) -> bool {
 }
 
 /// 开始截图。`delay` 用于等托盘菜单等短暂界面消失；设置中的截图延时显示倒计时，期间可取消。
-pub fn start(cx: &mut App, settings: &Settings, delay: Duration) {
+pub fn start(cx: &mut App, settings: &Settings, delay: Duration, purpose: Option<RecognitionMode>) {
     if active(cx) {
         log::info!("event=gpui.capture_ignored reason=active");
         return;
@@ -330,11 +333,12 @@ pub fn start(cx: &mut App, settings: &Settings, delay: Duration) {
                         picker: Picker::default(),
                         recent: None,
                         layout_key: String::new(),
+                        purpose,
                     });
                     session.update(cx, |s, _| {
                         s.layout_key = recent::layout_key(&s.displays);
                         s.recent = recent::default_path().and_then(|path| recent::load(&path));
-                        if reuse_last {
+                        if reuse_last && purpose.is_none() {
                             s.selection = recent::restore(s.recent.as_ref(), s.image.width(), s.image.height(), &s.layout_key);
                         }
                     });
@@ -621,6 +625,33 @@ pub fn pin(cx: &mut App) {
                     log::error!("event=gpui.capture_pin_failed message={error}");
                     session.update(cx, |s, _| s.busy = false);
                 }
+            }
+        });
+    })
+    .detach();
+}
+
+/// 识别选区：文字识别与翻译用原始像素（标注可能遮挡文字），二维码与 Vue 版一致包含标注。
+/// 识别在结果窗口中进行；浮层随即关闭，结果窗口独立存活。
+pub fn recognize(cx: &mut App, mode: RecognitionMode) {
+    let Some((session, image, rect, shapes)) = begin_export(cx) else {
+        return;
+    };
+    let shapes = if mode == RecognitionMode::Qr { shapes } else { Vec::new() };
+    cx.spawn(async move |cx| {
+        let composed = cx
+            .background_executor()
+            .spawn(async move { snap_core::capture::compose(&image, rect, &shapes) })
+            .await;
+        cx.update(|cx| match composed {
+            Ok(image) => {
+                log::info!("event=gpui.capture_recognize mode={mode:?} width={} height={}", rect.width, rect.height);
+                finish(cx);
+                crate::recognition::open(cx, image, mode);
+            }
+            Err(error) => {
+                log::error!("event=gpui.capture_recognize_failed message={error}");
+                session.update(cx, |s, _| s.busy = false);
             }
         });
     })
@@ -969,7 +1000,14 @@ impl Overlay {
             s.sync();
             cx.notify();
             let after = matches!(drag, Some(Drag::Create { .. }))
-                .then(|| s.selection.map(|_| s.after.clone()))
+                .then(|| {
+                    s.selection.map(|_| match s.purpose {
+                        Some(RecognitionMode::Ocr) => "ocr".to_owned(),
+                        Some(RecognitionMode::Translate) => "translate".to_owned(),
+                        Some(RecognitionMode::Qr) => "qr".to_owned(),
+                        None => s.after.clone(),
+                    })
+                })
                 .flatten();
             (after, None)
         });
@@ -979,6 +1017,9 @@ impl Overlay {
             Some("copy") => copy(cx, crate::native::hwnd(window)),
             Some("save") => save(cx),
             Some("pin") => pin(cx),
+            Some("ocr") => recognize(cx, RecognitionMode::Ocr),
+            Some("translate") => recognize(cx, RecognitionMode::Translate),
+            Some("qr") => recognize(cx, RecognitionMode::Qr),
             _ => {}
         }
     }
@@ -1439,6 +1480,10 @@ impl Render for Overlay {
             annotate::divider().into_any_element(),
         ];
         let trailing = vec![
+            export_button("capture-ocr", annotate::icons::SCAN_TEXT, s.text("识别文字"), false, |cx, _| recognize(cx, RecognitionMode::Ocr)),
+            export_button("capture-translate", annotate::icons::LANGUAGES, s.text("截图翻译"), false, |cx, _| recognize(cx, RecognitionMode::Translate)),
+            export_button("capture-qr", annotate::icons::QR_CODE, s.text("识别二维码"), false, |cx, _| recognize(cx, RecognitionMode::Qr)),
+            annotate::divider().into_any_element(),
             export_button("capture-cancel", annotate::icons::CLOSE, s.text("取消"), false, |cx, _| cancel(cx)),
             export_button("capture-pin", annotate::icons::PIN, s.text("贴图"), false, |cx, _| pin(cx)),
             export_button("capture-save", annotate::icons::SAVE, s.text("保存"), false, |cx, _| save(cx)),
@@ -1460,7 +1505,7 @@ impl Render for Overlay {
             (bottom - px(height + 6.0)).max(px(4.0))
         };
         // 右对齐到选区右边；选区太靠左时改为从屏幕左边起排，避免工具栏被挤出屏幕。
-        let min_width = if grouped { 640.0 } else { 920.0 };
+        let min_width = if grouped { 760.0 } else { 1040.0 };
         let mut toolbar = div()
             .id("capture-toolbar")
             .absolute()

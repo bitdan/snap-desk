@@ -277,7 +277,24 @@ pub fn run_action(cx: &mut App, action: ShortcutAction, source: &str) {
                 std::time::Duration::ZERO
             };
             let settings = cx.global::<Shell>().settings.clone();
-            crate::capture::start(cx, &settings, delay);
+            crate::capture::start(cx, &settings, delay, None);
+        }
+        ShortcutAction::Ocr => {
+            // 截图识字：框选完成即识别；截图中再按视为取消，与截图键一致。
+            if crate::capture::active(cx) {
+                crate::capture::cancel(cx);
+                return;
+            }
+            log::info!("event=gpui.action action=ocr source={source}");
+            let delay = if source == "menu" {
+                std::time::Duration::from_millis(150)
+            } else {
+                std::time::Duration::ZERO
+            };
+            // 识字不叠加普通截图延时（与 Tauri 版一致）。
+            let mut settings = cx.global::<Shell>().settings.clone();
+            settings.delay_seconds = 0;
+            crate::capture::start(cx, &settings, delay, Some(crate::recognition::Mode::Ocr));
         }
         ShortcutAction::Pin => {
             log::info!("event=gpui.action action=pin source={source}");
