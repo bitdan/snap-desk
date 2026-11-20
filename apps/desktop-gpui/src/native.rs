@@ -1,6 +1,35 @@
-//! GPUI 没有提供的窗口能力：原生句柄、点击穿透、切换置顶。目前只实现 Windows，
-//! 其他平台返回“不支持”，由调用方记录日志（macOS/Linux 的实现随多平台验证补上）。
+//! GPUI 没有提供的窗口能力：原生句柄、点击穿透、切换置顶、临时隐藏。
+//! Windows 用 Win32；macOS 经 NSView 取 NSWindow（`snap_core::macos`）；Linux 只支持 X11
+//! （`snap_core::x11`：XFixes 输入形状、EWMH 置顶、映射/取消映射），Wayland 会话返回“不支持”。
 use gpui_kit::Window;
+
+/// macOS：窗口的 NSWindow 指针；取不到时为空。
+#[cfg(target_os = "macos")]
+fn ns_window(window: &Window) -> *mut std::ffi::c_void {
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    match HasWindowHandle::window_handle(window).map(|h| h.as_raw()) {
+        // SAFETY: 句柄来自存活的 GPUI 窗口，且 GPUI 事件处理在 Cocoa 主线程上运行。
+        Ok(RawWindowHandle::AppKit(handle)) => unsafe {
+            snap_core::macos::ns_window_of_view(handle.ns_view.as_ptr())
+        },
+        _ => std::ptr::null_mut(),
+    }
+}
+
+/// Linux：X11 窗口 id；Wayland 会话返回 None。
+#[cfg(target_os = "linux")]
+fn x11_window(window: &Window) -> Option<u32> {
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    match HasWindowHandle::window_handle(window).ok()?.as_raw() {
+        RawWindowHandle::Xcb(handle) => Some(handle.window.get()),
+        RawWindowHandle::Xlib(handle) => u32::try_from(handle.window).ok(),
+        _ => None,
+    }
+}
+
+/// macOS GPUI PopUp 窗口的层级（NSPopUpWindowLevel）；取消置顶时降为普通层级。
+#[cfg(target_os = "macos")]
+const POPUP_LEVEL: isize = 101;
 
 /// 当前窗口的 HWND（作为 Windows 剪贴板所有者等）；其他平台返回 0。
 pub fn hwnd(window: &Window) -> isize {
@@ -47,7 +76,22 @@ pub fn set_click_through(window: &Window, enabled: bool) -> Result<(), String> {
         }
         Ok(())
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        let ns_window = ns_window(window);
+        if ns_window.is_null() {
+            return Err("窗口原生句柄不可用。".into());
+        }
+        // SAFETY: 指针来自存活窗口，在主线程调用。
+        unsafe { snap_core::macos::set_ns_window_ignores_mouse(ns_window, enabled) };
+        Ok(())
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let id = x11_window(window).ok_or("Wayland 会话暂不支持鼠标穿透。")?;
+        snap_core::x11::window_passthrough(id, enabled)
+    }
+    #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
     {
         let _ = (window, enabled);
         Err("当前平台暂不支持鼠标穿透。".into())
@@ -71,10 +115,60 @@ pub fn set_topmost(window: &Window, topmost: bool) -> Result<(), String> {
         }
         Ok(())
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        let ns_window = ns_window(window);
+        if ns_window.is_null() {
+            return Err("窗口原生句柄不可用。".into());
+        }
+        // SAFETY: 指针来自存活窗口，在主线程调用。
+        unsafe { snap_core::macos::set_ns_window_level(ns_window, if topmost { POPUP_LEVEL } else { 0 }) };
+        Ok(())
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let id = x11_window(window).ok_or("Wayland 会话暂不支持切换置顶。")?;
+        snap_core::x11::window_above(id, topmost)
+    }
+    #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
     {
         let _ = (window, topmost);
         Err("当前平台暂不支持切换置顶。".into())
+    }
+}
+
+/// 临时隐藏或不抢焦点地重新显示窗口（保存/打开对话框期间隐藏置顶贴图）。
+pub fn set_visible(window: &Window, visible: bool) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::UI::WindowsAndMessaging::*;
+        let hwnd = hwnd(window) as windows_sys::Win32::Foundation::HWND;
+        if hwnd.is_null() {
+            return Err("窗口原生句柄不可用。".into());
+        }
+        // SAFETY: hwnd 来自存活窗口；重新显示时不激活，避免抢走对话框关闭后的焦点。
+        unsafe { ShowWindow(hwnd, if visible { SW_SHOWNOACTIVATE } else { SW_HIDE }) };
+        Ok(())
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let ns_window = ns_window(window);
+        if ns_window.is_null() {
+            return Err("窗口原生句柄不可用。".into());
+        }
+        // SAFETY: 指针来自存活窗口，在主线程调用。
+        unsafe { snap_core::macos::set_ns_window_visible(ns_window, visible) };
+        Ok(())
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let id = x11_window(window).ok_or("Wayland 会话暂不支持隐藏窗口。")?;
+        snap_core::x11::window_mapped(id, visible)
+    }
+    #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
+    {
+        let _ = (window, visible);
+        Err("当前平台暂不支持隐藏窗口。".into())
     }
 }
 
