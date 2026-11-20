@@ -95,7 +95,7 @@ impl Fonts {
     }
 
     /// 某一字体族的首选字体与中文回退字体。
-    fn stack(&self, family: &str) -> Result<Vec<FontRef<'_>>, String> {
+    pub(crate) fn stack(&self, family: &str) -> Result<Vec<FontRef<'_>>, String> {
         let mut stack = Vec::new();
         let preferred = match family {
             "serif" => self.serif.as_deref(),
@@ -112,7 +112,7 @@ impl Fonts {
 }
 
 /// 字体栈中第一个含该字形的字体；都没有时报错，不能静默导出方框。
-fn glyph_font<'a>(stack: &'a [FontRef<'a>], c: char) -> Result<&'a FontRef<'a>, String> {
+pub(crate) fn glyph_font<'a>(stack: &'a [FontRef<'a>], c: char) -> Result<&'a FontRef<'a>, String> {
     stack
         .iter()
         .find(|font| font.glyph_id(c).0 != 0)
@@ -120,12 +120,12 @@ fn glyph_font<'a>(stack: &'a [FontRef<'a>], c: char) -> Result<&'a FontRef<'a>, 
 }
 
 /// ab_glyph 的 PxScale 是字形高度（ascent - descent），换算成 CSS 字号（em）。
-fn em_scale(font: &FontRef<'_>, size: f64) -> PxScale {
+pub(crate) fn em_scale(font: &FontRef<'_>, size: f64) -> PxScale {
     let units = font.units_per_em().unwrap_or(1000.0);
     PxScale::from(size as f32 * font.height_unscaled() / units)
 }
 
-fn advance(stack: &[FontRef<'_>], c: char, size: f64) -> Result<f64, String> {
+pub(crate) fn advance(stack: &[FontRef<'_>], c: char, size: f64) -> Result<f64, String> {
     if c == '\t' {
         return Ok(advance(stack, ' ', size)? * 4.0);
     }
@@ -185,7 +185,7 @@ fn parse_color(text: &str) -> Result<[u8; 3], String> {
 }
 
 /// 用覆盖率以 max 方式写入单色字形，重叠字形不会加深。
-fn draw_text(
+pub(crate) fn draw_text(
     image: &mut RgbaImage,
     stack: &[FontRef<'_>],
     text: &str,

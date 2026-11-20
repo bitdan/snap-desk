@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::io::Cursor;
 
 pub mod content;
+pub mod html;
 pub mod text;
 
 /// 全局贴图外观只影响显示；阴影由 WebView 按尺寸和焦点计算，原图像素保持独立。
