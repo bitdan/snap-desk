@@ -245,6 +245,82 @@ pub fn show_pins(cx: &mut App, hidden: Vec<AnyWindowHandle>) {
     }
 }
 
+/// 贴图管理窗口用的状态快照。
+pub struct Summary {
+    pub handle: AnyWindowHandle,
+    pub image: Arc<RgbaImage>,
+    pub zoom: f64,
+    pub locked: bool,
+    pub topmost: bool,
+    pub click_through: bool,
+    pub hidden: bool,
+    pub annotations: usize,
+}
+
+pub fn summaries(cx: &mut App) -> Vec<Summary> {
+    alive(cx)
+        .into_iter()
+        .map(|(handle, pin)| {
+            let pin = pin.read(cx);
+            Summary {
+                handle,
+                image: pin.image.clone(),
+                zoom: pin.zoom,
+                locked: pin.locked,
+                topmost: pin.topmost,
+                click_through: pin.click_through,
+                hidden: pin.hidden,
+                annotations: pin.editor.shapes().len(),
+            }
+        })
+        .collect()
+}
+
+/// 定位贴图：显示被隐藏的、解除鼠标穿透，并激活窗口。
+pub fn reveal(cx: &mut App, target: AnyWindowHandle) {
+    let Some((handle, pin)) = alive(cx).into_iter().find(|(handle, _)| *handle == target) else {
+        return;
+    };
+    if pin.read(cx).hidden {
+        show_pins(cx, vec![handle]);
+    }
+    let _ = handle.update(cx, |_, window, cx| {
+        pin.update(cx, |pin, cx| {
+            if pin.click_through {
+                pin.set_click_through(false, window, cx);
+            }
+        });
+        window.activate_window();
+    });
+}
+
+pub fn close(cx: &mut App, target: AnyWindowHandle) {
+    let _ = target.update(cx, |_, window, _| window.remove_window());
+}
+
+/// 关闭全部贴图；返回关闭数量。
+pub fn close_all(cx: &mut App) -> usize {
+    let pins = alive(cx);
+    let count = pins.len();
+    for (handle, _) in pins {
+        close(cx, handle);
+    }
+    if count > 0 {
+        log::info!("event=gpui.pins_closed_all count={count}");
+    }
+    count
+}
+
+/// 显示所有被隐藏的贴图。
+pub fn show_hidden(cx: &mut App) {
+    let hidden: Vec<_> = alive(cx)
+        .into_iter()
+        .filter(|(_, pin)| pin.read(cx).hidden)
+        .map(|(handle, _)| handle)
+        .collect();
+    show_pins(cx, hidden);
+}
+
 /// 全局贴图键：先恢复穿透中的贴图（它们收不到鼠标，只能这样找回来）；返回是否恢复了任何贴图。
 pub fn restore_click_through(cx: &mut App) -> bool {
     let mut restored = 0;

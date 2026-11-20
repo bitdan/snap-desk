@@ -33,6 +33,8 @@ const ACTIONS: [(&str, &str, ShortcutAction); 5] = [
     ("translation", "翻译", ShortcutAction::Translate),
 ];
 const PIN_FILE_ID: &str = "pin-file";
+const PIN_MANAGER_ID: &str = "pin-manager";
+const PIN_CLOSE_ALL_ID: &str = "pin-close-all";
 const SHORTCUTS_ID: &str = "shortcuts";
 const QUIT_ID: &str = "quit";
 
@@ -103,6 +105,8 @@ pub fn start(
     );
     menu.append_items(&[
         &MenuItem::with_id(PIN_FILE_ID, text("打开图片贴图"), true, None),
+        &MenuItem::with_id(PIN_MANAGER_ID, text("贴图管理"), true, None),
+        &MenuItem::with_id(PIN_CLOSE_ALL_ID, text("关闭全部贴图"), true, None),
         &PredefinedMenuItem::separator(),
         &shortcuts_item,
         &MenuItem::with_id(QUIT_ID, text("退出"), true, None),
@@ -242,6 +246,10 @@ fn handle(cx: &mut App, event: ShellEvent) {
                 cx.quit();
             }
             SHORTCUTS_ID => cx.update_global::<Shell, _>(|shell, _| shell.toggle_shortcuts()),
+            PIN_MANAGER_ID => crate::pin_manager::open(cx),
+            PIN_CLOSE_ALL_ID => {
+                crate::pins::close_all(cx);
+            }
             PIN_FILE_ID => {
                 log::info!("event=gpui.action action=pin_file source=menu");
                 crate::pins::open_file(cx);
