@@ -613,7 +613,7 @@ pub fn pin(cx: &mut App) {
             .await;
         cx.update(|cx| {
             let result = composed.and_then(|image| {
-                crate::pins::create(cx, image, shapes, crate::pins::Placement::Source { origin, scale, display })
+                crate::pins::create(cx, image, shapes, crate::pins::Placement::Source { origin, scale, display }, None)
             });
             match result {
                 Ok(()) => {

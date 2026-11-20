@@ -8,7 +8,9 @@
 //! 尺寸与 Tauri 版共用 `snap_core::pins::PinLayout`：缩放 1 表示一图像像素对应一物理像素，
 //! 图片四周保留 (padding + border) 的透明边距，按物理像素取整后再换算成窗口逻辑像素。
 //! 像素预算、变换、文字排版同样来自 core。识别文字/二维码/翻译图片打开独立结果窗口（`recognition.rs`）。
-//! 未接入：拖出内容、HTML 贴图。
+//! 按住 Ctrl（macOS 为 ⌥）拖动把内容拖到其他应用：文字贴图拖出文字，其余拖出合成后的 PNG
+//! （系统拖出目前只实现 Windows，`snap_core::drag`）。
+//! 未接入：HTML 贴图。
 //!
 //! 标注：空格（或右键菜单“显示工具栏”）在图片下方展开工具栏，窗口随之加高、加宽；选择标注工具后
 //! 图片上的按下交给编辑器（`annotate.rs`），“移动贴图”按钮回到拖动窗口。标注坐标为贴图图像像素，
@@ -86,6 +88,7 @@ pub fn create(
     image: RgbaImage,
     annotations: Vec<Annotation>,
     placement: Placement,
+    drag_text: Option<String>,
 ) -> Result<(), String> {
     snap_core::annotations::validate(&annotations, image.width(), image.height())?;
     let pins = alive(cx);
@@ -150,6 +153,7 @@ pub fn create(
                 annotating: false,
                 toolbar: false,
                 toolbar_above: false,
+                drag_text: drag_text.clone(),
                 text_input: None,
                 image,
                 frame,
@@ -257,15 +261,16 @@ pub fn from_clipboard(cx: &mut App) {
             .background_executor()
             .spawn(async move {
                 match source {
-                    Source::Image(bytes) => decode_clipboard_image(&bytes),
+                    Source::Image(bytes) => decode_clipboard_image(&bytes).map(|image| (image, None)),
                     Source::Text(text) => {
                         let font = core_pins::text::font_bytes(annotate::user_font())?;
-                        core_pins::text::render(&text, &font)
+                        let drag = core_pins::text::drag_text(&text);
+                        core_pins::text::render(&text, &font).map(|image| (image, Some(drag)))
                     }
                 }
             })
             .await;
-        cx.update(|cx| match image.and_then(|image| create(cx, image, Vec::new(), Placement::Centered)) {
+        cx.update(|cx| match image.and_then(|(image, drag)| create(cx, image, Vec::new(), Placement::Centered, drag)) {
             Ok(()) => log::info!("event=gpui.pin_created source=clipboard"),
             Err(error) => log::error!("event=gpui.pin_failed source=clipboard message={error}"),
         });
@@ -360,6 +365,8 @@ pub struct Pin {
     toolbar: bool,
     /// 工具栏放在图片上方（图片下方超出屏幕可见区域时；窗口向上扩展，图片不动）。
     toolbar_above: bool,
+    /// 文字/文件路径贴图拖出时提供的文字（颜色值规范化为 HEX，见 core `drag_text`）。
+    drag_text: Option<String>,
     text_input: Option<Entity<TextareaState>>,
     image: Arc<RgbaImage>,
     frame: Arc<RenderImage>,
@@ -489,6 +496,44 @@ impl Pin {
             Item::Separator => {}
         }
         cx.notify();
+    }
+
+    /// 系统拖出：后台准备内容（合成 PNG 写入临时文件），回到主线程在框架状态借用之外发起拖拽；
+    /// 准备期间已松开左键则不拖出（core 内检查）。
+    fn drag_out(&mut self, cx: &mut Context<Self>) {
+        if self.busy || self.editor.pending || self.editor.interacting() {
+            return;
+        }
+        if !cfg!(windows) {
+            let message = self.text("当前平台尚未支持贴图内容拖出。");
+            self.flash(message, cx);
+            return;
+        }
+        let (image, shapes, text) = (self.image.clone(), self.editor.shapes().to_vec(), self.drag_text.clone());
+        cx.spawn(async move |this, cx| {
+            let payload = match text {
+                Some(text) => Ok(snap_core::drag::Payload::Text(text)),
+                None => cx
+                    .background_executor()
+                    .spawn(async move {
+                        let image = composed(&image, &shapes)?;
+                        snap_core::drag::image_file(&image).map(|path| snap_core::drag::Payload::Files(vec![path]))
+                    })
+                    .await,
+            };
+            #[cfg(windows)]
+            let result = payload.and_then(snap_core::drag::start);
+            #[cfg(not(windows))]
+            let result = payload.map(|_| ());
+            match result {
+                Ok(()) => log::info!("event=gpui.pin_drag_finished"),
+                Err(error) => {
+                    log::warn!("event=gpui.pin_drag_failed message={error}");
+                    let _ = this.update(cx, |pin, cx| pin.flash(error, cx));
+                }
+            }
+        })
+        .detach();
     }
 
     /// 识别当前图像（含标注，与复制/保存看到的一致）；结果在独立窗口中显示，贴图保持不变。
@@ -835,6 +880,12 @@ impl Pin {
         }
         if self.editor.text.is_some() {
             self.commit_text(window, cx);
+            return;
+        }
+        // 与 Tauri 版一致：Windows/Linux 按住 Ctrl，macOS 按住 ⌥ 拖动即拖出内容。
+        let drag_modifier = if cfg!(target_os = "macos") { event.modifiers.alt } else { event.modifiers.control };
+        if drag_modifier && !self.locked && !self.click_through {
+            self.drag_out(cx);
             return;
         }
         let scale = window.scale_factor();
