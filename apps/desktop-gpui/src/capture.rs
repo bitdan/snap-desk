@@ -10,7 +10,7 @@
 //!    结束或取消时关闭全部浮层并丢弃会话，冻结画面随之释放。
 //!
 //! 坐标：浮层事件位置是窗口内逻辑像素；乘以该屏 `Display::scale` 再加上该屏在截图中的偏移，
-//! 即得到截图物理像素。限制：新建选区只在按下时所在的屏幕内（跨屏选区留待后续）；
+//! 即得到截图物理像素。选区可跨屏（坐标是整张虚拟桌面截图），各浮层只画与本屏相交的部分；
 //! 取色放大镜见 `magnifier.rs`。贴图窗口见 `pins.rs`。
 //!
 //! 标注（`annotate.rs`）：选区下方工具栏选择工具后，选区内的按下交给编辑器；标注坐标与截图同为
@@ -25,7 +25,7 @@ use gpui_kit::{
 use image::RgbaImage;
 use snap_core::{
     annotations::{Annotation, Point as ImagePoint, edit::Bounds as ImageBounds},
-    capture::{Display, Rect},
+    capture::{Display, Rect, recent::{self, RecentSelection}},
     settings::{ExportSettings, Language, Settings},
 };
 use std::{sync::Arc, time::{Duration, Instant}};
@@ -73,6 +73,9 @@ pub struct Session {
     /// 文字输入框所在的浮层与输入状态。
     text_input: Option<(usize, Entity<TextareaState>)>,
     picker: Picker,
+    /// 最近一次成功导出的选区（R 恢复；设置“沿用上次选区”时打开即预选）与当前显示器布局键。
+    recent: Option<RecentSelection>,
+    layout_key: String,
 }
 
 impl Session {
@@ -224,6 +227,7 @@ pub fn start(cx: &mut App, settings: &Settings, delay: Duration) {
     let snap = settings.screenshot_snap;
     let export = settings.export.clone();
     let after = settings.screenshot_after.clone();
+    let reuse_last = settings.screenshot_reuse_last;
     let language = settings.appearance.language.clone();
     let seconds = settings.delay_seconds;
     let hint = snap_core::i18n::for_language(&language, "再次按截图快捷键取消").to_owned();
@@ -283,6 +287,15 @@ pub fn start(cx: &mut App, settings: &Settings, delay: Duration) {
                         annotating: false,
                         text_input: None,
                         picker: Picker::default(),
+                        recent: None,
+                        layout_key: String::new(),
+                    });
+                    session.update(cx, |s, _| {
+                        s.layout_key = recent::layout_key(&s.displays);
+                        s.recent = recent::default_path().and_then(|path| recent::load(&path));
+                        if reuse_last {
+                            s.selection = recent::restore(s.recent.as_ref(), s.image.width(), s.image.height(), &s.layout_key);
+                        }
                     });
                     session.update(cx, |s, _| s.sync());
                     cx.global_mut::<CaptureState>().session = Some(session.clone());
@@ -384,6 +397,20 @@ fn close_overlays(cx: &mut App, session: &Entity<Session>) {
     });
 }
 
+/// 记住成功导出的选区（复制、保存、贴图）；写入失败只记日志。
+fn remember(cx: &mut App) {
+    let Some(session) = current(cx) else {
+        return;
+    };
+    let s = session.read(cx);
+    let (Some(rect), Some(path)) = (s.selection, recent::default_path()) else {
+        return;
+    };
+    if let Err(error) = recent::save(&path, rect, s.image.width(), s.image.height(), s.layout_key.clone()) {
+        log::warn!("event=gpui.recent_selection_save_failed message={error}");
+    }
+}
+
 /// 结束会话：关闭浮层并释放冻结画面。
 fn finish(cx: &mut App) {
     let Some(session) = cx.global_mut::<CaptureState>().session.take() else {
@@ -458,6 +485,7 @@ fn copy(cx: &mut App, owner: isize) {
             match result {
                 Ok((width, height)) => {
                     log::info!("event=gpui.capture_copied width={width} height={height}");
+                    remember(cx);
                     finish(cx);
                 }
                 Err(error) => {
@@ -502,7 +530,7 @@ pub fn pin(cx: &mut App) {
     let (origin, scale, logical) = {
         let s = session.read(cx);
         let global = (s.origin.0 + rect.x as i32, s.origin.1 + rect.y as i32);
-        // 选区所在屏：包含选区左上角的那块（新建选区不跨屏）。
+        // 选区所在屏：包含选区左上角的那块（跨屏选区按左上角所在屏贴图）。
         let display = s
             .displays
             .iter()
@@ -538,6 +566,7 @@ pub fn pin(cx: &mut App) {
             match result {
                 Ok(()) => {
                     log::info!("event=gpui.capture_pinned width={} height={}", rect.width, rect.height);
+                    remember(cx);
                     finish(cx);
                 }
                 Err(error) => {
@@ -625,6 +654,7 @@ fn save(cx: &mut App) {
                     }
                 }
                 log::info!("event=gpui.capture_saved width={width} height={height}");
+                remember(cx);
                 finish(cx);
             }
             Err(error) => {
@@ -757,7 +787,6 @@ impl Overlay {
         let p = self.to_image(event.position, cx);
         let point = self.to_point(event.position, cx);
         let tolerance = (HANDLE_HIT * self.scale(cx)).round() as i64;
-        let index = self.index;
         let alt = event.modifiers.alt;
         let copy_now = self.session.update(cx, |s, cx| {
             let inside = s.selection.is_some_and(|r| selection::contains(r, p));
@@ -795,7 +824,8 @@ impl Overlay {
                 cx.notify();
                 return false;
             }
-            let area = s.region(index);
+            // 新建选区可跨屏：限制在整张虚拟桌面截图内，拖到其他屏时由该屏浮层继续显示。
+            let area = s.area();
             s.drag = Some(match s.selection {
                 Some(rect) => match selection::handle_at(rect, p, tolerance) {
                     Some(handle) => Drag::Resize { anchor: p, start: rect, handle },
@@ -967,6 +997,26 @@ impl Overlay {
                 }
                 cx.notify();
             });
+            return;
+        }
+        // R：恢复最近选区（已有标注或正在编辑时选区固定）。
+        if key == "r" && !command && !keystroke.modifiers.alt {
+            self.session.update(cx, |s, cx| {
+                if s.selection_locked() || s.busy {
+                    return;
+                }
+                match recent::restore(s.recent.as_ref(), s.image.width(), s.image.height(), &s.layout_key) {
+                    Some(rect) => {
+                        s.selection = Some(rect);
+                        s.drag = None;
+                        s.hover = None;
+                        s.sync();
+                        cx.notify();
+                    }
+                    None => log::info!("event=gpui.recent_selection_unavailable"),
+                }
+            });
+            self.after_edit(window, cx);
             return;
         }
         let mut job = None;
