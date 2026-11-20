@@ -1,163 +1,191 @@
-# Snap Desk — Free Open-Source Cross-Platform Screenshot & Screen Recorder
+<p align="center">
+  <img src="src-tauri/icons/128x128@2x.png" alt="Snap Desk" width="96" height="96" />
+</p>
 
-[简体中文](README.md) · English
+<h1 align="center">Snap Desk</h1>
 
-**Snap Desk** is a free, open-source cross-platform screen capture and screen recording app for Windows, macOS, and Linux. Take region screenshots and scrolling screenshots, annotate or pin images, record MP4/GIF videos, recognize text with OCR, translate text, and manage clipboard history. Capture and recording work locally; OCR and translation offer optional offline engines and user-configured online APIs.
+<p align="center">
+  A free, open-source, cross-platform screenshot and screen recording app for Windows, macOS (Apple silicon), and Linux.<br />
+  Screenshots, scrolling capture, annotation, pinning, recording, OCR, translation, and clipboard history in one app.
+</p>
 
-[Website](https://bitdan.github.io/snap-desk/en/) · [Download](https://github.com/bitdan/snap-desk/releases) · [Quick Start](#quick-start) · [Technical Guide (Chinese)](TECHNICAL.md) · [Roadmap (Chinese)](Snap_Desk_TODO.md)
+<p align="center">
+  <a href="https://github.com/bitdan/snap-desk/releases">Download</a> ·
+  <a href="https://bitdan.github.io/snap-desk/en/">Website</a> ·
+  <a href="#features">Features</a> ·
+  <a href="#quick-start">Quick Start</a> ·
+  <a href="TECHNICAL.md">Technical Guide (Chinese)</a> ·
+  <a href="Snap_Desk_TODO.md">Roadmap (Chinese)</a>
+</p>
 
-![Snap Desk capture and annotation: select a chart, box the peak, point at it with an arrow, and mosaic the secret key](docs/assets/screenshots/annotate.png)
+<p align="center"><a href="README.md">简体中文</a> · English</p>
 
-## Screenshots
+| Light theme | Dark theme |
+| :---: | :---: |
+| ![Main window capture page, light theme](docs/assets/screenshots/main-light.png) | ![Main window capture page, dark theme](docs/assets/screenshots/main-dark.png) |
 
 Screenshots show the Simplified Chinese interface; the app also ships an English UI.
 
-| OCR | Translation |
-| :---: | :---: |
-| ![OCR result window: the captured image on the left, recognized text on the right](docs/assets/screenshots/ocr.png) | ![Translate in place: recognized English text above, Chinese translation below](docs/assets/screenshots/translate.png) |
-| Recognize text in a selection, compare it with the image, tidy and copy it | Translate the recognized text in place, source and result side by side |
-| **Pin to desktop** | **Screen recording** |
-| ![An annotated chart pinned beside a document](docs/assets/screenshots/pin.png) | ![Recording toolbar shown after selecting a region](docs/assets/screenshots/recording.png) |
-| Pin a screenshot on top of everything and work alongside it | Select a region, choose audio, pointer and format, then record |
-
-## Download
-
-Download from [Snap Desk releases](https://github.com/bitdan/snap-desk/releases). Install offline OCR models, the local translation engine, and language packs in the app as needed.
-
-| Platform | File | Notes |
-| --- | --- | --- |
-| Windows x64 | `-setup.exe` installer / `-standalone.exe` standalone EXE | Full feature set, with online updates |
-| macOS Apple silicon (preview) | `-macos-arm64.dmg` | Nearly full feature set, with online updates; not yet tested on real hardware. Requires macOS 13.3 or later. Not notarized by Apple: allow it in System Settings → Privacy & Security on first launch, and grant Screen Recording permission |
-| Linux x64 (preview) | `-linux-x64.AppImage` / `-linux-x64.deb` | Requires Ubuntu 24.04 or a comparable distribution (glibc 2.39+). Supports X11 and Wayland sessions; not yet tested on real hardware. The AppImage bundles the web engine and system libraries (about 100 MB), runs across distributions, and updates online. The deb is small (about 20 MB), gets its dependencies from the package manager, and is upgraded by installing the new package |
-
-On macOS, Snap Desk supports screenshots (with window and control snapping and an optional cursor), scrolling capture, MP4/GIF recording with system audio and microphone, clipboard history, pinning, Apple Vision OCR, and selected-text translation. Selecting across screens, the local translation engine, and local PaddleOCR are not available there yet. On Linux X11, Snap Desk supports multi-display capture, window snapping, scrolling capture, MP4/GIF recording with system audio and microphone, clipboard history, selected-text translation, and the system secret store. On Wayland it supports single-display capture, recording through the ScreenCast portal, and portal global shortcuts, with clipboard history and selected-text translation going through Xwayland. These macOS and Linux features have only passed CI builds and automated tests so far and have not been tested on real hardware; please open an issue if something does not work. See the [roadmap](Snap_Desk_TODO.md).
-
 ## Features
 
-`[x]` / ✅ means supported; `[ ]` means not yet supported. See the [roadmap (Chinese)](Snap_Desk_TODO.md) for future plans.
-
-- **Offline**: capture, recognition, or translation runs on your computer. Installing resources and checking for updates may require internet access.
-- **Online API**: text or selected images are sent to your chosen provider. Quotas, pricing, and usage rights depend on that provider.
-- **Local API**: requests go to a local endpoint. Whether it accesses cloud services depends on its configuration; a local endpoint does not guarantee offline processing.
+✅ Supported. Capture, recording, pinning, and the clipboard all run on your computer; images or text are sent to a provider only when you choose an online service. See the [roadmap](Snap_Desk_TODO.md) for plans.
 
 ### Screenshot & Annotation
 
-- [x] **Offline** · Region and full-screen capture, with snapping to windows.
-- [x] **Offline** · Multiple monitors, mixed display scaling, capture delay, and cursor options.
-- [x] **Offline** · Color picker, rectangles, ellipses, lines, arrows, arrow labels, and polylines.
-- [x] **Offline** · Pen, highlighter, text, numbered labels, spotlight, and magnifier annotations.
-- [x] **Offline** · Mosaic, blur, pixel erasing, and annotation deletion.
-- [x] **Offline** · Shared annotation tools for captures and pinned images, further editing, undo/redo, and toolbar reordering.
-- [x] **Offline** · Copy and save images, export PNG/JPEG/WebP, and customize filenames.
+![Capture: a selected region with the annotation and action toolbar below](docs/assets/screenshots/annotate.png)
+
+- ✅ Region and full-screen capture, snapping to windows and interface elements
+- ✅ Multiple monitors, mixed scaling, capture delay, optional cursor
+- ✅ Magnifier and color picker
+- ✅ Reuse last selection; copy, pin, or save right after selecting
+- ✅ Capture history: replay the last 20 captures with `,` / `.` and keep editing
+- ✅ 16 annotation tools: rectangle, ellipse, arrow, arrow with label, line, polyline, pen, highlighter, text, numbered label, spotlight, magnifier, mosaic, blur, pixel eraser, delete annotation
+- ✅ Undo/redo, collapsible and reorderable toolbar
+- ✅ PNG / JPEG / WebP export with custom filenames
 
 ### Scrolling Screenshot
 
-- [x] **Offline** · Manual horizontal or vertical scrolling, reversing direction along the same axis, and automatic stitching.
-- [x] **Offline** · Live preview, failure recovery, and PNG export with a white or transparent background.
-- [ ] Extra-large scrolling captures.
-- [ ] General-purpose full-page browser capture.
+![Scrolling capture with the live stitching preview on the right](docs/assets/screenshots/scroll-capture.png)
 
-### Image Pinning
-
-- [x] **Offline** · Pin screenshots, images, or clipboard content to the desktop.
-- [x] **Offline** · Multiple windows, grouping, locking, zoom, opacity, and always-on-top controls.
-- [x] **Offline** · Adjust, annotate, copy, and save images.
-- [x] **Depends on the selected service** · Access OCR, QR code recognition, and translation from pinned images.
+- ✅ Horizontal or vertical auto-stitching, reversing along the same axis
+- ✅ Live preview and failure recovery
+- ✅ PNG export with a white or transparent background
 
 ### Screen Recording
 
-- [x] **Offline / Windows, macOS, Linux** · Record a region or display and export MP4/GIF.
-- [x] **Offline / Windows, macOS, Linux (X11)** · Pause/resume, keyboard and mouse visualization, and live annotations.
-- [x] **Offline / Windows, macOS, Linux** · Record system audio and microphone input in MP4 recordings.
-- [ ] Webcam overlay, H.265, HDR, and advanced video editing.
+![Recording: toolbar for range, audio, pointer, and input effects after selecting a region](docs/assets/screenshots/recording.png)
 
-### OCR
+- ✅ Region or full-display recording, MP4 / GIF
+- ✅ System audio, microphone, mouse pointer
+- ✅ Countdown, pause/resume
+- ✅ Live annotation that fades out or is cleared by hand
+- ✅ Input effects: key hints, click rings, pointer trails, drag paths, scroll hints
+- ✅ Adjustable frame rate, quality, bitrate, and encoder
 
-| Status | Engine / Service | Type | Notes |
-| --- | --- | --- | --- |
-| ✅ | PaddleOCR · PP-OCRv6 | Offline | Install recognition resources on first use |
-| ✅ | Windows OCR | Offline | Uses installed Windows recognition language packs |
-| ✅ | Apple Vision | Offline | Built-in macOS text recognition; nothing to install |
-| ✅ | OCR.space | Online API | Requires an API key; large screenshots are compressed to meet the free tier's 1 MB limit |
-| ✅ | Paddle API | Online API | Requires an AI Studio token; model options include PP-OCRv6, PaddleOCR-VL-1.6, and PP-StructureV3 |
-| ✅ | Groq Vision | Online API | Select a model that supports image recognition |
-| ✅ | Custom vision service | Online API / Local API | Connect a compatible service with image input support |
+### Image Pinning
 
-- [x] Start text recognition with a global shortcut (`Alt+C` by default); during a capture it recognizes the current selection. The capture closes once content is recognized, leaving only the result window.
-- [x] Edit, copy, or translate recognized text.
-- [x] Recognize QR codes locally; confirm before opening detected links.
-- [x] Use the selected OCR engine without automatically switching to an online service when local recognition fails.
+| Pinned image | Toolbar |
+| :---: | :---: |
+| ![A pinned image floating above a page](docs/assets/screenshots/pin.png) | ![Pin toolbar below the image: annotation, zoom, image adjustments, and recognition](docs/assets/screenshots/pin-toolbar.png) |
 
-When online OCR is selected, recognition uploads the selected image directly. See the [OCR technical guide (Chinese)](TECHNICAL.md#ocr-接入) for endpoints, models, quotas, and commercial-use terms.
+- ✅ Pin captures, image files, or clipboard text / rich text / colors
+- ✅ Always on top, zoom, opacity, lock, click-through
+- ✅ Groups and shared appearance (shadow, corner radius, border)
+- ✅ Rotate, flip, grayscale, invert, auto adjust
+- ✅ Annotate, copy, save, drag out to other apps
+- ✅ OCR, QR code recognition, image translation
+
+### Top Shelf
+
+![Shelf cards hanging from the top of the screen](docs/assets/screenshots/shelf.png)
+
+- ✅ Opens with a shortcut or when the pointer rests at the top center of the screen
+- ✅ Holds chosen categories: text, images, files, links, paths, colors, favorites
+- ✅ Click to copy, drag to share, take down as a pinned image
+- ✅ Undoable removal that leaves clipboard history untouched
+
+### Clipboard History
+
+| History window | Combined export |
+| :---: | :---: |
+| ![Clipboard history window: search, categories, and text/image cards](docs/assets/screenshots/clipboard.png) | ![Combined export: item order and long-image preview](docs/assets/screenshots/clipboard-composer.png) |
+
+- ✅ Text, image, and file-path history
+- ✅ Categories, search, favorites, previews
+- ✅ Enter pastes into the previous window, `Ctrl+1`–`9` quick pick, multi-select batch actions
+- ✅ Combined export to PDF / long image / separate files, with reordering and text rewriting
+- ✅ Retention days, item count, and size limits
+
+### OCR & QR Codes
+
+| OCR result | QR code |
+| :---: | :---: |
+| ![OCR result: recognition boxes on the image beside editable text](docs/assets/screenshots/ocr.png) | ![QR code recognition result](docs/assets/screenshots/qr.png) |
+
+- ✅ Offline: PaddleOCR PP-OCRv6, Windows OCR, Apple Vision, WeChat OCR (experimental)
+- ✅ Online: OCR.space, Paddle API, Groq Vision, DeepSeek, custom vision services
+- ✅ Shortcut-driven recognition, with recognition boxes over the original image
+- ✅ Merge line breaks, tidy spaces, auto copy
+- ✅ Local QR code recognition, with confirmation before opening links
 
 ### Translation
 
-| Status | Engine / Service | Type | Notes |
-| --- | --- | --- | --- |
-| ✅ | CTranslate2 | Offline | Chinese–English translation after installing the engine and language pack |
-| ✅ | DeepL API Free / Pro | Online API | Use your own API key |
-| ✅ | Groq | Online API | Select a text model available to your account |
-| ✅ | OpenAI | Online API | Configure a model and API key |
-| ✅ | Ollama and other local services | Local API | Connect a compatible local text model service |
-| ✅ | Custom text service | Online API / Local API | Configure the endpoint, model, and required credentials |
+| Translate after OCR | Translation window |
+| :---: | :---: |
+| ![Screenshot translation with the result placed over the original text](docs/assets/screenshots/translate.png) | ![Translation window: language detection, auto Chinese–English, and a DeepL result](docs/assets/screenshots/translation-window.png) |
 
-- [x] A separate translation window for typed text, clipboard text, selected-text shortcuts, and screenshot translation.
-- [x] Press `Alt+T` to open the translation window; selected text is copied and translated automatically on Windows, macOS, and Linux. The shortcut is customizable.
-- [x] Press `Enter` to translate and `Shift+Enter` for a new line; switch languages, copy results, merge line breaks, and keep the window on top.
-- [x] Shared translation access from the screenshot toolbar, pinned images, and translation window. Online text translation sends only the text to translate.
+- ✅ Offline: CTranslate2 Chinese–English
+- ✅ Online: DeepL, Groq, DeepSeek, OpenAI, custom text services
+- ✅ Local: Ollama and other compatible services
+- ✅ Selected-text, screenshot, and pinned-image translation, plus a standalone window
+- ✅ Automatic Chinese ↔ English, plus Japanese, Korean, French, German
+- ✅ Translate back, swap languages, keep on top
 
-See the [translation technical guide (Chinese)](TECHNICAL.md#翻译接入) for dedicated API adapters and compatible services.
+### AI & Service Management
 
-### API Service Management
+![Service management: local engines and online services](docs/assets/screenshots/services.png)
 
-- [x] Separate OCR, translation, and service settings pages, with cloud APIs first, followed by local APIs and offline engines.
-- [x] Multiple account/model connections. Saved connections replace provider presets while preserving separate accounts.
-- [x] Display the active service, model, and current-use indicator; distinguish the configuration being viewed from the one in use.
-- [x] Store secrets in Windows Credential Manager, the macOS Keychain, or the Linux Secret Service, isolated by connection and endpoint; exclude secrets from configuration exports.
-- [x] Link to official credential pages and connect with API keys/tokens.
-- [ ] Sign in through a browser to authorize Snap Desk directly.
+- ✅ Multiple account/model connections, several keys each tested individually
+- ✅ DeepSeek, Groq, OCR.space, PaddleOCR, DeepL presets, plus Chat Completions–compatible services
+- ✅ Keys stored in Windows Credential Manager / macOS Keychain / Linux Secret Service
+- ✅ Local models and language packs installed on demand, verified, unloaded when idle
 
-### Clipboard Manager
+### Updates & Settings
 
-- [x] **Offline** · A standalone clipboard window opened by shortcut, with text, image, and file-path history, categories, sorting, search, favorites, and previews.
-- [x] **Offline** · Copy, pin, and export to PDF, long PNG images, or individual files. File history stores paths only.
+| Shortcuts | App updates |
+| :---: | :---: |
+| ![Shortcut settings](docs/assets/screenshots/shortcuts.png) | ![App update settings](docs/assets/screenshots/update.png) |
 
-### Settings & Updates
+![Log page](docs/assets/screenshots/logs.png)
 
-- [x] **Offline** · Custom shortcuts, conflict checks, global shortcut enable/disable, and an interactive interface guide.
-- [x] **Offline** · Chinese/English interface, light/dark themes, configuration import/export, and diagnostic logs.
-- [x] **Online** · Stable/beta updates for the Windows installer and standalone EXE, the macOS app, and the Linux AppImage.
+- ✅ Stable / beta online updates with signature verification
+- ✅ Download mirror, update proxy, check interval
+- ✅ Custom shortcuts, conflict detection, command-line actions
+- ✅ Tray icon, launch at login
+- ✅ Chinese / English UI, light / dark theme, onboarding guide
+- ✅ Settings import / export
+- ✅ Log filters and diagnostics export
+
+## Download
+
+Download from [Releases](https://github.com/bitdan/snap-desk/releases).
+
+| Platform | File | Status |
+| --- | --- | --- |
+| Windows x64 | `-setup.exe` installer / `-standalone.exe` standalone EXE | Full feature set |
+| macOS Apple silicon | `-macos-arm64.dmg` | Preview, macOS 13.3+ |
+| Linux x64 | `-linux-x64.AppImage` / `-linux-x64.deb` | Preview, glibc 2.39+ (Ubuntu 24.04 era) |
+
+<details>
+<summary><strong>macOS and Linux notes</strong></summary>
+<br />
+
+- The macOS and Linux builds have only passed CI builds and automated tests and have not been tested on real hardware; please open an issue if something does not work.
+- **macOS**: not notarized by Apple. On first launch, allow it in System Settings → Privacy & Security and grant Screen Recording permission. Selecting across screens, the local translation engine, and local PaddleOCR are not available yet.
+- **Linux**: the AppImage (about 100 MB) bundles its dependencies and updates online; the deb (about 20 MB) is upgraded by installing the new package. On Wayland, capture is single-display, recording goes through the ScreenCast portal, pause/resume, input effects, and live annotation are X11-only, clipboard history and selected-text translation go through Xwayland, and direct paste falls back to copy only.
+
+</details>
 
 ## Quick Start
 
-1. Launch the app and press `F1` to capture. Drag to select a region, then annotate, copy or save from the toolbar. Screenshots do not require an OCR or translation service.
-2. When you need text recognition, select an engine in OCR settings. Install resources for offline engines, or enter your own API key/token and save an online service.
-3. Select a local or online translation service and set the default target language. Configure additional accounts or models in service management.
-4. Check the current OCR/translation summary and the current-use indicator in the menu to confirm which configuration is active.
-5. Use the screenshot toolbar, pinned-image menu, or translation window. View and customize shortcuts in shortcut settings; keys taken by another app are marked "In use".
-6. If the app cannot register global shortcuts (for example on Linux Wayland), bind a system shortcut to `snap-desk --action capture`. Available actions: `capture`, `pin`, `record`, `history`, `translate`, `shelf`, `ocr`.
+1. Press `F1` to capture, drag a region, then annotate, copy, or save. Screenshots need no setup.
+2. Pick OCR and translation engines under Recognition & Translation: install resources for offline engines, or enter your own API key for online services.
+3. Default shortcuts: `F1` capture · `F2` pin · `F3` record · `Alt+V` clipboard · `Alt+T` translate · `Alt+Z` shelf · `Alt+C` OCR (letter keys use `Ctrl+Alt` on macOS).
+4. If global shortcuts cannot be registered (for example on Wayland), bind a system shortcut to `snap-desk --action capture`; other actions are `pin`, `record`, `history`, `translate`, `shelf`, and `ocr`.
 
-Paddle offers an official asynchronous endpoint (recommended) and a synchronous endpoint with a custom address. Use the official asynchronous option unless your console provides a synchronous endpoint. Online services may incur charges; quotas and usage rights depend on your provider's account terms.
-
-For development, builds, and additional service integrations, see the [technical guide (Chinese)](TECHNICAL.md).
+For development, builds, and service integrations, see the [technical guide (Chinese)](TECHNICAL.md).
 
 ## FAQ
 
-### Which platforms are supported?
+**Do OCR and translation work offline?** Yes. PaddleOCR, Windows OCR, Apple Vision, and WeChat OCR recognize text locally; CTranslate2 translates Chinese–English offline.
 
-Windows x64 has the full feature set, as an installer or standalone EXE: screenshot capture, screen recording, OCR, translation, and clipboard history in one desktop app. macOS (Apple silicon) has nearly all of it, apart from selecting across screens and some local engines. Linux x64 is a preview with the main features ported but not yet tested on real hardware; see [Download](#download) for what it includes.
+**Is it free?** Yes, free and open source (GPL-3.0-only). Third-party online services may charge.
 
-### Can OCR and translation work offline?
-
-Yes. PaddleOCR, Windows OCR, and Apple Vision recognize text locally. CTranslate2 supports offline Chinese–English translation after its resources are installed. You can also choose online services such as OCR.space, Paddle API, DeepL, and Groq using your own credentials.
-
-### Is Snap Desk free?
-
-Snap Desk is free and open source under GPL-3.0-only. Third-party OCR and translation APIs may charge for usage; free quotas depend on the provider.
+**A shortcut does nothing?** Check whether it is marked in use on the Shortcuts page and run the shortcut test; meanwhile use the tray menu or a command-line action.
 
 ## Feedback
 
-Use the [issue forms](https://github.com/bitdan/snap-desk/issues/new/choose) to report a bug, suggest a feature or ask for help. Chinese and English are welcome. For bugs, include the app version, OS, installation method and steps to reproduce. Remove secrets and personal data before sharing screenshots, logs or diagnostic bundles.
+Use the [issue forms](https://github.com/bitdan/snap-desk/issues/new/choose); Chinese and English are welcome. Include the version, OS, and steps to reproduce, and remove secrets and personal data before sharing screenshots, logs, or diagnostics bundles.
 
 ## Acknowledgements
 
