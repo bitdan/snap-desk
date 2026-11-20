@@ -594,3 +594,48 @@ mod tests {
         assert_eq!(frame.origin.y, 820.0);
     }
 }
+
+/// 从 NSView 取所在 NSWindow（GPUI 的 raw-window-handle 只给出 NSView）。
+///
+/// # Safety
+/// `ns_view` 必须是存活的 NSView 指针，且只能在 Cocoa 主线程调用。
+pub unsafe fn ns_window_of_view(ns_view: *mut c_void) -> *mut c_void {
+    if ns_view.is_null() {
+        return std::ptr::null_mut();
+    }
+    let view = &*(ns_view as *mut AnyObject);
+    let window: Id = msg_send![view, window];
+    window as *mut c_void
+}
+
+/// 鼠标穿透：忽略鼠标事件后点击落到下面的窗口。
+///
+/// # Safety
+/// `ns_window` 必须是存活且非空的 NSWindow 指针，且只能在 Cocoa 主线程调用。
+pub unsafe fn set_ns_window_ignores_mouse(ns_window: *mut c_void, ignore: bool) {
+    let window = &*(ns_window as *mut AnyObject);
+    let _: () = msg_send![window, setIgnoresMouseEvents: Bool::new(ignore)];
+}
+
+/// 设置窗口层级（0 普通、3 浮动、101 弹出菜单层）。
+///
+/// # Safety
+/// 同 [`set_ns_window_ignores_mouse`]。
+pub unsafe fn set_ns_window_level(ns_window: *mut c_void, level: isize) {
+    let window = &*(ns_window as *mut AnyObject);
+    let _: () = msg_send![window, setLevel: level];
+}
+
+/// 隐藏（orderOut）或不抢焦点地重新显示（orderFrontRegardless）。
+///
+/// # Safety
+/// 同 [`set_ns_window_ignores_mouse`]。
+pub unsafe fn set_ns_window_visible(ns_window: *mut c_void, visible: bool) {
+    let window = &*(ns_window as *mut AnyObject);
+    if visible {
+        let _: () = msg_send![window, orderFrontRegardless];
+    } else {
+        let nil: Id = std::ptr::null_mut();
+        let _: () = msg_send![window, orderOut: nil];
+    }
+}

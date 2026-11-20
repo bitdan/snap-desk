@@ -289,6 +289,63 @@ impl X11 {
             .map_err(|_| "X 服务器缺少 XFixes 扩展，无法监听剪贴板。".into())
     }
 
+    /// 鼠标穿透：把窗口输入形状设为空区域，点击落到下面的窗口；关闭时恢复默认（整窗接收）。
+    pub fn set_input_passthrough(&self, window: x::Window, enabled: bool) -> Result<(), String> {
+        self.xfixes()?;
+        let region: xfixes::Region = if enabled {
+            let region = self.conn.generate_id();
+            self.conn
+                .send_and_check_request(&xfixes::CreateRegion { region, rectangles: &[] })
+                .map_err(|e| format!("无法创建输入区域：{e}"))?;
+            region
+        } else {
+            xcb::Xid::none()
+        };
+        let result = self
+            .conn
+            .send_and_check_request(&xfixes::SetWindowShapeRegion {
+                dest: window,
+                dest_kind: xcb::shape::Sk::Input,
+                x_offset: 0,
+                y_offset: 0,
+                region,
+            })
+            .map_err(|e| format!("无法设置鼠标穿透：{e}"));
+        if enabled {
+            let _ = self.conn.send_and_check_request(&xfixes::DestroyRegion { region });
+        }
+        result
+    }
+
+    /// 通过 EWMH `_NET_WM_STATE_ABOVE` 请求窗口管理器置顶或取消置顶。
+    pub fn set_above(&self, window: x::Window, above: bool) -> Result<(), String> {
+        let state = self.existing("_NET_WM_STATE").ok_or("窗口管理器不支持置顶。")?;
+        let flag = self.intern("_NET_WM_STATE_ABOVE")?;
+        let event = x::ClientMessageEvent::new(
+            window,
+            state,
+            x::ClientMessageData::Data32([u32::from(above), flag.resource_id(), 0, 1, 0]),
+        );
+        self.conn
+            .send_and_check_request(&x::SendEvent {
+                propagate: false,
+                destination: x::SendEventDest::Window(self.root),
+                event_mask: x::EventMask::SUBSTRUCTURE_REDIRECT | x::EventMask::SUBSTRUCTURE_NOTIFY,
+                event: &event,
+            })
+            .map_err(|_| "窗口管理器拒绝了置顶请求。".into())
+    }
+
+    /// 隐藏（取消映射）或重新显示窗口。
+    pub fn set_mapped(&self, window: x::Window, mapped: bool) -> Result<(), String> {
+        let result = if mapped {
+            self.conn.send_and_check_request(&x::MapWindow { window })
+        } else {
+            self.conn.send_and_check_request(&x::UnmapWindow { window })
+        };
+        result.map_err(|e| format!("无法切换窗口可见性：{e}"))
+    }
+
     /// 窗口在根坐标系中的矩形（不含窗口管理器边框）。
     pub fn window_rect(&self, window: x::Window) -> Option<(i32, i32, u32, u32)> {
         let geometry = self
@@ -665,4 +722,22 @@ mod tests {
         assert_eq!(covers_monitor((-1, -1, 1922, 1082), &monitors), Some(true));
         assert_eq!(covers_monitor((9000, 9000, 10, 10), &monitors), None);
     }
+}
+
+/// 按窗口 id 设置鼠标穿透（GPUI 等外壳只持有原生窗口 id）。
+pub fn window_passthrough(id: u32, enabled: bool) -> Result<(), String> {
+    let x = X11::connect()?;
+    x.set_input_passthrough(x::Window::new(id), enabled)
+}
+
+/// 按窗口 id 请求置顶或取消置顶。
+pub fn window_above(id: u32, above: bool) -> Result<(), String> {
+    let x = X11::connect()?;
+    x.set_above(x::Window::new(id), above)
+}
+
+/// 按窗口 id 隐藏或重新显示。
+pub fn window_mapped(id: u32, mapped: bool) -> Result<(), String> {
+    let x = X11::connect()?;
+    x.set_mapped(x::Window::new(id), mapped)
 }
