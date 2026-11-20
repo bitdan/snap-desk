@@ -132,3 +132,27 @@ pub fn secret_key(id: &str, endpoint: &str, key: &str) -> String {
         format!("{}#{key}", credential_key(id, endpoint))
     }
 }
+
+/// 按顺序读取已保存的密钥（系统凭据库），缺失的条目跳过。
+pub fn secrets(id: &str, endpoint: &str, keys: &[String]) -> Result<Vec<String>, String> {
+    let mut values = Vec::new();
+    for key in keys {
+        if let Some(value) = super::ai_credentials::read(&secret_key(id, endpoint, key))? {
+            values.push(value);
+        }
+    }
+    Ok(values)
+}
+
+/// 认证失败、额度不足或限流时才换下一个密钥；网络、地址等错误换密钥也无济于事。
+pub fn key_rejected(error: &str) -> bool {
+    ["认证", "额度", "受限"].iter().any(|word| error.contains(word))
+}
+
+/// 运行时按服务标识取密钥顺序；旧版直接配置（无服务标识）只有单个条目。
+pub fn key_ids(settings: &Settings, service_id: &str) -> Vec<String> {
+    if service_id.is_empty() {
+        return default_keys();
+    }
+    find(settings, service_id).map(|service| service.keys.clone()).unwrap_or_default()
+}

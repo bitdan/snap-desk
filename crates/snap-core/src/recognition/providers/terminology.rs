@@ -1,5 +1,5 @@
 //! 大模型术语保护：代码、URL、占位符和常见变量先替换，返回后严格校验并原样恢复。
-pub(super) struct ProtectedText {
+pub struct ProtectedText {
     pub text: String,
     tokens: Vec<(String, String)>,
 }

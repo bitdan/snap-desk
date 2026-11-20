@@ -7,31 +7,17 @@ pub use snap_core::recognition::services::{
     credential_key, find, secret_key, translation_config, RecognitionService,
 };
 use snap_core::recognition::services::default_keys;
-/// 按顺序读取已保存的密钥，缺失的条目跳过。
-pub fn secrets(id: &str, endpoint: &str, keys: &[String]) -> Result<Vec<String>, String> {
-    let mut values = Vec::new();
-    for key in keys {
-        if let Some(value) = super::ai_credentials::read(&secret_key(id, endpoint, key))? {
-            values.push(value);
-        }
-    }
-    Ok(values)
-}
-/// 认证失败、额度不足或限流时才换下一个密钥；网络、地址等错误换密钥也无济于事。
-pub fn key_rejected(error: &str) -> bool {
-    ["认证", "额度", "受限"].iter().any(|word| error.contains(word))
-}
+/// 密钥读取、换钥判断与密钥顺序在 core（GPUI 版共用）。
+pub use snap_core::recognition::services::secrets;
+
 /// 运行时按服务标识取密钥顺序；旧版直接配置（无服务标识）只有单个条目。
 pub fn key_ids(app: &AppHandle, service_id: &str) -> Vec<String> {
-    if service_id.is_empty() {
-        return default_keys();
-    }
     let state = app.state::<crate::settings::SettingsState>();
     let keys = state
         .0
         .lock()
         .ok()
-        .and_then(|settings| find(&settings.value, service_id).ok().map(|service| service.keys.clone()));
+        .map(|settings| snap_core::recognition::services::key_ids(&settings.value, service_id));
     keys.unwrap_or_default()
 }
 /// 只显示首尾少量字符，界面可区分多个密钥而不暴露完整内容。

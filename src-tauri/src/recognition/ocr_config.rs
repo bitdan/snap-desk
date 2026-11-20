@@ -4,11 +4,7 @@ use tauri::{AppHandle, WebviewWindow};
 /// 配置模型在 core，设置校验与识别调度共用。
 pub use snap_core::recognition::ocr_config::OcrSettings;
 
-#[derive(Serialize)]
-pub struct OcrLanguage {
-    pub tag: String,
-    pub name: String,
-}
+pub use snap_core::recognition::ocr_config::OcrLanguage;
 
 /// supported 仅表示平台支持；语言查询失败不伪装成空语言包列表。
 #[derive(Serialize)]
@@ -58,10 +54,7 @@ pub fn snapshot(app: &AppHandle) -> Result<(OcrSettings, Option<super::services:
     use tauri::Manager;
     let state = app.state::<crate::settings::SettingsState>();
     let current = state.0.lock().map_err(|_| "无法读取 OCR 设置。")?;
-    let value = current.value.ocr.clone();
-    value.validate()?;
-    let service = if value.provider == "service" { Some(super::services::find(&current.value, &value.service_id)?.clone()) } else { None };
-    Ok((value, service))
+    snap_core::recognition::ocr_config::snapshot(&current.value)
 }
 
 #[cfg(test)]

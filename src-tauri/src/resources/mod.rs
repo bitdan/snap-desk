@@ -3,7 +3,7 @@
 pub(crate) mod lifecycle;
 pub(crate) mod status_cache;
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::{
     fs,
@@ -21,23 +21,10 @@ static OCR_STATUS: status_cache::StatusCache<(bool, bool, u64)> = status_cache::
 static FONT_STATUS: status_cache::StatusCache<bool> = status_cache::StatusCache::new();
 const MAX_FONT: u64 = 64 * 1024 * 1024;
 
-/// 前端只能选择资源类别，下载地址、文件名和摘要由内置清单决定。
-#[derive(Clone, Copy, Deserialize, PartialEq)]
-#[serde(rename_all = "lowercase")]
-pub enum ResourceKind {
-    Ocr,
-    Font,
-}
-
-/// 发布资源的固定身份；size 为字节数，sha256 用于发现截断或内容被替换。
-#[derive(Deserialize)]
-pub(crate) struct Asset {
-    pub(crate) kind: ResourceKind,
-    pub(crate) name: String,
-    pub(crate) url: String,
-    pub(crate) size: u64,
-    pub(crate) sha256: String,
-}
+/// 资源清单、类别与摘要校验在 core，GPUI 版与本外壳共用。
+pub use snap_core::resources::ResourceKind;
+pub(crate) use snap_core::resources::{verified, Asset};
+use snap_core::resources::manifest;
 
 /// 设置页展示的实际可用状态，不把“文件存在”直接当作“资源已就绪”。
 #[derive(Clone, Serialize)]
@@ -59,29 +46,11 @@ pub struct Progress {
     total: u64,
 }
 
-fn manifest() -> Result<Vec<Asset>, String> {
-    serde_json::from_str(include_str!("../../assets/downloads.json")).map_err(|e| e.to_string())
-}
-
 pub fn directory(app: &AppHandle) -> Result<PathBuf, String> {
     app.path()
         .app_data_dir()
         .map(|p| p.join("resources"))
         .map_err(|e| e.to_string())
-}
-
-pub(crate) fn verified(path: &Path, asset: &Asset) -> bool {
-    if fs::metadata(path).map(|m| m.len()).ok() != Some(asset.size) {
-        return false;
-    }
-    // 模型和 DLL 用流式摘要，避免检查设置状态时额外分配整份资源的内存。
-    (|| -> std::io::Result<bool> {
-        let mut file = fs::File::open(path)?;
-        let mut hash = Sha256::new();
-        std::io::copy(&mut file, &mut hash)?;
-        Ok(format!("{:x}", hash.finalize()) == asset.sha256)
-    })()
-    .unwrap_or(false)
 }
 
 /// 仅接受单个静态 TrueType 字体；可变字体和 TTC 集合不能可靠嵌入当前 PDF 引擎。
@@ -124,13 +93,7 @@ pub fn ocr_paths(app: &AppHandle) -> Result<PathBuf, String> {
     let _guard = OPERATION
         .try_lock()
         .map_err(|_| "资源正在更新，请稍后识别。")?;
-    let dir = directory(app)?;
-    for asset in manifest()?.iter().filter(|a| a.kind == ResourceKind::Ocr) {
-        if !verified(&dir.join(&asset.name), asset) {
-            return Err("OCR 模型未下载或校验失败，请在“文字识别”页下载识别资源。".into());
-        }
-    }
-    Ok(dir)
+    snap_core::resources::ocr_models(&directory(app)?)
 }
 
 /// 只观察实际校验的 OCR 文件和当前架构运行库；根目录及其他资源不属于本分区。
@@ -143,7 +106,7 @@ fn ocr_status_paths(dir: &Path, assets: &[Asset]) -> Result<Vec<PathBuf>, String
     #[cfg(windows)]
     let paths = {
         let mut paths = paths;
-        #[derive(Deserialize)]
+        #[derive(serde::Deserialize)]
         struct RuntimeDirectory {
             arch: String,
             directory: String,
@@ -225,7 +188,7 @@ pub async fn download_resources(
             .map_err(|e| e.to_string())?;
         #[cfg(windows)]
         if kind == ResourceKind::Ocr {
-            crate::recognition::ocr_runtime::download(&app, &client, &dir)?;
+            crate::recognition::ocr_runtime::download(&dir, |asset| download_file(&app, &client, &dir, asset))?;
         }
         for asset in manifest()?.iter().filter(|a| a.kind == kind) {
             let path = dir.join(&asset.name);

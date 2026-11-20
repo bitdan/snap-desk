@@ -1,5 +1,5 @@
 //! 在线 OCR 适配：按用户已选服务直接上传裁剪图，供应商响应归一化，不下载返回的图片链接。
-use super::{services::RecognitionService, OcrLine, OcrResult};
+use super::{ocr::{OcrLine, OcrResult}, services::RecognitionService};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use image::ImageEncoder;
 use serde_json::{json, Value};
@@ -141,7 +141,7 @@ fn recognize_inner(image: &image::RgbaImage, service: &RecognitionService, op: u
 }
 
 /// 网络响应共用体积限制与脱敏错误；任务元数据和 JSONL 下载均不回传服务正文。
-pub(super) fn read_response(response: reqwest::blocking::Response) -> Result<Vec<u8>, String> {
+pub fn read_response(response: reqwest::blocking::Response) -> Result<Vec<u8>, String> {
     let status = response.status();
     if !status.is_success() {
         return Err(match status.as_u16() {
@@ -178,7 +178,7 @@ fn encode_image(
     if !small || png.len() <= 1_000_000 {
         return Ok((png, "image/png", false));
     }
-    let mut rgb = crate::shared::image_io::white_background(image);
+    let mut rgb = crate::export::white_background(image);
     for _ in 0..8 {
         for quality in [90, 75, 60] {
             let mut bytes = Vec::new();

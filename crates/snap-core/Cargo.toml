@@ -25,19 +25,32 @@ dirs = "6"
 global-hotkey = { version = "0.8", features = ["serde"] }
 # 屏幕与窗口采集；版本与 Tauri 版锁定的一致。
 xcap = "=0.9.8"
+# 识别：本地 PP-OCR（OAR 前后处理 + ort CPU 推理）、在线 OCR/翻译、二维码、资源摘要与运行库解压；版本与 src-tauri 一致。
+oar-ocr = { version = "=0.10.0", default-features = false }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "socks"] }
+rqrr = { version = "=0.10.1", default-features = false }
+sha2 = "0.10"
+blake3 = "=1.8.2"
+zip = { version = "=6.0.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
 # Windows：物理像素拼接、窗口与 UIA 控件候选、光标合成。版本与 src-tauri 锁定的 windows 0.62.2 一致。
 [target.'cfg(windows)'.dependencies]
 clipboard-win = "=5.4.1"
-windows = { version = "=0.62.2", features = ["Win32_Foundation", "Win32_Graphics_Dwm", "Win32_Graphics_Gdi", "Win32_System_Threading", "Win32_System_Com", "Win32_System_Variant", "Win32_UI_HiDpi", "Win32_UI_WindowsAndMessaging", "Win32_UI_Accessibility", "Win32_UI_Shell", "Win32_Storage_FileSystem"] }
+# Windows 只在首次识别时从已下载、校验过的路径加载 onnxruntime.dll。
+ort = { version = "=2.0.0-rc.13", default-features = false, features = ["load-dynamic", "api-24"] }
+windows = { version = "=0.62.2", features = ["Win32_Foundation", "Win32_Graphics_Dwm", "Win32_Graphics_Gdi", "Win32_System_Threading", "Win32_System_Com", "Win32_System_Variant", "Win32_UI_HiDpi", "Win32_UI_WindowsAndMessaging", "Win32_UI_Accessibility", "Win32_UI_Shell", "Win32_Storage_FileSystem", "Foundation", "Globalization", "Graphics_Imaging", "Media_Ocr", "Storage", "Storage_Streams", "Win32_System_WinRT", "Win32_Security_Credentials"] }
 
 # macOS：光标、窗口层级、隐私授权与辅助功能控件候选；版本与 Tauri/native-tls 已锁定的一致。
 [target.'cfg(target_os = "macos")'.dependencies]
+# AI 密钥存于钥匙串。
+security-framework = "=3.7.0"
 objc2 = "=0.6.5"
 block2 = "=0.6.2"
 
 # Linux：X11（RandR/XFixes/XTest/SHM/XInput）、Wayland 采集与合成器探测、PipeWire 帧经 GStreamer 读取。
 [target.'cfg(target_os = "linux")'.dependencies]
+# AI 密钥存于 Secret Service。
+dbus-secret-service = { version = "=4.1.0", features = ["crypto-openssl"] }
 xcb = { version = "=1.7.1", features = ["randr", "xfixes", "xtest", "shm", "xinput"] }
 gstreamer = "=0.21.3"
 libc = "0.2"
@@ -45,3 +58,7 @@ wayland-client = "=0.31.15"
 zbus = "=5.19.0"
 wayland-protocols = { version = "=0.32.13", features = ["client", "staging"] }
 libwayshot-xcap = "=0.3.3"
+
+# 非 Windows 平台在构建时下载 CPU 推理引擎，与 src-tauri 一致。
+[target.'cfg(not(windows))'.dependencies]
+ort = { version = "=2.0.0-rc.13", default-features = false, features = ["download-binaries", "tls-native", "api-24"] }

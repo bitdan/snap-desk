@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 const MAX_TEXT: usize = 1024 * 1024;
 
 /// 地址与模型白名单在 core，服务配置校验与识别请求共用。
-pub(super) use snap_core::recognition::ocr_config::paddle_is_jobs_endpoint as is_jobs_endpoint;
+pub use crate::recognition::ocr_config::paddle_is_jobs_endpoint as is_jobs_endpoint;
 
 /// 整个任务最多两分钟，单次网络请求也受剩余时间约束，避免服务一直 pending 导致无限等待。
 fn remaining(deadline: Instant) -> Result<Duration, String> {
@@ -93,7 +93,7 @@ fn result_url(value: &str) -> Result<reqwest::Url, String> {
 }
 
 /// 提交一次，随后仅查询同一任务；请求失败不会自动重复上传和消耗额度。
-pub(super) fn recognize(
+pub fn recognize(
     client: &reqwest::blocking::Client,
     service: &RecognitionService,
     token: &str,
@@ -152,7 +152,7 @@ pub(super) fn recognize(
 }
 
 /// 统一通用 OCR 的文字行、VL/Structure 的 Markdown 和版面文本块，不重复拼接全局 OCR。
-pub(super) fn parse_result(value: &Value) -> Result<String, String> {
+pub fn parse_result(value: &Value) -> Result<String, String> {
     let result = value.get("result").ok_or("PaddleOCR 响应缺少识别结果。")?;
     let mut text = String::new();
     if let Some(pages) = result.get("layoutParsingResults").and_then(Value::as_array) {
@@ -229,7 +229,7 @@ fn parse_jsonl(bytes: &[u8]) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use snap_core::recognition::ocr_config::paddle_supports_model as supports_model;
+    use crate::recognition::ocr_config::paddle_supports_model as supports_model;
     #[test]
     fn jobs_models_and_upload_contract() {
         let endpoint = "https://paddleocr.aistudio-app.com/api/v2/ocr/jobs";

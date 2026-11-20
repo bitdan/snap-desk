@@ -3,7 +3,7 @@ use super::{send, terminology::ProtectedText, TranslationRequest};
 use crate::recognition::translation::{chat_endpoint, AiSettings};
 use serde::Deserialize;
 
-pub(super) async fn translate(
+pub async fn translate(
     client: &reqwest::Client,
     settings: &AiSettings,
     request: &TranslationRequest,

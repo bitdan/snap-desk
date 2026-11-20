@@ -54,8 +54,6 @@ blake3 = "=1.8.2"
 # 仅嵌入实际使用的字形，避免短文本 PDF 携带整份约 24 MiB 中文字体。
 printpdf = { version = "=0.7.0", default-features = false, features = ["font_subsetting"] }
 ab_glyph = "=0.2.32"
-# OAR 复用 ort 的 CPU 推理及 PaddleOCR 前后处理；锁定兼容 Rust 1.95 的组合。
-oar-ocr = { version = "=0.10.0", default-features = false }
 # socks：设置中的更新代理可以是 SOCKS5（见 app::updater::download）。
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "socks"] }
 # 更新插件用 reqwest 0.13 读取更新清单；只为它启用 socks 特性，使 SOCKS5 代理也能用于检查更新。代码不直接使用。
@@ -63,7 +61,6 @@ reqwest-updater-socks = { package = "reqwest", version = "0.13", default-feature
 sha2 = "0.10"
 tokio = { version = "1", features = ["macros", "sync", "process", "io-util", "time"] }
 gif = "=0.14.2"
-rqrr = { version = "=0.10.1", default-features = false }
 open = "5"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 # 使用带版本绑定验签的更新器；只接收原生安装包，不启用旧版 ZIP 更新格式。
@@ -82,17 +79,13 @@ windows-sys = { version = "=0.59.0", features = ["Win32_System_Registry", "Win32
 wechat-ocr-core = { git = "https://github.com/MapleREHub/wechat_ocr_sdk", rev = "146d838ba045aba82451a187a0fb459cc784d086" }
 
 [target.'cfg(windows)'.dependencies]
-# 禁用 OAR 默认的构建时下载/静态链接，只在用户启用 OCR 后加载固定版本 DLL。
-# rc.13 显式选择 API 24，继续兼容已发布的 ONNX Runtime 1.24.2 DLL。
-ort = { version = "=2.0.0-rc.13", default-features = false, features = ["load-dynamic", "api-24"] }
 clipboard-win = "=5.4.1"
 # COM implement 宏生成 ::windows_core 路径，必须直接声明并与 windows 0.62.2 对齐。
 windows-core = "=0.62.2"
 windows = { version = "=0.62.2", features = ["Foundation", "Globalization", "Graphics_Imaging", "Media_Ocr", "Storage", "Storage_Streams", "Win32_System_WinRT", "Win32_Media_Audio", "Win32_System_Com_StructuredStorage", "Win32_System_Variant", "Win32_Security_Credentials", "Win32_System_Threading", "Win32_Media_MediaFoundation", "Win32_System_Com", "Win32_System_Ole", "Win32_System_SystemServices", "Win32_UI_Shell", "Win32_System_DataExchange", "Win32_System_Memory", "Win32_Graphics_Gdi", "Win32_Graphics_Dwm", "Win32_Storage_Xps", "Foundation_Metadata", "Graphics_Capture", "Graphics_DirectX_Direct3D11", "Win32_Graphics_Direct3D", "Win32_Graphics_Direct3D11", "Win32_Graphics_Dxgi_Common", "Win32_System_WinRT_Direct3D11", "Win32_System_WinRT_Graphics_Capture", "Win32_System_Performance", "Win32_UI_WindowsAndMessaging", "Win32_UI_Input", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_HiDpi", "Win32_UI_Accessibility", "Win32_System_LibraryLoader"] }
 
-# macOS 原生能力：钥匙串保存 AI 密钥；objc2 调整截图蒙层窗口层级。版本与 Tauri/native-tls 已锁定的一致。
+# macOS 原生能力：objc2 调整截图蒙层窗口层级（钥匙串读写已移入 snap-core）。版本与 Tauri/native-tls 已锁定的一致。
 [target.'cfg(target_os = "macos")'.dependencies]
-security-framework = "=3.7.0"
 objc2 = "=0.6.5"
 # 系统完成回调（ScreenCaptureKit、麦克风授权）需要 Objective-C block；版本与 Cargo.lock 中已有的一致。
 block2 = "=0.6.2"
@@ -108,14 +101,9 @@ xcb = { version = "=1.7.1", features = ["randr", "xfixes", "xtest", "shm", "xinp
 gstreamer = "=0.21.3"
 gstreamer-app = "=0.21.2"
 libc = "0.2"
-dbus-secret-service = { version = "=4.1.0", features = ["crypto-openssl"] }
 # Wayland 会话探测：列出合成器全局对象、查询 KWin / xdg-desktop-portal 接口；版本与 xcap 已依赖的一致。
 wayland-client = "=0.31.15"
 zbus = "=5.19.0"
 # Wayland 截图：ext-image-copy-capture 在 staging 协议中；libwayshot 提供 xdg-output 布局与 wlr-screencopy。
 wayland-protocols = { version = "=0.32.13", features = ["client", "staging"] }
 libwayshot-xcap = "=0.3.3"
-
-# 其他平台保留构建时下载 CPU 引擎的方式，同样显式选择 API 24。
-[target.'cfg(not(windows))'.dependencies]
-ort = { version = "=2.0.0-rc.13", default-features = false, features = ["download-binaries", "tls-native", "api-24"] }

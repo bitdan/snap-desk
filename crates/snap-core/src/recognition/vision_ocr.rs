@@ -2,8 +2,8 @@
 //!
 //! 与 Windows.Media.Ocr 共用提供方标识 `windows-media`（即“系统 OCR”），配置、诊断与前端契约不变。
 //! Vision 的框坐标是归一化值、原点在左下角；这里换算为裁剪原图的像素坐标（原点左上）。
-use super::{ocr_config::OcrLanguage, OcrLine, OcrResult, PolygonPoint};
-use crate::shared::macos::{array_items, ns_array, ns_string, rust_string, Id};
+use super::{ocr::{OcrLine, OcrResult, PolygonPoint}, ocr_config::OcrLanguage};
+use crate::macos::{array_items, ns_array, ns_string, rust_string, Id};
 use objc2::{
     class,
     encode::{Encode, Encoding},
@@ -203,7 +203,7 @@ fn recognize_inner(
 ) -> Result<OcrResult, String> {
     super::ocr::validate_image(image)?;
     // 透明区域铺白底，避免被当成黑色背景影响识别。
-    let pixels = crate::shared::image_io::white_background(image);
+    let pixels = crate::export::white_background(image);
     let bitmap = Bitmap::new(&pixels)?;
     let request = new_request()?;
     let (width, height) = (image.width() as f32, image.height() as f32);

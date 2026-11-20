@@ -1,5 +1,5 @@
 //! 在线文本 Provider；只接收识别文字，不接收图片或文件路径。
-pub(super) mod deepl;
+pub mod deepl;
 mod openai_compatible;
 mod terminology;
 

@@ -4,9 +4,9 @@ use crate::recognition::translation::AiSettings;
 use serde::Deserialize;
 
 /// 官方地址白名单在 core，设置校验与发送请求共用。
-pub use snap_core::recognition::translation::deepl_endpoint as endpoint;
+pub use crate::recognition::translation::deepl_endpoint as endpoint;
 
-pub(super) async fn translate(
+pub async fn translate(
     client: &reqwest::Client,
     settings: &AiSettings,
     request: &TranslationRequest,

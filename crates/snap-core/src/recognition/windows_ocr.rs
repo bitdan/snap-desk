@@ -1,5 +1,5 @@
 //! Windows.Media.Ocr：直接从内存灰度像素识别，不写 PNG、不加载 Paddle/ONNX 模型。
-use super::{ocr_config::OcrLanguage, OcrLine, OcrResult, PolygonPoint};
+use super::{ocr::{OcrLine, OcrResult, PolygonPoint}, ocr_config::OcrLanguage};
 use std::{marker::PhantomData, rc::Rc, time::Instant};
 use windows::{
     core::HSTRING,
@@ -101,7 +101,7 @@ fn recognize_inner(
         return Err("Windows OCR 返回了无效的图像尺寸限制。".into());
     }
     // 先铺白底再转灰度；超过系统上限时等比缩小，最终坐标还原到裁剪原图像素。
-    let gray = image::DynamicImage::ImageRgb8(crate::shared::image_io::white_background(image))
+    let gray = image::DynamicImage::ImageRgb8(crate::export::white_background(image))
         .into_luma8();
     let resized = if gray.width() > maximum || gray.height() > maximum {
         image::DynamicImage::ImageLuma8(gray)

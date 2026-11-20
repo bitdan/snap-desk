@@ -57,3 +57,24 @@ pub fn paddle_supports_model(endpoint: &str, model: &str) -> bool {
         _ => false,
     }
 }
+
+/// 系统 OCR 语言包（BCP 47 标签与显示名）。
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct OcrLanguage {
+    pub tag: String,
+    pub name: String,
+}
+
+/// 同一请求使用同一份引擎与语言快照，识别期间保存设置只影响下次请求。
+pub fn snapshot(
+    settings: &crate::settings::Settings,
+) -> Result<(OcrSettings, Option<super::services::RecognitionService>), String> {
+    let value = settings.ocr.clone();
+    value.validate()?;
+    let service = if value.provider == "service" {
+        Some(super::services::find(settings, &value.service_id)?.clone())
+    } else {
+        None
+    };
+    Ok((value, service))
+}

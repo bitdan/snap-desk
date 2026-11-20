@@ -10,31 +10,12 @@ use tauri::{AppHandle, Manager, WebviewWindow};
 
 /// 配置模型与地址校验在 core；这里保留原路径供翻译调度和服务管理使用。
 pub use snap_core::recognition::translation::AiSettings;
-pub(crate) use snap_core::recognition::translation::endpoint_url;
+#[cfg(test)]
+use snap_core::recognition::translation::endpoint_url;
 
-/// OpenAI 兼容服务的 Chat Completions 地址。很多服务与网关只给出基础地址（如 `https://host/v1`、
-/// 火山方舟的 `/api/v3`、Gemini 的 `/v1beta/openai`），这里补上 `/chat/completions`；
-/// 只有主机名时按 `/v1/chat/completions`。其他自定义路径原样使用，已保存的地址与密钥索引不变。
-pub(super) fn chat_endpoint(value: &str) -> Result<reqwest::Url, String> {
-    let mut url = endpoint_url(value)?;
-    let path = url.path().trim_end_matches('/').to_string();
-    let last = path.rsplit('/').next().unwrap_or_default();
-    let version = last.len() > 1
-        && last.starts_with('v')
-        && last[1..].starts_with(|c: char| c.is_ascii_digit())
-        && last[1..].chars().all(|c| c.is_ascii_alphanumeric());
-    let next = if path.ends_with("/chat/completions") {
-        return Ok(url);
-    } else if path.is_empty() {
-        "/v1/chat/completions".to_string()
-    } else if version || last == "openai" {
-        format!("{path}/chat/completions")
-    } else {
-        return Ok(url);
-    };
-    url.set_path(&next);
-    Ok(url)
-}
+/// Chat Completions 地址补全在 core（在线 OCR 与翻译共用）。
+#[cfg(test)]
+use snap_core::recognition::translation::chat_endpoint;
 
 /// 全应用最多一个翻译请求；请求 ID 加入原生窗口归属，窗口间不能互相取消。Notify 的 permit 保留取消信号，避免开始前取消丢失。
 #[derive(Default)]

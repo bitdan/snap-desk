@@ -1,6 +1,6 @@
 //! Windows CPU 引擎的按需安装与延迟加载；其他功能不触碰 ort API，也不需要 DLL。
 //! 清单固定架构、版本与摘要；只提取白名单条目，不解压 SDK、PDB 或任意归档路径。
-use crate::resources::{download_file, verified, Asset};
+use crate::resources::{verified, Asset};
 use serde::Deserialize;
 use std::{fs, io::Read, path::Path, sync::Mutex};
 
@@ -16,7 +16,7 @@ struct Runtime {
 }
 
 fn manifest() -> Result<Runtime, String> {
-    let entries: Vec<Runtime> = serde_json::from_str(include_str!("../../assets/onnxruntime.json"))
+    let entries: Vec<Runtime> = serde_json::from_str(include_str!("../../../../src-tauri/assets/onnxruntime.json"))
         .map_err(|e| e.to_string())?;
     entries
         .into_iter()
@@ -43,10 +43,10 @@ fn installed(dir: &Path, runtime: &Runtime) -> bool {
 }
 
 /// 点击“下载识别资源”时调用；已有模型不受影响。加载后的 DLL 由系统锁定，修复需退出应用。
+/// `fetch` 下载并返回压缩包临时文件（外壳负责网络与进度显示）。
 pub fn download(
-    app: &tauri::AppHandle,
-    client: &reqwest::blocking::Client,
     dir: &Path,
+    fetch: impl FnOnce(&Asset) -> Result<tempfile::NamedTempFile, String>,
 ) -> Result<(), String> {
     let loaded = LOADED
         .try_lock()
@@ -58,7 +58,7 @@ pub fn download(
     if *loaded {
         return Err("OCR 引擎已加载，请退出应用后重新下载修复。".into());
     }
-    let archive = download_file(app, client, dir, &runtime.archive)?;
+    let archive = fetch(&runtime.archive)?;
     install(archive.path(), dir, &runtime)
 }
 

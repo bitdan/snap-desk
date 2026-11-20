@@ -15,6 +15,7 @@ pub mod paths;
 pub mod pins;
 pub mod platform;
 pub mod recognition;
+pub mod resources;
 pub mod settings;
 pub mod text_image;
 #[cfg(target_os = "linux")]
