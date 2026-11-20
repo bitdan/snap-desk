@@ -10,7 +10,7 @@
 //! 像素预算、变换、文字排版同样来自 core。识别文字/二维码/翻译图片打开独立结果窗口（`recognition.rs`）。
 //! 按住 Ctrl（macOS 为 ⌥）拖动把内容拖到其他应用：文字贴图拖出文字，其余拖出合成后的 PNG
 //! （系统拖出目前只实现 Windows，`snap_core::drag`）。托盘“打开图片贴图”从文件创建贴图。
-//! 未接入：HTML 贴图。
+//! 剪贴板富文本（CF_HTML）由 core 的白名单排版器转成图片（Tauri 版用 WebView 排版，效果略有差异）。
 //!
 //! 标注：空格（或右键菜单“显示工具栏”）在图片下方展开工具栏，窗口随之加高、加宽；选择标注工具后
 //! 图片上的按下交给编辑器（`annotate.rs`），“移动贴图”按钮回到拖动窗口。标注坐标为贴图图像像素，
@@ -268,30 +268,39 @@ pub fn from_clipboard(cx: &mut App) {
     enum Source {
         Image(Vec<u8>),
         Text(String),
+        /// 富文本与其纯文字（拖出时提供文字）。
+        Html(String, Option<String>),
     }
-    let source = cx.read_from_clipboard().and_then(|item| {
-        let entries = item.entries();
-        entries
-            .iter()
-            .find_map(|entry| match entry {
+    // 与 Tauri 版顺序一致：文件路径 → 图片 → 富文本 → 纯文字。
+    let item = cx.read_from_clipboard();
+    let entries = item.as_ref().map(|item| item.entries().to_vec()).unwrap_or_default();
+    let plain = entries.iter().find_map(|entry| match entry {
+        ClipboardEntry::String(text) => Some(text.text().to_string()),
+        _ => None,
+    });
+    let source = entries
+        .iter()
+        .find_map(|entry| match entry {
+            ClipboardEntry::ExternalPaths(paths) => Some(Source::Text(
+                paths.paths().iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join("\n"),
+            )),
+            _ => None,
+        })
+        .or_else(|| {
+            entries.iter().find_map(|entry| match entry {
                 ClipboardEntry::Image(image) => Some(Source::Image(image.bytes.clone())),
                 _ => None,
             })
-            .or_else(|| {
-                entries.iter().find_map(|entry| match entry {
-                    ClipboardEntry::ExternalPaths(paths) => Some(Source::Text(
-                        paths.paths().iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join("\n"),
-                    )),
-                    _ => None,
-                })
-            })
-            .or_else(|| {
-                entries.iter().find_map(|entry| match entry {
-                    ClipboardEntry::String(text) => Some(Source::Text(text.text().clone())),
-                    _ => None,
-                })
-            })
-    });
+        })
+        .or_else(|| match snap_core::pins::html::read() {
+            Ok(Some(html)) => Some(Source::Html(html, plain.clone())),
+            Ok(None) => None,
+            Err(error) => {
+                log::warn!("event=gpui.pin_clipboard_html_unreadable message={error}");
+                None
+            }
+        })
+        .or_else(|| plain.clone().map(Source::Text));
     let Some(source) = source else {
         log::warn!("event=gpui.pin_clipboard_empty message=剪贴板没有可读取的图片或文字。");
         return;
@@ -306,6 +315,12 @@ pub fn from_clipboard(cx: &mut App) {
                         let font = core_pins::text::font_bytes(annotate::user_font())?;
                         let drag = core_pins::text::drag_text(&text);
                         core_pins::text::render(&text, &font).map(|image| (image, Some(drag)))
+                    }
+                    Source::Html(html, text) => {
+                        // 没有 WebView：用 core 的白名单排版器（常规 / 粗体 / 等宽字体，缺字回退中文字体）。
+                        let fonts = snap_core::annotations::Fonts::system(annotate::user_font(), Some("mono"), true)?;
+                        let drag = text.map(|text| core_pins::text::drag_text(&text));
+                        core_pins::html::render(&html, &fonts).map(|image| (image, drag))
                     }
                 }
             })
