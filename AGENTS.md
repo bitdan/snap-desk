@@ -26,6 +26,12 @@
 - 区分“行内编辑（Inline Editing）”与“模态对话框（Modal Dialog）”：修改当前页面上的单项设置（开关、下拉、单个输入框）在行内直接生效；新增或编辑一个独立对象（服务、账号、规则等多字段表单，带保存 / 取消）必须用模态对话框，本项目统一使用 `shared/ui/DetachedWindow` 独立窗口，不在列表行下方展开表单（行内展开，Inline Expansion）。对话框标题写明“添加 / 编辑 + 对象”，底部右侧依次为取消、主按钮；取消或关闭不保存，保存失败保留内容供重试。
 - 截图默认快捷键为 `F1`，其他全局功能避开它；仅在功能实现时注册快捷键。
 
+## 前端 Web 写法
+
+- 新增或修改前端 HTML/CSS/客户端 JS（组件、样式、表单、弹层、无障碍、性能等）时，先用 Modern Web Guidance 查这个需求的推荐写法，再改代码：`npx.cmd -y modern-web-guidance@latest search "<2–5 词英文查询>"` 找到指南，`retrieve "<id>"` 取回后对照实现。Rust、脚本、CI、测试和构建配置不适用。指南与 `UI-GUIDELINES.md` 或本文件冲突时以项目约定为准。
+- 浏览器支持策略：运行时只有 Tauri WebView —— Windows 为 WebView2（Chromium 常青版），macOS 为 WKWebView（最低 13.3，对应 Safari 16.4），Linux 为系统 WebKitGTK。不以“主流浏览器普遍可用”为默认前提；三端均支持的特性可直接使用，未全部支持的特性须做特性检测并优雅降级，降级代码保持轻量，不引入 polyfill 或额外依赖。
+- JS 语法与内置 API 以 `tsconfig.json` 的 `lib`（当前 ES2022）为准；需要更新的特性（如 `toSorted`、`findLast`）先确认三端运行时支持，再升级 `lib`，不使用类型断言绕过。
+
 ## 验证与构建
 
 - 源码组织或依赖变化执行 `npm run check:architecture`；前端代码变化执行 `npm run check` 和受影响的定向测试。修正检查发现的问题，不删除检查或增加宽泛忽略。

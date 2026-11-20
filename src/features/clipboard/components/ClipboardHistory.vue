@@ -356,7 +356,7 @@ async function pinSelected() {
     let done = 0
     for (const id of selected.value) {
       if (!['image', 'text', 'file'].includes(selectedItems.value[id]?.kind)) continue
-      try { await api.clipboardPin(id); done++ } catch (e) { throw new Error(`已创建 ${done} 张贴图；${String(e)}`) }
+      try { await api.clipboardPin(id); done++ } catch (e) { throw new Error(`已创建 ${done} 张贴图；${String(e)}`, { cause: e }) }
     }
     message.value = `已创建 ${done} 张贴图。`
   })
