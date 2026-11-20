@@ -28,7 +28,7 @@ impl log::Log for FileLogger {
     }
 
     fn log(&self, record: &log::Record) {
-        if !self.enabled(record.metadata()) {
+        if !self.enabled(record.metadata()) || benign(record) {
             return;
         }
         let line = format!(
@@ -86,4 +86,30 @@ fn open(path: &PathBuf) -> std::io::Result<File> {
         let _ = fs::rename(path, path.with_extension("log.old"));
     }
     OpenOptions::new().create(true).append(true).open(path)
+}
+
+/// GPUI 框架已知无害的错误日志（目标为空）：关闭窗口后迟到的激活状态通知找不到窗口；
+/// 未安装 DirectX 调试层时取调试接口失败（随后另有 WARN 说明）。它们不代表故障，只会淹没真正的错误。
+fn benign(record: &log::Record) -> bool {
+    if record.level() != log::Level::Error || !record.target().is_empty() {
+        return false;
+    }
+    let message = record.args().to_string();
+    (message.starts_with("handling active status change for window") && message.contains("window not found"))
+        || message.contains("0x887A002D")
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn filters_only_known_framework_noise() {
+        let check = |level, target: &str, message: std::fmt::Arguments| {
+            super::benign(&log::Record::builder().level(level).target(target).args(message).build())
+        };
+        assert!(check(log::Level::Error, "", format_args!("handling active status change for window WindowId(3): window not found")));
+        assert!(check(log::Level::Error, "", format_args!("缺失的 SDK 组件。 (0x887A002D)")));
+        assert!(!check(log::Level::Error, "", format_args!("handling active status change for window WindowId(3): other")));
+        assert!(!check(log::Level::Error, "snap_desk_gpui", format_args!("window not found 0x887A002D")));
+        assert!(!check(log::Level::Warn, "", format_args!("0x887A002D")));
+    }
 }

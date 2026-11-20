@@ -77,3 +77,47 @@ pub fn set_topmost(window: &Window, topmost: bool) -> Result<(), String> {
         Err("当前平台暂不支持切换置顶。".into())
     }
 }
+
+/// 以“隐藏/最小化”方式启动（快捷方式“运行方式: 最小化”、计划任务、`Start-Process -WindowStyle Hidden`）时，
+/// 系统会把 STARTUPINFO 的显示方式套用到进程第一次以普通方式显示的窗口上，导致首个截图浮层不可见。
+/// 启动时用一个屏幕外 1×1 的工具窗口先消耗掉这个标志。
+#[cfg(windows)]
+pub fn consume_startup_show_state() {
+    use windows_sys::Win32::{
+        System::Threading::{GetStartupInfoW, STARTF_USESHOWWINDOW, STARTUPINFOW},
+        UI::WindowsAndMessaging::*,
+    };
+    unsafe {
+        let mut info: STARTUPINFOW = std::mem::zeroed();
+        info.cb = std::mem::size_of::<STARTUPINFOW>() as u32;
+        GetStartupInfoW(&mut info);
+        if info.dwFlags & STARTF_USESHOWWINDOW == 0 {
+            return;
+        }
+        let class: Vec<u16> = "STATIC\0".encode_utf16().collect();
+        let hwnd = CreateWindowExW(
+            WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+            class.as_ptr(),
+            std::ptr::null(),
+            WS_OVERLAPPED,
+            -32000,
+            -32000,
+            1,
+            1,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null(),
+        );
+        if hwnd.is_null() {
+            log::warn!("event=gpui.startup_show_state_failed");
+            return;
+        }
+        ShowWindow(hwnd, SW_SHOWNORMAL);
+        DestroyWindow(hwnd);
+        log::info!("event=gpui.startup_show_state_consumed show={}", info.wShowWindow);
+    }
+}
+
+#[cfg(not(windows))]
+pub fn consume_startup_show_state() {}

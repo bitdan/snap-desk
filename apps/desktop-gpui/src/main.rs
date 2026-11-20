@@ -36,6 +36,7 @@ fn main() {
         log_path.map(|p| p.display().to_string()).unwrap_or_default()
     );
 
+    native::consume_startup_show_state();
     let (sender, receiver) = mpsc::unbounded();
     let forward = sender.clone();
     listener.start(move |args| {
