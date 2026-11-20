@@ -176,8 +176,10 @@ fn flush(session: &Entity<Session>, window: Option<&mut Window>, cx: &mut App) {
 #[derive(Default)]
 struct CaptureState {
     session: Option<Entity<Session>>,
-    /// 后台正在拍屏：此时再次触发截图直接忽略。
+    /// 倒计时或后台拍屏中：此时再次触发截图视为取消（倒计时）或忽略（拍屏）。
     starting: bool,
+    /// 延时截图倒计时中的取消句柄。
+    countdown: Option<crate::countdown::Countdown>,
 }
 impl Global for CaptureState {}
 
@@ -211,7 +213,7 @@ pub fn active(cx: &App) -> bool {
         .is_some_and(|state| state.starting || state.session.is_some())
 }
 
-/// 开始截图。`delay` 用于等托盘菜单等短暂界面消失；设置中的截图延时也在此等待（倒计时界面未接入）。
+/// 开始截图。`delay` 用于等托盘菜单等短暂界面消失；设置中的截图延时显示倒计时，期间可取消。
 pub fn start(cx: &mut App, settings: &Settings, delay: Duration) {
     if active(cx) {
         log::info!("event=gpui.capture_ignored reason=active");
@@ -223,10 +225,28 @@ pub fn start(cx: &mut App, settings: &Settings, delay: Duration) {
     let export = settings.export.clone();
     let after = settings.screenshot_after.clone();
     let language = settings.appearance.language.clone();
-    let delay = delay + Duration::from_secs(u64::from(settings.delay_seconds));
+    let seconds = settings.delay_seconds;
+    let hint = snap_core::i18n::for_language(&language, "再次按截图快捷键取消").to_owned();
     cx.spawn(async move |cx| {
         if !delay.is_zero() {
             cx.background_executor().timer(delay).await;
+        }
+        if seconds > 0 {
+            let elapsed = crate::countdown::run(cx, seconds, hint, |cx, countdown| {
+                cx.default_global::<CaptureState>().countdown = Some(countdown);
+            })
+            .await;
+            let proceed = cx.update(|cx| {
+                let state = cx.default_global::<CaptureState>();
+                state.countdown = None;
+                if !elapsed {
+                    state.starting = false;
+                }
+                elapsed
+            });
+            if !proceed {
+                return;
+            }
         }
         let started = Instant::now();
         let result = cx
@@ -373,6 +393,11 @@ fn finish(cx: &mut App) {
 }
 
 pub fn cancel(cx: &mut App) {
+    // 倒计时中：只设置取消标志，由倒计时任务关闭提示窗并结束流程。
+    if let Some(countdown) = cx.try_global::<CaptureState>().and_then(|s| s.countdown.clone()) {
+        countdown.cancel();
+        return;
+    }
     if cx.try_global::<CaptureState>().is_some_and(|s| s.session.is_some()) {
         log::info!("event=gpui.capture_cancelled");
         finish(cx);
