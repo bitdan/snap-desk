@@ -154,6 +154,7 @@ pub fn create(
                 toolbar: false,
                 toolbar_above: false,
                 drag_text: drag_text.clone(),
+                hidden: false,
                 text_input: None,
                 image,
                 frame,
@@ -203,6 +204,45 @@ fn window_size(width: u32, height: u32, zoom: f64, scale: f64) -> Size<Pixels> {
         px((w + inset * 2) as f32 / scale as f32),
         px((h + inset * 2) as f32 / scale as f32),
     )
+}
+
+/// 打开/保存对话框期间临时隐藏可见贴图，防止置顶贴图盖住系统对话框（与 Tauri 版 `with_hidden_pins` 一致）。
+/// `except` 为对话框的父贴图（对话框归它所有，总在它上面）。返回本次隐藏的窗口，只恢复这些。
+pub fn hide_pins(cx: &mut App, except: Option<AnyWindowHandle>) -> Vec<AnyWindowHandle> {
+    let mut hidden = Vec::new();
+    for (handle, pin) in alive(cx) {
+        // 先比较句柄：调用方可能正处于自身贴图的事件处理中，不能读取它的实体。
+        if Some(handle) == except || pin.read(cx).hidden {
+            continue;
+        }
+        let result = handle.update(cx, |_, window, _| crate::native::set_visible(window, false));
+        match result {
+            Ok(Ok(())) => {
+                pin.update(cx, |pin, _| pin.hidden = true);
+                hidden.push(handle);
+            }
+            Ok(Err(error)) => log::warn!("event=gpui.pin_hide_failed message={error}"),
+            Err(_) => {}
+        }
+    }
+    if !hidden.is_empty() {
+        log::info!("event=gpui.pins_hidden count={}", hidden.len());
+    }
+    hidden
+}
+
+/// 恢复 [`hide_pins`] 隐藏的贴图（不抢焦点）；已关闭的窗口跳过。
+pub fn show_pins(cx: &mut App, hidden: Vec<AnyWindowHandle>) {
+    for (handle, pin) in alive(cx) {
+        if !hidden.contains(&handle) {
+            continue;
+        }
+        let result = handle.update(cx, |_, window, _| crate::native::set_visible(window, true));
+        if let Ok(Err(error)) = result {
+            log::warn!("event=gpui.pin_show_failed message={error}");
+        }
+        pin.update(cx, |pin, _| pin.hidden = false);
+    }
 }
 
 /// 全局贴图键：先恢复穿透中的贴图（它们收不到鼠标，只能这样找回来）；返回是否恢复了任何贴图。
@@ -286,8 +326,11 @@ pub fn open_file(cx: &mut App) {
     let dialog = rfd::AsyncFileDialog::new()
         .set_title(text("打开图片贴图"))
         .add_filter(text("图片（PNG / JPEG / WebP）"), &["png", "jpg", "jpeg", "webp"]);
+    let hidden = hide_pins(cx, None);
     cx.spawn(async move |cx| {
-        let Some(file) = dialog.pick_file().await else {
+        let picked = dialog.pick_file().await;
+        cx.update(|cx| show_pins(cx, hidden));
+        let Some(file) = picked else {
             log::info!("event=gpui.pin_file_cancelled");
             return;
         };
@@ -391,6 +434,8 @@ pub struct Pin {
     toolbar: bool,
     /// 工具栏放在图片上方（图片下方超出屏幕可见区域时；窗口向上扩展，图片不动）。
     toolbar_above: bool,
+    /// 被 [`hide_pins`] 临时隐藏（对话框期间）。
+    hidden: bool,
     /// 文字/文件路径贴图拖出时提供的文字（颜色值规范化为 HEX，见 core `drag_text`）。
     drag_text: Option<String>,
     text_input: Option<Entity<TextareaState>>,
@@ -641,8 +686,11 @@ impl Pin {
         {
             dialog = dialog.set_directory(directory);
         }
+        let hidden = hide_pins(cx, Some(window.window_handle()));
         cx.spawn(async move |this, cx| {
-            let Some(file) = dialog.save_file().await else {
+            let picked = dialog.save_file().await;
+            cx.update(|cx| show_pins(cx, hidden));
+            let Some(file) = picked else {
                 let _ = this.update(cx, |pin, _| pin.busy = false);
                 return;
             };

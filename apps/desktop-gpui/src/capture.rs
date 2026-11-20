@@ -708,7 +708,11 @@ fn save(cx: &mut App) {
         {
             dialog = dialog.set_directory(directory);
         }
-        let Some(file) = dialog.save_file().await else {
+        // 浮层已关闭；置顶贴图同样会盖住对话框，期间临时隐藏。
+        let hidden = cx.update(|cx| crate::pins::hide_pins(cx, None));
+        let picked = dialog.save_file().await;
+        cx.update(|cx| crate::pins::show_pins(cx, hidden));
+        let Some(file) = picked else {
             cx.update(|cx| reopen(cx, &session));
             return;
         };
