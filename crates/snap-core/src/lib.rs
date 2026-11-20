@@ -7,6 +7,7 @@ pub mod annotations;
 pub mod capture;
 pub mod clipboard;
 pub mod desktop_support;
+pub mod drag;
 pub mod export;
 pub mod i18n;
 #[cfg(target_os = "macos")]

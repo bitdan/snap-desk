@@ -9143,6 +9143,7 @@ dependencies = [
  "wayland-client",
  "wayland-protocols",
  "windows 0.62.2",
+ "windows-core 0.62.2",
  "xcap",
  "xcb",
  "zbus 5.19.0",
