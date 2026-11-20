@@ -1281,6 +1281,8 @@ pub struct ToolbarProps<'a> {
     /// `active` 为假时只高亮宿主的“移动/调整选区”按钮（截图的选区模式、贴图的移动模式）。
     pub active: bool,
     pub disabled: bool,
+    /// 贴图单行工具栏省去删除/清空按钮（仍可用 Delete 与“图片处理”菜单）。
+    pub compact: bool,
     pub text: &'a dyn Fn(&'static str) -> String,
 }
 
@@ -1335,12 +1337,14 @@ pub fn tool_row<T: 'static>(
     row = row.child(on(undo, Action::Undo, !locked && e.can_undo(), host));
     let redo = icon_button("annotation-redo", icons::REDO, (props.text)("重做 Ctrl/⌘+Shift+Z"), false, locked || !e.can_redo());
     row = row.child(on(redo, Action::Redo, !locked && e.can_redo(), host));
+    if !props.compact {
     let delete_ok = !locked && e.selected.is_some();
     let delete = icon_button("annotation-delete", icons::TRASH, (props.text)("删除选中标注 Delete"), false, !delete_ok);
     row = row.child(on(delete, Action::Delete, delete_ok, host));
     let clear_ok = !locked && !e.shapes().is_empty();
     let clear = icon_button("annotation-clear", icons::CLEAR, (props.text)("清空标注，可撤销恢复"), false, !clear_ok);
     row = row.child(on(clear, Action::Clear, clear_ok, host));
+    }
     if !trailing.is_empty() {
         row = row.child(divider()).children(trailing);
     }

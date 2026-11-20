@@ -7,10 +7,20 @@
 //!
 //! 尺寸与 Tauri 版共用 `snap_core::pins::PinLayout`：缩放 1 表示一图像像素对应一物理像素，
 //! 图片四周保留 (padding + border) 的透明边距，按物理像素取整后再换算成窗口逻辑像素。
-//! 像素预算、变换、文字排版同样来自 core。未接入：标注、OCR/翻译面板、拖出内容、HTML 贴图。
-use gpui_kit::*;
+//! 像素预算、变换、文字排版同样来自 core。未接入：OCR/翻译面板、拖出内容、HTML 贴图。
+//!
+//! 标注：空格（或右键菜单“显示工具栏”）在图片下方展开工具栏，窗口随之加高、加宽；选择标注工具后
+//! 图片上的按下交给编辑器（`annotate.rs`），“移动贴图”按钮回到拖动窗口。标注坐标为贴图图像像素，
+//! 复制/保存时合成到底图副本，不改变可编辑对象；旋转/翻转用 core `transform_annotations` 随图变换，
+//! “恢复原图”恢复贴图创建时的标注。
+use crate::annotate::{self, Action, Editor, Job, Layers, Tool, ToolbarProps};
+use gpui_kit::{
+    component::input::{Textarea, TextareaState},
+    *,
+};
 use image::RgbaImage;
 use snap_core::{
+    annotations::{Annotation, Point as ImagePoint, edit::Bounds as ImageBounds},
     pins::{self as core_pins, PinAppearance, PinLayout, PinShadow, Transform},
     settings::{ExportSettings, Language},
 };
@@ -21,6 +31,8 @@ const MENU_WIDTH: f32 = 196.0;
 const ITEM_HEIGHT: f32 = 28.0;
 const SEPARATOR_HEIGHT: f32 = 9.0;
 const OPACITIES: [f32; 4] = [1.0, 0.8, 0.6, 0.4];
+/// 工具栏完整显示所需宽度（逻辑像素）：移动 + 17 个工具 + 撤销/重做 + 缩放、处理、置顶、保存、关闭、复制。
+const TOOLBAR_WIDTH: f32 = 860.0;
 
 /// 贴图位置：原位（截图选区）或居中（剪贴板）。
 pub enum Placement {
@@ -71,10 +83,10 @@ fn render_image(image: &RgbaImage) -> Arc<RenderImage> {
 pub fn create(
     cx: &mut App,
     image: RgbaImage,
-    annotations: Vec<snap_core::annotations::Annotation>,
+    annotations: Vec<Annotation>,
     placement: Placement,
 ) -> Result<(), String> {
-    let _ = annotations;
+    snap_core::annotations::validate(&annotations, image.width(), image.height())?;
     let pins = alive(cx);
     let used = pins.iter().map(|(_, pin)| retained(pin.read(cx))).sum();
     core_pins::validate_capacity(image.width(), image.height(), pins.len(), used)?;
@@ -128,8 +140,15 @@ pub fn create(
     let mut weak = None;
     let handle = cx
         .open_window(options, |window, cx| {
+            let crop = image_bounds(&image);
             let pin = cx.new(|cx| Pin {
                 original: image.clone(),
+                editor: Editor::new(crop, annotations.clone()),
+                original_annotations: annotations,
+                layers: Layers::default(),
+                annotating: false,
+                toolbar: false,
+                text_input: None,
                 image,
                 frame,
                 zoom,
@@ -163,6 +182,10 @@ pub fn create(
     }
     log_memory(cx, "created");
     Ok(())
+}
+
+fn image_bounds(image: &RgbaImage) -> ImageBounds {
+    ImageBounds { x: 0.0, y: 0.0, width: f64::from(image.width()), height: f64::from(image.height()) }
 }
 
 /// 图片 + 两侧透明边距的窗口逻辑尺寸；边距按物理像素取整，首像素落在整数屏幕坐标上。
@@ -234,7 +257,7 @@ pub fn from_clipboard(cx: &mut App) {
                 match source {
                     Source::Image(bytes) => decode_clipboard_image(&bytes),
                     Source::Text(text) => {
-                        let font = core_pins::text::font_bytes(user_font())?;
+                        let font = core_pins::text::font_bytes(annotate::user_font())?;
                         core_pins::text::render(&text, &font)
                     }
                 }
@@ -246,13 +269,6 @@ pub fn from_clipboard(cx: &mut App) {
         });
     })
     .detach();
-}
-
-/// Tauri 版“通用设置”中下载或选择的导出字体；读不到或无法解析时回退系统字体。
-fn user_font() -> Option<Vec<u8>> {
-    let path = snap_core::paths::data_dir()?.join("resources").join("export-font.ttf");
-    let bytes = std::fs::read(path).ok()?;
-    ab_glyph::FontRef::try_from_slice(&bytes).is_ok().then_some(bytes)
 }
 
 /// 剪贴板图片可能是 PNG、JPEG 或由 CF_DIB 转来的 BMP。32 位 DIB 常把 alpha 全写成 0，
@@ -283,19 +299,22 @@ enum Item {
     Save,
     Topmost,
     Lock,
+    Toolbar,
     ClickThrough,
     Transform(Transform),
     Opacity(usize),
+    ClearAnnotations,
     Close,
     Separator,
 }
 
-const MENU: [Item; 21] = [
+const MENU: [Item; 23] = [
     Item::Copy,
     Item::Save,
     Item::Separator,
     Item::Topmost,
     Item::Lock,
+    Item::Toolbar,
     Item::ClickThrough,
     Item::Separator,
     Item::Transform(Transform::RotateLeft),
@@ -311,6 +330,7 @@ const MENU: [Item; 21] = [
     Item::Opacity(2),
     Item::Opacity(3),
     Item::Separator,
+    Item::ClearAnnotations,
     Item::Close,
 ];
 
@@ -323,6 +343,15 @@ fn menu_height() -> f32 {
 
 pub struct Pin {
     original: Arc<RgbaImage>,
+    editor: Editor,
+    /// 贴图创建时的标注，“恢复原图”时还原。
+    original_annotations: Vec<Annotation>,
+    layers: Layers,
+    /// 选择了标注工具：图片上的按下交给编辑器，否则拖动窗口。
+    annotating: bool,
+    /// 外置工具栏是否显示（空格切换）。
+    toolbar: bool,
+    text_input: Option<Entity<TextareaState>>,
     image: Arc<RgbaImage>,
     frame: Arc<RenderImage>,
     zoom: f64,
@@ -352,9 +381,16 @@ impl Pin {
         window_size(self.image.width(), self.image.height(), self.zoom, f64::from(scale))
     }
 
-    /// 菜单打开时窗口扩到能放下菜单；图片左上角不动（窗口只向右下扩展）。
+    /// 工具栏或菜单打开时窗口扩到能放下它们；图片左上角不动（窗口只向右下扩展）。
     fn fit_window(&self, window: &mut Window) {
-        let mut size = self.base_size(window.scale_factor());
+        let scale = window.scale_factor();
+        let mut size = self.base_size(scale);
+        if self.toolbar {
+            let layout = PinLayout::load();
+            let inset = layout.image_inset(f64::from(scale)) as f32 / scale;
+            size.width = size.width.max(px(inset + TOOLBAR_WIDTH + 4.0));
+            size.height += px((layout.gap + layout.toolbar_height) as f32);
+        }
         if let Some(at) = self.menu {
             size.width = size.width.max(at.x + px(MENU_WIDTH + 4.0));
             size.height = size.height.max(at.y + px(menu_height() + 4.0));
@@ -412,10 +448,21 @@ impl Pin {
                 Ok(()) => self.topmost = !self.topmost,
                 Err(error) => log::warn!("event=gpui.pin_topmost_failed message={error}"),
             },
-            Item::Lock => self.locked = !self.locked,
+            Item::Lock => {
+                self.locked = !self.locked;
+                if self.locked {
+                    self.annotating = false;
+                    self.editor.abort();
+                }
+            }
+            Item::Toolbar => self.toggle_toolbar(window, cx),
             Item::ClickThrough => self.set_click_through(!self.click_through, window, cx),
             Item::Transform(action) => self.transform(action, cx),
             Item::Opacity(index) => self.opacity = OPACITIES[index],
+            Item::ClearAnnotations => {
+                self.editor.clear();
+                self.after_edit(window, cx);
+            }
             Item::Close => window.remove_window(),
             Item::Separator => {}
         }
@@ -428,15 +475,16 @@ impl Pin {
         }
         self.busy = true;
         let owner = crate::native::hwnd(window);
-        let image = self.image.clone();
+        let (image, shapes) = (self.image.clone(), self.editor.shapes().to_vec());
         cx.spawn(async move |this, cx| {
-            let png = cx.background_executor().spawn({
-                let image = image.clone();
-                async move { crate::capture::png(&image) }
+            let encoded = cx.background_executor().spawn(async move {
+                let image = composed(&image, &shapes)?;
+                let png = crate::capture::png(&image)?;
+                Ok::<_, String>((image, png))
             }).await;
             let _ = this.update(cx, |pin, cx| {
                 pin.busy = false;
-                match png.and_then(|png| crate::capture::write_clipboard(cx, owner, &image, png)) {
+                match encoded.and_then(|(image, png)| crate::capture::write_clipboard(cx, owner, &image, png)) {
                     Ok(()) => {
                         let message = pin.text("已复制");
                         pin.flash(message, cx);
@@ -453,7 +501,10 @@ impl Pin {
         if self.busy {
             return;
         }
-        let image = self.image.clone();
+        if self.editor.pending || self.editor.text.is_some() {
+            return;
+        }
+        let (image, shapes) = (self.image.clone(), self.editor.shapes().to_vec());
         let export = self.export.clone();
         let name = match snap_core::export::filename(
             &export,
@@ -491,7 +542,10 @@ impl Pin {
                 .background_executor()
                 .spawn({
                     let (path, export) = (path.clone(), export.clone());
-                    async move { snap_core::export::write_file(&path, &image, &export) }
+                    async move {
+                        let image = composed(&image, &shapes)?;
+                        snap_core::export::write_file(&path, &image, &export)
+                    }
                 })
                 .await;
             let _ = this.update(cx, |pin, cx| {
@@ -530,6 +584,21 @@ impl Pin {
             log::warn!("event=gpui.pin_transform_rejected reason=budget");
             return;
         }
+        if self.editor.pending || self.editor.interacting() {
+            return;
+        }
+        // 标注随图变换；恢复原图时还原创建时的标注。几何变换前先校验，失败不改图。
+        let shapes = if action == Transform::Reset {
+            self.original_annotations.clone()
+        } else {
+            match core_pins::transform_annotations(self.editor.shapes(), self.image.width(), self.image.height(), action) {
+                Ok(shapes) => shapes,
+                Err(error) => {
+                    log::warn!("event=gpui.pin_transform_rejected message={error}");
+                    return;
+                }
+            }
+        };
         self.busy = true;
         let (image, original) = (self.image.clone(), self.original.clone());
         cx.spawn(async move |this, cx| {
@@ -545,17 +614,29 @@ impl Pin {
                     (image, frame)
                 })
                 .await;
-            let _ = this.update(cx, |pin, cx| {
-                pin.busy = false;
-                pin.image = image;
-                pin.frame = frame;
-                cx.notify();
-            });
-            // 旋转会交换宽高：按新尺寸重设窗口。
+            let old = this
+                .update(cx, |pin, cx| {
+                    pin.busy = false;
+                    pin.image = image;
+                    let old = std::mem::replace(&mut pin.frame, frame);
+                    pin.editor.crop = image_bounds(&pin.image);
+                    pin.editor.reset(shapes);
+                    pin.layers.update(&pin.editor);
+                    cx.notify();
+                    old
+                })
+                .ok();
+            // 旋转会交换宽高：按新尺寸重设窗口；释放旧画面与旧标注图层的纹理。
             let _ = cx.update(|cx| {
                 let windows = alive(cx);
                 if let Some((handle, pin)) = windows.into_iter().find(|(_, pin)| this.upgrade().as_ref() == Some(pin)) {
-                    let _ = handle.update(cx, |_, window, cx| pin.read(cx).fit_window(window));
+                    let _ = handle.update(cx, |_, window, cx| {
+                        pin.read(cx).fit_window(window);
+                        let retired = pin.update(cx, |pin, _| pin.layers.take_retired());
+                        for image in retired.into_iter().chain(old) {
+                            cx.drop_image(image, Some(window));
+                        }
+                    });
                 }
                 log_memory(cx, "transformed");
             });
@@ -563,17 +644,204 @@ impl Pin {
         .detach();
     }
 
-    fn press(&mut self, _: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+    /// 窗口内逻辑坐标 → 贴图图像像素。
+    fn to_point(&self, position: Point<Pixels>, scale: f32) -> ImagePoint {
+        let layout = PinLayout::load();
+        let inset = layout.image_inset(f64::from(scale)) as f32 / scale;
+        let (w, h) = layout.displayed(self.image.width(), self.image.height(), self.zoom);
+        let (w, h) = (w as f32 / scale, h as f32 / scale);
+        ImagePoint {
+            x: f64::from((f32::from(position.x) - inset) * self.image.width() as f32 / w),
+            y: f64::from((f32::from(position.y) - inset) * self.image.height() as f32 / h),
+        }
+    }
+
+    /// 编辑器状态变化后：刷新图层、释放旧纹理、按需创建或移除文字输入框。
+    fn after_edit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.layers.update(&self.editor);
+        for image in self.layers.take_retired() {
+            cx.drop_image(image, Some(window));
+        }
+        if let Some(error) = self.editor.error.take() {
+            self.flash(error, cx);
+        }
+        match (self.editor.text.as_ref(), self.text_input.is_some()) {
+            (Some(text), false) => {
+                let value = text.shape.text.clone().unwrap_or_default();
+                let state = cx.new(|cx| {
+                    let mut state = TextareaState::new(window, cx);
+                    state.set_auto_grow(1, 20, cx);
+                    state.set_value(value, window, cx);
+                    state
+                });
+                state.update(cx, |state, cx| state.focus(window, cx));
+                self.text_input = Some(state);
+            }
+            (None, true) => {
+                self.text_input = None;
+                window.focus(&self.focus, cx);
+            }
+            _ => {}
+        }
+        cx.notify();
+    }
+
+    /// 在后台线程栅格化，完成后写回编辑器。
+    fn run(&mut self, job: Option<Job>, cx: &mut Context<Self>) {
+        let Some(job) = job else {
+            return;
+        };
+        let image = self.image.clone();
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn({
+                    let job = job.clone();
+                    async move { job.run(&image, annotate::user_font()) }
+                })
+                .await;
+            let _ = this.update(cx, |pin, cx| {
+                pin.editor.complete(job, result);
+                pin.layers.update(&pin.editor);
+                // 不在窗口事件中：所有窗口都在应用的窗口表里，可直接释放。
+                for image in pin.layers.take_retired() {
+                    cx.drop_image(image, None);
+                }
+                if let Some(error) = pin.editor.error.take() {
+                    pin.flash(error, cx);
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn commit_text(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let value = self.text_input.as_ref().map(|state| state.read(cx).value().to_string()).unwrap_or_default();
+        let job = self.editor.finish_text(&value);
+        self.run(job, cx);
+        self.after_edit(window, cx);
+    }
+
+    fn toggle_toolbar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.editor.pending || self.editor.interacting() {
+            return;
+        }
+        self.toolbar = !self.toolbar;
+        if !self.toolbar {
+            self.annotating = false;
+            self.editor.select(None);
+        }
+        self.fit_window(window);
+        self.after_edit(window, cx);
+    }
+
+    /// 工具栏与样式条的操作；选择工具时进入标注模式。
+    fn action(this: &mut Self, action: Action, window: &mut Window, cx: &mut Context<Self>) {
+        if this.locked || this.busy {
+            return;
+        }
+        let e = &mut this.editor;
+        let job = match action {
+            Action::Tool(tool) => {
+                this.annotating = true;
+                e.set_tool(tool);
+                None
+            }
+            Action::Undo => {
+                e.undo();
+                None
+            }
+            Action::Redo => {
+                e.redo();
+                None
+            }
+            Action::Delete => {
+                e.remove();
+                None
+            }
+            Action::Clear => {
+                e.clear();
+                None
+            }
+            Action::Style(patch) => e.style(patch),
+        };
+        this.run(job, cx);
+        this.after_edit(window, cx);
+    }
+
+    fn press(&mut self, event: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         if self.menu.is_some() {
             self.close_menu(window, cx);
             return;
+        }
+        if self.editor.text.is_some() {
+            self.commit_text(window, cx);
+            return;
+        }
+        let scale = window.scale_factor();
+        let p = self.to_point(event.position, scale);
+        let crop = image_bounds(&self.image);
+        let inside = crop.contains(p);
+        // 容差按屏幕 6 逻辑像素换算到图像像素。
+        let (w, _) = PinLayout::load().displayed(self.image.width(), self.image.height(), self.zoom);
+        let tolerance = 6.0 * f64::from(scale) * f64::from(self.image.width()) / f64::from(w.max(1));
+        if self.annotating && !self.locked {
+            let handle = self.editor.handle_at(p, tolerance);
+            if inside || handle.is_some() {
+                if event.click_count >= 2 {
+                    if let Some(i) = self.editor.hit(p, tolerance).filter(|&i| {
+                        self.editor.shapes()[i].kind == snap_core::annotations::Kind::Text
+                    }) {
+                        self.editor.edit_text(i);
+                        self.after_edit(window, cx);
+                        return;
+                    }
+                }
+                self.editor.begin(p, tolerance, handle, event.modifiers.alt);
+                self.after_edit(window, cx);
+                return;
+            }
         }
         if !self.locked {
             window.start_window_move();
         }
     }
 
+    fn motion(&mut self, event: &MouseMoveEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if event.pressed_button != Some(MouseButton::Left) || self.editor.draft.is_none() || self.editor.text.is_some() {
+            return;
+        }
+        let p = self.to_point(event.position, window.scale_factor());
+        self.editor.drag(p);
+        self.layers.update(&self.editor);
+        for image in self.layers.take_retired() {
+            cx.drop_image(image, Some(window));
+        }
+        cx.notify();
+    }
+
+    fn release(&mut self, _: &MouseUpEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if self.editor.draft.is_none() {
+            return;
+        }
+        let job = self.editor.finish(false);
+        self.run(job, cx);
+        self.after_edit(window, cx);
+    }
+
     fn right_click(&mut self, event: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        // 右键先放弃未完成的笔画或输入；完成后再次右键才显示菜单。
+        if self.editor.text.is_some() {
+            self.editor.cancel_text();
+            self.after_edit(window, cx);
+            return;
+        }
+        if self.editor.interacting() {
+            self.editor.abort();
+            self.after_edit(window, cx);
+            return;
+        }
         self.menu = Some(event.position);
         self.fit_window(window);
         cx.notify();
@@ -589,9 +857,65 @@ impl Pin {
     fn key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let keystroke = &event.keystroke;
         let command = keystroke.modifiers.control || keystroke.modifiers.platform;
-        match keystroke.key.as_str() {
+        let key = keystroke.key.as_str();
+        if self.editor.text.is_some() {
+            // 输入中只处理取消与完成，其余按键交给输入框。
+            match key {
+                "escape" => {
+                    self.editor.cancel_text();
+                    self.after_edit(window, cx);
+                    cx.stop_propagation();
+                }
+                "enter" if command => {
+                    self.commit_text(window, cx);
+                    cx.stop_propagation();
+                }
+                _ => {}
+            }
+            return;
+        }
+        let editable = !self.locked && !self.busy;
+        match key {
             "escape" if self.menu.is_some() => self.close_menu(window, cx),
+            "escape" if self.editor.interacting() => {
+                self.editor.abort();
+                self.after_edit(window, cx);
+            }
             "escape" => window.remove_window(),
+            "space" if !command => self.toggle_toolbar(window, cx),
+            "z" if command && editable => {
+                if keystroke.modifiers.shift {
+                    self.editor.redo();
+                } else {
+                    self.editor.undo();
+                }
+                self.after_edit(window, cx);
+            }
+            "y" if command && editable => {
+                self.editor.redo();
+                self.after_edit(window, cx);
+            }
+            "delete" | "backspace" if editable => {
+                self.editor.remove();
+                self.after_edit(window, cx);
+            }
+            "enter" if self.editor.tool == Tool::Polyline && self.editor.draft.is_some() => {
+                let job = self.editor.finish(true);
+                self.run(job, cx);
+                self.after_edit(window, cx);
+            }
+            "left" | "right" | "up" | "down" if editable && self.editor.selected.is_some() => {
+                let step = if keystroke.modifiers.shift { 10.0 } else { 1.0 };
+                let (dx, dy) = match key {
+                    "left" => (-step, 0.0),
+                    "right" => (step, 0.0),
+                    "up" => (0.0, -step),
+                    _ => (0.0, step),
+                };
+                let job = self.editor.nudge(dx, dy).1;
+                self.run(job, cx);
+                self.after_edit(window, cx);
+            }
             "c" if command => self.copy(window, cx),
             "s" if command => self.save(window, cx),
             "w" if command => window.remove_window(),
@@ -610,6 +934,8 @@ impl Pin {
             Item::Save => (self.text("保存图片"), false),
             Item::Topmost => (self.text("窗口置顶"), self.topmost),
             Item::Lock => (self.text("锁定贴图"), self.locked),
+            Item::Toolbar => (self.text("显示工具栏"), self.toolbar),
+            Item::ClearAnnotations => (self.text("清空标注"), false),
             Item::ClickThrough => (self.text("鼠标穿透"), self.click_through),
             Item::Transform(action) => (
                 self.text(match action {
@@ -637,6 +963,7 @@ impl Pin {
             Item::Copy => "Ctrl+C",
             Item::Save => "Ctrl+S",
             Item::ClickThrough => "Ctrl+Alt+P",
+            Item::Toolbar => "Space",
             Item::Close => "Esc",
             _ => "",
         }
@@ -645,6 +972,15 @@ impl Pin {
 
 fn hex(value: &str) -> u32 {
     u32::from_str_radix(value.trim_start_matches('#'), 16).unwrap_or(0xa1a1aa)
+}
+
+/// 导出用的合成图：底图副本 + 标注，不改变可编辑对象。
+fn composed(image: &RgbaImage, shapes: &[Annotation]) -> Result<RgbaImage, String> {
+    let mut output = image.clone();
+    if !shapes.is_empty() {
+        snap_core::annotations::render(&mut output, shapes, ImagePoint { x: 0.0, y: 0.0 })?;
+    }
+    Ok(output)
 }
 
 impl Render for Pin {
@@ -660,6 +996,25 @@ impl Render for Pin {
         let (w, h) = (w as f32 / scale, h as f32 / scale);
         let border = layout.border as f32;
         let radius = (self.appearance.corner_radius as f32).min(w.min(h) / 2.0);
+        // 图片像素 → 图片内容区内的逻辑坐标（标注图层、选中框、输入框共用）。
+        let (kx, ky) = (w / self.image.width() as f32, h / self.image.height() as f32);
+        let mut content = div()
+            .relative()
+            .size_full()
+            .child(img(self.frame.clone()).absolute().size_full().object_fit(ObjectFit::Fill));
+        for layer in [self.layers.base(), self.layers.draft()].into_iter().flatten() {
+            content = content.child(
+                img(layer.image.clone())
+                    .absolute()
+                    .left(px(layer.x as f32 * kx))
+                    .top(px(layer.y as f32 * ky))
+                    .w(px(layer.width as f32 * kx))
+                    .h(px(layer.height as f32 * ky))
+                    .object_fit(ObjectFit::Fill),
+            );
+        }
+        let map = |p: ImagePoint| point(px(p.x as f32 * kx), px(p.y as f32 * ky));
+        content = content.children(annotate::selection_overlay(&self.editor, &map));
         let mut stage = div()
             .absolute()
             .left(px(inset - border))
@@ -671,7 +1026,7 @@ impl Render for Pin {
             .rounded(px(radius))
             .overflow_hidden()
             .opacity(self.opacity)
-            .child(img(self.frame.clone()).size_full().object_fit(ObjectFit::Fill));
+            .child(content);
         stage = match self.appearance.shadow {
             PinShadow::None => stage,
             PinShadow::Soft => stage.shadow_sm(),
@@ -684,9 +1039,34 @@ impl Render for Pin {
             .relative()
             .on_key_down(cx.listener(Self::key))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::press))
+            .on_mouse_move(cx.listener(Self::motion))
+            .on_mouse_up(MouseButton::Left, cx.listener(Self::release))
             .on_mouse_down(MouseButton::Right, cx.listener(Self::right_click))
             .on_scroll(cx.listener(Self::wheel))
             .child(stage);
+        if self.annotating && !self.locked {
+            root = root.cursor_crosshair();
+        }
+        // 文字输入框：放在文字起点，宽度到图片右边缘，与最终排版的换行宽度一致。
+        if let (Some(text), Some(state)) = (self.editor.text.as_ref(), self.text_input.as_ref()) {
+            let at = map(text.shape.start);
+            let width = ((self.image.width() as f64 - text.shape.start.x).min(2048.0) as f32 * kx).max(40.0);
+            let font = (text.shape.font_size.unwrap_or(24.0) as f32 * ky).max(8.0);
+            let color = u32::from_str_radix(text.shape.color.trim_start_matches('#'), 16).unwrap_or(0xef4444);
+            root = root.child(
+                div()
+                    .absolute()
+                    .left(px(inset) + at.x)
+                    .top(px(inset) + at.y)
+                    .w(px(width))
+                    .border_1()
+                    .border_dashed()
+                    .border_color(rgb(0x2f80ff))
+                    .bg(rgba(0xffffff18))
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .child(Textarea::new(state).appearance(false).text_size(px(font)).text_color(rgb(color))),
+            );
+        }
         let badge = |text: String, top: f32| {
             div()
                 .absolute()
@@ -705,6 +1085,9 @@ impl Render for Pin {
         if self.click_through {
             let hint = self.text("鼠标穿透中 · 用全局贴图快捷键或托盘恢复");
             root = root.child(badge(hint, (inset + h - 24.0).max(inset + 8.0)));
+        }
+        if self.toolbar {
+            root = root.child(self.toolbar(inset, h, window, cx));
         }
         if let Some(at) = self.menu {
             let mut menu = div()
@@ -749,5 +1132,95 @@ impl Render for Pin {
             root = root.child(menu);
         }
         root
+    }
+}
+
+impl Pin {
+    /// 图片下方的外置工具栏：移动、标注工具、撤销重做 + 缩放比例、图片处理、置顶、保存、关闭、复制。
+    fn toolbar(&self, inset: f32, image_height: f32, window: &Window, cx: &mut Context<Self>) -> Stateful<Div> {
+        let view = cx.entity();
+        let text = |key: &'static str| self.text(key);
+        let disabled = self.locked || self.busy;
+        let props = ToolbarProps { editor: &self.editor, active: self.annotating, disabled, compact: true, text: &text };
+        let host = annotate::Host { view: &view, window, dispatch: Self::action };
+        let leading = vec![
+            annotate::icon_button("pin-move", annotate::icons::MOVE, self.text("移动贴图"), !self.annotating, disabled)
+                .on_click(cx.listener(|pin, _: &ClickEvent, window, cx| {
+                    if pin.editor.interacting() || pin.editor.pending {
+                        return;
+                    }
+                    pin.annotating = false;
+                    pin.editor.select(None);
+                    pin.after_edit(window, cx);
+                }))
+                .into_any_element(),
+            annotate::divider().into_any_element(),
+        ];
+        let zoom = div()
+            .id("pin-zoom")
+            .h(px(30.0))
+            .px(px(6.0))
+            .flex()
+            .flex_none()
+            .items_center()
+            .rounded(px(6.0))
+            .cursor_pointer()
+            .hover(|s| s.bg(rgb(annotate::HOVER)))
+            .text_xs()
+            .text_color(rgb(annotate::TEXT))
+            .child(format!("{}%", (self.zoom * 100.0).round()))
+            .on_click(cx.listener(|pin, _: &ClickEvent, window, cx| {
+                if pin.locked {
+                    return;
+                }
+                pin.zoom = 1.0_f64.max(PinLayout::load().minimum_zoom(pin.image.width(), pin.image.height(), f64::from(window.scale_factor())));
+                pin.fit_window(window);
+                cx.notify();
+            }));
+        let trailing = vec![
+            zoom.into_any_element(),
+            annotate::icon_button("pin-adjust", annotate::icons::SLIDERS, self.text("图片处理"), false, disabled)
+                .on_click(cx.listener(|pin, event: &ClickEvent, window, cx| {
+                    pin.menu = Some(event.position());
+                    pin.fit_window(window);
+                    cx.notify();
+                }))
+                .into_any_element(),
+            annotate::divider().into_any_element(),
+            annotate::icon_button(
+                "pin-topmost",
+                if self.topmost { annotate::icons::PIN } else { annotate::icons::PIN_OFF },
+                self.text(if self.topmost { "取消置顶" } else { "窗口置顶" }),
+                self.topmost,
+                self.busy,
+            )
+            .on_click(cx.listener(|pin, _: &ClickEvent, window, cx| pin.select(Item::Topmost, window, cx)))
+            .into_any_element(),
+            annotate::icon_button("pin-save", annotate::icons::SAVE, self.text("保存图片 Ctrl/⌘+S"), false, self.busy)
+                .on_click(cx.listener(|pin, _: &ClickEvent, window, cx| pin.save(window, cx)))
+                .into_any_element(),
+            annotate::icon_button("pin-close", annotate::icons::CLOSE, self.text("关闭贴图 Esc"), false, false)
+                .on_click(|_, window, _| window.remove_window())
+                .into_any_element(),
+            annotate::icon_button("pin-copy", annotate::icons::COPY, self.text("复制图片 Ctrl/⌘+C"), false, self.busy)
+                .bg(rgb(0x2563eb))
+                .on_click(cx.listener(|pin, _: &ClickEvent, window, cx| pin.copy(window, cx)))
+                .into_any_element(),
+        ];
+        let layout = PinLayout::load();
+        div()
+            .id("pin-toolbar")
+            .absolute()
+            .left(px(inset))
+            .top(px(inset + image_height + layout.gap as f32))
+            .flex()
+            .flex_col()
+            .items_start()
+            .gap(px(6.0))
+            .cursor_default()
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
+            .child(annotate::tool_row(&props, leading, trailing, &host))
+            .children(annotate::options_row(&props, &host))
     }
 }

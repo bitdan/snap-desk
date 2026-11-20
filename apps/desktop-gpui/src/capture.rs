@@ -1211,7 +1211,7 @@ impl Render for Overlay {
             return root;
         }
         let text = |key: &'static str| s.text(key);
-        let props = ToolbarProps { editor: &s.editor, active: s.annotating, disabled: s.busy, text: &text };
+        let props = ToolbarProps { editor: &s.editor, active: s.annotating, disabled: s.busy, compact: false, text: &text };
         let host = annotate::Host { view: &view, window, dispatch: Self::action };
         let leading = vec![
             annotate::icon_button("capture-select", annotate::icons::MOVE, s.text("调整选区"), !s.annotating, false)
