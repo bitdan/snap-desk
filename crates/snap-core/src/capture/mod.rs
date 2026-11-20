@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 #[cfg(windows)]
 #[path = "desktop_windows.rs"]
 pub mod windows;
+pub mod recent;
 #[cfg(windows)]
 pub use windows::{AppWindow as NativeWindow, PhysicalDpi};
 #[cfg(not(windows))]
