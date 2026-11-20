@@ -1054,5 +1054,18 @@
   "请先选择要复制的条目。": "Select the entries to copy first.",
   "Ctrl+Enter 或点击输入框外完成；Esc 取消；双击文字重新编辑": "Ctrl+Enter or click outside the box to finish; Esc to cancel; double-click text to edit",
   "再次按截图快捷键取消": "Press the screenshot shortcut again to cancel",
-  "展开全部工具": "Show all tools"
+  "展开全部工具": "Show all tools",
+  "原文（可编辑）": "Source text (editable)",
+  "发送翻译": "Send for translation",
+  "只发送上方文字，不上传图片。翻译服务：": "Only the text above is sent; the image is not uploaded. Translation service:",
+  "已复制识别文字": "Recognized text copied",
+  "已复制译文": "Translation copied",
+  "当前版本暂不支持微信 OCR，请在设置中改用其他引擎。": "WeChat OCR is not supported in this version yet. Choose another engine in Settings.",
+  "当前版本暂不支持本地翻译模型，请在设置中改用在线翻译服务。": "Local translation models are not supported in this version yet. Choose an online translation service in Settings.",
+  "打开链接": "Open link",
+  "无法定位资源目录。": "Unable to locate the resources folder.",
+  "未识别到二维码。": "No QR code found.",
+  "没有可翻译的文字。": "There is no text to translate.",
+  "确认在浏览器中打开此链接？": "Open this link in your browser?",
+  "译为": "Translate to"
 }
