@@ -11,11 +11,32 @@ pub struct WechatOcrStatus {
     pub error: Option<String>,
 }
 
-/// 连接随应用存活，避免每次截图重建微信工作进程及底层回调状态。
+/// 连续识别复用同一连接，避免每次截图重建微信工作进程；空闲五分钟后断开，微信 OCR 子进程随之退出。
 #[derive(Default)]
 pub struct WechatOcrState {
     #[cfg(all(windows, target_arch = "x86_64"))]
     engine: std::sync::Mutex<Option<wechat_ocr_core::WeChatOcr>>,
+    #[cfg(all(windows, target_arch = "x86_64"))]
+    idle: crate::shared::idle_release::IdleSince,
+}
+
+/// 与本地 OCR 相同：从最后一次识别结束计时；正在识别时跳过，下一轮再检查。
+pub fn release_idle(app: &tauri::AppHandle) {
+    #[cfg(all(windows, target_arch = "x86_64"))]
+    {
+        use tauri::Manager;
+        let state = app.state::<WechatOcrState>();
+        let Ok(mut engine) = state.engine.try_lock() else {
+            return;
+        };
+        if engine.is_some() && state.idle.take_expired(std::time::Duration::from_secs(300)) {
+            // 持锁析构，避免旧连接尚未停止时又初始化新连接。
+            drop(engine.take());
+            log::info!("event=ocr.engine_unloaded module=ocr engine=wechat-ocr reason=idle");
+        }
+    }
+    #[cfg(not(all(windows, target_arch = "x86_64")))]
+    let _ = app;
 }
 
 #[tauri::command]
@@ -273,6 +294,8 @@ mod platform {
             .ok_or("WeChat OCR 未初始化。")?
             .recognize(temporary.path())
             .map_err(|e| format!("WeChat OCR 识别失败，请重试或手动切换引擎：{e}"));
+        // 失败的识别也刷新空闲时间，与本地 OCR 一致。
+        state.idle.start();
         let result = result?;
         let lines: Vec<_> = result
             .blocks

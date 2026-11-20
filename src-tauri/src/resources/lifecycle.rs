@@ -1,4 +1,4 @@
-//! 定期回收空闲模型；不等待忙碌任务，不中断正在执行的识别或翻译。
+//! 定期回收空闲模型、OCR 连接和收起较久的常驻窗口；不等待忙碌任务，不中断正在执行的识别或翻译。
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use tauri::{AppHandle, Manager};
@@ -19,6 +19,9 @@ pub fn initialize(app: &AppHandle) {
             let handle = app.clone();
             if let Err(error) = tauri::async_runtime::spawn_blocking(move || {
                 crate::recognition::ocr::release_idle(&handle);
+                crate::recognition::wechat_ocr::release_idle(&handle);
+                crate::shelf::release_idle_window(&handle);
+                crate::clipboard::release_idle_window(&handle);
             })
             .await
             {

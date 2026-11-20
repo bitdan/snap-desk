@@ -608,6 +608,11 @@ pub fn open_history(app: &AppHandle) {
     });
 }
 
+/// 由资源回收循环调用：收起较久的剪贴板窗口释放 WebView。
+pub fn release_idle_window(app: &AppHandle) {
+    window::release_idle(app);
+}
+
 /// 窗口失焦只转告前端：是否收起取决于固定状态及是否有预览、导出等子窗口。
 /// WebView2 在点击页面、开始拖动时会把焦点在外层窗口与内部 WebView 之间转交，
 /// 期间会先报一次失焦再立刻报获得焦点；因此延迟复核，仍未取得焦点才算真正离开。

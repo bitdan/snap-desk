@@ -6,6 +6,7 @@ pub(crate) mod benchmark;
 pub(crate) mod desktop_support;
 pub(crate) mod dialog_windows;
 pub(crate) mod export_staging;
+pub(crate) mod idle_release;
 pub(crate) mod image_io;
 pub(crate) mod image_protocol;
 #[cfg(target_os = "macos")]

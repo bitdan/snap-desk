@@ -32,6 +32,13 @@ pub(crate) fn root_owner(label: &str) -> String {
     current
 }
 
+/// 所有者仍有预览、导出等子窗口时不能销毁它，否则子窗口会随父窗口一起消失。
+pub(crate) fn has_children(owner: &str) -> bool {
+    OWNERS
+        .lock()
+        .map_or(true, |owners| owners.values().any(|value| value == owner))
+}
+
 /// 不允许任意链接进入应用 WebView；空白子窗口也不授予原生命令或事件权限。
 pub(crate) fn attach<'a, M: Manager<Wry>>(
     builder: WebviewWindowBuilder<'a, Wry, M>,

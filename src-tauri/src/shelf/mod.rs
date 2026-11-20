@@ -294,6 +294,11 @@ pub fn initialize(app: &AppHandle) {
     }
 }
 
+/// 由资源回收循环调用：收起较久的暂存架窗口释放 WebView。
+pub fn release_idle_window(app: &AppHandle) {
+    window::release_idle(app);
+}
+
 /// 快捷键沿用应用统一映射、冲突校验和注册生命周期；默认不占用新按键。
 pub fn toggle(app: &AppHandle) {
     let handle = app.clone();
