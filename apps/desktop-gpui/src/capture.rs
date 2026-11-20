@@ -1152,6 +1152,10 @@ impl Overlay {
                     e.set_tool(tool);
                     None
                 }
+                Action::Ui(ui) => {
+                    e.ui(ui);
+                    None
+                }
                 Action::Undo => {
                     e.undo();
                     None
@@ -1414,7 +1418,19 @@ impl Render for Overlay {
             return root.children(loupe);
         }
         let text = |key: &'static str| s.text(key);
-        let props = ToolbarProps { editor: &s.editor, active: s.annotating, disabled: s.busy, compact: false, text: &text };
+        let grouped = !annotate::expanded();
+        // 分组下拉默认向下弹出；选区下方放不下下拉时改为向上。
+        let popover_up = b.origin.y + b.size.height + px(6.0 + annotate::ROW_HEIGHT + 150.0) > viewport.height;
+        let props = ToolbarProps {
+            editor: &s.editor,
+            active: s.annotating,
+            disabled: s.busy,
+            compact: false,
+            grouped,
+            collapsible: true,
+            popover_up,
+            text: &text,
+        };
         let host = annotate::Host { view: &view, window, dispatch: Self::action };
         let leading = vec![
             annotate::icon_button("capture-select", annotate::icons::MOVE, s.text("调整选区"), !s.annotating, false)
@@ -1444,7 +1460,7 @@ impl Render for Overlay {
             (bottom - px(height + 6.0)).max(px(4.0))
         };
         // 右对齐到选区右边；选区太靠左时改为从屏幕左边起排，避免工具栏被挤出屏幕。
-        const MIN_WIDTH: f32 = 900.0;
+        let min_width = if grouped { 640.0 } else { 920.0 };
         let mut toolbar = div()
             .id("capture-toolbar")
             .absolute()
@@ -1460,7 +1476,7 @@ impl Render for Overlay {
             .child(tools)
             .children(options)
             .children(error.map(annotate::error_row));
-        toolbar = if right >= px(MIN_WIDTH) {
+        toolbar = if right >= px(min_width) {
             toolbar.right((viewport.width - right).max(px(4.0)))
         } else {
             toolbar.left(px(4.0)).items_start()

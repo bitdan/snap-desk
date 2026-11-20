@@ -31,8 +31,8 @@ const MENU_WIDTH: f32 = 196.0;
 const ITEM_HEIGHT: f32 = 28.0;
 const SEPARATOR_HEIGHT: f32 = 9.0;
 const OPACITIES: [f32; 4] = [1.0, 0.8, 0.6, 0.4];
-/// 工具栏完整显示所需宽度（逻辑像素）：移动 + 17 个工具 + 撤销/重做 + 缩放、处理、置顶、保存、关闭、复制。
-const TOOLBAR_WIDTH: f32 = 860.0;
+/// 工具栏完整显示所需宽度（逻辑像素）：移动 + 7 个工具分组 + 撤销/重做 + 缩放、处理、置顶、保存、关闭、复制。
+const TOOLBAR_WIDTH: f32 = 640.0;
 
 /// 贴图位置：原位（截图选区）或居中（剪贴板）。
 pub enum Placement {
@@ -748,6 +748,10 @@ impl Pin {
                 e.set_tool(tool);
                 None
             }
+            Action::Ui(ui) => {
+                e.ui(ui);
+                None
+            }
             Action::Undo => {
                 e.undo();
                 None
@@ -1141,7 +1145,7 @@ impl Pin {
         let view = cx.entity();
         let text = |key: &'static str| self.text(key);
         let disabled = self.locked || self.busy;
-        let props = ToolbarProps { editor: &self.editor, active: self.annotating, disabled, compact: true, text: &text };
+        let props = ToolbarProps { editor: &self.editor, active: self.annotating, disabled, compact: true, grouped: true, collapsible: false, popover_up: true, text: &text };
         let host = annotate::Host { view: &view, window, dispatch: Self::action };
         let leading = vec![
             annotate::icon_button("pin-move", annotate::icons::MOVE, self.text("移动贴图"), !self.annotating, disabled)

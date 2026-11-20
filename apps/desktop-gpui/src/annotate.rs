@@ -139,6 +139,29 @@ impl Tool {
     }
 }
 
+/// 折叠模式按用途合并工具（与 Vue 版 `annotationToolGroups` 一致）；每组显示最近使用的工具，
+/// 旁边的小箭头展开该组全部工具。
+pub const GROUPS: [(&str, &[Tool]); 7] = [
+    ("选择 / 编辑", &[Tool::Edit]),
+    ("形状", &[Tool::Rectangle, Tool::Ellipse]),
+    ("线条", &[Tool::Arrow, Tool::ArrowText, Tool::Line, Tool::Polyline]),
+    ("画笔", &[Tool::Pen, Tool::Highlighter]),
+    ("文字与序号", &[Tool::Text, Tool::Number]),
+    ("遮挡与擦除", &[Tool::Mosaic, Tool::Blur, Tool::Erase, Tool::Eraser]),
+    ("强调", &[Tool::Spotlight, Tool::Magnify]),
+];
+
+fn group_of(tool: Tool) -> usize {
+    GROUPS.iter().position(|(_, tools)| tools.contains(&tool)).unwrap_or(0)
+}
+
+/// 截图工具栏是否展开全部工具；进程内各次截图共享（Vue 版存于 localStorage）。
+static EXPANDED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn expanded() -> bool {
+    EXPANDED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// 工具栏图标（Lucide，ISC 许可，见 assets/icons/LICENSE-LUCIDE）；以 SVG 数据嵌入，不注册资源路径。
 pub mod icons {
     macro_rules! icon {
@@ -299,6 +322,10 @@ pub struct Editor {
     pub draft_version: u64,
     /// 丢弃过期的栅格化结果（撤销、取消或重置之后）。
     generation: u64,
+    /// 折叠工具栏中展开下拉的分组。
+    pub open_group: Option<usize>,
+    /// 各分组最近使用的工具。
+    group_tools: [Tool; 7],
 }
 
 impl Editor {
@@ -317,6 +344,8 @@ impl Editor {
             version: 0,
             draft_version: 0,
             generation: 0,
+            open_group: None,
+            group_tools: GROUPS.map(|(_, tools)| tools[0]),
         }
     }
 
@@ -397,6 +426,8 @@ impl Editor {
         self.tool = tool;
         self.selected = None;
         self.error = None;
+        self.open_group = None;
+        self.group_tools[group_of(tool)] = tool;
         match tool {
             Tool::Highlighter => {
                 self.style.width = 20.0;
@@ -453,6 +484,7 @@ impl Editor {
     /// 按下：命中手柄则缩放；选择工具或绘制几何图形时命中已有图形则选中并准备移动；否则开始绘制。
     /// `force_draw`（Alt）时总是绘制。返回整项删除等立即完成的操作不需要后台任务。
     pub fn begin(&mut self, p: Point, tolerance: f64, handle: Option<Handle>, force_draw: bool) {
+        self.open_group = None;
         if self.locked() {
             return;
         }
@@ -960,6 +992,19 @@ impl Editor {
         None
     }
 
+    /// 工具栏自身的界面状态（分组下拉、展开/折叠）。
+    pub fn ui(&mut self, action: UiAction) {
+        match action {
+            UiAction::OpenGroup(index) => {
+                self.open_group = if self.open_group == Some(index) { None } else { Some(index) };
+            }
+            UiAction::ToggleExpanded => {
+                EXPANDED.fetch_xor(true, std::sync::atomic::Ordering::Relaxed);
+                self.open_group = None;
+            }
+        }
+    }
+
     pub fn remove(&mut self) {
         if self.locked() || self.interacting() {
             return;
@@ -1174,11 +1219,18 @@ impl Layers {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Action {
     Tool(Tool),
+    Ui(UiAction),
     Undo,
     Redo,
     Delete,
     Clear,
     Style(StylePatch),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum UiAction {
+    OpenGroup(usize),
+    ToggleExpanded,
 }
 
 /// 预设颜色（Vue 版使用系统取色器；这里提供常用色板）。
@@ -1283,6 +1335,11 @@ pub struct ToolbarProps<'a> {
     pub disabled: bool,
     /// 贴图单行工具栏省去删除/清空按钮（仍可用 Delete 与“图片处理”菜单）。
     pub compact: bool,
+    /// 按用途分组显示；`collapsible` 时可切换为全部工具（截图），否则总是分组（贴图）。
+    pub grouped: bool,
+    pub collapsible: bool,
+    /// 分组下拉向上弹出（工具栏在内容下方、下方空间不足时）。
+    pub popover_up: bool,
     pub text: &'a dyn Fn(&'static str) -> String,
 }
 
@@ -1327,10 +1384,93 @@ pub fn tool_row<T: 'static>(
         .bg(rgb(SURFACE))
         .shadow_lg()
         .children(leading);
-    for (index, tool) in Tool::ALL.into_iter().enumerate() {
-        let pressed = props.active && e.tool == tool;
-        let button = icon_button(("annotation-tool", index), tool.icon(), (props.text)(tool.label()), pressed, locked);
-        row = row.child(on(button, Action::Tool(tool), !locked, host));
+    if props.grouped {
+        for (index, (name, tools)) in GROUPS.into_iter().enumerate() {
+            let current = if tools.contains(&e.tool) { e.tool } else { e.group_tools[index] };
+            let pressed = props.active && tools.contains(&e.tool);
+            let button = icon_button(("annotation-group", index), current.icon(), (props.text)(current.label()), pressed, locked);
+            let mut group = div().relative().flex().flex_none().items_center().child(on(button, Action::Tool(current), !locked, host));
+            if tools.len() > 1 {
+                let trigger = div()
+                    .id(("annotation-group-trigger", index))
+                    .w(px(14.0))
+                    .h(px(30.0))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(4.0))
+                    .text_xs()
+                    .text_color(rgb(MUTED))
+                    .child(if props.popover_up { "▴" } else { "▾" })
+                    .tooltip({
+                        let name = (props.text)(name);
+                        move |_, cx| cx.new(|_| Tooltip(name.clone().into())).into()
+                    });
+                let trigger = if locked { trigger } else { trigger.cursor_pointer().hover(|s| s.bg(rgb(HOVER))) };
+                group = group.child(on(trigger, Action::Ui(UiAction::OpenGroup(index)), !locked, host));
+                if e.open_group == Some(index) && !locked {
+                    let mut menu = div()
+                        .absolute()
+                        .left(px(0.0))
+                        .p(px(4.0))
+                        .flex()
+                        .flex_col()
+                        .gap(px(2.0))
+                        .rounded(px(8.0))
+                        .border_1()
+                        .border_color(rgb(BORDER))
+                        .bg(rgb(SURFACE))
+                        .shadow_lg();
+                    menu = if props.popover_up { menu.bottom(px(36.0)) } else { menu.top(px(36.0)) };
+                    for (position, tool) in tools.iter().copied().enumerate() {
+                        let item = div()
+                            .id(("annotation-group-item", index * 8 + position))
+                            .h(px(30.0))
+                            .px(px(6.0))
+                            .flex()
+                            .items_center()
+                            .gap(px(8.0))
+                            .rounded(px(6.0))
+                            .cursor_pointer()
+                            .hover(|s| s.bg(rgb(HOVER)))
+                            .bg(rgb(if props.active && e.tool == tool { ACTIVE_BG } else { SURFACE }))
+                            .child(icon(tool.icon(), if props.active && e.tool == tool { ACTIVE_FG } else { TEXT }))
+                            .child(div().text_xs().text_color(rgb(TEXT)).whitespace_nowrap().child((props.text)(tool.label())));
+                        menu = menu.child(on(item, Action::Tool(tool), true, host));
+                    }
+                    group = group.child(menu);
+                }
+            }
+            row = row.child(group);
+        }
+    } else {
+        for (index, tool) in Tool::ALL.into_iter().enumerate() {
+            let pressed = props.active && e.tool == tool;
+            let button = icon_button(("annotation-tool", index), tool.icon(), (props.text)(tool.label()), pressed, locked);
+            row = row.child(on(button, Action::Tool(tool), !locked, host));
+        }
+    }
+    if props.collapsible {
+        let label = if props.grouped { "展开全部工具" } else { "折叠相似工具" };
+        let toggle = div()
+            .id("annotation-expand")
+            .w(px(18.0))
+            .h(px(30.0))
+            .flex()
+            .flex_none()
+            .items_center()
+            .justify_center()
+            .rounded(px(4.0))
+            .cursor_pointer()
+            .hover(|s| s.bg(rgb(HOVER)))
+            .text_xs()
+            .text_color(rgb(MUTED))
+            .child(if props.grouped { "»" } else { "«" })
+            .tooltip({
+                let label = (props.text)(label);
+                move |_, cx| cx.new(|_| Tooltip(label.clone().into())).into()
+            });
+        row = row.child(on(toggle, Action::Ui(UiAction::ToggleExpanded), !locked, host));
     }
     row = row.child(divider());
     let undo = icon_button("annotation-undo", icons::UNDO, (props.text)("撤销 Ctrl/⌘+Z"), false, locked || !e.can_undo());
@@ -1564,7 +1704,7 @@ pub fn user_font() -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     // 不能 `use super::*`：gpui 的 `test` 宏会遮蔽标准库 #[test]。
-    use super::{Bounds, Editor, Handle, Kind, Layers, Point, RgbaImage, StylePatch, Tool, annotations};
+    use super::{Bounds, Editor, Handle, Kind, Layers, Point, RgbaImage, StylePatch, Tool, UiAction, annotations};
 
     const CROP: Bounds = Bounds { x: 0.0, y: 0.0, width: 200.0, height: 100.0 };
     fn p(x: f64, y: f64) -> Point {
@@ -1749,5 +1889,22 @@ mod tests {
         // 未变化时不重绘。
         layers.update(&e);
         assert!(layers.take_retired().is_empty());
+    }
+
+    #[test]
+    fn groups_remember_last_tool_and_dropdown_closes_on_choice() {
+        let mut e = Editor::new(CROP, vec![]);
+        assert_eq!(e.group_tools[2], Tool::Arrow);
+        e.ui(UiAction::OpenGroup(2));
+        assert_eq!(e.open_group, Some(2));
+        e.ui(UiAction::OpenGroup(2));
+        assert_eq!(e.open_group, None);
+        e.ui(UiAction::OpenGroup(5));
+        e.set_tool(Tool::Blur);
+        assert_eq!(e.open_group, None);
+        assert_eq!(e.group_tools[5], Tool::Blur);
+        e.ui(UiAction::OpenGroup(1));
+        e.begin(p(5.0, 5.0), 6.0, None, false);
+        assert_eq!(e.open_group, None, "在画布上按下关闭下拉");
     }
 }
