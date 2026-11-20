@@ -7,7 +7,8 @@
 //!
 //! 尺寸与 Tauri 版共用 `snap_core::pins::PinLayout`：缩放 1 表示一图像像素对应一物理像素，
 //! 图片四周保留 (padding + border) 的透明边距，按物理像素取整后再换算成窗口逻辑像素。
-//! 像素预算、变换、文字排版同样来自 core。未接入：OCR/翻译面板、拖出内容、HTML 贴图。
+//! 像素预算、变换、文字排版同样来自 core。识别文字/二维码/翻译图片打开独立结果窗口（`recognition.rs`）。
+//! 未接入：拖出内容、HTML 贴图。
 //!
 //! 标注：空格（或右键菜单“显示工具栏”）在图片下方展开工具栏，窗口随之加高、加宽；选择标注工具后
 //! 图片上的按下交给编辑器（`annotate.rs`），“移动贴图”按钮回到拖动窗口。标注坐标为贴图图像像素，
@@ -32,7 +33,7 @@ const ITEM_HEIGHT: f32 = 28.0;
 const SEPARATOR_HEIGHT: f32 = 9.0;
 const OPACITIES: [f32; 4] = [1.0, 0.8, 0.6, 0.4];
 /// 工具栏完整显示所需宽度（逻辑像素）：移动 + 7 个工具分组 + 撤销/重做 + 缩放、处理、置顶、保存、关闭、复制。
-const TOOLBAR_WIDTH: f32 = 640.0;
+const TOOLBAR_WIDTH: f32 = 680.0;
 
 /// 贴图位置：原位（截图选区）或居中（剪贴板）。
 pub enum Placement {
@@ -296,6 +297,7 @@ fn decode_clipboard_image(bytes: &[u8]) -> Result<RgbaImage, String> {
 /// 右键菜单项；文案是词典键（中文原文）。
 #[derive(Clone, Copy, PartialEq)]
 enum Item {
+    Recognize(crate::recognition::Mode),
     Copy,
     Save,
     Topmost,
@@ -309,7 +311,11 @@ enum Item {
     Separator,
 }
 
-const MENU: [Item; 23] = [
+const MENU: [Item; 27] = [
+    Item::Recognize(crate::recognition::Mode::Ocr),
+    Item::Recognize(crate::recognition::Mode::Qr),
+    Item::Recognize(crate::recognition::Mode::Translate),
+    Item::Separator,
     Item::Copy,
     Item::Save,
     Item::Separator,
@@ -457,6 +463,7 @@ impl Pin {
     fn select(&mut self, item: Item, window: &mut Window, cx: &mut Context<Self>) {
         self.close_menu(window, cx);
         match item {
+            Item::Recognize(mode) => self.recognize(mode, cx),
             Item::Copy => self.copy(window, cx),
             Item::Save => self.save(window, cx),
             Item::Topmost => match crate::native::set_topmost(window, !self.topmost) {
@@ -482,6 +489,22 @@ impl Pin {
             Item::Separator => {}
         }
         cx.notify();
+    }
+
+    /// 识别当前图像（含标注，与复制/保存看到的一致）；结果在独立窗口中显示，贴图保持不变。
+    fn recognize(&mut self, mode: crate::recognition::Mode, cx: &mut Context<Self>) {
+        if self.busy || self.editor.pending || self.editor.interacting() {
+            return;
+        }
+        let (image, shapes) = (self.image.clone(), self.editor.shapes().to_vec());
+        cx.spawn(async move |_, cx| {
+            let composed = cx.background_executor().spawn(async move { composed(&image, &shapes) }).await;
+            cx.update(|cx| match composed {
+                Ok(image) => crate::recognition::open(cx, image, mode),
+                Err(error) => log::error!("event=gpui.pin_recognize_failed message={error}"),
+            });
+        })
+        .detach();
     }
 
     fn copy(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -965,6 +988,14 @@ impl Pin {
 
     fn label(&self, item: Item) -> (String, bool) {
         match item {
+            Item::Recognize(mode) => (
+                self.text(match mode {
+                    crate::recognition::Mode::Ocr => "识别文字",
+                    crate::recognition::Mode::Qr => "识别二维码",
+                    crate::recognition::Mode::Translate => "翻译图片",
+                }),
+                false,
+            ),
             Item::Copy => (self.text("复制图片"), false),
             Item::Save => (self.text("保存图片"), false),
             Item::Topmost => (self.text("窗口置顶"), self.topmost),
@@ -1215,6 +1246,14 @@ impl Pin {
             }));
         let trailing = vec![
             zoom.into_any_element(),
+            annotate::icon_button("pin-recognize", annotate::icons::SCAN_TEXT, self.text("识别"), false, self.busy)
+                .on_click(cx.listener(|pin, event: &ClickEvent, window, cx| {
+                    // 识别菜单与右键菜单共用（识别项在最上方）。
+                    pin.menu = Some(event.position());
+                    pin.fit_window(window);
+                    cx.notify();
+                }))
+                .into_any_element(),
             annotate::icon_button("pin-adjust", annotate::icons::SLIDERS, self.text("图片处理"), false, disabled)
                 .on_click(cx.listener(|pin, event: &ClickEvent, window, cx| {
                     pin.menu = Some(event.position());
