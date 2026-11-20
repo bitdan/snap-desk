@@ -8,6 +8,7 @@
 //! 已有实例运行时，参数经单实例通道转交给它，本进程随即退出。
 mod annotate;
 mod capture;
+mod clipboard;
 mod countdown;
 mod logging;
 mod magnifier;

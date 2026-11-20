@@ -299,13 +299,7 @@ fn restore_many(app: &AppHandle, s: &Service, ids: &[i64]) -> Result<(), String>
     if ids.is_empty() || ids.len() > MAX_SELECTION {
         return Err("请选择 1～100 条记录。".into());
     }
-    let contents = {
-        let d = s.data()?;
-        let _guard = d.operation.lock().map_err(|_| "历史存储忙碌。")?;
-        ids.iter()
-            .map(|id| d.content(*id))
-            .collect::<Result<Vec<_>, _>>()?
-    };
+    let contents = s.contents(ids)?;
     let content = combine(contents, |image| {
         crate::shared::native_drag::image_file(app, image)
     })?;
@@ -411,13 +405,7 @@ pub async fn clipboard_set_favorite(
     id: i64,
     favorite: bool,
 ) -> Result<(), String> {
-    work(app, window, move |_app, s| {
-        let d = s.data()?;
-        let _guard = d.operation.lock().map_err(|_| "历史存储忙碌。")?;
-        d.repo.favorite(id, favorite)?;
-        s.changed();
-        Ok(())
-    })
+    work(app, window, move |_app, s| s.set_favorite(id, favorite))
     .await
 }
 #[tauri::command]
@@ -427,14 +415,7 @@ pub async fn clipboard_delete(
     ids: Vec<i64>,
 ) -> Result<(), String> {
     validate_ids(&ids)?;
-    work(app, window, move |_app, s| {
-        let d = s.data()?;
-        let _guard = d.operation.lock().map_err(|_| "历史存储忙碌。")?;
-        let removed = d.repo.delete(&ids)?;
-        let cleanup = d.blobs.remove(&removed);
-        s.changed();
-        cleanup
-    })
+    work(app, window, move |_app, s| s.delete(&ids))
     .await
 }
 #[tauri::command]
@@ -443,21 +424,7 @@ pub async fn clipboard_clear(
     window: WebviewWindow,
     include_favorites: bool,
 ) -> Result<(), String> {
-    work(app, window, move |_app, s| {
-        let d = s.data()?;
-        let _guard = d.operation.lock().map_err(|_| "历史存储忙碌。")?;
-        let removed = d.repo.clear(include_favorites)?;
-        let cleanup = d.blobs.remove(&removed);
-        s.changed();
-        if cleanup.is_ok() {
-            log::info!("event=clipboard.cleared module=clipboard");
-        } else {
-            log::warn!(
-                "event=clipboard.cleanup_failed module=clipboard code=CLIPBOARD_CLEANUP_FAILED"
-            );
-        }
-        cleanup
-    })
+    work(app, window, move |_app, s| s.clear(include_favorites))
     .await
 }
 /// 历史设置独立合并，防止快捷键页面的旧草稿重新打开已暂停的监听。

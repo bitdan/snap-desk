@@ -447,6 +447,70 @@ impl Data {
 }
 
 impl Service {
+    /// 收藏 / 取消收藏。
+    pub fn set_favorite(&self, id: i64, favorite: bool) -> Result<(), String> {
+        let d = self.data()?;
+        let _guard = d.operation.lock().map_err(|_| "历史存储忙碌。")?;
+        d.repo.favorite(id, favorite)?;
+        self.changed();
+        Ok(())
+    }
+
+    /// 删除条目及其图片素材。
+    pub fn delete(&self, ids: &[i64]) -> Result<(), String> {
+        validate_ids(ids)?;
+        let d = self.data()?;
+        let _guard = d.operation.lock().map_err(|_| "历史存储忙碌。")?;
+        let removed = d.repo.delete(ids)?;
+        let cleanup = d.blobs.remove(&removed);
+        self.changed();
+        cleanup
+    }
+
+    /// 清空历史；`include_favorites` 为假时保留收藏。
+    pub fn clear(&self, include_favorites: bool) -> Result<(), String> {
+        let d = self.data()?;
+        let _guard = d.operation.lock().map_err(|_| "历史存储忙碌。")?;
+        let removed = d.repo.clear(include_favorites)?;
+        let cleanup = d.blobs.remove(&removed);
+        self.changed();
+        if cleanup.is_ok() {
+            log::info!("event=clipboard.cleared module=clipboard");
+        } else {
+            log::warn!("event=clipboard.cleanup_failed module=clipboard code=CLIPBOARD_CLEANUP_FAILED");
+        }
+        cleanup
+    }
+
+    /// 图片条目的缩略图（WebP，≤ 256 KiB）。锁内只打开文件，读取在锁外完成。
+    pub fn thumbnail(&self, id: i64) -> Result<Vec<u8>, String> {
+        use std::io::Read;
+        let file = {
+            let d = self.data()?;
+            let _guard = d.operation.lock().map_err(|_| "历史存储忙碌。")?;
+            let item = d.repo.get(id)?;
+            let path = d.blobs.path(&item.thumb.ok_or("此条目不是图片。")?)?;
+            std::fs::File::open(path).map_err(|_| "缩略图不可用。")?
+        };
+        let limit = 256 * 1024;
+        let mut bytes = Vec::new();
+        file.take(limit + 1).read_to_end(&mut bytes).map_err(|_| "缩略图读取失败。")?;
+        if bytes.len() as u64 > limit {
+            return Err("缩略图大小异常。".into());
+        }
+        Ok(bytes)
+    }
+
+    /// 按选择顺序读取多条内容（多选复制/粘贴前合并用）。
+    pub fn contents(&self, ids: &[i64]) -> Result<Vec<Content>, String> {
+        if ids.is_empty() || ids.len() > MAX_SELECTION {
+            return Err("请选择 1～100 条记录。".into());
+        }
+        let d = self.data()?;
+        let _guard = d.operation.lock().map_err(|_| "历史存储忙碌。")?;
+        ids.iter().map(|id| d.content(*id)).collect()
+    }
+
     /// 写回系统剪贴板后调用：记下序号与哈希，监听线程据此跳过这次自写入。
     /// 调用方应在写入前取得 `write_gate`，写入与标记之间不让监听线程插入读取。
     pub fn mark_restored(&self, content: &Content) -> Result<(), String> {
@@ -615,3 +679,30 @@ mod tests {
     }
 
 }
+
+#[cfg(test)]
+mod seed {
+    /// 开发辅助：向 `SNAP_SEED_DIR` 指定的空目录写入示例历史（文本、链接、颜色、路径、图片），
+    /// 用于在不改动真实剪贴板的情况下查看历史窗口。`cargo test -p snap-core seed_history -- --ignored`。
+    #[test]
+    #[ignore]
+    fn seed_history() {
+        use super::super::{blob_store::BlobStore, model::*, repository::{NewItem, Repository}};
+        let Ok(dir) = std::env::var("SNAP_SEED_DIR") else { return };
+        let root = std::path::PathBuf::from(dir);
+        let repo = Repository::open(&root.join("history.db")).unwrap();
+        let blobs = BlobStore::new(root.clone()).unwrap();
+        let settings = ClipboardSettings::default();
+        let now = super::now();
+        for (i, text) in ["会议纪要：周五前提交迁移清单", "https://example.com/docs/gpui", "#2563eb", r"C:\Users\Public\Documents\report.pdf", "fn main() {}"].iter().enumerate() {
+            let hash = blake3::hash(text.as_bytes()).to_hex().to_string();
+            repo.insert(NewItem { kind: Kind::Text, hash: &hash, text: Some(text), blob: None, thumb: None, width: None, height: None, bytes: text.len() as u64 }, &settings, now - (i as i64) * 90_000).unwrap();
+        }
+        let image = image::RgbaImage::from_fn(320, 180, |x, y| image::Rgba([(x % 256) as u8, (y * 255 / 180) as u8, 180, 255]));
+        let hash = super::image_hash(&image);
+        let saved = blobs.save(&hash, &image).unwrap();
+        repo.insert(NewItem { kind: Kind::Image, hash: &hash, text: None, blob: Some(&saved.blob), thumb: Some(&saved.thumb), width: Some(320), height: Some(180), bytes: saved.bytes }, &settings, now - 3_600_000).unwrap();
+        saved.commit();
+    }
+}
+

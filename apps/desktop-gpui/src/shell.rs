@@ -132,7 +132,10 @@ pub fn start(
         _tray: tray,
     };
     shell.register_startup();
+    let clipboard = shell.settings.clipboard.clone();
     cx.set_global(shell);
+    // 剪贴板历史记录服务（按设置启用）；历史窗口由托盘“剪贴板”或快捷键打开。
+    crate::clipboard::init(cx, &clipboard);
 
     cx.spawn(async move |cx| {
         let mut receiver = receiver;
@@ -243,6 +246,7 @@ fn handle(cx: &mut App, event: ShellEvent) {
         ShellEvent::Menu(event) => match event.id.0.as_str() {
             QUIT_ID => {
                 log::info!("event=gpui.quit source=tray");
+                crate::clipboard::shutdown(cx);
                 cx.quit();
             }
             SHORTCUTS_ID => cx.update_global::<Shell, _>(|shell, _| shell.toggle_shortcuts()),
@@ -318,6 +322,10 @@ pub fn run_action(cx: &mut App, action: ShortcutAction, source: &str) {
             } else if !crate::pins::restore_click_through(cx) {
                 crate::pins::from_clipboard(cx);
             }
+        }
+        ShortcutAction::History => {
+            log::info!("event=gpui.action action=history source={source}");
+            crate::clipboard::open(cx);
         }
         _ => log::info!(
             "event=gpui.action action={} source={source} status=not_implemented",
