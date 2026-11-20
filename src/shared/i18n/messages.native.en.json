@@ -1067,5 +1067,9 @@
   "未识别到二维码。": "No QR code found.",
   "没有可翻译的文字。": "There is no text to translate.",
   "确认在浏览器中打开此链接？": "Open this link in your browser?",
-  "译为": "Translate to"
+  "译为": "Translate to",
+  "Wayland 会话暂不支持鼠标穿透。": "Click-through is not supported in Wayland sessions yet.",
+  "Wayland 会话暂不支持切换置顶。": "Always-on-top is not supported in Wayland sessions yet.",
+  "窗口管理器不支持置顶。": "The window manager does not support always-on-top.",
+  "窗口管理器拒绝了置顶请求。": "The window manager rejected the always-on-top request."
 }
