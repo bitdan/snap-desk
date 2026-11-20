@@ -1,162 +1,189 @@
-# Snap Desk — 免费开源的跨平台截图、滚动截图与录屏工具
+<p align="center">
+  <img src="src-tauri/icons/128x128@2x.png" alt="Snap Desk" width="96" height="96" />
+</p>
 
-简体中文 · [English](README.en.md)
+<h1 align="center">Snap Desk</h1>
 
-**Snap Desk** 是一款免费开源的跨平台截图与屏幕录制软件，可在 Windows、macOS 和 Linux 上使用，支持区域截图、长截图（滚动截图）、图片标注、桌面贴图、MP4/GIF 录屏、OCR 文字识别、文本翻译和剪贴板历史管理。截图及录屏可在本机完成，OCR 和翻译可根据需要选择离线引擎或自配置的在线 API。
+<p align="center">
+  免费开源的跨平台截图与录屏工具，支持 Windows、macOS（Apple 芯片）和 Linux。<br />
+  截图、滚动截图、标注、贴图、录屏、OCR、翻译、剪贴板历史，一个应用完成。
+</p>
 
-[项目官网](https://bitdan.github.io/snap-desk/) · [下载](https://github.com/bitdan/snap-desk/releases) · [开始使用](#开始使用) · [技术说明](TECHNICAL.md) · [开发进度](Snap_Desk_TODO.md)
+<p align="center">
+  <a href="https://github.com/bitdan/snap-desk/releases">下载</a> ·
+  <a href="https://bitdan.github.io/snap-desk/">项目官网</a> ·
+  <a href="#功能">功能</a> ·
+  <a href="#开始使用">开始使用</a> ·
+  <a href="TECHNICAL.md">技术说明</a> ·
+  <a href="Snap_Desk_TODO.md">开发进度</a>
+</p>
 
-![Snap Desk 截图与标注：框选图表区域后，用工具栏圈出峰值、画箭头，并给密钥打上马赛克](docs/assets/screenshots/annotate.png)
+<p align="center">简体中文 · <a href="README.en.md">English</a></p>
 
-## 界面预览
-
-| 文字识别 | 翻译 |
+| 浅色主题 | 深色主题 |
 | :---: | :---: |
-| ![文字识别结果窗口：左侧是截图原图，右侧是识别出的文字](docs/assets/screenshots/ocr.png) | ![识别后就地翻译：上方是识别出的英文，下方是中文译文](docs/assets/screenshots/translate.png) |
-| 框选后一键识别，结果与原图对照，可整理、复制 | 识别结果就地翻译，原文与译文同屏 |
-| **桌面贴图** | **录屏** |
-| ![标注过的图表贴图悬浮在文档右侧](docs/assets/screenshots/pin.png) | ![框选区域后展开的录屏工具栏](docs/assets/screenshots/recording.png) |
-| 把截图钉在桌面，始终置顶，对照着写 | 框选范围后选择声音、指针和格式，开始录制 |
-
-## 下载
-
-前往 [Releases](https://github.com/bitdan/snap-desk/releases) 下载。OCR 模型、本地翻译引擎及语言包可在应用内按需安装。
-
-| 平台 | 文件 | 说明 |
-| --- | --- | --- |
-| Windows x64 | `-setup.exe` 安装包 / `-standalone.exe` 独立 EXE | 功能完整，支持在线更新 |
-| macOS Apple 芯片（预览） | `-macos-arm64.dmg` | 功能基本完整，支持在线更新，尚未实机验证；需 macOS 13.3 及以上；未经 Apple 公证，首次打开需在“系统设置 → 隐私与安全性”中放行，并授予屏幕录制权限 |
-| Linux x64（预览） | `-linux-x64.AppImage` / `-linux-x64.deb` | 需 Ubuntu 24.04 或同期发行版（glibc 2.39+）；支持 X11 与 Wayland 会话，尚未实机验证；AppImage 自带界面引擎和系统库（约 100 MB），不挑发行版并支持在线更新；deb 体积小（约 20 MB），依赖由包管理器安装，升级需下载新版本覆盖安装 |
-
-macOS 版已适配截图（窗口与控件吸附、包含光标）、滚动截图、MP4/GIF 录屏（含系统声音与麦克风）、剪贴板历史、贴图、Apple Vision 文字识别与划词翻译，暂不支持跨屏框选、本地翻译引擎和本地 PaddleOCR。Linux 版在 X11 下已适配多屏截图、窗口吸附、滚动截图、MP4/GIF 录屏（含系统声音与麦克风）、剪贴板历史、划词翻译和系统密钥存储；Wayland 下支持单显示器截图、经屏幕共享门户录屏和门户全局快捷键，剪贴板历史与划词翻译经 Xwayland 提供。macOS 与 Linux 的这些功能目前仅通过 CI 构建和自动化测试，尚未在实机上验证，遇到问题欢迎提交 Issue。进度见 [TODO](Snap_Desk_TODO.md)。
+| ![主窗口截图页，浅色主题](docs/assets/screenshots/main-light.png) | ![主窗口截图页，深色主题](docs/assets/screenshots/main-dark.png) |
 
 ## 功能
 
-`[x]` / ✅ 表示已支持，`[ ]` 表示尚未支持。后续计划见 [TODO](Snap_Desk_TODO.md)。
-
-- **离线**：截图、识别或翻译在本机执行；首次安装资源、检查更新等操作可能需要网络。
-- **在线 API**：文字或选区图片发送给所选服务商，额度、费用与使用权限由该服务决定。
-- **本机 API**：请求发往本机接口；是否继续访问云端取决于该服务，不能据此保证完全离线。
+✅ 已支持。截图、录屏、贴图与剪贴板全部在本机完成；只有选择在线服务时，才会把图片或文字发给该服务商。后续计划见 [TODO](Snap_Desk_TODO.md)。
 
 ### 截图与标注
 
-- [x] **离线** · 区域截图、全屏截图、窗口吸附。
-- [x] **离线** · 多显示器、不同缩放比例、延时截图与鼠标光标选项。
-- [x] **离线** · 取色、矩形、椭圆、直线、箭头、箭头文字与折线。
-- [x] **离线** · 画笔、荧光笔、文字、序号、聚光灯与放大镜标注。
-- [x] **离线** · 马赛克、模糊、局部像素擦除及整项标注删除。
-- [x] **离线** · 截图 / 贴图共享标注、二次编辑、撤销 / 重做与工具栏排序。
-- [x] **离线** · 复制、保存图片，PNG / JPEG / WebP 导出与文件命名设置。
+![截图标注：框选区域，底部为标注与操作工具栏](docs/assets/screenshots/annotate.png)
+
+- ✅ 区域 / 全屏截图，窗口与界面元素吸附
+- ✅ 多显示器、混合缩放、延时截图、包含光标
+- ✅ 放大镜、取色器
+- ✅ 沿用上次选区；框选后直接复制 / 贴图 / 保存
+- ✅ 截图历史：`,` / `.` 回放最近 20 次截图，继续编辑
+- ✅ 16 种标注：矩形、椭圆、箭头、箭头文字、直线、折线、画笔、荧光笔、文字、序号、聚光灯、放大镜、马赛克、模糊、像素擦除、整项删除
+- ✅ 撤销 / 重做，工具栏折叠与排序
+- ✅ PNG / JPEG / WebP 导出，自定义文件名
 
 ### 滚动截图
 
-- [x] **离线** · 手动横向 / 纵向滚动、同轴折返与自动拼接。
-- [x] **离线** · 实时预览、失败恢复、白底 / 透明 PNG 导出。
-- [ ] 超大滚动截图。
-- [ ] 通用浏览器整页截图。
+![滚动截图：右侧实时预览拼接结果](docs/assets/screenshots/scroll-capture.png)
 
-### 桌面贴图
-
-- [x] **离线** · 将截图、图片或剪贴板内容固定在桌面。
-- [x] **离线** · 多窗口、分组、锁定、缩放、透明度与置顶。
-- [x] **离线** · 图像调整、继续标注、复制与保存。
-- [x] **按所选服务** · 从贴图调用文字识别、二维码识别和翻译。
+- ✅ 横向 / 纵向滚动自动拼接，同轴折返
+- ✅ 实时预览，失败恢复
+- ✅ 白底 / 透明 PNG 导出
 
 ### 录屏
 
-- [x] **离线 / Windows、macOS、Linux** · 区域 / 显示器录制，MP4 / GIF 导出。
-- [x] **离线 / Windows、macOS、Linux（X11）** · 暂停 / 恢复、键鼠可视化与实时标注。
-- [x] **离线 / Windows、macOS、Linux** · MP4 录制系统声音和麦克风。
-- [ ] 摄像头画中画、H.265、HDR 与复杂视频剪辑。
+![录屏：框选区域后的录制范围、声音、指针与键鼠设置工具栏](docs/assets/screenshots/recording.png)
 
-### 文字识别
+- ✅ 选区 / 整屏录制，MP4 / GIF
+- ✅ 系统声音、麦克风、鼠标指针
+- ✅ 倒计时、暂停 / 恢复
+- ✅ 录制中标注，自动淡出或手动清除
+- ✅ 键鼠特效：按键提示、点击光圈、移动尾迹、拖动轨迹、滚轮提示
+- ✅ 帧率、画质、码率、编码方式可调
 
-| 状态 | 引擎 / 服务 | 类型 | 使用说明 |
-| --- | --- | --- | --- |
-| ✅ | PaddleOCR · PP-OCRv6 | 离线 | 首次使用时安装识别资源 |
-| ✅ | Windows OCR | 离线 | 使用系统已安装的识别语言包 |
-| ✅ | Apple Vision | 离线 | macOS 系统自带文字识别，无需安装资源 |
-| ✅ | OCR.space | 在线 API | 配置 API Key；大截图自动压缩以满足免费版 1 MB 限制 |
-| ✅ | Paddle API | 在线 API | 配置 AI Studio Token；可选 PP-OCRv6、PaddleOCR-VL-1.6、PP-StructureV3 等模型 |
-| ✅ | Groq Vision | 在线 API | 选择支持图片识别的模型 |
-| ✅ | [DeepSeek](https://api-docs.deepseek.com/zh-cn/guides/vision/) | 在线 API | `deepseek-flash` 图片文字识别 |
-| ✅ | 自定义视觉服务 | 在线 API / 本机 API | 使用支持图片输入的兼容服务 |
+### 桌面贴图
 
-- [x] 全局快捷键（默认 `Alt+C`）直接框选识别；截图中按下则识别当前选区。识别出内容后截图自动收起，只保留结果窗口。
-- [x] 识别结果与原图对照：点击识别框定位文字，可合并换行、整理空格、复制或就地翻译。
-- [x] 本地二维码识别；打开识别到的链接前确认。
-- [x] 按当前选择的引擎识别；不会因本地失败自动改用在线服务。
+| 贴图 | 工具栏 |
+| :---: | :---: |
+| ![桌面贴图悬浮在页面上方](docs/assets/screenshots/pin.png) | ![贴图下方的标注、缩放、图像调整与识别工具栏](docs/assets/screenshots/pin-toolbar.png) |
 
-启用在线 OCR 后，识别操作会直接上传选区图片。接口地址、支持模型、额度与商用条款见 [OCR 技术说明](TECHNICAL.md#ocr-接入)。
+- ✅ 贴截图、图片文件、剪贴板文字 / 富文本 / 颜色
+- ✅ 置顶、缩放、不透明度、锁定、鼠标穿透
+- ✅ 分组管理，统一外观（阴影、圆角、边框）
+- ✅ 旋转、翻转、灰度、反色、自动调整
+- ✅ 继续标注、复制、保存、拖出到其他应用
+- ✅ 文字识别、二维码识别、图片翻译
+
+### 顶部暂存架
+
+![屏幕顶部展开的暂存架卡片](docs/assets/screenshots/shelf.png)
+
+- ✅ 快捷键或鼠标停在屏幕顶部中央时展开
+- ✅ 按类别放置：文本、图片、文件、链接、路径、颜色、收藏
+- ✅ 单击复制、拖出分享、取下为贴图
+- ✅ 移除可撤销，不影响剪贴板历史
+
+### 剪贴板历史
+
+| 历史窗口 | 组合导出 |
+| :---: | :---: |
+| ![剪贴板历史窗口：搜索、分类与文本 / 图片卡片](docs/assets/screenshots/clipboard.png) | ![组合导出：素材排序与长图预览](docs/assets/screenshots/clipboard-composer.png) |
+
+- ✅ 文本、图片、文件路径历史
+- ✅ 分类、搜索、收藏、预览
+- ✅ 回车粘贴到原窗口，`Ctrl+1`～`9` 快速选取，多选批量操作
+- ✅ 组合导出 PDF / 长图 / 单独文件，可排序、改写文本
+- ✅ 保留天数、条数与容量上限
+
+### 文字识别与二维码
+
+| 识别结果 | 二维码 |
+| :---: | :---: |
+| ![文字识别结果：原图识别框与可编辑文字](docs/assets/screenshots/ocr.png) | ![二维码识别结果](docs/assets/screenshots/qr.png) |
+
+- ✅ 离线：PaddleOCR PP-OCRv6、Windows OCR、Apple Vision、WeChat OCR（实验性）
+- ✅ 在线：OCR.space、Paddle API、Groq Vision、DeepSeek、自定义视觉服务
+- ✅ 快捷键框选识别，识别框与原图对照
+- ✅ 合并换行、整理空格、自动复制
+- ✅ 本地二维码识别，打开链接前确认
 
 ### 翻译
 
-| 状态 | 引擎 / 服务 | 类型 | 使用说明 |
-| --- | --- | --- | --- |
-| ✅ | CTranslate2 | 离线 | 安装引擎与语言包后支持本地中英互译 |
-| ✅ | DeepL API Free / Pro | 在线 API | 使用自己的 API Key |
-| ✅ | Groq | 在线 API | 选择账号可用的文本模型 |
-| ✅ | [DeepSeek](https://api-docs.deepseek.com/zh-cn/) | 在线 API | 内置 `deepseek-flash` 预设，使用自己的 API Key |
-| ✅ | OpenAI | 在线 API | 配置模型与 API Key |
-| ✅ | Ollama 等本机服务 | 本机 API | 使用兼容的本机文本模型服务 |
-| ✅ | 自定义文本服务 | 在线 API / 本机 API | 配置服务地址、模型和所需凭据 |
+| 识别后翻译 | 翻译窗口 |
+| :---: | :---: |
+| ![截图翻译：译文覆盖原文位置](docs/assets/screenshots/translate.png) | ![独立翻译窗口：检测语言、中英自动互译与 DeepL 译文](docs/assets/screenshots/translation-window.png) |
 
-- [x] 独立翻译窗口，支持手动输入、剪贴板文本、划词快捷键和截图翻译。
-- [x] 按 `Alt+T` 打开翻译界面；有选中文字时自动复制并翻译（Windows、macOS、Linux），快捷键可修改。
-- [x] `Enter` 翻译、`Shift+Enter` 换行，支持语言切换、复制、合并换行与窗口置顶。
-- [x] 截图工具栏、贴图和翻译窗口共用翻译入口；在线文本翻译只发送待翻译文字。
+- ✅ 离线：CTranslate2 中英互译
+- ✅ 在线：DeepL、Groq、DeepSeek、OpenAI、自定义文本服务
+- ✅ 本机：Ollama 等兼容服务
+- ✅ 划词翻译、截图翻译、贴图翻译、独立翻译窗口
+- ✅ 中英自动互译，另支持日、韩、法、德
+- ✅ 回译、交换语言、窗口置顶
 
-专用接口与兼容服务的接入范围见 [翻译技术说明](TECHNICAL.md#翻译接入)。
+### AI 与服务管理
 
-### 服务管理
+![服务管理：本地引擎与在线服务列表](docs/assets/screenshots/services.png)
 
-- [x] OCR、翻译与服务管理独立页面，菜单按云端 API、本机 API、离线引擎排序。
-- [x] 多账号 / 多模型连接；已有连接替代同供应商预设入口，保留真实的多个账号。
-- [x] 显示已生效的服务名称、模型及“当前使用”；浏览状态与生效配置分别标注。
-- [x] 密钥按连接与地址隔离保存到 Windows 凭据库、macOS 钥匙串或 Linux Secret Service，不随配置导出。
-- [x] 提供官方凭据页面入口；通过 API Key / Token 接入。
+- ✅ 多账号 / 多模型连接，多密钥逐个测试
+- ✅ 内置 DeepSeek、Groq、OCR.space、PaddleOCR、DeepL 预设，兼容 Chat Completions 接口
+- ✅ 密钥存入 Windows 凭据库 / macOS 钥匙串 / Linux Secret Service
+- ✅ 本地模型与语言包按需安装、校验、空闲回收
 
-### 剪贴板
+### 更新与设置
 
-- [x] **离线** · 快捷键唤出独立剪贴板窗口；文本、图片与文件路径历史，分类排序、搜索、收藏和预览。
-- [x] **离线** · 复制、贴图、PDF / 长 PNG / 独立文件导出；文件历史只保存路径。
+| 快捷键 | 应用更新 |
+| :---: | :---: |
+| ![快捷键设置](docs/assets/screenshots/shortcuts.png) | ![应用更新设置](docs/assets/screenshots/update.png) |
 
-### 设置与更新
+![日志页](docs/assets/screenshots/logs.png)
 
-- [x] **离线** · 自定义快捷键、冲突校验、全局启停和界面点击引导。
-- [x] **离线** · 中英文、浅色 / 深色主题、配置导入 / 导出与日志诊断。
-- [x] **联网** · 正式版 / 测试版在线更新：Windows 安装包与独立 EXE、macOS 应用、Linux AppImage。
+- ✅ 正式版 / 测试版在线更新，签名校验
+- ✅ 下载镜像、更新代理、检查间隔
+- ✅ 自定义快捷键、冲突检测、命令行动作
+- ✅ 托盘常驻、开机自启
+- ✅ 中英文界面、浅色 / 深色主题、新手引导
+- ✅ 配置导入 / 导出
+- ✅ 日志筛选、诊断包导出
+
+## 下载
+
+前往 [Releases](https://github.com/bitdan/snap-desk/releases) 下载。
+
+| 平台 | 文件 | 状态 |
+| --- | --- | --- |
+| Windows x64 | `-setup.exe` 安装包 / `-standalone.exe` 独立 EXE | 功能完整 |
+| macOS Apple 芯片 | `-macos-arm64.dmg` | 预览，需 macOS 13.3+ |
+| Linux x64 | `-linux-x64.AppImage` / `-linux-x64.deb` | 预览，需 glibc 2.39+（Ubuntu 24.04 同期） |
+
+<details>
+<summary><strong>macOS 与 Linux 说明</strong></summary>
+<br />
+
+- macOS 与 Linux 版目前仅通过 CI 构建和自动化测试，尚未实机验证，遇到问题欢迎提交 Issue。
+- **macOS**：未经 Apple 公证，首次打开需在“系统设置 → 隐私与安全性”中放行，并授予屏幕录制权限。暂不支持跨屏框选、本地翻译引擎和本地 PaddleOCR。
+- **Linux**：AppImage 约 100 MB，自带依赖并支持在线更新；deb 约 20 MB，升级需覆盖安装。Wayland 下仅支持单显示器截图，录屏经屏幕共享门户，暂停 / 恢复、键鼠特效与录制中标注仅 X11 可用，剪贴板历史与划词翻译经 Xwayland，直接粘贴退化为只复制。
+
+</details>
 
 ## 开始使用
 
-1. 启动应用后按 `F1` 开始截图，拖动选择区域，再通过工具栏标注、复制或保存。只使用截图不需要配置 OCR 或翻译服务。
-2. 需要文字识别时，在“文字识别”选择 OCR 引擎。离线引擎按提示安装资源；在线服务填写自己的 API Key / Token 后保存。
-3. 在“翻译”选择本地或在线服务，设置默认目标语言。多个账号或模型可在“服务管理”中分别配置。
-4. 查看页面顶部的“当前 OCR / 当前翻译”与菜单里的“当前使用”，确认已经生效的配置。
-5. 使用截图工具栏、贴图菜单或翻译窗口调用对应功能；快捷键可在“快捷键”中查看和修改，被其他程序占用的按键会标为“已被占用”。
-6. 应用无法注册全局快捷键时（如 Linux Wayland），可在系统设置里把快捷键绑定到命令 `snap-desk --action capture`；可用的动作有 `capture`、`pin`、`record`、`history`、`translate`、`shelf`、`ocr`。
+1. 按 `F1` 截图，拖动选区后标注、复制或保存。只用截图无需任何配置。
+2. 在“识别与翻译”中选择 OCR / 翻译引擎：离线引擎按提示安装资源，在线服务填写自己的 API Key。
+3. 默认快捷键：`F1` 截图 · `F2` 贴图 · `F3` 录屏 · `Alt+V` 剪贴板 · `Alt+T` 翻译 · `Alt+Z` 暂存架 · `Alt+C` 识别（macOS 字母键为 `Ctrl+Alt`）。
+4. 无法注册全局快捷键时（如 Wayland），可把系统快捷键绑定到 `snap-desk --action capture`，动作还有 `pin`、`record`、`history`、`translate`、`shelf`、`ocr`。
 
-Paddle 的地址选项包括“官方异步接口（推荐）”和“同步接口（自定义地址）”。通常选择官方异步接口；有控制台提供的同步地址时再选择同步。在线服务可能产生费用，额度及使用权限以服务商账号条款为准。
-
-需要开发、构建或接入其他服务时，请查看 [技术说明](TECHNICAL.md)。
+开发、构建与服务接入见 [技术说明](TECHNICAL.md)。
 
 ## 常见问题
 
-### Snap Desk 支持哪些系统？
+**OCR 和翻译能离线吗？** 可以。PaddleOCR、Windows OCR、Apple Vision、WeChat OCR 本机识别，CTranslate2 离线中英互译。
 
-Windows x64 功能完整，提供安装包和独立 EXE；macOS（Apple 芯片）功能基本完整，暂不支持跨屏框选和部分本地引擎。截图、录屏、文字识别、翻译和剪贴板管理都在同一款桌面应用内使用。Linux x64 提供预览版，主要功能已适配但尚未实机验证，可用功能见[下载](#下载)。
+**免费吗？** 免费开源（GPL-3.0-only）。第三方在线服务可能收费。
 
-### OCR 和翻译能离线使用吗？
-
-可以。PaddleOCR、Windows OCR 和 Apple Vision 在本机识别文字；CTranslate2 安装资源后支持离线中英互译。也可以自行选择 OCR.space、Paddle API、DeepL、Groq 等在线服务。
-
-### Snap Desk 免费吗？
-
-Snap Desk 是免费开源软件，使用 GPL-3.0-only 许可证。第三方在线 OCR 和翻译服务可能收费，免费额度由对应服务商决定。
+**快捷键没反应？** 在“快捷键”页查看是否被占用，并用“开始检测”排查；临时可用托盘菜单或命令行动作。
 
 ## 反馈与建议
 
-通过 [Issue 表单](https://github.com/bitdan/snap-desk/issues/new/choose) 提交问题、功能建议或使用求助，支持中文和 English。反馈问题时请提供应用版本、系统、安装方式和复现步骤；分享截图、日志或诊断包前，请移除密钥和私人数据。
+通过 [Issue 表单](https://github.com/bitdan/snap-desk/issues/new/choose) 反馈，支持中文和 English。请附上版本、系统和复现步骤；分享截图、日志或诊断包前请移除密钥和私人数据。
 
 ## 致谢
 
