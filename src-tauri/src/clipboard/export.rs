@@ -304,7 +304,7 @@ pub async fn clipboard_export(
     options: Options,
 ) -> Result<ExportResult, String> {
     // 历史列表已移到独立剪贴板窗口，导出由该窗口（及其编辑子窗口的原 WebView）发起。
-    if !super::service::UI_WINDOWS.contains(&window.label()) {
+    if !super::UI_WINDOWS.contains(&window.label()) {
         return Err("当前窗口无权执行此操作。".into());
     }
     options.validate()?;

@@ -10,9 +10,19 @@ pub fn config_dir() -> Option<PathBuf> {
     dirs::config_dir().map(|dir| dir.join(APP_IDENTIFIER))
 }
 
-/// 等同 Tauri `app_data_dir()`；剪贴板历史、下载的识别引擎等放在这里。
+/// 等同 Tauri `app_data_dir()`；下载的识别引擎、字体等资源放在这里。
 pub fn data_dir() -> Option<PathBuf> {
     dirs::data_dir().map(|dir| dir.join(APP_IDENTIFIER))
+}
+
+/// 等同 Tauri `app_local_data_dir()`（Windows 为 `%LOCALAPPDATA%\io.snapdesk.app`）。
+pub fn local_data_dir() -> Option<PathBuf> {
+    dirs::data_local_dir().map(|dir| dir.join(APP_IDENTIFIER))
+}
+
+/// 剪贴板历史目录（数据库与图片），与 Tauri 版相同：`app_local_data_dir/clipboard`。
+pub fn clipboard_dir() -> Option<PathBuf> {
+    local_data_dir().map(|dir| dir.join("clipboard"))
 }
 
 /// 等同 Tauri `app_log_dir()`：macOS 为 `~/Library/Logs/<标识>`，其他平台为本地数据目录

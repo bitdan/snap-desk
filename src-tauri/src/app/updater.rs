@@ -535,7 +535,7 @@ pub(super) async fn install_app_update(
                     .clone();
                 handle
                     .state::<crate::clipboard::Service>()
-                    .configure(&handle, clipboard_settings)?;
+                    .configure(clipboard_settings)?;
             }
         }
         result

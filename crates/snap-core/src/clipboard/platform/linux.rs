@@ -3,7 +3,7 @@
 //! X11 没有全局序列号，`sequence` 由一条常驻连接统计 XFixes 通知，读取前先同步一次往返，
 //! 因此刚写入的内容（包括本程序自己的写回）在返回前已被计入。
 use super::super::{model::ClipboardSettings, reader::Snapshot};
-use crate::shared::x11::{keysym, process_name, ReadError, SelectionReader, X11};
+use crate::x11::{keysym, process_name, ReadError, SelectionReader, X11};
 use std::{
     sync::{
         atomic::{AtomicBool, Ordering},

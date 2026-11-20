@@ -248,8 +248,8 @@ fn commit_settings(app: &AppHandle, backup: Backup) -> Result<Settings, String> 
     let clipboard = app.state::<crate::clipboard::Service>();
     let clipboard_changed = old.clipboard != next.clipboard;
     if clipboard_changed {
-        if let Err(error) = clipboard.configure(app, next.clipboard.clone()) {
-            let rollback = clipboard.configure(app, old.clipboard.clone());
+        if let Err(error) = clipboard.configure(next.clipboard.clone()) {
+            let rollback = clipboard.configure(old.clipboard.clone());
             return Err(with_rollback(error, rollback.err().into_iter().collect()));
         }
     }
@@ -301,7 +301,7 @@ fn commit_settings(app: &AppHandle, backup: Backup) -> Result<Settings, String> 
                 errors.push(error);
             }
             if clipboard_changed {
-                if let Err(error) = clipboard.configure(app, old.clipboard) {
+                if let Err(error) = clipboard.configure(old.clipboard) {
                     errors.push(error);
                 }
             }

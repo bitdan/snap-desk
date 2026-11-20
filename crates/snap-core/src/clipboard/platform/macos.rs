@@ -1,7 +1,7 @@
 //! macOS 剪贴板：NSPasteboard 没有变更通知，只能轮询 changeCount。
 //! 轮询线程只发送有界唤醒，读取、解码和 SQL 仍由存储工作线程完成，与 Windows 分工一致。
 use super::super::{model::ClipboardSettings, reader::Snapshot};
-use crate::shared::macos::{self, array_items, data_bytes, ns_array, ns_string, rust_string, Id};
+use crate::macos::{self, array_items, data_bytes, ns_array, ns_string, rust_string, Id};
 use objc2::{class, msg_send, runtime::Bool};
 use std::{
     sync::{
