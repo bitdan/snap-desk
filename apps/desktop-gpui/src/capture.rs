@@ -192,22 +192,62 @@ struct Grabbed {
     origin: (i32, i32),
     displays: Vec<Display>,
     targets: Vec<Rect>,
+    /// Windows：UI Automation 控件候选在浮层显示后再后台补充（控件枚举占拍屏耗时大半）。
+    deferred: Option<Deferred>,
+}
+
+#[cfg(windows)]
+type Deferred = snap_core::capture::windows::AccessibilityRequest;
+#[cfg(not(windows))]
+type Deferred = std::convert::Infallible;
+
+fn snap_rects(targets: &[snap_core::capture::Target]) -> Vec<Rect> {
+    targets.iter().filter(|target| !target.recording_only).map(|target| target.rect).collect()
 }
 
 fn grab(include_cursor: bool, snap: bool) -> Result<Grabbed, String> {
-    let desktop = snap_core::capture::capture(false, include_cursor, snap)?;
-    let targets = desktop
-        .targets
-        .iter()
-        .filter(|target| !target.recording_only)
-        .map(|target| target.rect)
-        .collect();
+    #[cfg(windows)]
+    let (desktop, deferred) = snap_core::capture::capture_deferred(false, include_cursor, snap)?;
+    #[cfg(not(windows))]
+    let (desktop, deferred) = (snap_core::capture::capture(false, include_cursor, snap)?, None);
     Ok(Grabbed {
+        targets: snap_rects(&desktop.targets),
         image: desktop.image,
         origin: (desktop.x, desktop.y),
         displays: desktop.displays,
-        targets,
+        deferred,
     })
+}
+
+/// 浮层显示后在后台补充控件候选，追加到吸附列表（窗口候选之后，与一次性采集的顺序一致）。
+#[cfg(windows)]
+async fn complete_targets(cx: &mut AsyncApp, session: Entity<Session>, request: Deferred) {
+    let started = Instant::now();
+    let found = cx.background_executor().spawn(async move { request.collect() }).await;
+    cx.update(|cx| {
+        session.update(cx, |s, cx| {
+            let before = s.targets.len();
+            for rect in snap_rects(&found) {
+                if s.targets.len() >= 4096 {
+                    break;
+                }
+                if !s.targets.iter().any(|existing| snap_core::capture::same_bounds(*existing, rect)) {
+                    s.targets.push(rect);
+                }
+            }
+            log::info!(
+                "event=gpui.capture_targets_completed added={} elements_ms={}",
+                s.targets.len() - before,
+                started.elapsed().as_millis()
+            );
+            cx.notify();
+        });
+    });
+}
+
+#[cfg(not(windows))]
+async fn complete_targets(_: &mut AsyncApp, _: Entity<Session>, request: Deferred) {
+    match request {}
 }
 
 /// 是否已有截图会话（准备中或浮层已显示）。
@@ -258,10 +298,11 @@ pub fn start(cx: &mut App, settings: &Settings, delay: Duration) {
             .spawn(async move { grab(include_cursor, snap) })
             .await;
         let capture_ms = started.elapsed().as_millis();
-        cx.update(|cx| {
+        let deferred = cx.update(|cx| {
             cx.global_mut::<CaptureState>().starting = false;
             match result {
-                Ok(grabbed) => {
+                Ok(mut grabbed) => {
+                    let deferred = grabbed.deferred.take();
                     log::info!(
                         "event=gpui.capture_ready width={} height={} displays={} targets={} capture_ms={capture_ms}",
                         grabbed.image.width(),
@@ -304,10 +345,17 @@ pub fn start(cx: &mut App, settings: &Settings, delay: Duration) {
                         "event=gpui.overlay_shown total_ms={}",
                         started.elapsed().as_millis()
                     );
+                    deferred.map(|request| (session, request))
                 }
-                Err(error) => log::error!("event=gpui.capture_failed message={error}"),
+                Err(error) => {
+                    log::error!("event=gpui.capture_failed message={error}");
+                    None
+                }
             }
         });
+        if let Some((session, request)) = deferred {
+            complete_targets(cx, session, request).await;
+        }
     })
     .detach();
 }
