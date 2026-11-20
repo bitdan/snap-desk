@@ -131,7 +131,17 @@ src-tauri/src/
   resources/           # 资源安装与空闲回收
   diagnostics/         # 日志与诊断
   shared/              # 渲染、导出、窗口与系统基础设施
+crates/snap-core/src/  # 与界面无关的核心，Tauri 版和 GPUI 版共用
+  settings/            # 设置模型、校验、落盘与快捷键事务
+  recognition/         # 服务目录、翻译与 OCR 配置模型
+  clipboard/           # 历史模型、分类与 SQLite 仓库
+  annotations.rs       # 标注校验与渲染
+  text_image.rs        # 文字转图片
+  pins.rs · i18n.rs · paths.rs
+apps/desktop-gpui/src/ # GPUI 版（迁移中）：托盘、快捷键、单实例与日志
 tests/<功能>/          # 前端测试
 ```
+
+Cargo workspace 的根在 `src-tauri/Cargo.toml`，`Cargo.lock` 与 `target/` 仍在 `src-tauri/`；在该目录执行 `cargo test --lib` 只测 Tauri 包，core 与 GPUI 版用 `-p snap-core`、`-p snap-desk-gpui`。core 不依赖 Tauri 或 GPUI（`check:architecture` 检查），需要外壳能力时由调用方以闭包或 trait 注入。GPUI 版读取与 Tauri 版相同的设置文件；开发时可用环境变量 `SNAP_DESK_SETTINGS` 指向另一份设置，与已安装的版本同时运行。
 
 组件和业务逻辑归属对应功能；命令与事件通过 `services/ipc.ts` 调用，`services/api.ts` 仅汇总。协作规则见 [AGENTS.md](AGENTS.md)，开发进度见 [TODO](Snap_Desk_TODO.md)。

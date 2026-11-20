@@ -1,0 +1,31 @@
+[package]
+name = "snap-desk-gpui"
+version = "0.0.0"
+license = "GPL-3.0-only"
+description = "Snap Desk on GPUI (migration in progress; the Tauri build remains the shipped app)"
+# gpui-kit 与 gpui-pre 使用 2024 edition。
+edition = "2024"
+rust-version = "1.95"
+publish = false
+# workspace 根在 src-tauri（共用 Cargo.lock 与 target 目录）。
+workspace = "../../src-tauri"
+
+[[bin]]
+name = "snap-desk-gpui"
+path = "src/main.rs"
+
+[dependencies]
+snap-core = { path = "../../crates/snap-core" }
+gpui-kit = "0.10.0"
+# 托盘与全局快捷键都要在 GPUI 主线程创建：Windows 上它们依赖创建线程的消息循环。
+tray-icon = "0.25.1"
+# 与 Tauri 全局快捷键插件同一版本，按键类型（HotKey）与 core 中的解析结果一致。
+global-hotkey = "0.8.0"
+image = { version = "0.25", default-features = false, features = ["png"] }
+log = "0.4"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+futures = "0.3"
+
+[target.'cfg(windows)'.dependencies]
+# 单实例：命名互斥量判断首个实例，命名管道把第二次启动的参数转交过来。
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Pipes", "Win32_System_Threading", "Win32_System_IO"] }

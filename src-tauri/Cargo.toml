@@ -10,9 +10,9 @@ rust-version = "1.95"
 
 # src-tauri 兼作 workspace 根：Cargo.lock 与 target 目录留在原处，发版脚本、CI 缓存路径不变。
 # 成员在 src-tauri 之外，需在各自 Cargo.toml 用 `package.workspace` 指回这里。
-# 在本目录执行 cargo build/test 只作用于 Tauri 包；core 用 `-p snap-core`。
+# 在本目录执行 cargo build/test 只作用于 Tauri 包；core 与 GPUI 版用 `-p snap-core`、`-p snap-desk-gpui`。
 [workspace]
-members = [".", "../crates/snap-core"]
+members = [".", "../crates/snap-core", "../apps/desktop-gpui"]
 resolver = "2"
 
 [lib]
