@@ -5,6 +5,11 @@ use image::RgbaImage;
 use serde::{Deserialize, Serialize};
 use std::io::Cursor;
 
+pub mod edit;
+pub mod raster;
+
+pub use raster::{rasterize, Fonts};
+
 #[derive(Clone, Copy, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Point {
