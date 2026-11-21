@@ -8,7 +8,8 @@
 //! 分页加载、键盘导航；回车/双击按设置“唤出后直接粘贴”粘贴到唤出前的窗口（否则只复制），
 //! Ctrl+1～9 取第 N 条；每条可复制、贴图、收藏、删除；清空（默认保留收藏，二次确认）；
 //! “固定”时粘贴后不收起。单击选中、Ctrl/⌘ 多选、Shift 连选（按选择顺序，最多 100 条）；
-//! 多选后回车或 Ctrl+C 按 core `service::combine` 合并（文本逐行拼接，图片/文件合成文件列表）。
+//! 多选后回车或 Ctrl+C 按 core `service::combine` 合并（文本逐行拼接，图片/文件合成文件列表）；
+//! 所选文本与图片可组合导出为 PDF、长图或分别保存（`clipboard_export.rs`）。
 use crate::annotate;
 use futures::{channel::mpsc, StreamExt};
 use gpui_kit::{
@@ -846,7 +847,9 @@ impl Render for HistoryView {
                     })))
             }
             None if picked > 0 => {
-                let combinable = can_combine(&self.picked_kinds());
+                let kinds = self.picked_kinds();
+                let combinable = can_combine(&kinds);
+                let exportable = kinds.len() == picked && kinds.iter().all(|k| *k != Kind::File);
                 let copy_label = text(if combinable { "复制所选" } else { "文本不能与图片或文件一起复制" });
                 div()
                     .flex()
@@ -855,6 +858,12 @@ impl Render for HistoryView {
                         if combinable {
                             let ids = view.picked.clone();
                             view.activate_ids(ids, false, window, cx);
+                        }
+                    })))
+                    .child(self.small_button("clipboard-export-picked", text(if exportable { "组合导出" } else { "组合导出仅支持文本和图片，文件引用请复制后粘贴" })).on_click(cx.listener(move |view, _: &ClickEvent, _, cx| {
+                        if exportable {
+                            let items: Vec<Item> = view.picked.iter().filter_map(|id| view.picked_items.get(id).cloned()).collect();
+                            crate::clipboard_export::open(cx, view.service.clone(), items);
                         }
                     })))
                     .child(self.small_button("clipboard-pin-picked", text("贴图")).on_click(cx.listener(|view, _: &ClickEvent, _, cx| view.pin_picked(cx))))
