@@ -85,14 +85,30 @@ fn capture_item(source: NativeSource) -> Result<GraphicsCaptureItem, String> {
 }
 
 /// 在创建编码器之前读取真实物理像素尺寸，不启动采集或计时。
+///
+/// 窗口来源返回 DWM 可见边界：WGC 的 `Item.Size` 含不可见缩放边框（如 1249×635），
+/// 实际帧 `ContentSize` 只有可见部分（1235×628），编码器与区域复制必须按帧尺寸。
 pub fn source_dimensions(source: NativeSource) -> Result<(u32, u32), String> {
     let _dpi = crate::capture::PhysicalDpi::enter()?;
     let _runtime = Runtime::new()?;
-    let size = capture_item(source)?.Size().map_err(error)?;
-    if size.Width < 2 || size.Height < 2 {
+    let item = capture_item(source)?.Size().map_err(error)?;
+    let size = match source {
+        NativeSource::Window { id, .. } => visible_size(id)?,
+        NativeSource::Monitor { .. } => (item.Width as u32, item.Height as u32),
+    };
+    if size.0 < 2 || size.1 < 2 {
         return Err("录制来源尺寸无效。".into());
     }
-    Ok((size.Width as u32, size.Height as u32))
+    Ok(size)
+}
+
+/// 窗口可见部分的物理像素尺寸（与 WGC 窗口帧的 ContentSize 一致）。
+fn visible_size(id: u32) -> Result<(u32, u32), String> {
+    let bounds = window_bounds(id)?;
+    Ok((
+        (bounds.right - bounds.left).max(0) as u32,
+        (bounds.bottom - bounds.top).max(0) as u32,
+    ))
 }
 
 struct Runtime(PhantomData<Rc<()>>);
@@ -168,7 +184,10 @@ pub struct Capture {
     context: ID3D11DeviceContext,
     device: ID3D11Device,
     region: Rect,
+    /// 帧内容尺寸（窗口为可见部分）。
     size: (u32, u32),
+    /// WGC 采集项尺寸基准；窗口来源含不可见边框，只用来发现来源变化。
+    item_size: (u32, u32),
     /// 采集、合成和编码线程共用的 CPU 帧缓冲；每帧复制完成即归还。
     frames: Arc<super::super::frame::FramePool>,
     // DWM 边界与 WGC 表面各自保存基准，避免把固有边框差异误判为窗口缩放。
@@ -213,7 +232,11 @@ impl Capture {
             let item = capture_item(source)?;
             let native_size = item.Size().map_err(error)?;
             let native_dimensions = (native_size.Width as u32, native_size.Height as u32);
-            if native_dimensions != size {
+            let current = match source {
+                NativeSource::Window { id, .. } => visible_size(id)?,
+                NativeSource::Monitor { .. } => native_dimensions,
+            };
+            if current != size {
                 return Err("录制来源尺寸已变化，请重新选择录屏区域。".into());
             }
             let region = config.region;
@@ -312,6 +335,7 @@ impl Capture {
                 device,
                 region,
                 size,
+                item_size: native_dimensions,
                 frames,
                 window_size,
                 started: false,
@@ -324,7 +348,11 @@ impl Capture {
     fn copy(&self, frame: &Direct3D11CaptureFrame) -> Result<VideoFrame, String> {
         let size = frame.ContentSize().map_err(error)?;
         if (size.Width as u32, size.Height as u32) != self.size {
-            return Err("显示器像素尺寸改变，请重新录屏。".into());
+            return Err(match self.source {
+                NativeSource::Window { .. } => "录制窗口尺寸已改变，录制已结束；请重新选择来源。",
+                NativeSource::Monitor { .. } => "显示器像素尺寸改变，请重新录屏。",
+            }
+            .into());
         }
         let source_time = frame.SystemRelativeTime().map_err(error)?.Duration;
         let surface = frame.Surface().map_err(error)?;
@@ -401,7 +429,7 @@ impl CaptureBackend for Capture {
             }
         }
         let size = self.item.Size().map_err(error)?;
-        if (size.Width as u32, size.Height as u32) != self.size {
+        if (size.Width as u32, size.Height as u32) != self.item_size {
             return Err("录制来源尺寸已改变，录制已结束；请重新选择来源。".into());
         }
         Ok(())
