@@ -35,15 +35,8 @@ pub fn read_translation_input(
     }
 }
 
-fn validate(text: String) -> Result<String, String> {
-    if text.trim().is_empty() {
-        return Err("没有可翻译的文字，请先选中或复制文字。".into());
-    }
-    if text.len() > 32_000 {
-        return Err("翻译文字超过 32 KB，请减少文字后重试。".into());
-    }
-    Ok(text)
-}
+/// 原文上限与空白检查在 core（GPUI 版共用）。
+use snap_core::recognition::selected_text::validate;
 
 fn clipboard(app: &AppHandle) -> Result<String, String> {
     validate(
@@ -130,19 +123,4 @@ pub fn open(app: &AppHandle) {
         }
         RUNNING.store(false, Ordering::Release);
     });
-}
-
-#[cfg(test)]
-mod tests {
-    use super::validate;
-    #[test]
-    fn translation_input_is_bounded_in_utf8_bytes_and_preserves_whitespace() {
-        assert!(validate(" \n\t".into()).is_err());
-        assert!(validate("中".repeat(11_000)).is_err());
-        assert!(validate("a".repeat(32_000)).is_ok());
-        assert_eq!(
-            validate("  hello\nworld  ".into()).unwrap(),
-            "  hello\nworld  "
-        );
-    }
 }

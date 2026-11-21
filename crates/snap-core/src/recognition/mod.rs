@@ -10,6 +10,7 @@ pub mod online_ocr;
 pub mod paddle_ocr;
 pub mod providers;
 pub mod qr;
+pub mod selected_text;
 pub mod services;
 pub mod translation;
 #[cfg(target_os = "macos")]
