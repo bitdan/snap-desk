@@ -244,8 +244,11 @@ fn handle(cx: &mut App, event: ShellEvent) {
         ShellEvent::Menu(event) => match event.id.0.as_str() {
             QUIT_ID => {
                 log::info!("event=gpui.quit source=tray");
-                crate::clipboard::shutdown(cx);
-                cx.quit();
+                // 录屏中先停止并等视频保存完成再退出。
+                crate::recording::quit_when_idle(cx, |cx| {
+                    crate::clipboard::shutdown(cx);
+                    cx.quit();
+                });
             }
             SHORTCUTS_ID => cx.update_global::<Shell, _>(|shell, _| shell.toggle_shortcuts()),
             PIN_MANAGER_ID => crate::pin_manager::open(cx),

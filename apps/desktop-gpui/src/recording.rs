@@ -5,6 +5,8 @@
 //! 2. 收起浮层，打开选区红框与悬浮控制条（两者都不进入录像：Windows 用 WDA_EXCLUDEFROMCAPTURE）；
 //! 3. 控制条每 200 ms 读取一次状态快照，提供暂停/继续/停止/取消，结束后显示成品并可打开目录、复制路径。
 //!
+//! 4. 托盘退出时先停止并保存录屏，等流水线封装完成再退出（无进展超时规则与 Tauri 版共用 core `recording::exit`）。
+//!
 //! 与 Tauri 版的差异：只录显示器区域（窗口录制未接入）；截图中画好的标注随视频输出，录制中不能再编辑标注；
 //! 确认选区后直接开始（按偏好倒计时），没有单独的“准备就绪”步骤。
 use gpui_kit::*;
@@ -15,6 +17,7 @@ use snap_core::{
         annotation_layer::{self, Layer},
         audio, capture as source, collect, encoder, frame, output,
         preferences::Preferences,
+        exit::{self, Progress},
         stats, CaptureSource, ControlOutcome, Host, Phase, RecorderConfig, RecordingAction,
         RecordingState, RecordingView, Session, QUEUE_CAPACITY,
     },
@@ -22,8 +25,8 @@ use snap_core::{
 };
 use std::{
     path::{Path, PathBuf},
-    sync::{mpsc, Arc},
-    time::Duration,
+    sync::{mpsc, Arc, Mutex},
+    time::{Duration, Instant},
 };
 
 /// 控制条刷新间隔。
@@ -39,9 +42,83 @@ struct Recorder {
     next_id: u64,
     controls: Option<AnyWindowHandle>,
     border: Option<AnyWindowHandle>,
+    /// 流水线报告的真实进展；退出等待据此判断是否卡死。
+    progress: Arc<Mutex<Progress>>,
+    /// 已请求退出：不再开始新录屏，准备中的录屏直接放弃。
+    quitting: bool,
 }
 
 impl Global for Recorder {}
+
+/// 退出等待的检查间隔。
+const EXIT_TICK: Duration = Duration::from_secs(1);
+
+/// 托盘“退出”：没有录屏时立即执行 `finish`；否则先停止并保存，等录屏线程封装、发布完成（或长时间
+/// 无进展超时）后再执行。重复请求忽略。
+pub fn quit_when_idle(cx: &mut App, finish: fn(&mut App)) {
+    let recorder = cx.default_global::<Recorder>();
+    if recorder.quitting {
+        return;
+    }
+    recorder.quitting = true;
+    let (state, progress) = (recorder.state.clone(), recorder.progress.clone());
+    state.request_stop(false);
+    if !state.is_active() {
+        finish(cx);
+        return;
+    }
+    log::info!("event=gpui.quit_waiting_recording");
+    // 文件系统调用可能被掉线磁盘卡住：增长观察放在后台，独立于超时裁决。
+    let executor = cx.background_executor().clone();
+    let (observe_state, observe_progress) = (state.clone(), progress.clone());
+    cx.background_executor()
+        .spawn(async move {
+            let mut observed = None;
+            while observe_state.is_active() {
+                executor.timer(EXIT_TICK).await;
+                let Some(path) = observe_progress.lock().ok().and_then(|p| p.path.clone()) else {
+                    continue;
+                };
+                let Ok(metadata) = std::fs::metadata(&path) else {
+                    continue;
+                };
+                if exit::grew(&mut observed, &path, metadata.len()) {
+                    if let Ok(mut p) = observe_progress.lock() {
+                        p.file_grew(&path);
+                    }
+                }
+            }
+        })
+        .detach();
+    cx.spawn(async move |cx| {
+        let started = Instant::now();
+        let mut last = started;
+        loop {
+            cx.background_executor().timer(EXIT_TICK).await;
+            if !state.is_active() {
+                log::info!("event=gpui.quit_recording_done wait_ms={}", started.elapsed().as_millis());
+                break;
+            }
+            let (stage, updated) = match progress.try_lock() {
+                Ok(p) => (p.stage, p.updated),
+                Err(_) => ("state-unavailable", started),
+            };
+            last = last.max(updated);
+            if exit::exit_timed_out(stage, last.elapsed(), started.elapsed()) {
+                // 未完成的录制不会发布为成品（临时目录随进程结束遗留，下次不会被当作成品）。
+                log::error!(
+                    "event=gpui.quit_recording_timeout stage={stage} idle_ms={} total_ms={}",
+                    last.elapsed().as_millis(),
+                    started.elapsed().as_millis()
+                );
+                break;
+            }
+        }
+        cx.update(finish);
+    })
+    .detach();
+}
+
 
 /// 是否有未结束的录屏（含封装中）。
 pub fn active(cx: &App) -> bool {
@@ -142,6 +219,9 @@ pub async fn prepare(cx: &mut AsyncApp, request: Request) -> Result<Prepared, St
     if cx.update(|cx| active(cx)) {
         return Err("录屏正在进行。".into());
     }
+    if cx.update(|cx| cx.try_global::<Recorder>().is_some_and(|r| r.quitting)) {
+        return Err("程序正在退出，不能启动录屏。".into());
+    }
     let (display, local) = locate(&request)?;
     let mut config = RecorderConfig::for_region(local);
     config.source = CaptureSource::SelectedMonitor;
@@ -165,10 +245,10 @@ pub async fn prepare(cx: &mut AsyncApp, request: Request) -> Result<Prepared, St
     };
     let export = cx.update(|cx| crate::shell::settings(cx).recording_export);
     export.validate()?;
-    let (state, id) = cx.update(|cx| {
+    let (state, id, progress) = cx.update(|cx| {
         let recorder = cx.default_global::<Recorder>();
         recorder.next_id += 1;
-        (recorder.state.clone(), recorder.next_id)
+        (recorder.state.clone(), recorder.next_id, recorder.progress.clone())
     });
     let probe_config = config;
     let probe_export = export.clone();
@@ -207,7 +287,7 @@ pub async fn prepare(cx: &mut AsyncApp, request: Request) -> Result<Prepared, St
         layer,
         display: display.clone(),
         export,
-        stage: Default::default(),
+        progress,
     });
     let (ready_tx, ready_rx) = mpsc::sync_channel::<Result<(), String>>(1);
     let (go_tx, go_rx) = mpsc::sync_channel::<bool>(1);
@@ -292,7 +372,18 @@ pub fn launch(cx: &mut App, prepared: Prepared) {
         language,
         go,
     } = prepared;
-    let state = cx.default_global::<Recorder>().state.clone();
+    let recorder = cx.default_global::<Recorder>();
+    let state = recorder.state.clone();
+    // 准备期间请求了退出：放弃这次录屏，让退出等待尽快结束。
+    if recorder.quitting {
+        let _ = go.send(false);
+        if let Ok(mut session) = state.0.lock() {
+            *session = None;
+        }
+        crate::shelf::resume(cx);
+        log::info!("event=gpui.recording_abandoned_for_quit id={id}");
+        return;
+    }
     let logical = logical_region(cx, &display, region);
     let border = open_border(cx, logical);
     let controls = open_controls(cx, &display, logical, id, state.clone(), language);
@@ -799,8 +890,8 @@ struct GpuiHost {
     layer: Option<Arc<Layer>>,
     display: Display,
     export: RecordingExportSettings,
-    /// 最近一次处理阶段；只在阶段变化时写日志（编码阶段每帧都会报告）。
-    stage: std::sync::Mutex<&'static str>,
+    /// 真实处理进展（阶段变化时记录日志；退出等待据此判断是否卡死）。
+    progress: Arc<Mutex<Progress>>,
 }
 
 impl Host for GpuiHost {
@@ -816,15 +907,9 @@ impl Host for GpuiHost {
     fn export_settings(&self) -> Result<RecordingExportSettings, String> {
         Ok(self.export.clone())
     }
-    fn progress(&self, stage: &'static str, _path: Option<&Path>) {
-        if let Ok(mut last) = self.stage.lock() {
-            if *last != stage {
-                log::info!(
-                    "event=gpui.recording_stage previous={} stage={stage}",
-                    *last
-                );
-                *last = stage;
-            }
+    fn progress(&self, stage: &'static str, path: Option<&Path>) {
+        if let Ok(mut progress) = self.progress.lock() {
+            progress.record(stage, path);
         }
     }
     fn published(&self, _path: &Path) {
