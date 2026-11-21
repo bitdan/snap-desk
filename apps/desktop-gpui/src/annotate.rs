@@ -1292,7 +1292,7 @@ pub fn icon_button(
 }
 
 /// 极简悬停提示视图。
-pub struct Tooltip(SharedString);
+pub struct Tooltip(pub SharedString);
 impl Render for Tooltip {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         div()

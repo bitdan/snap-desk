@@ -269,6 +269,21 @@ fn update(
     Ok(())
 }
 
+/// 暂存架卡片上的小图标按钮（浅色背景上用深色图标）。
+fn icon_pill(id: impl Into<ElementId>, data: &'static [u8], tooltip: String) -> Stateful<Div> {
+    div()
+        .id(id)
+        .size(px(24.0))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(px(12.0))
+        .cursor_pointer()
+        .hover(|s| s.bg(rgb(0xe2e8f0)))
+        .child(annotate::icon(data, 0x334155))
+        .tooltip(move |_, cx| cx.new(|_| annotate::Tooltip(tooltip.clone().into())).into())
+}
+
 /// 照片尺寸：最长边适配 144×108（与 `shelf-layout.ts` 一致）。
 fn photo_size(width: Option<u32>, height: Option<u32>) -> (f32, f32) {
     match (width, height) {
@@ -621,34 +636,35 @@ impl ShelfView {
                     .child(content),
             )
             .child(
+                // 图标按钮条（复制 / 固定 / 取下为贴图 / 从架上移除），悬停显示说明。
                 div()
                     .mt(px(4.0))
+                    .px(px(3.0))
+                    .py(px(2.0))
                     .flex()
-                    .gap(px(3.0))
+                    .gap(px(2.0))
+                    .rounded(px(14.0))
+                    .bg(rgb(0xf8fafc))
+                    .border_1()
+                    .border_color(rgb(0xe2e8f0))
+                    .shadow_sm()
+                    .child(icon_pill(("shelf-copy", id as u64), annotate::icons::COPY, text("复制")).on_click(
+                        cx.listener(move |view, _: &ClickEvent, window, cx| view.copy(id, window, cx)),
+                    ))
                     .child(
-                        self.round_button(
+                        icon_pill(
                             ("shelf-keep", id as u64),
-                            text(if kept {
-                                "取消固定"
-                            } else {
-                                "固定在架上"
-                            }),
+                            if kept { annotate::icons::PIN_OFF } else { annotate::icons::PIN },
+                            text(if kept { "取消固定" } else { "固定在架上" }),
                         )
-                        .on_click(
-                            cx.listener(move |view, _: &ClickEvent, _, cx| view.keep(id, cx)),
-                        ),
+                        .on_click(cx.listener(move |view, _: &ClickEvent, _, cx| view.keep(id, cx))),
                     )
+                    .child(icon_pill(("shelf-pin", id as u64), annotate::icons::SQUARE, text("取下为贴图")).on_click(
+                        cx.listener(move |view, _: &ClickEvent, _, cx| view.pin(id, cx)),
+                    ))
                     .child(
-                        self.round_button(("shelf-pin", id as u64), text("贴图"))
-                            .on_click(
-                                cx.listener(move |view, _: &ClickEvent, _, cx| view.pin(id, cx)),
-                            ),
-                    )
-                    .child(
-                        self.round_button(("shelf-remove", id as u64), "×".into())
-                            .on_click(
-                                cx.listener(move |view, _: &ClickEvent, _, cx| view.remove(id, cx)),
-                            ),
+                        icon_pill(("shelf-remove", id as u64), annotate::icons::CLOSE, text("从架子移除，保留历史"))
+                            .on_click(cx.listener(move |view, _: &ClickEvent, _, cx| view.remove(id, cx))),
                     ),
             )
             .into_any_element()
@@ -714,6 +730,11 @@ impl Render for ShelfView {
                 .bottom(px(8.0))
                 .left(px(width / 2.0 - 50.0))
                 .w(px(100.0))
+                .py(px(2.0))
+                .rounded(px(14.0))
+                .bg(rgb(0xfafafa))
+                .border_1()
+                .border_color(rgb(0xe2e8f0))
                 .flex()
                 .items_center()
                 .justify_center()
