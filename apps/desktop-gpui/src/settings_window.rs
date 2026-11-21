@@ -80,6 +80,9 @@ pub fn open(cx: &mut App) {
     }
 }
 
+#[path = "settings_logs.rs"]
+mod logs_page;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Page {
     Capture,
@@ -88,16 +91,18 @@ enum Page {
     Clipboard,
     General,
     Shortcuts,
+    Logs,
 }
 
 impl Page {
-    const ALL: [Page; 6] = [
+    const ALL: [Page; 7] = [
         Page::Capture,
         Page::Recording,
         Page::Pins,
         Page::Clipboard,
         Page::General,
         Page::Shortcuts,
+        Page::Logs,
     ];
     fn label(self) -> &'static str {
         match self {
@@ -107,6 +112,7 @@ impl Page {
             Page::Clipboard => "剪贴板",
             Page::General => "通用",
             Page::Shortcuts => "快捷键",
+            Page::Logs => "日志",
         }
     }
 }
@@ -169,6 +175,10 @@ struct SettingsView {
     notice: Option<String>,
     /// 导入后文本框需要按新设置重填（需要窗口，在渲染时执行）。
     reload_inputs: bool,
+    /// 日志页的最近一次读取结果与筛选。
+    logs: Option<logs_page::LogsView>,
+    logs_loading: bool,
+    log_filter: Option<snap_core::diagnostics::logs::Level>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -223,6 +233,9 @@ impl SettingsView {
             transferring: false,
             notice: None,
             reload_inputs: false,
+            logs: None,
+            logs_loading: false,
+            log_filter: None,
             _subscriptions: subscriptions,
         }
         .with_autostart(cx)
@@ -1721,6 +1734,9 @@ impl Render for SettingsView {
                             view.end_capture(None, cx);
                         }
                         view.page = page;
+                        if page == Page::Logs {
+                            view.load_logs(cx);
+                        }
                         view.error = None;
                         view.saved = false;
                         view.notice = None;
@@ -1735,6 +1751,7 @@ impl Render for SettingsView {
             Page::Clipboard => self.clipboard_page(&settings, &t, cx),
             Page::General => self.general_page(&settings, &t, cx),
             Page::Shortcuts => self.shortcuts_page(&settings, &t, cx),
+            Page::Logs => self.logs_page(&t, cx),
         };
         let status = match (&self.error, self.saved) {
             (None, _) if self.notice.is_some() => Some(
