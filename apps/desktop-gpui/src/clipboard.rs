@@ -9,7 +9,8 @@
 //! Ctrl+1～9 取第 N 条；每条可复制、贴图、收藏、删除；清空（默认保留收藏，二次确认）；
 //! “固定”时粘贴后不收起。单击选中、Ctrl/⌘ 多选、Shift 连选（按选择顺序，最多 100 条）；
 //! 多选后回车或 Ctrl+C 按 core `service::combine` 合并（文本逐行拼接，图片/文件合成文件列表）；
-//! 所选文本与图片可组合导出为 PDF、长图或分别保存（`clipboard_export.rs`）。
+//! 所选文本与图片可组合导出为 PDF、长图或分别保存（`clipboard_export.rs`）；文本与图片可在独立窗口预览
+//! 全文或原图（`clipboard_preview.rs`）。
 use crate::annotate;
 use futures::{channel::mpsc, StreamExt};
 use gpui_kit::{
@@ -782,6 +783,13 @@ impl Render for HistoryView {
                                 cx.stop_propagation();
                                 view.activate(index, false, window, cx);
                             })))
+                            .children((item.kind != Kind::File).then(|| {
+                                let item = item.clone();
+                                self.small_button(("clipboard-preview", index), text("预览")).on_click(cx.listener(move |view, _: &ClickEvent, _, cx| {
+                                    cx.stop_propagation();
+                                    crate::clipboard_preview::open(cx, view.service.clone(), item.clone());
+                                }))
+                            }))
                             .child(self.small_button(("clipboard-pin", index), text("贴图")).on_click(cx.listener(move |view, _: &ClickEvent, _, cx| {
                                 cx.stop_propagation();
                                 view.pin(index, cx);

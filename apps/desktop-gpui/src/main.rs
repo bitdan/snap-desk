@@ -10,6 +10,7 @@ mod annotate;
 mod capture;
 mod clipboard;
 mod clipboard_export;
+mod clipboard_preview;
 mod countdown;
 mod logging;
 mod magnifier;
