@@ -21,6 +21,7 @@ mod recognition;
 mod live_annotate;
 mod recording;
 mod scroll;
+mod settings_window;
 mod selection;
 mod shell;
 mod shelf;

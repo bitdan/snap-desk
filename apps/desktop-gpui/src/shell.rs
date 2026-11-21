@@ -36,6 +36,7 @@ const PIN_FILE_ID: &str = "pin-file";
 const PIN_MANAGER_ID: &str = "pin-manager";
 const PIN_CLOSE_ALL_ID: &str = "pin-close-all";
 const SHORTCUTS_ID: &str = "shortcuts";
+const SETTINGS_ID: &str = "settings";
 const QUIT_ID: &str = "quit";
 
 /// 主线程独占的外壳状态。托盘与快捷键管理器必须活到进程结束，析构即注销。
@@ -48,6 +49,8 @@ struct Shell {
     /// 快捷键 id → 动作，由当前设置推导；收到事件时据此分发。
     bindings: HashMap<u32, ShortcutAction>,
     shortcuts_item: CheckMenuItem,
+    /// 设置界面正在录入快捷键：已注销全部全局快捷键，按键直接送到设置窗口。
+    suspended: bool,
     _tray: TrayIcon,
 }
 impl Global for Shell {}
@@ -106,6 +109,7 @@ pub fn start(
         &MenuItem::with_id(PIN_CLOSE_ALL_ID, text("关闭全部贴图"), true, None),
         &PredefinedMenuItem::separator(),
         &shortcuts_item,
+        &MenuItem::with_id(SETTINGS_ID, text("设置…"), true, None),
         &MenuItem::with_id(QUIT_ID, text("退出"), true, None),
     ])
     .map_err(|e| e.to_string())?;
@@ -126,6 +130,7 @@ pub fn start(
         hotkeys,
         registered: Vec::new(),
         shortcuts_item,
+        suspended: false,
         _tray: tray,
     };
     shell.register_startup();
@@ -178,6 +183,24 @@ impl Shell {
             |key| manager.unregister(key).map_err(|e| e.to_string()),
             write,
         )
+    }
+
+    /// 以 `next` 替换当前设置并写盘；快捷键注册与写盘为一笔事务。录入快捷键期间（已注销）只写盘。
+    fn commit(&mut self, path: &std::path::Path, next: Settings) -> Result<Settings, String> {
+        let old = self.settings.clone();
+        if self.suspended {
+            settings::persist(path, &next)?;
+        } else {
+            let warning = self.apply(&old, &next, |value| settings::persist(path, value))?;
+            if let Some(warning) = warning {
+                log::warn!("event=gpui.shortcuts_unavailable message={warning}");
+            }
+        }
+        self.bindings = bindings(&next);
+        self.settings = next;
+        self.shortcuts_item.set_checked(self.settings.shortcuts_enabled);
+        log::info!("event=gpui.settings_saved registered={}", self.registered.len());
+        Ok(self.settings.clone())
     }
 
     /// 托盘“启用全局快捷键”：与 Tauri 版的 `set_shortcuts` 相同，注册结果与磁盘写入是一笔事务。
@@ -251,6 +274,7 @@ fn handle(cx: &mut App, event: ShellEvent) {
                 });
             }
             SHORTCUTS_ID => cx.update_global::<Shell, _>(|shell, _| shell.toggle_shortcuts()),
+            SETTINGS_ID => crate::settings_window::open(cx),
             PIN_MANAGER_ID => crate::pin_manager::open(cx),
             PIN_CLOSE_ALL_ID => {
                 crate::pins::close_all(cx);
@@ -287,27 +311,98 @@ pub fn settings_dir() -> Option<PathBuf> {
     settings_path().and_then(|path| path.parent().map(|p| p.to_path_buf()))
 }
 
-/// 修改并保存剪贴板设置。先从磁盘重新读取设置文件再只改剪贴板部分：Tauri 版可能同时运行并写入同一文件，
-/// 整份覆盖会丢掉它在本进程启动后保存的其他设置。返回保存后的剪贴板设置。
+/// 修改并保存剪贴板设置（只改剪贴板部分，见 [`update_settings`]）。返回保存后的剪贴板设置。
+/// 调用方负责按新设置重启记录服务（历史窗口自行在后台执行）。
 pub fn update_clipboard(
     cx: &mut App,
     change: impl FnOnce(&mut snap_core::clipboard::model::ClipboardSettings),
 ) -> Result<snap_core::clipboard::model::ClipboardSettings, String> {
+    let saved = save(cx, |s| change(&mut s.clipboard))?;
+    log::info!(
+        "event=gpui.clipboard_settings_saved enabled={} paste_on_activate={}",
+        saved.clipboard.enabled,
+        saved.clipboard.paste_on_activate
+    );
+    Ok(saved.clipboard)
+}
+
+/// 修改并保存设置。先从磁盘重新读取再只改 `change` 涉及的部分：Tauri 版可能同时运行并写入同一文件，
+/// 整份覆盖会丢掉它在本进程启动后保存的其他设置。快捷键变化与写盘是一笔事务（注册失败时回滚、不写盘）；
+/// 剪贴板设置变化时在后台按新设置重启记录服务。返回保存后的设置。
+pub fn update_settings(cx: &mut App, change: impl FnOnce(&mut Settings)) -> Result<Settings, String> {
+    let old = cx.global::<Shell>().settings.clone();
+    let saved = save(cx, change)?;
+    if saved.clipboard != old.clipboard {
+        if let Some(service) = crate::clipboard::service(cx) {
+            let clipboard = saved.clipboard.clone();
+            cx.background_executor()
+                .spawn(async move {
+                    if let Err(error) = service.configure(clipboard) {
+                        log::warn!("event=gpui.clipboard_configure_failed message={error}");
+                        service.report(error);
+                    }
+                })
+                .detach();
+        }
+    }
+    Ok(saved)
+}
+
+fn save(cx: &mut App, change: impl FnOnce(&mut Settings)) -> Result<Settings, String> {
     let path = cx.global::<Shell>().path.clone().ok_or("无法定位设置目录。")?;
     let (mut fresh, warning) = settings::load(&path);
     if let Some(warning) = warning {
         log::warn!("event=gpui.settings_warning message={warning}");
     }
-    change(&mut fresh.clipboard);
-    fresh.clipboard.validate()?;
-    settings::persist(&path, &fresh)?;
-    cx.global_mut::<Shell>().settings.clipboard = fresh.clipboard.clone();
-    log::info!(
-        "event=gpui.clipboard_settings_saved enabled={} paste_on_activate={}",
-        fresh.clipboard.enabled,
-        fresh.clipboard.paste_on_activate
-    );
-    Ok(fresh.clipboard)
+    change(&mut fresh);
+    fresh.validate()?;
+    cx.update_global::<Shell, _>(|shell, _| shell.commit(&path, fresh))
+}
+
+/// 设置界面录入快捷键期间注销全部全局快捷键（否则按下的组合会被系统热键吞掉或直接触发动作）；
+/// 结束录入后按当前设置重新注册，被占用的按键只记日志。
+pub fn suspend_shortcuts(cx: &mut App, suspend: bool) {
+    cx.update_global::<Shell, _>(|shell, _| {
+        if shell.suspended == suspend {
+            return;
+        }
+        shell.suspended = suspend;
+        if suspend {
+            for key in &shell.registered {
+                if let Err(error) = shell.hotkeys.unregister(*key) {
+                    log::warn!("event=gpui.shortcut_suspend_failed message={error}");
+                }
+            }
+            log::info!("event=gpui.shortcuts_suspended count={}", shell.registered.len());
+        } else {
+            let keys = std::mem::take(&mut shell.registered);
+            for key in keys {
+                match shell.hotkeys.register(key) {
+                    Ok(()) => shell.registered.push(key),
+                    Err(error) => log::warn!("event=gpui.shortcut_resume_failed message={error}"),
+                }
+            }
+            log::info!("event=gpui.shortcuts_resumed count={}", shell.registered.len());
+        }
+    });
+}
+
+/// 被系统或其他程序占用、暂未生效的动作（设置界面标注“已被占用”）。
+pub fn unavailable_shortcuts(cx: &App) -> Vec<ShortcutAction> {
+    let shell = cx.global::<Shell>();
+    if !shell.settings.shortcuts_enabled || shell.suspended {
+        return Vec::new();
+    }
+    shell
+        .settings
+        .shortcuts
+        .entries()
+        .into_iter()
+        .filter_map(|(action, _, value)| {
+            let key = settings::parse_shortcut(value).ok().flatten()?;
+            (!shell.registered.contains(&key)).then_some(action)
+        })
+        .collect()
 }
 
 /// 当前设置快照（截图、贴图读取外观与导出偏好）。
