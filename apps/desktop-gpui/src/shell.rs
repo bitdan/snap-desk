@@ -359,6 +359,102 @@ fn save(cx: &mut App, change: impl FnOnce(&mut Settings)) -> Result<Settings, St
     cx.update_global::<Shell, _>(|shell, _| shell.commit(&path, fresh))
 }
 
+/// 导入完整配置备份（对照 Tauri `settings/backup.rs` 的提交事务）：先校验备份中的目录；快照设置文件与两个
+/// 目录记录；快捷键注册、目录记录与设置写盘为一笔事务，任一步失败恢复快照与运行时目录；成功后按需重启
+/// 剪贴板记录服务并写回备份中的密钥。截图、录屏、滚动截图或快捷键录入进行中时拒绝。
+pub fn import_backup(cx: &mut App, mut backup: snap_core::settings::backup::Backup) -> Result<Settings, String> {
+    use snap_core::{recording::output, settings::backup};
+    if crate::capture::active(cx) || crate::recording::active(cx) || crate::scroll::active(cx) {
+        return Err("请先完成或取消截图、录屏，再修改设置。".into());
+    }
+    if cx.global::<Shell>().suspended {
+        return Err("请先结束快捷键录入。".into());
+    }
+    if let Some(path) = &backup.directories.captures {
+        snap_core::export::validate_directory(path)?;
+    }
+    if let Some(path) = &backup.directories.recordings {
+        output::validate_directory(path)?;
+    }
+    let settings_path = cx.global::<Shell>().path.clone().ok_or("无法定位设置目录。")?;
+    let capture_record = snap_core::export::directory_record().ok_or("无法定位配置目录。")?;
+    let recording_record = recording_record().ok_or("无法定位配置目录。")?;
+    let old = cx.global::<Shell>().settings.clone();
+    let old_recording = output::configured_directory(&recording_record, old.recording_export.remember_directory)?;
+    let files = backup::Files::snapshot_paths([settings_path.clone(), capture_record.clone(), recording_record.clone()])?;
+    let secrets = std::mem::take(&mut backup.secrets);
+    let directories = backup.directories;
+    let mut next = backup.settings;
+    next.onboarding_version = next.onboarding_version.max(old.onboarding_version);
+    let result = cx.update_global::<Shell, _>(|shell, _| {
+        let target = next.clone();
+        let warning = shell.apply(&old, &next, |value| {
+            if value == &target {
+                snap_core::export::configure_directory_record(&capture_record, directories.captures.as_deref())?;
+                output::configure_directory(
+                    &recording_record,
+                    directories.recordings.as_deref(),
+                    target.recording_export.remember_directory,
+                )?;
+                settings::persist(&settings_path, value)
+            } else {
+                files.restore()?;
+                output::restore_session_directory(old_recording.clone())
+            }
+        });
+        match warning {
+            Ok(warning) => {
+                if let Some(warning) = warning {
+                    log::warn!("event=gpui.shortcuts_unavailable message={warning}");
+                }
+                shell.bindings = bindings(&next);
+                shell.settings = next.clone();
+                shell.shortcuts_item.set_checked(next.shortcuts_enabled);
+                Ok(())
+            }
+            Err(error) => {
+                let mut errors = Vec::new();
+                if let Err(error) = files.restore() {
+                    errors.push(error);
+                }
+                if let Err(error) = output::restore_session_directory(old_recording.clone()) {
+                    errors.push(error);
+                }
+                Err(backup::with_rollback(error, errors))
+            }
+        }
+    });
+    result?;
+    if next.clipboard != old.clipboard {
+        if let Some(service) = crate::clipboard::service(cx) {
+            let clipboard = next.clipboard.clone();
+            cx.background_executor()
+                .spawn(async move {
+                    if let Err(error) = service.configure(clipboard) {
+                        service.report(error);
+                    }
+                })
+                .detach();
+        }
+    }
+    log::info!("event=gpui.settings_imported schema_version={}", backup::VERSION);
+    backup::restore_secrets(&next, secrets)?;
+    Ok(next)
+}
+
+/// 录屏保存目录记录（与 Tauri 版共用）。
+pub fn recording_record() -> Option<PathBuf> {
+    snap_core::paths::config_dir().map(|dir| dir.join("recording-directory.json"))
+}
+
+/// 导出配置时不能覆盖的正在使用的配置文件。
+pub fn active_config_files(cx: &App) -> Vec<PathBuf> {
+    [cx.global::<Shell>().path.clone(), snap_core::export::directory_record(), recording_record()]
+        .into_iter()
+        .flatten()
+        .collect()
+}
+
 /// 设置界面录入快捷键期间注销全部全局快捷键（否则按下的组合会被系统热键吞掉或直接触发动作）；
 /// 结束录入后按当前设置重新注册，被占用的按键只记日志。
 pub fn suspend_shortcuts(cx: &mut App, suspend: bool) {

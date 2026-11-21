@@ -1160,5 +1160,17 @@
   "90 天": "90 days",
   "排除应用": "Excluded apps",
   "不记录这些程序复制的内容，填写程序文件名，用逗号分隔": "Copies from these programs are not recorded. Enter executable names separated by commas",
-  "点击按键框后按下组合键；Esc 取消，Backspace 禁用。": "Click a key box, then press the combination. Esc cancels, Backspace disables."
+  "点击按键框后按下组合键；Esc 取消，Backspace 禁用。": "Click a key box, then press the combination. Esc cancels, Backspace disables.",
+  "系统默认位置（保存对话框决定）": "System default (chosen by the save dialog)",
+  "保存对话框的默认位置": "Default location of the save dialog",
+  "更改…": "Change…",
+  "与 Tauri 版共用同一登录项；开启后登录时启动当前程序。": "Shares one login item with the Tauri build; when on, this program starts at login.",
+  "密钥以明文写入导出文件，请妥善保管。": "Keys are written to the export file in plain text. Keep it safe.",
+  "导入导出配置": "Import and export",
+  "包含全部设置与保存目录，不含截图、录屏与剪贴板历史。": "Includes all settings and save folders, but not screenshots, recordings or clipboard history.",
+  "导出配置…": "Export settings…",
+  "导入配置…": "Import settings…",
+  "已导出配置。": "Settings exported.",
+  "已导入配置。": "Settings imported.",
+  "请先完成或取消截图、录屏，再修改设置。": "Finish or cancel the screenshot or recording before changing settings."
 }

@@ -7,8 +7,9 @@
 //! 快捷键录入：点击按键框后注销全部全局快捷键（否则组合会被系统热键吞掉），按下组合即预览，
 //! 全部按键松开后保存；Esc 取消，Backspace/Delete 禁用该动作；窗口失焦也会取消并恢复全局快捷键。
 //!
-//! 未迁移：识别与翻译（服务、模型、密钥）、日志、关于与更新、外观主题（GPUI 版界面尚无浅色/深色切换）、
-//! 开机自启、配置导入导出、目录更改（这里只能打开目录）。
+//! 截图、录屏的默认保存目录可更改或恢复默认（与 Tauri 版共用目录记录文件）。
+//! 通用页：开机自启（core `autostart`，与 Tauri 版共用登录项）、配置导出/导入（core `settings::backup`，
+//! 导入事务见 `shell::import_backup`）。
 use gpui_kit::{
     component::input::{Input, InputEvent, InputState},
     *,
@@ -17,7 +18,10 @@ use snap_core::{
     pins::PinShadow,
     settings::{ExportFormat, Language, Settings, ShortcutAction},
 };
-use std::{path::PathBuf, time::Duration};
+use std::{
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 const SURFACE: u32 = 0xffffff;
 const PAGE_BG: u32 = 0xf4f4f5;
@@ -155,6 +159,16 @@ struct SettingsView {
     error: Option<String>,
     /// 最近一次保存成功（显示“已自动保存”）。
     saved: bool,
+    /// 系统登录项状态；None 为尚未读取或读取失败。
+    autostart: Option<bool>,
+    /// 导出配置时包含服务密钥（明文）。
+    include_secrets: bool,
+    /// 配置导入、导出进行中。
+    transferring: bool,
+    /// 操作成功提示（导出/导入完成）。
+    notice: Option<String>,
+    /// 导入后文本框需要按新设置重填（需要窗口，在渲染时执行）。
+    reload_inputs: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -204,8 +218,185 @@ impl SettingsView {
             capture: None,
             error: None,
             saved: false,
+            autostart: None,
+            include_secrets: false,
+            transferring: false,
+            notice: None,
+            reload_inputs: false,
             _subscriptions: subscriptions,
         }
+        .with_autostart(cx)
+    }
+
+    /// 后台读取登录项状态。
+    fn with_autostart(self, cx: &mut Context<Self>) -> Self {
+        cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let state = cx
+                .background_executor()
+                .spawn(async { snap_core::autostart::enabled() })
+                .await;
+            let _ = this.update(cx, |view, cx| {
+                match state {
+                    Ok(on) => view.autostart = Some(on),
+                    Err(error) => view.error = Some(error),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        self
+    }
+
+    fn set_autostart(&mut self, on: bool, cx: &mut Context<Self>) {
+        cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let result = cx
+                .background_executor()
+                .spawn(async move { snap_core::autostart::set(on) })
+                .await;
+            let fresh = cx
+                .background_executor()
+                .spawn(async { snap_core::autostart::enabled() })
+                .await;
+            let _ = this.update(cx, |view, cx| {
+                // 写入失败也可能已部分生效，以重新查询的状态为准。
+                view.autostart = fresh.ok();
+                match result {
+                    Ok(_) => {
+                        view.error = None;
+                        view.saved = true;
+                    }
+                    Err(error) => view.error = Some(error),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// 导出完整配置（可选包含服务密钥）。
+    fn export_config(&mut self, cx: &mut Context<Self>) {
+        if self.transferring {
+            return;
+        }
+        self.transferring = true;
+        self.notice = None;
+        let settings = crate::shell::settings(cx);
+        let include = self.include_secrets;
+        let active = crate::shell::active_config_files(cx);
+        let title =
+            snap_core::i18n::for_language(&settings.appearance.language, "导出配置").to_owned();
+        cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let result = async {
+                let remember = settings.recording_export.remember_directory;
+                let document = cx
+                    .background_executor()
+                    .spawn(async move {
+                        let directories = snap_core::settings::backup::Directories {
+                            captures: snap_core::export::directory_record()
+                                .and_then(|record| snap_core::export::read_directory(&record)),
+                            recordings: match crate::shell::recording_record() {
+                                Some(record) => snap_core::recording::output::configured_directory(
+                                    &record, remember,
+                                )?,
+                                None => None,
+                            },
+                        };
+                        snap_core::settings::backup::export_document(settings, directories, include)
+                    })
+                    .await?;
+                let hidden = cx.update(|cx| crate::pins::hide_pins(cx, None));
+                let picked = rfd::AsyncFileDialog::new()
+                    .set_title(title)
+                    .set_file_name("snap-desk-settings.json")
+                    .add_filter("JSON", &["json"])
+                    .save_file()
+                    .await;
+                cx.update(|cx| crate::pins::show_pins(cx, hidden));
+                let Some(file) = picked else {
+                    return Ok(false);
+                };
+                let destination = file.path().to_path_buf();
+                cx.background_executor()
+                    .spawn(async move {
+                        snap_core::settings::backup::guard_destination(&destination, &active)?;
+                        snap_core::settings::backup::write_bytes(&destination, &document)
+                    })
+                    .await?;
+                Ok::<_, String>(true)
+            }
+            .await;
+            let _ = this.update(cx, |view, cx| {
+                view.transferring = false;
+                match result {
+                    Ok(true) => {
+                        view.error = None;
+                        view.notice = Some("已导出配置。".into());
+                    }
+                    Ok(false) => {}
+                    Err(error) => view.error = Some(error),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// 导入完整配置：校验后作为一笔事务替换设置与目录记录，失败时原样恢复。
+    fn import_config(&mut self, cx: &mut Context<Self>) {
+        if self.transferring || self.capture.is_some() {
+            return;
+        }
+        self.transferring = true;
+        self.notice = None;
+        let language = crate::shell::settings(cx).appearance.language;
+        let title = snap_core::i18n::for_language(&language, "导入配置").to_owned();
+        cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let hidden = cx.update(|cx| crate::pins::hide_pins(cx, None));
+            let picked = rfd::AsyncFileDialog::new()
+                .set_title(title)
+                .add_filter("JSON", &["json"])
+                .pick_file()
+                .await;
+            cx.update(|cx| crate::pins::show_pins(cx, hidden));
+            let result = match picked {
+                None => Ok(None),
+                Some(file) => {
+                    let path = file.path().to_path_buf();
+                    let parsed = cx
+                        .background_executor()
+                        .spawn(async move {
+                            snap_core::settings::backup::parse(
+                                &snap_core::settings::backup::read_bounded(&path)?,
+                            )
+                        })
+                        .await;
+                    match parsed {
+                        Ok(backup) => cx
+                            .update(|cx| crate::shell::import_backup(cx, backup))
+                            .map(Some),
+                        Err(error) => Err(error),
+                    }
+                }
+            };
+            let _ = this.update(cx, |view, cx| {
+                view.transferring = false;
+                match result {
+                    Ok(Some(_)) => {
+                        view.error = None;
+                        view.notice = Some("已导入配置。".into());
+                        view.reload_inputs = true;
+                    }
+                    Ok(None) => {}
+                    // 导入本身成功但密钥写回失败时，设置已更新，同样重填文本框。
+                    Err(error) => {
+                        view.reload_inputs = true;
+                        view.error = Some(error);
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     fn language(cx: &App) -> Language {
@@ -645,6 +836,109 @@ impl SettingsView {
             .child(Input::new(state))
     }
 
+    /// 默认保存目录：当前位置 + 更改…/恢复默认/打开。
+    fn folder_row(
+        &self,
+        folder: Folder,
+        s: &Settings,
+        t: &dyn Fn(&str) -> String,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let (path, is_default) = folder.current(s);
+        let location = match (&path, is_default) {
+            (Some(path), false) => path.display().to_string(),
+            (Some(path), true) => format!("{} · {}", t("默认"), path.display()),
+            (None, _) => t("系统默认位置（保存对话框决定）"),
+        };
+        let (label, hint, id) = match folder {
+            Folder::Captures => ("截图保存目录", "保存对话框的默认位置", 0usize),
+            Folder::Recordings => ("录屏保存目录", "视频输出位置，恢复默认不会移动已有视频", 1),
+        };
+        let small = |id: (&'static str, usize), label: String| {
+            div()
+                .id(id)
+                .h(px(28.0))
+                .px(px(10.0))
+                .flex()
+                .items_center()
+                .rounded(px(6.0))
+                .border_1()
+                .border_color(rgb(BORDER))
+                .text_xs()
+                .cursor_pointer()
+                .hover(|s| s.bg(rgb(PAGE_BG)))
+                .child(label)
+        };
+        let controls = div()
+            .flex()
+            .gap(px(6.0))
+            .child(small(("folder-change", id), t("更改…")).on_click(
+                cx.listener(move |view, _: &ClickEvent, _, cx| view.choose_folder(folder, cx)),
+            ))
+            .children((!is_default).then(|| {
+                small(("folder-reset", id), t("恢复默认")).on_click(cx.listener(
+                    move |view, _: &ClickEvent, _, cx| {
+                        let settings = crate::shell::settings(cx);
+                        let result = folder.configure(None, &settings);
+                        view.report(result, cx);
+                    },
+                ))
+            }))
+            .child(self.open_button(("folder-open", id), t("打开"), path, cx));
+        row(
+            t(label),
+            Some(format!("{} · {location}", t(hint))),
+            controls,
+        )
+    }
+
+    /// 系统文件夹选择器（期间隐藏置顶贴图，避免盖住对话框）。
+    fn choose_folder(&mut self, folder: Folder, cx: &mut Context<Self>) {
+        let settings = crate::shell::settings(cx);
+        let language = settings.appearance.language.clone();
+        let title = snap_core::i18n::for_language(
+            &language,
+            match folder {
+                Folder::Captures => "选择截图保存文件夹",
+                Folder::Recordings => "选择录屏保存文件夹",
+            },
+        )
+        .to_owned();
+        let mut dialog = rfd::AsyncFileDialog::new().set_title(title);
+        if let Some(current) = folder.current(&settings).0.filter(|p| p.is_dir()) {
+            dialog = dialog.set_directory(current);
+        }
+        cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let hidden = cx.update(|cx| crate::pins::hide_pins(cx, None));
+            let picked = dialog.pick_folder().await;
+            cx.update(|cx| crate::pins::show_pins(cx, hidden));
+            let Some(picked) = picked else {
+                return;
+            };
+            let path = picked.path().to_path_buf();
+            let _ = this.update(cx, |view, cx| {
+                let settings = crate::shell::settings(cx);
+                let result = folder.configure(Some(&path), &settings);
+                view.report(result, cx);
+            });
+        })
+        .detach();
+    }
+
+    fn report(&mut self, result: Result<(), String>, cx: &mut Context<Self>) {
+        match result {
+            Ok(()) => {
+                self.error = None;
+                self.saved = true;
+            }
+            Err(error) => {
+                self.error = Some(error);
+                self.saved = false;
+            }
+        }
+        cx.notify();
+    }
+
     fn open_button(
         &self,
         id: impl Into<ElementId>,
@@ -766,6 +1060,7 @@ impl SettingsView {
                 |s, v| s.export.remember_directory = v,
             ),
         ));
+        export.push(self.folder_row(Folder::Captures, s, t, cx));
         vec![
             heading(t("截图")).into_any_element(),
             card(vec![
@@ -851,11 +1146,7 @@ impl SettingsView {
                         s.recording_export.remember_directory = v
                     }),
                 ),
-                row(
-                    t("录屏保存目录"),
-                    Some(t("视频输出位置，恢复默认不会移动已有视频")),
-                    self.open_button("rec-dir", t("打开"), recording_directory(e), cx),
-                ),
+                self.folder_row(Folder::Recordings, s, t, cx),
             ])
             .into_any_element(),
             div()
@@ -1092,9 +1383,106 @@ impl SettingsView {
                 ),
             )])
             .into_any_element(),
+            heading(t("启动")).into_any_element(),
+            card(vec![row(
+                t("开机自启"),
+                Some(t("与 Tauri 版共用同一登录项；开启后登录时启动当前程序。")),
+                match self.autostart {
+                    Some(on) => self
+                        .plain_toggle("autostart", on, cx, |view, on, cx| {
+                            view.set_autostart(on, cx)
+                        })
+                        .into_any_element(),
+                    None => div()
+                        .text_xs()
+                        .text_color(rgb(MUTED))
+                        .child(t("未知"))
+                        .into_any_element(),
+                },
+            )])
+            .into_any_element(),
+            heading(t("配置")).into_any_element(),
+            card(vec![
+                row(
+                    t("导出时包含服务密钥"),
+                    Some(t("密钥以明文写入导出文件，请妥善保管。")),
+                    self.plain_toggle(
+                        "include-secrets",
+                        self.include_secrets,
+                        cx,
+                        |view, on, cx| {
+                            view.include_secrets = on;
+                            cx.notify();
+                        },
+                    ),
+                ),
+                row(
+                    t("导入导出配置"),
+                    Some(t("包含全部设置与保存目录，不含截图、录屏与剪贴板历史。")),
+                    div()
+                        .flex()
+                        .gap(px(6.0))
+                        .child(
+                            self.action_button("config-export", t("导出配置…"), !self.transferring)
+                                .on_click(cx.listener(|view, _: &ClickEvent, _, cx| {
+                                    view.export_config(cx)
+                                })),
+                        )
+                        .child(
+                            self.action_button("config-import", t("导入配置…"), !self.transferring)
+                                .on_click(cx.listener(|view, _: &ClickEvent, _, cx| {
+                                    view.import_config(cx)
+                                })),
+                        ),
+                ),
+            ])
+            .into_any_element(),
             heading(t("目录")).into_any_element(),
             card(rows).into_any_element(),
         ]
+    }
+
+    /// 不经设置保存的本地开关（登录项、导出选项）。
+    fn plain_toggle(
+        &self,
+        id: &'static str,
+        on: bool,
+        cx: &mut Context<Self>,
+        change: impl Fn(&mut Self, bool, &mut Context<Self>) + 'static,
+    ) -> Stateful<Div> {
+        div()
+            .id(id)
+            .w(px(38.0))
+            .h(px(22.0))
+            .flex_none()
+            .rounded_full()
+            .p(px(2.0))
+            .cursor_pointer()
+            .bg(rgb(if on { ACCENT } else { 0xd4d4d8 }))
+            .flex()
+            .justify_start()
+            .when_on(on)
+            .child(div().size(px(18.0)).rounded_full().bg(rgb(0xffffff)))
+            .on_click(cx.listener(move |view, _: &ClickEvent, _, cx| change(view, !on, cx)))
+    }
+
+    fn action_button(&self, id: &'static str, label: String, enabled: bool) -> Stateful<Div> {
+        let button = div()
+            .id(id)
+            .h(px(28.0))
+            .px(px(10.0))
+            .flex()
+            .items_center()
+            .rounded(px(6.0))
+            .border_1()
+            .border_color(rgb(BORDER))
+            .text_xs()
+            .child(label);
+        if enabled {
+            button.cursor_pointer().hover(|s| s.bg(rgb(PAGE_BG)))
+        } else {
+            button.opacity(0.5)
+        }
     }
 
     fn shortcuts_page(
@@ -1224,18 +1612,81 @@ fn shadow_index(value: &PinShadow) -> usize {
     }
 }
 
-/// 录屏保存目录：记住的目录（启用时）或默认目录（与录屏输出一致）。
-fn recording_directory(export: &snap_core::settings::RecordingExportSettings) -> Option<PathBuf> {
-    let record = snap_core::paths::config_dir()?.join("recording-directory.json");
-    let default = snap_core::paths::local_data_dir()?.join("recordings");
-    snap_core::recording::output::resolve(&record, export.remember_directory, default)
-        .ok()
-        .map(|(path, _)| path)
+/// 可更改的默认保存目录。记录文件与 Tauri 版共用（配置目录下）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Folder {
+    Captures,
+    Recordings,
+}
+
+impl Folder {
+    /// 当前目录与是否为默认。截图没有固定默认目录（交给保存对话框），返回 None。
+    fn current(self, s: &Settings) -> (Option<PathBuf>, bool) {
+        match self {
+            Folder::Captures => {
+                let path = snap_core::export::directory_record().and_then(|record| {
+                    snap_core::export::preferred_directory(&record, s.export.remember_directory)
+                });
+                let is_default = path.is_none();
+                (path, is_default)
+            }
+            Folder::Recordings => {
+                let (Some(record), Some(data)) = (
+                    crate::shell::recording_record(),
+                    snap_core::paths::local_data_dir(),
+                ) else {
+                    return (None, true);
+                };
+                match snap_core::recording::output::resolve(
+                    &record,
+                    s.recording_export.remember_directory,
+                    data.join("recordings"),
+                ) {
+                    Ok((path, is_default)) => (Some(path), is_default),
+                    Err(_) => (None, true),
+                }
+            }
+        }
+    }
+
+    /// 设为 `directory`（None 为恢复默认）；目录须可写，失败不改记录。
+    fn configure(self, directory: Option<&Path>, s: &Settings) -> Result<(), String> {
+        match self {
+            Folder::Captures => {
+                let record = snap_core::export::directory_record().ok_or("无法定位配置目录。")?;
+                snap_core::export::configure_directory_record(&record, directory)
+            }
+            Folder::Recordings => {
+                let record = crate::shell::recording_record().ok_or("无法定位配置目录。")?;
+                snap_core::recording::output::configure_directory(
+                    &record,
+                    directory,
+                    s.recording_export.remember_directory,
+                )
+            }
+        }
+    }
 }
 
 impl Render for SettingsView {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let settings = crate::shell::settings(cx);
+        if std::mem::take(&mut self.reload_inputs) {
+            // set_value 不触发 Change，不会把重填当成编辑再次保存。
+            for (state, value) in [
+                (
+                    &self.capture_prefix,
+                    settings.export.filename_prefix.clone(),
+                ),
+                (
+                    &self.recording_prefix,
+                    settings.recording_export.filename_prefix.clone(),
+                ),
+                (&self.excluded, settings.clipboard.excluded_apps.join(", ")),
+            ] {
+                state.update(cx, |state, cx| state.set_value(value, window, cx));
+            }
+        }
         let language = Self::language(cx);
         let words = language.clone();
         let t = move |key: &str| snap_core::i18n::for_language(&words, key).to_owned();
@@ -1272,6 +1723,7 @@ impl Render for SettingsView {
                         view.page = page;
                         view.error = None;
                         view.saved = false;
+                        view.notice = None;
                         cx.notify();
                     })),
             );
@@ -1285,6 +1737,13 @@ impl Render for SettingsView {
             Page::Shortcuts => self.shortcuts_page(&settings, &t, cx),
         };
         let status = match (&self.error, self.saved) {
+            (None, _) if self.notice.is_some() => Some(
+                div()
+                    .mt(px(12.0))
+                    .text_xs()
+                    .text_color(rgb(0x16a34a))
+                    .child(t(self.notice.as_deref().unwrap_or_default())),
+            ),
             (Some(error), _) => Some(
                 div()
                     .mt(px(12.0))
