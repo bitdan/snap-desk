@@ -11,8 +11,6 @@ pub mod result;
 mod lifecycle;
 pub use lifecycle::{ExitState, request_exit, request_restart};
 use lifecycle::{progress, WorkerGuard};
-#[cfg(test)]
-use lifecycle::exit_timed_out;
 use super::scroll::chrome;
 pub use snap_core::recording::{
     annotation_layer, annotation_track, diagnostic_summary, Phase, RecordingAction, RecordingState,

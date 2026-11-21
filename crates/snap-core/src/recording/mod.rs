@@ -10,6 +10,7 @@ pub mod capture;
 pub mod compositor;
 pub mod config;
 pub mod encoder;
+pub mod exit;
 pub mod frame;
 pub mod gif;
 pub mod input;

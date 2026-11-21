@@ -76,43 +76,14 @@ impl Drop for WorkerGuard {
     }
 }
 
-/// 记录真实处理进展，不能用定时心跳伪装编码器仍有进展。
-struct Progress {
-    stage: &'static str,
-    updated: Instant,
-    entered: Instant,
-    path: Option<PathBuf>,
-}
-impl Default for Progress {
-    fn default() -> Self {
-        Self {
-            stage: "idle",
-            updated: Instant::now(),
-            entered: Instant::now(),
-            path: None,
-        }
-    }
-}
+/// 记录真实处理进展（core `recording::exit::Progress`，GPUI 版共用），不能用定时心跳伪装编码器仍有进展。
 pub(super) fn progress(app: &AppHandle, stage: &'static str, path: Option<&std::path::Path>) {
     if let Ok(mut p) = app.state::<ExitState>().progress.lock() {
-        if p.stage != stage {
-            log::info!(
-                "event=recording.stage_changed module=recording previous={} stage={stage} duration_ms={:.0}",
-                p.stage,
-                p.entered.elapsed().as_secs_f64() * 1000.0
-            );
-            p.entered = Instant::now();
-        }
-        p.stage = stage;
-        p.updated = Instant::now();
-        p.path = path.map(std::path::Path::to_path_buf);
+        p.record(stage, path);
     }
 }
-/// Finalize 属于不可细分的原生调用，给予更长无进展窗口；总等待仍有硬上限。
-pub(super) fn exit_timed_out(stage: &str, idle: Duration, total: Duration) -> bool {
-    let limit = if stage == "finalizing" { 180 } else { 90 };
-    idle >= Duration::from_secs(limit) || total >= Duration::from_secs(600)
-}
+pub(super) use snap_core::recording::exit::exit_timed_out;
+use snap_core::recording::exit::Progress;
 
 /// 退出按真实帧提交、阶段切换及文件增长延长等待，让正常停止有机会发布成品。
 pub fn request_exit(app: &AppHandle) {
@@ -161,18 +132,11 @@ fn begin_exit(app: &AppHandle, restart: bool) {
             let Ok(metadata) = fs::metadata(&path) else {
                 continue;
             };
-            let size = metadata.len();
-            if observed
-                .as_ref()
-                .is_some_and(|(old_path, old_size)| old_path == &path && size > *old_size)
-            {
+            if snap_core::recording::exit::grew(&mut observed, &path, metadata.len()) {
                 if let Ok(mut p) = state.progress.try_lock() {
-                    if p.path.as_ref() == Some(&path) {
-                        p.updated = Instant::now();
-                    }
+                    p.file_grew(&path);
                 }
             }
-            observed = Some((path, size));
         }
     });
     std::thread::spawn(move || {
