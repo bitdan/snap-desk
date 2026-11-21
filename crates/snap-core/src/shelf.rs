@@ -150,7 +150,7 @@ impl Preferences {
 /// 按所选类别合并历史，固定项排在普通项前面。
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct Snapshot {
+pub struct ShelfSnapshot {
     pub settings: ShelfSettings,
     pub kept_ids: Vec<i64>,
     pub items: Vec<Item>,
@@ -178,7 +178,7 @@ fn query(category: ShelfCategory) -> Query {
 }
 
 /// 同一轮读取持历史操作锁，避免清理素材时拼出不一致的卡片列表。
-pub fn snapshot(prefs: &Preferences, service: &Service) -> Result<Snapshot, String> {
+pub fn snapshot(prefs: &Preferences, service: &Service) -> Result<ShelfSnapshot, String> {
     let recording_enabled = service.status().enabled;
     let data = service.data()?;
     let _guard = data.operation.lock().map_err(|_| "历史存储忙碌。")?;
@@ -219,7 +219,7 @@ pub fn snapshot(prefs: &Preferences, service: &Service) -> Result<Snapshot, Stri
     items.retain(|item| !prefs.kept_ids.contains(&item.id));
     items.truncate(MAX_ITEMS.saturating_sub(kept.len()));
     kept.extend(items);
-    Ok(Snapshot {
+    Ok(ShelfSnapshot {
         settings: prefs.settings.clone(),
         kept_ids: prefs.kept_ids.clone(),
         items: kept,

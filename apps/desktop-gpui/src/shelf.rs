@@ -13,7 +13,7 @@ use snap_core::{
         model::{Item, Kind},
         service::Service,
     },
-    shelf::{self, Preferences, ShelfAction, Snapshot},
+    shelf::{self, Preferences, ShelfAction, ShelfSnapshot as Snapshot},
 };
 use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
 

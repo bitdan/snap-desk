@@ -5,7 +5,7 @@ pub(crate) use window::{resume_after_capture, suspend_for_capture};
 
 use crate::clipboard::Service as ClipboardService;
 /// 设置模型、`shelf.json` 读写、条目操作与快照拼装在 core（GPUI 版共用）；这里保留窗口、悬停采样与命令。
-pub use snap_core::shelf::{Preferences, ShelfSettings, Snapshot as ShelfSnapshot};
+pub use snap_core::shelf::{Preferences, ShelfSettings, ShelfSnapshot};
 use std::{
     sync::{
         atomic::{AtomicBool, Ordering},
