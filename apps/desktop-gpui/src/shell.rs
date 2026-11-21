@@ -357,6 +357,10 @@ pub fn run_action(cx: &mut App, action: ShortcutAction, source: &str) {
                 crate::pins::from_clipboard(cx);
             }
         }
+        ShortcutAction::Translate => {
+            log::info!("event=gpui.action action=translate source={source}");
+            crate::recognition::translate_selection(cx);
+        }
         ShortcutAction::Shelf => {
             log::info!("event=gpui.action action=shelf source={source}");
             crate::shelf::toggle(cx);

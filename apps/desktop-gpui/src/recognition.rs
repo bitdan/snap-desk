@@ -7,6 +7,10 @@
 //! - 在线翻译只发送识别出的文字，发送前需要用户点击“发送翻译”确认；本地 CTranslate2 翻译暂不支持；
 //! - 二维码只在用户确认后才打开 HTTP/HTTPS 链接。
 //! 识别与翻译在后台线程执行（翻译用一个临时的单线程 tokio 运行时承载异步 HTTP 请求）。
+//!
+//! 文字翻译窗口（对照 Vue 版 `TranslationWindow.vue`）复用同一面板、不带图片：“翻译”快捷键先在前台应用
+//! 复制选中文字（core `recognition::selected_text`；X11 读 PRIMARY 选区），取到时自动翻译，否则打开空白窗口
+//! 手动输入；窗口内可“截图翻译”。
 use crate::annotate;
 use gpui_kit::{
     component::input::{Textarea, TextareaState},
@@ -81,6 +85,67 @@ pub fn segments(text: &str) -> Vec<String> {
     parts
 }
 
+/// “翻译”快捷键：记下前台窗口，后台复制其中选中的文字后打开文字翻译窗口；同一时间只执行一次。
+pub fn translate_selection(cx: &mut App) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static RUNNING: AtomicBool = AtomicBool::new(false);
+    if RUNNING.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    // 必须在本程序任何窗口取得焦点之前读取前台窗口。
+    let target = recognition::selected_text::foreground();
+    cx.spawn(async move |cx| {
+        let text = cx
+            .background_executor()
+            .spawn(async move {
+                target
+                    .and_then(|target| recognition::selected_text::copy(target, recognition::selected_text::clipboard_text))
+                    .and_then(recognition::selected_text::validate)
+            })
+            .await;
+        if let Err(error) = &text {
+            // 未取得选区也允许手动输入；不以旧剪贴板内容作为自动翻译原文。
+            log::info!("event=gpui.translate_selection_empty message={error}");
+        }
+        cx.update(|cx| open_text(cx, text.ok()));
+        RUNNING.store(false, Ordering::Release);
+    })
+    .detach();
+}
+
+/// 打开文字翻译窗口；带原文时立即发送翻译（快捷键划词即视为确认）。
+pub fn open_text(cx: &mut App, text: Option<String>) {
+    let settings = crate::shell::settings(cx);
+    let local = local_engine(cx);
+    let options = WindowOptions {
+        window_bounds: Some(WindowBounds::Windowed(Bounds::centered(None, size(px(560.0), px(620.0)), cx))),
+        titlebar: Some(TitlebarOptions { title: Some(self::text(&settings, "文字翻译").into()), ..Default::default() }),
+        focus: true,
+        show: true,
+        kind: WindowKind::Normal,
+        is_resizable: true,
+        window_min_size: Some(size(px(420.0), px(420.0))),
+        ..Default::default()
+    };
+    let result = cx.open_window(options, |window, cx| {
+        cx.new(|cx| {
+            let mut panel = Panel::new(None, Mode::Translate, settings, local, window, cx);
+            if let Some(text) = text {
+                panel.fill = Some(text.clone());
+                panel.translate_text(text, cx);
+            }
+            panel
+        })
+    });
+    match result {
+        Ok(handle) => {
+            let _ = handle.update(cx, |_, window, _| window.activate_window());
+            log::info!("event=gpui.translation_window_opened");
+        }
+        Err(error) => log::error!("event=gpui.translation_window_failed message={error}"),
+    }
+}
+
 /// 打开识别结果窗口并立即开始识别。
 pub fn open(cx: &mut App, image: RgbaImage, mode: Mode) {
     let settings = crate::shell::settings(cx);
@@ -104,7 +169,7 @@ pub fn open(cx: &mut App, image: RgbaImage, mode: Mode) {
     let image = Arc::new(image);
     let result = cx.open_window(options, |window, cx| {
         cx.new(|cx| {
-            let mut panel = Panel::new(image, mode, settings, local, window, cx);
+            let mut panel = Panel::new(Some(image), mode, settings, local, window, cx);
             panel.start(cx);
             panel
         })
@@ -134,8 +199,9 @@ fn title(settings: &Settings, mode: Mode) -> String {
 }
 
 struct Panel {
-    image: Arc<RgbaImage>,
-    preview: Arc<RenderImage>,
+    /// 识别的图片；文字翻译窗口没有图片。
+    image: Option<Arc<RgbaImage>>,
+    preview: Option<Arc<RenderImage>>,
     mode: Mode,
     settings: Settings,
     local: Arc<LocalOcr>,
@@ -159,18 +225,20 @@ struct Panel {
 
 impl Panel {
     fn new(
-        image: Arc<RgbaImage>,
+        image: Option<Arc<RgbaImage>>,
         mode: Mode,
         settings: Settings,
         local: Arc<LocalOcr>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let mut frame = (*image).clone();
-        for pixel in frame.pixels_mut() {
-            pixel.0.swap(0, 2);
-        }
-        let preview = Arc::new(RenderImage::new(vec![image::Frame::new(frame)]));
+        let preview = image.as_ref().map(|image| {
+            let mut frame = (**image).clone();
+            for pixel in frame.pixels_mut() {
+                pixel.0.swap(0, 2);
+            }
+            Arc::new(RenderImage::new(vec![image::Frame::new(frame)]))
+        });
         let target = snap_core::recognition::services::translation_config(&settings)
             .map(|ai| ai.target_language)
             .unwrap_or_else(|_| "zh-CN".into());
@@ -210,10 +278,13 @@ impl Panel {
         if self.busy.is_some() {
             return;
         }
+        let Some(image) = self.image.clone() else {
+            return;
+        };
         self.busy = Some("正在识别文字…");
         self.error = None;
         self.message = None;
-        let (image, settings, local) = (self.image.clone(), self.settings.clone(), self.local.clone());
+        let (settings, local) = (self.settings.clone(), self.local.clone());
         cx.spawn(async move |this, cx| {
             let result = cx
                 .background_executor()
@@ -251,9 +322,11 @@ impl Panel {
     }
 
     fn scan_qr(&mut self, cx: &mut Context<Self>) {
+        let Some(image) = self.image.clone() else {
+            return;
+        };
         self.busy = Some("正在识别二维码…");
         self.error = None;
-        let image = self.image.clone();
         cx.spawn(async move |this, cx| {
             let result = cx
                 .background_executor()
@@ -279,10 +352,14 @@ impl Panel {
 
     /// 用户点击“发送翻译”即视为确认上传识别文字（与 Tauri 版 consent 一致）。
     fn translate(&mut self, cx: &mut Context<Self>) {
+        let source = self.draft.read(cx).value().to_string();
+        self.translate_text(source, cx);
+    }
+
+    fn translate_text(&mut self, source: String, cx: &mut Context<Self>) {
         if self.busy.is_some() {
             return;
         }
-        let source = self.draft.read(cx).value().to_string();
         let texts = segments(&source);
         if texts.is_empty() {
             self.error = Some(self.t("没有可翻译的文字。"));
@@ -440,7 +517,8 @@ impl Panel {
 
     fn translate_view(&self, cx: &mut Context<Self>) -> Div {
         let idle = self.busy.is_none();
-        let has = self.ocr.is_some();
+        // 文字翻译窗口没有识别步骤，原文由用户输入或划词带入。
+        let has = self.ocr.is_some() || self.image.is_none();
         let mut targets = div().flex().flex_wrap().items_center().gap(px(4.0)).child(
             div().text_xs().text_color(rgb(annotate::MUTED)).child(self.t("译为")),
         );
@@ -490,7 +568,16 @@ impl Panel {
                     .child(self.button("translate-copy", self.t("复制译文"), false, idle).on_click(cx.listener(|p, _: &ClickEvent, _, cx| {
                         let value = p.translated.read(cx).value().to_string();
                         p.copy(value, "已复制译文", cx);
-                    }))),
+                    })))
+                    .children(self.image.is_none().then(|| {
+                        self.button("translate-capture", self.t("截图翻译"), false, idle).on_click(cx.listener(|_, _: &ClickEvent, window, cx| {
+                            // 框选完成后在新的图片翻译窗口中显示结果；本窗口保留。
+                            let mut settings = crate::shell::settings(cx);
+                            settings.delay_seconds = 0;
+                            crate::capture::start(cx, &settings, Duration::from_millis(150), Some(Mode::Translate));
+                            window.minimize_window();
+                        }))
+                    })),
             )
             .child(div().text_xs().text_color(rgb(annotate::MUTED)).child(self.t("译文")))
             .child(div().flex_1().min_h(px(0.0)).child(Textarea::new(&self.translated).h_full()))
@@ -557,6 +644,7 @@ impl Render for Panel {
         }
         let tabs = match self.mode {
             Mode::Qr => div(),
+            _ if self.image.is_none() => div(),
             _ => div()
                 .flex()
                 .gap(px(4.0))
@@ -591,7 +679,7 @@ impl Render for Panel {
             .p(px(12.0))
             .bg(rgb(0x181b20))
             .text_color(rgb(annotate::TEXT))
-            .child(
+            .children(self.preview.clone().map(|preview| {
                 div()
                     .w(relative(0.42))
                     .h_full()
@@ -601,8 +689,8 @@ impl Render for Panel {
                     .rounded(px(8.0))
                     .bg(rgb(0x0f1115))
                     .overflow_hidden()
-                    .child(img(self.preview.clone()).size_full().object_fit(ObjectFit::Contain)),
-            )
+                    .child(img(preview).size_full().object_fit(ObjectFit::Contain))
+            }))
             .child(
                 div()
                     .flex_1()
