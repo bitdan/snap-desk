@@ -8,7 +8,8 @@ use crate::{
     settings::SettingsState,
 };
 use semver::Version;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
+use snap_core::updates::{candidate, release_page, Release, REPOSITORY};
 use std::{
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -19,7 +20,6 @@ use std::{
 use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
 use tauri_plugin_updater::{Update, UpdaterExt};
 
-const REPOSITORY: &str = "bitdan/snap-desk";
 /// 应用常驻托盘，可能连续运行数天；定时复查才能发现运行期间发布的新版本。
 /// 复查间隔由设置决定（见 settings::UPDATE_CHECK_MINUTES），读取失败时按一小时处理。
 const DEFAULT_RECHECK_INTERVAL: Duration = Duration::from_secs(60 * 60);
@@ -192,44 +192,6 @@ fn failed(app: &AppHandle, result: Result<(), String>) -> Result<AppUpdateView, 
         Some(message) => Err(message),
         None => Ok(view),
     }
-}
-
-#[derive(Deserialize)]
-struct ReleaseAsset {
-    name: String,
-    browser_download_url: String,
-}
-#[derive(Deserialize)]
-struct Release {
-    tag_name: String,
-    draft: bool,
-    prerelease: bool,
-    assets: Vec<ReleaseAsset>,
-}
-
-/// 仅匹配应用 SemVer 标签和固定清单名称，跳过翻译模型/引擎等独立发布。
-fn candidate(
-    release: &Release,
-    current: &Version,
-    include_preview: bool,
-) -> Option<(Version, String)> {
-    if release.draft {
-        return None;
-    }
-    let version = Version::parse(release.tag_name.strip_prefix('v')?).ok()?;
-    if version <= *current || (!include_preview && (release.prerelease || !version.pre.is_empty()))
-    {
-        return None;
-    }
-    let expected = format!(
-        "https://github.com/{REPOSITORY}/releases/download/{}/updater.json",
-        release.tag_name
-    );
-    release
-        .assets
-        .iter()
-        .find(|asset| asset.name == "updater.json" && asset.browser_download_url == expected)
-        .map(|_| (version, expected))
 }
 
 async fn discover(app: &AppHandle, include_preview: bool) -> Result<Option<Update>, String> {
@@ -447,14 +409,6 @@ pub(super) async fn download_app_update(
     failed(&app, result)
 }
 
-/// 候选版本的发布页；没有候选版本时打开最新发布。版本号来自已校验的清单，只含 SemVer 字符。
-fn release_page(version: Option<&str>) -> String {
-    match version {
-        Some(version) => format!("https://github.com/{REPOSITORY}/releases/tag/v{version}"),
-        None => format!("https://github.com/{REPOSITORY}/releases/latest"),
-    }
-}
-
 /// 自动下载失败时让用户在浏览器中下载；地址只由原生端拼出，不接受前端传入。
 #[tauri::command]
 pub(super) fn open_app_update_page(app: AppHandle, window: WebviewWindow) -> Result<(), String> {
@@ -589,51 +543,4 @@ pub(super) fn initialize(app: &AppHandle) {
             }
         }
     });
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn release(tag: &str, prerelease: bool) -> Release {
-        Release {
-            tag_name: tag.into(),
-            draft: false,
-            prerelease,
-            assets: vec![ReleaseAsset {
-                name: "updater.json".into(),
-                browser_download_url: format!(
-                    "https://github.com/{REPOSITORY}/releases/download/{tag}/updater.json"
-                ),
-            }],
-        }
-    }
-
-    #[test]
-    fn release_page_points_at_the_candidate_or_latest_release() {
-        assert_eq!(
-            release_page(Some("0.2.6-beta.2")),
-            format!("https://github.com/{REPOSITORY}/releases/tag/v0.2.6-beta.2")
-        );
-        assert_eq!(
-            release_page(None),
-            format!("https://github.com/{REPOSITORY}/releases/latest")
-        );
-    }
-
-    #[test]
-    fn channels_use_semver_and_ignore_resource_releases() {
-        let current = Version::parse("0.2.0-beta.2").unwrap();
-        assert!(candidate(&release("v0.2.0-beta.10", true), &current, false).is_none());
-        assert!(candidate(&release("v0.2.0-beta.10", true), &current, true).is_some());
-        assert!(candidate(&release("v0.2.0", false), &current, false).is_some());
-        assert!(candidate(&release("v0.1.9", false), &current, false).is_none());
-        assert!(candidate(&release("translation-engine-v3", true), &current, true).is_none());
-        let mut forged = release("v0.2.1", false);
-        forged.assets[0].browser_download_url = "https://example.com/updater.json".into();
-        assert!(candidate(&forged, &current, true).is_none());
-        forged = release("v0.2.1", false);
-        forged.draft = true;
-        assert!(candidate(&forged, &current, true).is_none());
-    }
 }

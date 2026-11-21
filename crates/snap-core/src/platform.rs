@@ -7,6 +7,11 @@ pub fn open_project_homepage() -> Result<(), String> {
 
 /// 由功能模块传入受信的固定页面，复用系统浏览器启动方式，不经过 shell 拼接。
 pub fn open_web_page(url: &'static str) -> Result<(), String> {
+    open_trusted(url)
+}
+
+/// crate 内部拼出的受信地址（如发布页，版本号已校验）。
+pub(crate) fn open_trusted(url: &str) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     let mut command = {
         use std::os::windows::process::CommandExt;

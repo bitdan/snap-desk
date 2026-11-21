@@ -24,6 +24,7 @@ pub mod scroll;
 pub mod settings;
 pub mod shelf;
 pub mod text_image;
+pub mod updates;
 #[cfg(target_os = "linux")]
 pub mod wayland_probe;
 #[cfg(target_os = "linux")]
