@@ -14,6 +14,7 @@ pub mod exit;
 pub mod frame;
 pub mod gif;
 pub mod input;
+pub mod live;
 pub mod output;
 mod pipeline;
 pub mod preferences;
