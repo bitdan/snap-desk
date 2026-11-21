@@ -8,6 +8,7 @@ pub mod autostart;
 pub mod capture;
 pub mod clipboard;
 pub mod desktop_support;
+pub mod diagnostics;
 pub mod drag;
 pub mod export;
 pub mod i18n;

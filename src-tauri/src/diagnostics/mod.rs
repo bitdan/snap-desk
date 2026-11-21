@@ -1,7 +1,7 @@
 //! 主窗口专属的本地诊断入口：读取、导出与清理走阻塞线程，不授予前端文件权限。
 pub(crate) mod catalog;
 mod export;
-mod logs;
+use snap_core::diagnostics::logs;
 pub(crate) mod logger;
 pub mod runtime;
 
@@ -60,6 +60,7 @@ fn status(app: &AppHandle) -> Status {
                 level: None,
                 module: None,
             },
+            catalog::COMMANDS,
         )?;
         status.recent_errors = recent
             .entries
@@ -98,7 +99,7 @@ pub async fn diagnostics_recent_logs(
             .map_err(|_| "诊断操作正在进行，请稍后刷新。")?;
         log::logger().flush();
         let (root, base) = location(&app)?;
-        logs::recent(&logs::files(&root, &base)?, &query)
+        logs::recent(&logs::files(&root, &base)?, &query, catalog::COMMANDS)
     })
     .await
     .map_err(|_| "读取日志任务失败。")?

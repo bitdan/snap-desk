@@ -104,6 +104,8 @@ pub fn archive_name(name: &str, base: &str) -> bool {
         && chrono::NaiveDateTime::parse_from_str(date, "%Y-%m-%d_%H-%M-%S").is_ok()
 }
 
+/// 活动日志 `{base}.log` 与归档：Tauri 日志插件的 `{base}_YYYY-MM-DD_HH-MM-SS.log`，
+/// GPUI 版启动轮转的 `{base}.log.old`。
 pub fn files(root: &Path, base: &str) -> Result<Vec<LogFile>, String> {
     safe_directory(root)?;
     let mut files = Vec::new();
@@ -120,7 +122,7 @@ pub fn files(root: &Path, base: &str) -> Result<Vec<LogFile>, String> {
             continue;
         };
         let active = name == format!("{base}.log");
-        if !active && !archive_name(name, base) {
+        if !active && !archive_name(name, base) && name != format!("{base}.log.old") {
             continue;
         }
         let meta = fs::symlink_metadata(entry.path()).map_err(|_| "日志正在轮转，请刷新重试。")?;
@@ -182,7 +184,8 @@ fn open(file: &LogFile) -> Result<File, String> {
 }
 
 /// 从时间最近的文件往前读；预算覆盖所有文件，不逐个扫描完整文件。
-pub fn recent(files: &[LogFile], query: &Query) -> Result<Recent, String> {
+/// `commands` 为外壳的命令审计名单（`command=` 字段只放行其中的值）。
+pub fn recent(files: &[LogFile], query: &Query, commands: &[&str]) -> Result<Recent, String> {
     if !(1..=MAX_LINES).contains(&query.limit) {
         return Err("日志条数必须在 1–500 之间。".into());
     }
@@ -233,7 +236,7 @@ pub fn recent(files: &[LogFile], query: &Query) -> Result<Recent, String> {
                 result.truncated = true;
                 break;
             }
-            let Some(entry) = sanitize(line) else {
+            let Some(entry) = sanitize(line, commands) else {
                 result.omitted_lines += 1;
                 continue;
             };
@@ -249,7 +252,9 @@ pub fn recent(files: &[LogFile], query: &Query) -> Result<Recent, String> {
 }
 
 /// 二次隐私保护采取重建而非正则替换：自由文本/未知字段/旧日志一律不输出。
-pub fn sanitize(line: &str) -> Option<Entry> {
+/// 只放行白名单事件与字段。级别兼容 Tauri 日志插件的 `[INFO]` 与 GPUI 版的 `INFO`；
+/// GPUI 外壳的 `gpui.*` 事件（没有 module 字段）只保留事件名，归入 App。
+pub fn sanitize(line: &str, commands: &[&str]) -> Option<Entry> {
     if line.len() > 4096 {
         return None;
     }
@@ -258,16 +263,24 @@ pub fn sanitize(line: &str) -> Option<Entry> {
     let timestamp = chrono::DateTime::parse_from_rfc3339(timestamp)
         .ok()?
         .to_rfc3339();
-    let level = match parts.next()? {
-        "[ERROR]" => Level::Error,
-        "[WARN]" => Level::Warn,
-        "[INFO]" => Level::Info,
-        "[DEBUG]" => Level::Debug,
+    let level = match parts.next()?.trim_start_matches('[').trim_end_matches(']') {
+        "ERROR" => Level::Error,
+        "WARN" => Level::Warn,
+        "INFO" => Level::Info,
+        "DEBUG" => Level::Debug,
         _ => return None,
     };
     let _target = parts.next()?;
     let fields: Vec<_> = parts.filter_map(|s| s.split_once('=')).collect();
     let event = fields.iter().find(|(k, _)| *k == "event")?.1;
+    if gpui_event(event) {
+        return Some(Entry {
+            timestamp,
+            level,
+            module: Module::App,
+            message: format!("event={event}"),
+        });
+    }
     if !super::catalog::EVENTS.contains(&event) {
         return None;
     }
@@ -334,10 +347,14 @@ pub fn sanitize(line: &str) -> Option<Entry> {
             .contains(&value),
             "reason" if event == "recording.timestamp_rejected" => value == "before_start",
             "generation" if event == "recording.timestamp_rejected" => value.parse::<u64>().is_ok(),
-            "source_offset_ms" if event == "recording.timestamp_rejected" => value.parse::<i64>().is_ok(),
-            "level" if event == "diagnostics.level_changed" => ["Error", "Warn", "Info", "Debug"].contains(&value),
+            "source_offset_ms" if event == "recording.timestamp_rejected" => {
+                value.parse::<i64>().is_ok()
+            }
+            "level" if event == "diagnostics.level_changed" => {
+                ["Error", "Warn", "Info", "Debug"].contains(&value)
+            }
             "code" => super::catalog::CODES.contains(&value),
-            "command" => super::catalog::COMMANDS.contains(&value),
+            "command" => commands.contains(&value),
             "op" => ["cap-", "rec-", "scroll-", "ocr-", "tr-"]
                 .iter()
                 .any(|prefix| {
@@ -347,10 +364,23 @@ pub fn sanitize(line: &str) -> Option<Entry> {
                 }),
             "provider" => ["local", "cloud"].contains(&value),
             // 引擎只允许固定协议标识，不记录服务名称、地址、凭据或任意模型文字。
-            "engine" if module == Module::Ocr => ["local-ppocr", "windows-media", "wechat-ocr", "ocr-space", "paddle-ocr", "openai-compatible"].contains(&value),
-            "engine" if module == Module::Translation => ["local-ctranslate2", "online-llm", "deepl"].contains(&value),
+            "engine" if module == Module::Ocr => [
+                "local-ppocr",
+                "windows-media",
+                "wechat-ocr",
+                "ocr-space",
+                "paddle-ocr",
+                "openai-compatible",
+            ]
+            .contains(&value),
+            "engine" if module == Module::Translation => {
+                ["local-ctranslate2", "online-llm", "deepl"].contains(&value)
+            }
             "queued" | "queue_dropped" | "throttled" | "rejected_capture" | "stale"
-                if event == "recording.finished" => value.parse::<u64>().is_ok(),
+                if event == "recording.finished" =>
+            {
+                value.parse::<u64>().is_ok()
+            }
             "result" => ["success", "cancelled", "failed"].contains(&value),
             "stage" if event == "recording.step_failed" => [
                 "encoder_thread_start",
@@ -394,14 +424,32 @@ pub fn sanitize(line: &str) -> Option<Entry> {
                 "completed",
             ]
             .contains(&value),
-            "hide_ms" | "dwm_ms" | "capture_ms" | "png_ms" | "overlay_ready_ms" | "first_paint_ms"
-            | "delay_ms" | "load_ms" | "decode_ms" | "pre_paint_ms" | "post_paint_ms" | "clone_ms" | "compose_ms"
-                if event.starts_with("capture.") => value.len() <= 20 && value.parse::<f64>().is_ok_and(|n| n.is_finite() && n >= 0.0),
-            "compose_ms" | "png_ms" | "clipboard_ms" if event == "scroll.export" => value.len() <= 20 && value.parse::<f64>().is_ok_and(|n| n.is_finite() && n >= 0.0),
+            "hide_ms" | "dwm_ms" | "capture_ms" | "png_ms" | "overlay_ready_ms"
+            | "first_paint_ms" | "delay_ms" | "load_ms" | "decode_ms" | "pre_paint_ms"
+            | "post_paint_ms" | "clone_ms" | "compose_ms"
+                if event.starts_with("capture.") =>
+            {
+                value.len() <= 20
+                    && value
+                        .parse::<f64>()
+                        .is_ok_and(|n| n.is_finite() && n >= 0.0)
+            }
+            "compose_ms" | "png_ms" | "clipboard_ms" if event == "scroll.export" => {
+                value.len() <= 20
+                    && value
+                        .parse::<f64>()
+                        .is_ok_and(|n| n.is_finite() && n >= 0.0)
+            }
             "rgba_bytes" if event == "scroll.export" => value.parse::<u64>().is_ok(),
-            "actual_width" | "actual_height" | "offset_x" | "offset_y" if event == "capture.frame_mismatch" => value.len() <= 10 && value.parse::<u32>().is_ok(),
+            "actual_width" | "actual_height" | "offset_x" | "offset_y"
+                if event == "capture.frame_mismatch" =>
+            {
+                value.len() <= 10 && value.parse::<u32>().is_ok()
+            }
             "paint_source" if event == "capture.interactive" => ["raf", "timeout"].contains(&value),
-            "revision" | "monitors" | "png_bytes" if event.starts_with("capture.") => value.parse::<u64>().is_ok(),
+            "revision" | "monitors" | "png_bytes" if event.starts_with("capture.") => {
+                value.parse::<u64>().is_ok()
+            }
             "cold" if event.starts_with("capture.") => ["0", "1"].contains(&value),
             "duration_ms" | "inference_ms" | "encoding_ms" | "width" | "height" | "frames"
             | "captured" | "encoded" | "dropped" | "fps" | "lines" | "line" | "column" => {
@@ -427,22 +475,55 @@ pub fn sanitize(line: &str) -> Option<Entry> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 外壳命令审计名单的测试替身。
+    const TEST_COMMANDS: &[&str] = &["app_status"];
+    fn check(line: &str) -> Option<Entry> {
+        sanitize(line, TEST_COMMANDS)
+    }
+    fn scan(files: &[LogFile], query: &Query) -> Result<Recent, String> {
+        recent(files, query, TEST_COMMANDS)
+    }
     #[test]
     fn recognition_engines_survive_display_and_export_without_free_text() {
         let prefix = "2026-11-04T12:00:00+08:00 [INFO] [recognition]";
-        for engine in ["local-ppocr", "windows-media", "wechat-ocr", "ocr-space", "paddle-ocr", "openai-compatible"] {
-            let line = format!("{prefix} event=ocr.finished module=ocr op=ocr-1 engine={engine} text=private");
-            assert_eq!(sanitize(&line).unwrap().message, format!("event=ocr.finished op=ocr-1 engine={engine}"));
+        for engine in [
+            "local-ppocr",
+            "windows-media",
+            "wechat-ocr",
+            "ocr-space",
+            "paddle-ocr",
+            "openai-compatible",
+        ] {
+            let line = format!(
+                "{prefix} event=ocr.finished module=ocr op=ocr-1 engine={engine} text=private"
+            );
+            assert_eq!(
+                check(&line).unwrap().message,
+                format!("event=ocr.finished op=ocr-1 engine={engine}")
+            );
         }
         for engine in ["local-ctranslate2", "online-llm", "deepl"] {
-            for event in ["translation.started", "translation.finished", "translation.failed", "translation.cancelled"] {
+            for event in [
+                "translation.started",
+                "translation.finished",
+                "translation.failed",
+                "translation.cancelled",
+            ] {
                 let line = format!("{prefix} event={event} module=translation op=tr-1 engine={engine} endpoint=private");
-                assert_eq!(sanitize(&line).unwrap().message, format!("event={event} op=tr-1 engine={engine}"));
+                assert_eq!(
+                    check(&line).unwrap().message,
+                    format!("event={event} op=tr-1 engine={engine}")
+                );
             }
         }
-        for (module, event, engine) in [("ocr", "ocr.finished", "private"), ("ocr", "ocr.failed", "deepl"), ("translation", "translation.finished", "wechat-ocr")] {
+        for (module, event, engine) in [
+            ("ocr", "ocr.finished", "private"),
+            ("ocr", "ocr.failed", "deepl"),
+            ("translation", "translation.finished", "wechat-ocr"),
+        ] {
             let line = format!("{prefix} event={event} module={module} engine={engine}");
-            assert_eq!(sanitize(&line).unwrap().message, format!("event={event}"));
+            assert_eq!(check(&line).unwrap().message, format!("event={event}"));
         }
     }
 
@@ -463,41 +544,60 @@ mod tests {
             ("event=recording.step_failed module=recording stage=private code=secret", "event=recording.step_failed"),
             ("event=scroll.rejected module=scroll reason=private axis=private", "event=scroll.rejected"),
         ] {
-            assert_eq!(sanitize(&format!("{prefix} {fields}")).unwrap().message, expected);
+            assert_eq!(check(&format!("{prefix} {fields}")).unwrap().message, expected);
         }
     }
 
     #[test]
     fn capture_latency_preserves_safe_stages_and_rejects_content_and_invalid_times() {
         let line = "2026-10-28T12:00:00+08:00 [DEBUG] [capture] event=capture.interactive module=capture op=cap-3 hide_ms=0 dwm_ms=1.5 capture_ms=8 png_ms=20 overlay_ready_ms=3 first_paint_ms=140 load_ms=4 decode_ms=2 pre_paint_ms=100 post_paint_ms=32 delay_ms=0 revision=0 width=3840 height=2160 monitors=2 cold=0 png_bytes=123 paint_source=raf image=private";
-        let safe = sanitize(line).unwrap().message;
-        for field in ["hide_ms=0", "dwm_ms=1.5", "capture_ms=8", "png_ms=20", "overlay_ready_ms=3", "first_paint_ms=140", "monitors=2", "paint_source=raf"] { assert!(safe.contains(field)); }
+        let safe = check(line).unwrap().message;
+        for field in [
+            "hide_ms=0",
+            "dwm_ms=1.5",
+            "capture_ms=8",
+            "png_ms=20",
+            "overlay_ready_ms=3",
+            "first_paint_ms=140",
+            "monitors=2",
+            "paint_source=raf",
+        ] {
+            assert!(safe.contains(field));
+        }
         assert!(!safe.contains("private"));
-        let invalid = line.replace("decode_ms=2", "decode_ms=NaN").replace("paint_source=raf", "paint_source=private");
-        let safe = sanitize(&invalid).unwrap().message;
+        let invalid = line
+            .replace("decode_ms=2", "decode_ms=NaN")
+            .replace("paint_source=raf", "paint_source=private");
+        let safe = check(&invalid).unwrap().message;
         assert!(!safe.contains("decode_ms"));
         assert!(!safe.contains("paint_source"));
-        for event in ["capture.prepared", "capture.visible", "capture.native_replaced"] { assert!(sanitize(&line.replace("capture.interactive", event)).is_some()); }
+        for event in [
+            "capture.prepared",
+            "capture.visible",
+            "capture.native_replaced",
+        ] {
+            assert!(check(&line.replace("capture.interactive", event)).is_some());
+        }
     }
     #[test]
     fn retired_abnormal_exit_event_is_not_exported() {
         // 异常退出探测已移除，旧日志中的事件不再进入当前诊断导出白名单。
         let line = "2026-10-23T16:00:00+08:00 [WARN] [app] event=app.previous_exit_unclean module=app previous_started_ms=1792727969001 previous_pid=42 path=private";
-        assert!(sanitize(line).is_none());
-        assert!(sanitize(&line.replace("previous_pid=42", "previous_pid=private")).is_none());
+        assert!(check(line).is_none());
+        assert!(check(&line.replace("previous_pid=42", "previous_pid=private")).is_none());
     }
     #[test]
     fn pin_memory_diagnostics_keep_only_counts_and_known_reasons() {
         let line = "2026-10-21T09:00:00+08:00 [INFO] [pins] event=pins.memory module=capture reason=destroyed count=0 rgba_bytes=0 image=private";
         assert_eq!(
-            sanitize(line).unwrap().message,
+            check(line).unwrap().message,
             "event=pins.memory reason=destroyed count=0 rgba_bytes=0"
         );
         let invalid = line
             .replace("reason=destroyed", "reason=private")
             .replace("count=0", "count=-1")
             .replace("rgba_bytes=0", "rgba_bytes=NaN");
-        assert_eq!(sanitize(&invalid).unwrap().message, "event=pins.memory");
+        assert_eq!(check(&invalid).unwrap().message, "event=pins.memory");
     }
     #[test]
     fn rejects_paths_and_legacy_secrets() {
@@ -514,8 +614,8 @@ mod tests {
             "snap-desk_2026-10-19_12-00-00.log",
             "snap-desk"
         ));
-        assert!(sanitize("legacy token=secret OCR正文").is_none());
-        let entry = sanitize("2026-10-19T12:00:00+08:00 [ERROR] [private/path] event=ipc.failed module=frontend command=app_status token=secret email=user@example.com path=C:\\Users\\private").unwrap();
+        assert!(check("legacy token=secret OCR正文").is_none());
+        let entry = check("2026-10-19T12:00:00+08:00 [ERROR] [private/path] event=ipc.failed module=frontend command=app_status token=secret email=user@example.com path=C:\\Users\\private").unwrap();
         assert_eq!(entry.message, "event=ipc.failed command=app_status");
     }
     #[test]
@@ -529,7 +629,7 @@ mod tests {
             active: true,
             size: 0,
         }];
-        let result = recent(
+        let result = scan(
             &files,
             &Query {
                 limit: 500,
@@ -540,7 +640,7 @@ mod tests {
         .unwrap();
         assert_eq!(result.entries.len(), 500);
         assert!(result.scanned_bytes <= MAX_SCAN && result.truncated);
-        assert!(recent(
+        assert!(scan(
             &files,
             &Query {
                 limit: 501,
@@ -629,7 +729,7 @@ mod tests {
                 size: 0,
             },
         ];
-        let result = recent(
+        let result = scan(
             &files,
             &Query {
                 limit: 10,
@@ -641,7 +741,7 @@ mod tests {
         assert_eq!(result.entries.len(), 1);
         assert!(result.entries[0].message.contains("OCR_BUSY"));
         fs::remove_file(&files[0].path).unwrap();
-        assert!(recent(
+        assert!(scan(
             &files,
             &Query {
                 limit: 10,
@@ -666,5 +766,75 @@ mod tests {
             size: 0
         })
         .is_err());
+    }
+}
+
+/// GPUI 外壳的事件名：`gpui.` 后只含小写字母、数字与下划线（代码常量，不含用户数据）。
+fn gpui_event(event: &str) -> bool {
+    event.strip_prefix("gpui.").is_some_and(|name| {
+        !name.is_empty()
+            && name.len() <= 64
+            && name
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+    })
+}
+
+#[cfg(test)]
+mod gpui_tests {
+    use super::*;
+
+    #[test]
+    fn both_log_formats_parse_and_unknown_fields_are_dropped() {
+        let bracketed = "2026-11-21T10:00:00+08:00 [ERROR] snap_desk event=scroll.failed module=scroll op=scroll-3 code=SCROLL_OUTPUT_FAILED path=C:/secret";
+        let entry = sanitize(bracketed, &[]).unwrap();
+        assert_eq!((entry.level, entry.module), (Level::Error, Module::Scroll));
+        assert!(entry.message.contains("event=scroll.failed"));
+        assert!(entry.message.contains("op=scroll-3"));
+        assert!(!entry.message.contains("secret"));
+        let plain = "2026-11-21T10:00:00.123+08:00 WARN  snap_core::scroll::session event=scroll.failed module=scroll op=scroll-4";
+        assert_eq!(sanitize(plain, &[]).unwrap().level, Level::Warn);
+    }
+
+    #[test]
+    fn gpui_events_keep_only_the_event_name() {
+        let line = "2026-11-21T10:00:00.123+08:00 ERROR snap_desk_gpui::capture event=gpui.capture_failed message=C:/Users/me/secret.png";
+        let entry = sanitize(line, &[]).unwrap();
+        assert_eq!((entry.level, entry.module), (Level::Error, Module::App));
+        assert_eq!(entry.message, "event=gpui.capture_failed");
+        assert!(sanitize("2026-11-21T10:00:00+08:00 INFO x event=gpui.Bad-Name", &[]).is_none());
+        assert!(sanitize(
+            "2026-11-21T10:00:00+08:00 INFO x event=other.thing module=app",
+            &[]
+        )
+        .is_none());
+        assert!(sanitize("not a log line", &[]).is_none());
+    }
+
+    #[test]
+    fn commands_are_checked_against_the_shell_list() {
+        let line = "2026-11-21T10:00:00+08:00 [ERROR] x event=ipc.failed module=frontend command=start_scroll";
+        assert_eq!(
+            sanitize(line, &["start_scroll"]).unwrap().message,
+            "event=ipc.failed command=start_scroll"
+        );
+        assert_eq!(sanitize(line, &[]).unwrap().message, "event=ipc.failed");
+    }
+
+    #[test]
+    fn gpui_rotation_counts_as_an_archive() {
+        let dir = tempfile::tempdir().unwrap();
+        for name in [
+            "snap-desk-gpui.log",
+            "snap-desk-gpui.log.old",
+            "snap-desk-gpui.log.bak",
+            "other.log",
+        ] {
+            std::fs::write(dir.path().join(name), b"x\n").unwrap();
+        }
+        let found = files(dir.path(), "snap-desk-gpui").unwrap();
+        assert_eq!(found.len(), 2);
+        assert!(found[0].active);
+        assert!(!found[1].active);
     }
 }
