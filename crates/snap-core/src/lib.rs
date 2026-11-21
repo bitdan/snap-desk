@@ -18,6 +18,7 @@ pub mod platform;
 pub mod recognition;
 pub mod resources;
 pub mod settings;
+pub mod shelf;
 pub mod text_image;
 #[cfg(target_os = "linux")]
 pub mod wayland_probe;
