@@ -15,6 +15,7 @@ pub mod gif;
 pub mod input;
 pub mod output;
 mod pipeline;
+pub mod preferences;
 pub mod stats;
 pub mod timeline;
 #[cfg(test)]
@@ -503,4 +504,27 @@ pub fn wayland_session() -> bool {
     return crate::x11::wayland();
     #[cfg(not(target_os = "linux"))]
     false
+}
+
+/// 录制所在显示器是否仍与开始时一致（位置、物理尺寸、缩放）；拔插或改分辨率后应停止录制。
+/// Windows 以外的平台由采集后端自行检测来源变化，这里总是返回 true。
+pub fn display_unchanged(display: &crate::capture::Display) -> Result<bool, String> {
+    #[cfg(windows)]
+    {
+        let _dpi = crate::capture::PhysicalDpi::enter()?;
+        let monitors = xcap::Monitor::all().map_err(err)?;
+        Ok(monitors.iter().any(|m| {
+            m.x().ok() == Some(display.x)
+                && m.y().ok() == Some(display.y)
+                && m.width().ok() == Some(display.width)
+                && m.height().ok() == Some(display.height)
+                // xcap 以 f32 报告缩放；统一到 f32 比较，避免 110% 等比例误报。
+                && m.scale_factor().ok().map(f32::to_bits) == Some((display.scale as f32).to_bits())
+        }))
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = display;
+        Ok(true)
+    }
 }

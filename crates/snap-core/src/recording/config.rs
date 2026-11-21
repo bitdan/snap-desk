@@ -10,7 +10,7 @@ pub enum CaptureSource {
     SelectedWindow,
 }
 
-#[derive(Clone, Copy, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum OutputFormat {
     Mp4,
@@ -37,7 +37,7 @@ pub enum EncodingPreference {
 }
 
 /// 按分辨率、帧率和质量估算目标码率，不保证输出恒定码率。
-#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum RecordingQuality {
     Economy,
@@ -58,7 +58,7 @@ pub(super) fn estimated_bitrate(width: u32, height: u32, fps: u32, quality: Reco
 }
 
 /// 默认关闭；所有样式采用输出视频物理像素，颜色为 RGB，避免前端传任意样式表达式。
-#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", default, deny_unknown_fields)]
 pub struct InputEffects {
     pub keyboard: bool,
@@ -74,7 +74,7 @@ pub struct InputEffects {
     pub double_color: [u8; 3],
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum KeyPosition {
     TopLeft,
