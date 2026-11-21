@@ -92,12 +92,12 @@ impl Manager {
             .items_center()
             .rounded(px(6.0))
             .border_1()
-            .border_color(rgb(annotate::BORDER))
-            .bg(rgb(annotate::SURFACE))
+            .border_color(rgb(annotate::border()))
+            .bg(rgb(annotate::surface()))
             .text_sm()
-            .text_color(rgb(if danger { 0xfb7185 } else { annotate::TEXT }))
+            .text_color(rgb(if danger { 0xfb7185 } else { annotate::text() }))
             .cursor_pointer()
-            .hover(|s| s.bg(rgb(annotate::HOVER)))
+            .hover(|s| s.bg(rgb(annotate::hover())))
             .child(label)
     }
 
@@ -106,9 +106,9 @@ impl Manager {
             .px(px(6.0))
             .py(px(1.0))
             .rounded(px(4.0))
-            .bg(rgb(annotate::ACTIVE_BG))
+            .bg(rgb(annotate::active_bg()))
             .text_xs()
-            .text_color(rgb(annotate::ACTIVE_FG))
+            .text_color(rgb(annotate::active_fg()))
             .child(label)
     }
 }
@@ -149,7 +149,7 @@ impl Render for Manager {
             }));
         let mut list = div().id("pins-list").flex_1().flex().flex_col().gap(px(6.0)).overflow_y_scroll();
         if pins.is_empty() {
-            list = list.child(div().p(px(16.0)).text_sm().text_color(rgb(annotate::MUTED)).child(self.t("当前没有贴图。")));
+            list = list.child(div().p(px(16.0)).text_sm().text_color(rgb(annotate::muted())).child(self.t("当前没有贴图。")));
         }
         for (index, pin) in pins.iter().enumerate() {
             let handle = pin.handle;
@@ -178,7 +178,7 @@ impl Render for Manager {
                     .gap(px(10.0))
                     .rounded(px(8.0))
                     .border_1()
-                    .border_color(rgb(annotate::BORDER))
+                    .border_color(rgb(annotate::border()))
                     .child(
                         div()
                             .size(px(THUMB as f32))
@@ -187,7 +187,7 @@ impl Render for Manager {
                             .items_center()
                             .justify_center()
                             .rounded(px(6.0))
-                            .bg(rgb(0x0f1115))
+                            .bg(rgb(crate::theme::c().window_bg))
                             .children(thumb.map(|t| img(t).max_w_full().max_h_full().object_fit(ObjectFit::Contain))),
                     )
                     .child(
@@ -227,10 +227,10 @@ impl Render for Manager {
             .flex_col()
             .gap(px(10.0))
             .p(px(12.0))
-            .bg(rgb(0x181b20))
-            .text_color(rgb(annotate::TEXT))
+            .bg(rgb(crate::theme::c().panel))
+            .text_color(rgb(annotate::text()))
             .child(header)
-            .child(div().text_xs().text_color(rgb(annotate::MUTED)).child(format!("{} {}", self.t("当前贴图："), pins.len())))
+            .child(div().text_xs().text_color(rgb(annotate::muted())).child(format!("{} {}", self.t("当前贴图："), pins.len())))
             .child(list)
     }
 }

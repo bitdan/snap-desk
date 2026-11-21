@@ -126,16 +126,16 @@ impl Composer {
             .text_xs()
             .cursor_pointer()
             .text_color(rgb(if active {
-                annotate::ACTIVE_FG
+                annotate::active_fg()
             } else {
-                annotate::MUTED
+                annotate::muted()
             }))
             .bg(rgb(if active {
-                annotate::ACTIVE_BG
+                annotate::active_bg()
             } else {
-                annotate::SURFACE
+                annotate::surface()
             }))
-            .hover(|s| s.text_color(rgb(annotate::TEXT)))
+            .hover(|s| s.text_color(rgb(annotate::text())))
             .child(label)
     }
 
@@ -325,7 +325,7 @@ impl Render for Composer {
                 .items_center()
                 .gap(px(6.0))
                 .text_xs()
-                .text_color(rgb(annotate::MUTED))
+                .text_color(rgb(annotate::muted()))
                 .child(div().w(px(72.0)).child(label))
         };
         match mode {
@@ -410,7 +410,7 @@ impl Render for Composer {
                     );
             }
             Mode::Separate => {
-                options = options.child(div().text_xs().text_color(rgb(annotate::MUTED)).child(
+                options = options.child(div().text_xs().text_color(rgb(annotate::muted())).child(
                     text("在所选目录中新建批次文件夹，文本存为 TXT，图片存为 PNG。"),
                 ));
             }
@@ -428,7 +428,7 @@ impl Render for Composer {
                 div()
                     .p(px(12.0))
                     .text_sm()
-                    .text_color(rgb(annotate::MUTED))
+                    .text_color(rgb(annotate::muted()))
                     .child(text("组合导出仅支持文本和图片，文件引用请复制后粘贴")),
             );
         }
@@ -449,12 +449,12 @@ impl Render for Composer {
                     .gap(px(6.0))
                     .p(px(6.0))
                     .rounded(px(6.0))
-                    .bg(rgb(annotate::SURFACE))
+                    .bg(rgb(annotate::surface()))
                     .child(
                         div()
                             .w(px(24.0))
                             .text_xs()
-                            .text_color(rgb(annotate::MUTED))
+                            .text_color(rgb(annotate::muted()))
                             .child(format!("{}", index + 1)),
                     )
                     .child(
@@ -491,13 +491,13 @@ impl Render for Composer {
             (Some(error), _) => Some(
                 div()
                     .text_xs()
-                    .text_color(rgb(0xfb7185))
+                    .text_color(rgb(crate::theme::c().error_text))
                     .child(error.clone()),
             ),
             (None, Some(message)) => Some(
                 div()
                     .text_xs()
-                    .text_color(rgb(0x86efac))
+                    .text_color(rgb(crate::theme::c().ok_text))
                     .child(message.clone()),
             ),
             _ => None,
@@ -521,13 +521,13 @@ impl Render for Composer {
             .flex_col()
             .gap(px(10.0))
             .p(px(12.0))
-            .bg(rgb(0x181b20))
-            .text_color(rgb(annotate::TEXT))
+            .bg(rgb(crate::theme::c().panel))
+            .text_color(rgb(annotate::text()))
             .child(options)
             .child(
                 div()
                     .text_xs()
-                    .text_color(rgb(annotate::MUTED))
+                    .text_color(rgb(annotate::muted()))
                     .child(format!("{} {count}", text("素材"))),
             )
             .child(list)

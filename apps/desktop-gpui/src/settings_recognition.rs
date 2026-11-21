@@ -7,9 +7,7 @@
 //!
 //! 与 Tauri 版的差异：微信 OCR、本地 CTranslate2 翻译在 GPUI 版不可用（显示但不可选）；
 //! 每个服务只编辑第一个密钥（其余密钥标识保留不变）；没有打开服务商密钥页面的入口。
-use super::{
-    card, heading, row, SettingsView, ACCENT, BORDER, DANGER, MUTED, PAGE_BG, SURFACE, TEXT,
-};
+use super::{card, col, heading, row, SettingsView};
 use gpui_kit::{
     component::input::{Input, InputState},
     *,
@@ -395,7 +393,7 @@ impl SettingsView {
             .justify_between()
             .gap(px(8.0))
             .border_b_1()
-            .border_color(rgb(BORDER))
+            .border_color(rgb(col::border()))
             .child(
                 div()
                     .flex()
@@ -404,10 +402,10 @@ impl SettingsView {
                     .child(
                         div()
                             .text_sm()
-                            .text_color(rgb(if enabled { TEXT } else { MUTED }))
+                            .text_color(rgb(if enabled { col::text() } else { col::muted() }))
                             .child(label),
                     )
-                    .children(hint.map(|h| div().text_xs().text_color(rgb(MUTED)).child(h))),
+                    .children(hint.map(|h| div().text_xs().text_color(rgb(col::muted())).child(h))),
             )
             .child(
                 div()
@@ -415,11 +413,19 @@ impl SettingsView {
                     .flex_none()
                     .rounded_full()
                     .border_2()
-                    .border_color(rgb(if selected { ACCENT } else { BORDER }))
-                    .bg(rgb(if selected { ACCENT } else { SURFACE })),
+                    .border_color(rgb(if selected {
+                        col::accent()
+                    } else {
+                        col::border()
+                    }))
+                    .bg(rgb(if selected {
+                        col::accent()
+                    } else {
+                        col::surface()
+                    })),
             );
         if enabled {
-            option.cursor_pointer().hover(|s| s.bg(rgb(PAGE_BG)))
+            option.cursor_pointer().hover(|s| s.bg(rgb(col::page_bg())))
         } else {
             option.opacity(0.6)
         }
@@ -541,8 +547,12 @@ impl SettingsView {
                         .rounded(px(5.0))
                         .text_xs()
                         .cursor_pointer()
-                        .text_color(rgb(if selected { ACCENT } else { TEXT }))
-                        .bg(rgb(if selected { 0xeff6ff } else { PAGE_BG }))
+                        .text_color(rgb(if selected { col::accent() } else { col::text() }))
+                        .bg(rgb(if selected {
+                            col::accent_soft()
+                        } else {
+                            col::page_bg()
+                        }))
                         .child(name)
                         .on_click(cx.listener(move |view, _: &ClickEvent, _, cx| {
                             let tag = tag.clone();
@@ -671,24 +681,33 @@ impl SettingsView {
                     .justify_between()
                     .gap(px(8.0))
                     .border_b_1()
-                    .border_color(rgb(BORDER))
-                    .bg(rgb(if editing { 0xeff6ff } else { SURFACE }))
+                    .border_color(rgb(col::border()))
+                    .bg(rgb(if editing {
+                        col::accent_soft()
+                    } else {
+                        col::surface()
+                    }))
                     .cursor_pointer()
-                    .hover(|s| s.bg(rgb(PAGE_BG)))
+                    .hover(|s| s.bg(rgb(col::page_bg())))
                     .child(
                         div()
                             .flex()
                             .flex_col()
                             .min_w_0()
                             .child(div().text_sm().child(service.name.clone()))
-                            .child(div().text_xs().text_color(rgb(MUTED)).child(format!(
+                            .child(div().text_xs().text_color(rgb(col::muted())).child(format!(
                                 "{} · {} · {}",
                                 t(service_kind(service)),
                                 host(&service.endpoint),
                                 key_hint(service)
                             ))),
                     )
-                    .child(div().text_xs().text_color(rgb(ACCENT)).child(t("编辑")))
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(rgb(col::accent()))
+                            .child(t("编辑")),
+                    )
                     .on_click(cx.listener(move |view, _: &ClickEvent, window, cx| {
                         view.edit_service(None, Some(&item), window, cx)
                     })),
@@ -700,7 +719,7 @@ impl SettingsView {
                     .px(px(12.0))
                     .py(px(14.0))
                     .text_xs()
-                    .text_color(rgb(MUTED))
+                    .text_color(rgb(col::muted()))
                     .child(t("尚未添加服务。")),
             );
         }
@@ -715,11 +734,11 @@ impl SettingsView {
                     .items_center()
                     .rounded(px(6.0))
                     .border_1()
-                    .border_color(rgb(BORDER))
-                    .bg(rgb(SURFACE))
+                    .border_color(rgb(col::border()))
+                    .bg(rgb(col::surface()))
                     .text_xs()
                     .cursor_pointer()
-                    .hover(|s| s.bg(rgb(PAGE_BG)))
+                    .hover(|s| s.bg(rgb(col::page_bg())))
                     .child(format!("+ {}", t(preset.name)))
                     .on_click(cx.listener(move |view, _: &ClickEvent, window, cx| {
                         view.edit_service(Some(&PRESETS[index]), None, window, cx)
@@ -730,9 +749,9 @@ impl SettingsView {
             heading(t("文字识别")).into_any_element(),
             div()
                 .rounded(px(8.0))
-                .bg(rgb(SURFACE))
+                .bg(rgb(col::surface()))
                 .border_1()
-                .border_color(rgb(BORDER))
+                .border_color(rgb(col::border()))
                 .overflow_hidden()
                 .child(engines)
                 .into_any_element(),
@@ -740,9 +759,9 @@ impl SettingsView {
             heading(t("翻译")).into_any_element(),
             div()
                 .rounded(px(8.0))
-                .bg(rgb(SURFACE))
+                .bg(rgb(col::surface()))
                 .border_1()
-                .border_color(rgb(BORDER))
+                .border_color(rgb(col::border()))
                 .overflow_hidden()
                 .child(translators)
                 .into_any_element(),
@@ -753,9 +772,9 @@ impl SettingsView {
             heading(t("服务管理")).into_any_element(),
             div()
                 .rounded(px(8.0))
-                .bg(rgb(SURFACE))
+                .bg(rgb(col::surface()))
                 .border_1()
-                .border_color(rgb(BORDER))
+                .border_color(rgb(col::border()))
                 .overflow_hidden()
                 .child(list)
                 .into_any_element(),
@@ -768,7 +787,7 @@ impl SettingsView {
             div()
                 .mt(px(10.0))
                 .text_xs()
-                .text_color(rgb(MUTED))
+                .text_color(rgb(col::muted()))
                 .child(t("在线服务会上传图片或文字；密钥只保存在系统凭据库。"))
                 .into_any_element(),
         );
@@ -789,8 +808,8 @@ impl SettingsView {
                     .w(px(300.0))
                     .rounded(px(6.0))
                     .border_1()
-                    .border_color(rgb(BORDER))
-                    .bg(rgb(SURFACE))
+                    .border_color(rgb(col::border()))
+                    .bg(rgb(col::surface()))
                     .child(Input::new(state)),
             )
         };
@@ -806,7 +825,7 @@ impl SettingsView {
                 None,
                 div()
                     .text_xs()
-                    .text_color(rgb(MUTED))
+                    .text_color(rgb(col::muted()))
                     .child(t(protocol_label)),
             ),
             field(t("名称"), &editor.name),
@@ -842,13 +861,21 @@ impl SettingsView {
                 .text_color(rgb(if primary {
                     0xffffff
                 } else if danger {
-                    DANGER
+                    col::danger()
                 } else {
-                    TEXT
+                    col::text()
                 }))
-                .bg(rgb(if primary { ACCENT } else { SURFACE }))
+                .bg(rgb(if primary {
+                    col::accent()
+                } else {
+                    col::surface()
+                }))
                 .border_1()
-                .border_color(rgb(if primary { ACCENT } else { BORDER }))
+                .border_color(rgb(if primary {
+                    col::accent()
+                } else {
+                    col::border()
+                }))
         };
         let mut actions = div()
             .flex()

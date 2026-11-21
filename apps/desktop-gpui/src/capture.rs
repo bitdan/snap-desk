@@ -1472,9 +1472,9 @@ fn record_options(
             .rounded(px(5.0))
             .text_xs()
             .cursor_pointer()
-            .text_color(rgb(if on { annotate::ACTIVE_FG } else { annotate::MUTED }))
-            .bg(rgb(if on { annotate::ACTIVE_BG } else { annotate::SURFACE }))
-            .hover(|s| s.text_color(rgb(annotate::TEXT)))
+            .text_color(rgb(if on { annotate::active_fg() } else { annotate::muted() }))
+            .bg(rgb(if on { annotate::active_bg() } else { annotate::surface() }))
+            .hover(|s| s.text_color(rgb(annotate::text())))
             .child(label)
             .on_click(move |_, _, cx| set_record(&session, cx, |p| change(p)))
             .into_any_element()
@@ -1489,9 +1489,9 @@ fn record_options(
         .items_center()
         .gap(px(4.0))
         .rounded(px(8.0))
-        .bg(rgb(annotate::SURFACE))
+        .bg(rgb(annotate::surface()))
         .border_1()
-        .border_color(rgb(annotate::BORDER))
+        .border_color(rgb(annotate::border()))
         .children(window.map(|on| {
             // 选区正好是吸附到的窗口：可改为录制整个窗口（跟随窗口移动）。
             let session = session.clone();
@@ -1504,9 +1504,9 @@ fn record_options(
                 .rounded(px(5.0))
                 .text_xs()
                 .cursor_pointer()
-                .text_color(rgb(if on { annotate::ACTIVE_FG } else { annotate::MUTED }))
-                .bg(rgb(if on { annotate::ACTIVE_BG } else { annotate::SURFACE }))
-                .hover(|s| s.text_color(rgb(annotate::TEXT)))
+                .text_color(rgb(if on { annotate::active_fg() } else { annotate::muted() }))
+                .bg(rgb(if on { annotate::active_bg() } else { annotate::surface() }))
+                .hover(|s| s.text_color(rgb(annotate::text())))
                 .child(text("整个窗口"))
                 .on_click(move |_, _, cx| {
                     session.update(cx, |s, cx| {

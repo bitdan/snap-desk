@@ -828,7 +828,7 @@ impl Render for ShelfView {
                             .child(message),
                     )
             }))
-            .text_color(rgb(annotate::TEXT))
+            .text_color(rgb(annotate::text()))
     }
 }
 

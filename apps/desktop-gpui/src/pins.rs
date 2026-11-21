@@ -1448,9 +1448,9 @@ impl Pin {
             .items_center()
             .rounded(px(6.0))
             .cursor_pointer()
-            .hover(|s| s.bg(rgb(annotate::HOVER)))
+            .hover(|s| s.bg(rgb(annotate::hover())))
             .text_xs()
-            .text_color(rgb(annotate::TEXT))
+            .text_color(rgb(annotate::text()))
             .child(format!("{}%", (self.zoom * 100.0).round()))
             .on_click(cx.listener(|pin, _: &ClickEvent, window, cx| {
                 if pin.locked {

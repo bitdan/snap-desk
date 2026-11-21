@@ -811,14 +811,14 @@ impl Controls {
             .rounded(px(6.0))
             .text_xs()
             .cursor_pointer()
-            .text_color(rgb(crate::annotate::TEXT))
+            .text_color(rgb(crate::annotate::text()))
             .bg(rgb(if primary {
                 0x2563eb
             } else {
-                crate::annotate::HOVER
+                crate::annotate::hover()
             }))
             .hover(|s| s.opacity(0.85))
-            .child(crate::annotate::icon(icon, crate::annotate::TEXT))
+            .child(crate::annotate::icon(icon, crate::annotate::text()))
             .child(label)
     }
 }
@@ -848,7 +848,7 @@ impl Render for Controls {
             Some(Phase::Recording) => RED,
             Some(Phase::Countdown) | Some(Phase::Paused) | Some(Phase::Ready) => 0xf59e0b,
             Some(Phase::Completed) => 0x22c55e,
-            _ => crate::annotate::MUTED,
+            _ => crate::annotate::muted(),
         };
         let mut buttons = div().flex().items_center().gap(px(6.0));
         match phase {
@@ -997,10 +997,10 @@ impl Render for Controls {
             .gap(px(10.0))
             .px(px(12.0))
             .rounded(px(10.0))
-            .bg(rgb(crate::annotate::SURFACE))
+            .bg(rgb(crate::annotate::surface()))
             .border_1()
-            .border_color(rgb(crate::annotate::BORDER))
-            .text_color(rgb(crate::annotate::TEXT))
+            .border_color(rgb(crate::annotate::border()))
+            .text_color(rgb(crate::annotate::text()))
             .child(div().size(px(10.0)).rounded_full().bg(rgb(dot)))
             .children(show_clock.then(|| {
                 div()
@@ -1017,7 +1017,7 @@ impl Render for Controls {
                     .text_ellipsis()
                     .whitespace_nowrap()
                     .text_xs()
-                    .text_color(rgb(crate::annotate::MUTED))
+                    .text_color(rgb(crate::annotate::muted()))
                     .child(message),
             )
             .child(buttons)

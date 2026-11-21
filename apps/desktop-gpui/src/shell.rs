@@ -136,6 +136,8 @@ pub fn start(
     shell.register_startup();
     let clipboard = shell.settings.clipboard.clone();
     cx.set_global(shell);
+    // 按主题设置与系统外观选定调色板（窗口尚未打开，不需要重绘）。
+    crate::theme::refresh(cx);
     // 剪贴板历史记录服务（按设置启用）；历史窗口由托盘“剪贴板”或快捷键打开。
     crate::clipboard::init(cx, &clipboard);
     crate::shelf::init(cx);
@@ -332,6 +334,7 @@ pub fn update_clipboard(
 pub fn update_settings(cx: &mut App, change: impl FnOnce(&mut Settings)) -> Result<Settings, String> {
     let old = cx.global::<Shell>().settings.clone();
     let saved = save(cx, change)?;
+    apply_theme(cx);
     if saved.clipboard != old.clipboard {
         if let Some(service) = crate::clipboard::service(cx) {
             let clipboard = saved.clipboard.clone();
@@ -437,9 +440,18 @@ pub fn import_backup(cx: &mut App, mut backup: snap_core::settings::backup::Back
                 .detach();
         }
     }
+    apply_theme(cx);
     log::info!("event=gpui.settings_imported schema_version={}", backup::VERSION);
     backup::restore_secrets(&next, secrets)?;
     Ok(next)
+}
+
+/// 主题改变时重绘全部窗口（截图工具栏、剪贴板历史、设置窗口等读取同一调色板）。
+pub fn apply_theme(cx: &mut App) {
+    if crate::theme::refresh(cx) {
+        log::info!("event=gpui.theme_changed");
+        cx.refresh_windows();
+    }
 }
 
 /// 录屏保存目录记录（与 Tauri 版共用）。

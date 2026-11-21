@@ -3,9 +3,7 @@
 //! 读取 GPUI 版日志文件（`snap-desk-gpui.log` 与轮转的 `.log.old`）的有限尾部，经 core 白名单清洗后显示：
 //! GPUI 外壳事件只显示事件名，core 事件按审计字段显示，其余行计入“已省略”。可修改日志级别（立即生效，
 //! 与 Tauri 版共用本机偏好）、按级别筛选、刷新、打开目录、清理历史日志（确认后只删归档）、导出本地诊断包。
-use super::{
-    card, heading, row, SettingsView, ACCENT, BORDER, DANGER, MUTED, PAGE_BG, SURFACE, TEXT,
-};
+use super::{card, col, heading, row, SettingsView};
 use gpui_kit::*;
 use snap_core::diagnostics::{
     logs::{self, Entry, Level, Query},
@@ -222,7 +220,7 @@ impl SettingsView {
             .p(px(2.0))
             .gap(px(2.0))
             .rounded(px(6.0))
-            .bg(rgb(PAGE_BG));
+            .bg(rgb(col::page_bg()));
         for (index, (value, label)) in [
             (Level::Error, "错误"),
             (Level::Warn, "警告"),
@@ -243,8 +241,12 @@ impl SettingsView {
                     .rounded(px(5.0))
                     .text_xs()
                     .cursor_pointer()
-                    .text_color(rgb(if selected { TEXT } else { MUTED }))
-                    .bg(rgb(if selected { SURFACE } else { PAGE_BG }))
+                    .text_color(rgb(if selected { col::text() } else { col::muted() }))
+                    .bg(rgb(if selected {
+                        col::surface()
+                    } else {
+                        col::page_bg()
+                    }))
                     .child(t(label))
                     .on_click(cx.listener(move |view, _: &ClickEvent, _, cx| {
                         if !selected {
@@ -281,11 +283,11 @@ impl SettingsView {
                 .items_center()
                 .rounded(px(6.0))
                 .border_1()
-                .border_color(rgb(BORDER))
-                .bg(rgb(SURFACE))
+                .border_color(rgb(col::border()))
+                .bg(rgb(col::surface()))
                 .text_xs()
                 .cursor_pointer()
-                .hover(|s| s.bg(rgb(PAGE_BG)))
+                .hover(|s| s.bg(rgb(col::page_bg())))
                 .child(label)
         };
         let actions = div()
@@ -332,8 +334,16 @@ impl SettingsView {
                     .rounded(px(5.0))
                     .text_xs()
                     .cursor_pointer()
-                    .text_color(rgb(if selected { ACCENT } else { MUTED }))
-                    .bg(rgb(if selected { 0xeff6ff } else { SURFACE }))
+                    .text_color(rgb(if selected {
+                        col::accent()
+                    } else {
+                        col::muted()
+                    }))
+                    .bg(rgb(if selected {
+                        col::accent_soft()
+                    } else {
+                        col::surface()
+                    }))
                     .child(t(label))
                     .on_click(cx.listener(move |view, _: &ClickEvent, _, cx| {
                         view.log_filter = value;
@@ -352,9 +362,9 @@ impl SettingsView {
             {
                 shown += 1;
                 let (color, label) = match entry.level {
-                    Level::Error => (DANGER, "ERROR"),
+                    Level::Error => (col::danger(), "ERROR"),
                     Level::Warn => (0xb45309, "WARN"),
-                    Level::Info => (MUTED, "INFO"),
+                    Level::Info => (col::muted(), "INFO"),
                     Level::Debug => (0xa1a1aa, "DEBUG"),
                 };
                 list = list.child(
@@ -364,13 +374,13 @@ impl SettingsView {
                         .px(px(12.0))
                         .py(px(5.0))
                         .border_b_1()
-                        .border_color(rgb(BORDER))
+                        .border_color(rgb(col::border()))
                         .text_xs()
                         .child(
                             div()
                                 .flex_none()
                                 .w(px(104.0))
-                                .text_color(rgb(MUTED))
+                                .text_color(rgb(col::muted()))
                                 .child(time_label(&entry.timestamp)),
                         )
                         .child(
@@ -384,7 +394,7 @@ impl SettingsView {
                             div()
                                 .flex_none()
                                 .w(px(76.0))
-                                .text_color(rgb(MUTED))
+                                .text_color(rgb(col::muted()))
                                 .child(format!("{:?}", entry.module).to_lowercase()),
                         )
                         .child(
@@ -404,7 +414,7 @@ impl SettingsView {
                         .px(px(12.0))
                         .py(px(16.0))
                         .text_xs()
-                        .text_color(rgb(MUTED))
+                        .text_color(rgb(col::muted()))
                         .child(t("没有可显示的日志。")),
                 );
             }
@@ -436,16 +446,16 @@ impl SettingsView {
             div()
                 .mt(px(6.0))
                 .rounded(px(8.0))
-                .bg(rgb(SURFACE))
+                .bg(rgb(col::surface()))
                 .border_1()
-                .border_color(rgb(BORDER))
+                .border_color(rgb(col::border()))
                 .overflow_hidden()
                 .child(list)
                 .into_any_element(),
             div()
                 .mt(px(8.0))
                 .text_xs()
-                .text_color(rgb(MUTED))
+                .text_color(rgb(col::muted()))
                 .children(footnote)
                 .into_any_element(),
         ]

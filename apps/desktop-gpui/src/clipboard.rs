@@ -344,8 +344,8 @@ impl Render for DragChip {
             .py(px(3.0))
             .rounded(px(6.0))
             .text_xs()
-            .bg(rgb(annotate::ACTIVE_BG))
-            .text_color(rgb(annotate::ACTIVE_FG))
+            .bg(rgb(annotate::active_bg()))
+            .text_color(rgb(annotate::active_fg()))
             .opacity(0.85)
             .child(self.0.clone())
     }
@@ -939,9 +939,9 @@ impl HistoryView {
             .py(px(2.0))
             .rounded(px(4.0))
             .text_xs()
-            .text_color(rgb(annotate::MUTED))
+            .text_color(rgb(annotate::muted()))
             .cursor_pointer()
-            .hover(|s| s.bg(rgb(annotate::HOVER)).text_color(rgb(annotate::TEXT)))
+            .hover(|s| s.bg(rgb(annotate::hover())).text_color(rgb(annotate::text())))
             .child(label)
     }
 }
@@ -983,17 +983,17 @@ impl Render for HistoryView {
                 div()
                     .id(("clipboard-tab", index))
                     .border_l_2()
-                    .border_color(rgb(0x181b20))
+                    .border_color(rgb(crate::theme::c().panel))
                     .on_drag(CategoryDrag(category), move |_, _, _, cx| cx.new(|_| DragChip(chip.clone())))
-                    .drag_over::<CategoryDrag>(|style, _, _, _| style.border_color(rgb(annotate::ACTIVE_FG)))
+                    .drag_over::<CategoryDrag>(|style, _, _, _| style.border_color(rgb(annotate::active_fg())))
                     .on_drop(cx.listener(move |view, drag: &CategoryDrag, _, cx| view.reorder(drag.0, category, cx)))
                     .px(px(8.0))
                     .py(px(3.0))
                     .rounded(px(6.0))
                     .cursor_pointer()
                     .text_xs()
-                    .text_color(rgb(if active { annotate::ACTIVE_FG } else { annotate::MUTED }))
-                    .bg(rgb(if active { annotate::ACTIVE_BG } else { annotate::SURFACE }))
+                    .text_color(rgb(if active { annotate::active_fg() } else { annotate::muted() }))
+                    .bg(rgb(if active { annotate::active_bg() } else { annotate::surface() }))
                     .child(text(label))
                     .on_click(cx.listener(move |view, _: &ClickEvent, _, cx| view.set_category(category, cx))),
             );
@@ -1014,7 +1014,7 @@ impl Render for HistoryView {
         let mut list = div().id("clipboard-list").flex_1().flex().flex_col().gap(px(2.0)).overflow_y_scroll();
         if self.items.is_empty() && !self.loading {
             let empty = if self.service.data().is_err() { "剪贴板历史不可用。" } else { "没有匹配的记录。" };
-            list = list.child(div().p(px(16.0)).text_sm().text_color(rgb(annotate::MUTED)).child(text(empty)));
+            list = list.child(div().p(px(16.0)).text_sm().text_color(rgb(annotate::muted())).child(text(empty)));
         }
         let items = self.items.clone();
         for (index, item) in items.iter().enumerate() {
@@ -1023,20 +1023,20 @@ impl Render for HistoryView {
             let leading: AnyElement = match item.kind {
                 Kind::Image => match self.thumbnail(item.id, cx) {
                     Some(thumb) => img(thumb).size(px(44.0)).object_fit(ObjectFit::Contain).into_any_element(),
-                    None => div().size(px(44.0)).rounded(px(4.0)).bg(rgb(0x0f1115)).into_any_element(),
+                    None => div().size(px(44.0)).rounded(px(4.0)).bg(rgb(crate::theme::c().window_bg)).into_any_element(),
                 },
-                Kind::File => div().size(px(44.0)).flex().items_center().justify_center().text_xs().text_color(rgb(annotate::MUTED)).child(text("文件")).into_any_element(),
+                Kind::File => div().size(px(44.0)).flex().items_center().justify_center().text_xs().text_color(rgb(annotate::muted())).child(text("文件")).into_any_element(),
                 Kind::Text => match classification::classify(&item.preview) {
                     Some(TextCategory::Color) => div()
                         .size(px(44.0))
                         .rounded(px(4.0))
                         .border_1()
-                        .border_color(rgb(annotate::BORDER))
+                        .border_color(rgb(annotate::border()))
                         .bg(rgb(swatch(&item.preview).unwrap_or(0)))
                         .into_any_element(),
-                    Some(TextCategory::Link) => div().size(px(44.0)).flex().items_center().justify_center().text_xs().text_color(rgb(annotate::ACTIVE_FG)).child(text("链接")).into_any_element(),
-                    Some(TextCategory::Path) => div().size(px(44.0)).flex().items_center().justify_center().text_xs().text_color(rgb(annotate::MUTED)).child(text("路径")).into_any_element(),
-                    None => div().size(px(44.0)).flex().items_center().justify_center().text_xs().text_color(rgb(annotate::MUTED)).child("T").into_any_element(),
+                    Some(TextCategory::Link) => div().size(px(44.0)).flex().items_center().justify_center().text_xs().text_color(rgb(annotate::active_fg())).child(text("链接")).into_any_element(),
+                    Some(TextCategory::Path) => div().size(px(44.0)).flex().items_center().justify_center().text_xs().text_color(rgb(annotate::muted())).child(text("路径")).into_any_element(),
+                    None => div().size(px(44.0)).flex().items_center().justify_center().text_xs().text_color(rgb(annotate::muted())).child("T").into_any_element(),
                 },
             };
             let title = match item.kind {
@@ -1060,10 +1060,10 @@ impl Render for HistoryView {
                     .gap(px(8.0))
                     .rounded(px(6.0))
                     .cursor_pointer()
-                    .bg(rgb(if picked { annotate::ACTIVE_BG } else if selected { 0x232830 } else { 0x181b20 }))
+                    .bg(rgb(if picked { annotate::active_bg() } else if selected { 0x232830 } else { 0x181b20 }))
                     .border_1()
-                    .border_color(rgb(if selected { annotate::BORDER } else { 0x181b20 }))
-                    .hover(|s| s.bg(rgb(annotate::HOVER)))
+                    .border_color(rgb(if selected { annotate::border() } else { 0x181b20 }))
+                    .hover(|s| s.bg(rgb(annotate::hover())))
                     .on_mouse_down(MouseButton::Left, cx.listener(move |view, event: &MouseDownEvent, _, _| {
                         view.press = Some((index, event.position));
                     }))
@@ -1087,8 +1087,8 @@ impl Render for HistoryView {
                             .flex()
                             .flex_col()
                             .gap(px(2.0))
-                            .child(div().text_sm().text_color(rgb(annotate::TEXT)).truncate().child(title))
-                            .child(div().text_xs().text_color(rgb(annotate::MUTED)).child(meta)),
+                            .child(div().text_sm().text_color(rgb(annotate::text())).truncate().child(title))
+                            .child(div().text_xs().text_color(rgb(annotate::muted())).child(meta)),
                     )
                     .child(
                         div()
@@ -1216,8 +1216,8 @@ impl Render for HistoryView {
                 .rounded(px(4.0))
                 .cursor_pointer()
                 .text_xs()
-                .text_color(rgb(if on { annotate::ACTIVE_FG } else { annotate::MUTED }))
-                .hover(|s| s.bg(rgb(annotate::HOVER)))
+                .text_color(rgb(if on { annotate::active_fg() } else { annotate::muted() }))
+                .hover(|s| s.bg(rgb(annotate::hover())))
                 .child(if on { "☑" } else { "☐" })
                 .child(label)
         };
@@ -1234,13 +1234,13 @@ impl Render for HistoryView {
             .items_center()
             .gap(px(8.0))
             .text_xs()
-            .text_color(rgb(if picked > 0 { annotate::ACTIVE_FG } else { annotate::MUTED }))
+            .text_color(rgb(if picked > 0 { annotate::active_fg() } else { annotate::muted() }))
             .child(div().flex_1().min_w(px(0.0)).truncate().child(summary))
             .child(actions);
         let notice = if let Some(error) = self.error.clone().or(status.error.clone()) {
-            Some(div().text_xs().text_color(rgb(0xfb7185)).child(error))
+            Some(div().text_xs().text_color(rgb(crate::theme::c().error_text)).child(error))
         } else {
-            self.message.clone().map(|m| div().text_xs().text_color(rgb(0x86efac)).child(m))
+            self.message.clone().map(|m| div().text_xs().text_color(rgb(crate::theme::c().ok_text)).child(m))
         };
         div()
             .id("clipboard-history")
@@ -1251,8 +1251,8 @@ impl Render for HistoryView {
             .flex_col()
             .gap(px(8.0))
             .p(px(10.0))
-            .bg(rgb(0x181b20))
-            .text_color(rgb(annotate::TEXT))
+            .bg(rgb(crate::theme::c().panel))
+            .text_color(rgb(annotate::text()))
             .child(header)
             .child(tabs)
             .children((status.supported && !status.enabled).then(|| {
@@ -1263,9 +1263,9 @@ impl Render for HistoryView {
                     .px(px(8.0))
                     .py(px(4.0))
                     .rounded(px(6.0))
-                    .bg(rgb(0x22364d))
+                    .bg(rgb(crate::theme::c().active_bg))
                     .text_xs()
-                    .text_color(rgb(0xc4dfff))
+                    .text_color(rgb(crate::theme::c().active_fg))
                     .child(div().flex_1().child(text("记录已暂停，新复制的内容不会保存。")))
                     .child(self.small_button("clipboard-resume", text("继续记录")).on_click(cx.listener(|view, _: &ClickEvent, _, cx| view.set_recording(true, cx))))
             }))

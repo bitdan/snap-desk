@@ -190,9 +190,9 @@ impl Preview {
             .rounded(px(6.0))
             .text_xs()
             .cursor_pointer()
-            .text_color(rgb(annotate::MUTED))
-            .bg(rgb(annotate::SURFACE))
-            .hover(|s| s.text_color(rgb(annotate::TEXT)).bg(rgb(annotate::HOVER)))
+            .text_color(rgb(annotate::muted()))
+            .bg(rgb(annotate::surface()))
+            .hover(|s| s.text_color(rgb(annotate::text())).bg(rgb(annotate::hover())))
             .child(label)
     }
 
@@ -224,7 +224,7 @@ impl Render for Preview {
             Body::Loading => div()
                 .p(px(16.0))
                 .text_sm()
-                .text_color(rgb(annotate::MUTED))
+                .text_color(rgb(annotate::muted()))
                 .child(text("正在加载…"))
                 .into_any_element(),
             Body::Image(image) => div()
@@ -233,7 +233,7 @@ impl Render for Preview {
                 .flex()
                 .items_center()
                 .justify_center()
-                .bg(rgb(0x0f1115))
+                .bg(rgb(crate::theme::c().window_bg))
                 .child(
                     img(image.clone())
                         .size_full()
@@ -274,7 +274,7 @@ impl Render for Preview {
                     .p(px(12.0))
                     .text_sm()
                     .font_family("Consolas")
-                    .text_color(rgb(annotate::TEXT));
+                    .text_color(rgb(annotate::text()));
                 for line in lines {
                     // 空行保留高度。
                     body = body.child(div().min_h(px(18.0)).child(line.clone()));
@@ -284,7 +284,7 @@ impl Render for Preview {
                     .flex_1()
                     .min_h(px(0.0))
                     .overflow_y_scroll()
-                    .bg(rgb(0x14171c))
+                    .bg(rgb(crate::theme::c().inset))
                     .child(body)
                     .into_any_element()
             }
@@ -297,13 +297,13 @@ impl Render for Preview {
             (Some(error), _) => Some(
                 div()
                     .text_xs()
-                    .text_color(rgb(0xfb7185))
+                    .text_color(rgb(crate::theme::c().error_text))
                     .child(error.clone()),
             ),
             (None, Some(message)) => Some(
                 div()
                     .text_xs()
-                    .text_color(rgb(0x86efac))
+                    .text_color(rgb(crate::theme::c().ok_text))
                     .child(message.clone()),
             ),
             _ => None,
@@ -330,10 +330,10 @@ impl Render for Preview {
             .flex_col()
             .gap(px(8.0))
             .p(px(10.0))
-            .bg(rgb(0x181b20))
-            .text_color(rgb(annotate::TEXT))
+            .bg(rgb(crate::theme::c().panel))
+            .text_color(rgb(annotate::text()))
             .child(content)
-            .children(note.map(|n| div().text_xs().text_color(rgb(annotate::MUTED)).child(n)))
+            .children(note.map(|n| div().text_xs().text_color(rgb(annotate::muted())).child(n)))
             .children(notice)
             .child(
                 div()
@@ -344,7 +344,7 @@ impl Render for Preview {
                         div()
                             .flex_1()
                             .text_xs()
-                            .text_color(rgb(annotate::MUTED))
+                            .text_color(rgb(annotate::muted()))
                             .child(meta),
                     )
                     .child(actions),

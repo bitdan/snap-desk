@@ -1222,5 +1222,6 @@
   "API 密钥": "API key",
   "GPUI 版暂不支持": "Not yet supported in the GPUI build",
   "macOS 系统 OCR": "macOS system OCR",
-  "OpenAI 兼容": "OpenAI-compatible"
+  "OpenAI 兼容": "OpenAI-compatible",
+  "跟随系统时随系统浅色/深色切换。": "When following the system, switches with the system's light or dark mode."
 }

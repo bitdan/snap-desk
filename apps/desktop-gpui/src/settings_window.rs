@@ -16,20 +16,52 @@ use gpui_kit::{
 };
 use snap_core::{
     pins::PinShadow,
-    settings::{ExportFormat, Language, Settings, ShortcutAction},
+    settings::{ExportFormat, Language, Settings, ShortcutAction, Theme},
 };
 use std::{
     path::{Path, PathBuf},
     time::Duration,
 };
 
-const SURFACE: u32 = 0xffffff;
-const PAGE_BG: u32 = 0xf4f4f5;
-const BORDER: u32 = 0xe4e4e7;
-const TEXT: u32 = 0x27272a;
-const MUTED: u32 = 0x71717a;
-const ACCENT: u32 = 0x2563eb;
-const DANGER: u32 = 0xb91c1c;
+/// 设置窗口配色，随主题变化（见 `theme.rs`）。
+mod col {
+    pub fn surface() -> u32 {
+        crate::theme::c().surface
+    }
+    pub fn page_bg() -> u32 {
+        crate::theme::c().page
+    }
+    pub fn border() -> u32 {
+        crate::theme::c().border
+    }
+    pub fn text() -> u32 {
+        crate::theme::c().text
+    }
+    pub fn muted() -> u32 {
+        crate::theme::c().muted
+    }
+    pub fn accent() -> u32 {
+        crate::theme::c().accent
+    }
+    pub fn danger() -> u32 {
+        crate::theme::c().danger
+    }
+    pub fn accent_soft() -> u32 {
+        crate::theme::c().accent_soft
+    }
+    pub fn nav() -> u32 {
+        crate::theme::c().nav
+    }
+    pub fn toggle_off() -> u32 {
+        crate::theme::c().toggle_off
+    }
+    pub fn hover() -> u32 {
+        crate::theme::c().hover
+    }
+    pub fn success() -> u32 {
+        crate::theme::c().success
+    }
+}
 /// 文本框停顿多久后保存。
 const DEBOUNCE: Duration = Duration::from_millis(500);
 /// 与截图标注色板一致的贴图边框预设。
@@ -701,14 +733,14 @@ fn row(label: String, hint: Option<String>, control: impl IntoElement) -> Div {
         .px(px(14.0))
         .py(px(10.0))
         .border_b_1()
-        .border_color(rgb(BORDER))
+        .border_color(rgb(col::border()))
         .child(
             div()
                 .flex()
                 .flex_col()
                 .min_w_0()
                 .child(div().text_sm().child(label))
-                .children(hint.map(|h| div().text_xs().text_color(rgb(MUTED)).child(h))),
+                .children(hint.map(|h| div().text_xs().text_color(rgb(col::muted())).child(h))),
         )
         .child(div().flex_none().child(control))
 }
@@ -718,9 +750,9 @@ fn card(rows: Vec<Div>) -> Div {
         .flex()
         .flex_col()
         .rounded(px(8.0))
-        .bg(rgb(SURFACE))
+        .bg(rgb(col::surface()))
         .border_1()
-        .border_color(rgb(BORDER))
+        .border_color(rgb(col::border()))
         .overflow_hidden()
         .children(rows)
 }
@@ -731,7 +763,7 @@ fn heading(text: String) -> Div {
         .mb(px(8.0))
         .text_xs()
         .font_weight(FontWeight::SEMIBOLD)
-        .text_color(rgb(MUTED))
+        .text_color(rgb(col::muted()))
         .child(text)
 }
 
@@ -751,7 +783,7 @@ impl SettingsView {
             .rounded_full()
             .p(px(2.0))
             .cursor_pointer()
-            .bg(rgb(if on { ACCENT } else { 0xd4d4d8 }))
+            .bg(rgb(if on { col::accent() } else { col::toggle_off() }))
             .flex()
             .justify_start()
             .when_on(on)
@@ -774,7 +806,7 @@ impl SettingsView {
             .p(px(2.0))
             .gap(px(2.0))
             .rounded(px(6.0))
-            .bg(rgb(PAGE_BG));
+            .bg(rgb(col::page_bg()));
         for (index, (value, label)) in options.into_iter().enumerate() {
             let selected = value == current;
             let change = change.clone();
@@ -788,7 +820,7 @@ impl SettingsView {
                     .rounded(px(5.0))
                     .text_xs()
                     .cursor_pointer()
-                    .text_color(rgb(if selected { TEXT } else { MUTED }))
+                    .text_color(rgb(if selected { col::text() } else { col::muted() }))
                     .when_selected(selected)
                     .child(label)
                     .on_click(cx.listener(move |view, _: &ClickEvent, _, cx| {
@@ -822,9 +854,13 @@ impl SettingsView {
                 .items_center()
                 .justify_center()
                 .rounded(px(5.0))
-                .bg(rgb(PAGE_BG))
+                .bg(rgb(col::page_bg()))
                 .text_sm()
-                .text_color(rgb(if enabled { TEXT } else { 0xd4d4d8 }))
+                .text_color(rgb(if enabled {
+                    col::text()
+                } else {
+                    col::toggle_off()
+                }))
                 .cursor_pointer()
                 .child(label)
                 .on_click(cx.listener(move |view, _: &ClickEvent, _, cx| {
@@ -868,8 +904,8 @@ impl SettingsView {
             .w(px(width))
             .rounded(px(6.0))
             .border_1()
-            .border_color(rgb(BORDER))
-            .bg(rgb(SURFACE))
+            .border_color(rgb(col::border()))
+            .bg(rgb(col::surface()))
             .child(Input::new(state))
     }
 
@@ -900,10 +936,10 @@ impl SettingsView {
                 .items_center()
                 .rounded(px(6.0))
                 .border_1()
-                .border_color(rgb(BORDER))
+                .border_color(rgb(col::border()))
                 .text_xs()
                 .cursor_pointer()
-                .hover(|s| s.bg(rgb(PAGE_BG)))
+                .hover(|s| s.bg(rgb(col::page_bg())))
                 .child(label)
         };
         let controls = div()
@@ -991,10 +1027,10 @@ impl SettingsView {
             .items_center()
             .rounded(px(6.0))
             .border_1()
-            .border_color(rgb(BORDER))
+            .border_color(rgb(col::border()))
             .text_xs()
             .cursor_pointer()
-            .hover(|s| s.bg(rgb(PAGE_BG)))
+            .hover(|s| s.bg(rgb(col::page_bg())))
             .child(label)
             .on_click(cx.listener(move |view, _: &ClickEvent, _, cx| {
                 let result = path
@@ -1023,7 +1059,7 @@ trait States: Styled + Sized {
     }
     fn when_selected(self, selected: bool) -> Self {
         if selected {
-            self.bg(rgb(SURFACE)).shadow_sm()
+            self.bg(rgb(col::surface())).shadow_sm()
         } else {
             self
         }
@@ -1189,7 +1225,7 @@ impl SettingsView {
             div()
                 .mt(px(10.0))
                 .text_xs()
-                .text_color(rgb(MUTED))
+                .text_color(rgb(col::muted()))
                 .child(t("格式、帧率、倒计时与声音在录屏框选时的选项行中设置。"))
                 .into_any_element(),
         ]
@@ -1213,7 +1249,11 @@ impl SettingsView {
                     .rounded_full()
                     .bg(rgb(value))
                     .border_2()
-                    .border_color(rgb(if selected { ACCENT } else { BORDER }))
+                    .border_color(rgb(if selected {
+                        col::accent()
+                    } else {
+                        col::border()
+                    }))
                     .cursor_pointer()
                     .on_click(cx.listener(move |view, _: &ClickEvent, _, cx| {
                         view.change(cx, |s| s.pin_appearance.border_color = (*color).to_owned())
@@ -1255,7 +1295,7 @@ impl SettingsView {
             div()
                 .mt(px(10.0))
                 .text_xs()
-                .text_color(rgb(MUTED))
+                .text_color(rgb(col::muted()))
                 .child(t("新外观用于之后创建的贴图。"))
                 .into_any_element(),
         ]
@@ -1402,23 +1442,43 @@ impl SettingsView {
         }
         vec![
             heading(t("外观")).into_any_element(),
-            card(vec![row(
-                t("语言"),
-                Some(t("新打开的窗口使用新语言。")),
-                self.segmented(
-                    "language",
-                    language,
-                    vec![(0, "中文".into()), (1, "English".into())],
-                    cx,
-                    |s, v| {
-                        s.appearance.language = if v == 1 {
-                            Language::English
-                        } else {
-                            Language::Chinese
-                        }
-                    },
+            card(vec![
+                row(
+                    t("主题"),
+                    Some(t("跟随系统时随系统浅色/深色切换。")),
+                    self.segmented(
+                        "theme",
+                        match s.appearance.theme {
+                            Theme::System => 0,
+                            Theme::Light => 1,
+                            Theme::Dark => 2,
+                        },
+                        vec![(0, t("跟随系统")), (1, t("浅色")), (2, t("深色"))],
+                        cx,
+                        |s, v| {
+                            s.appearance.theme =
+                                [Theme::System, Theme::Light, Theme::Dark][v].clone()
+                        },
+                    ),
                 ),
-            )])
+                row(
+                    t("语言"),
+                    Some(t("新打开的窗口使用新语言。")),
+                    self.segmented(
+                        "language",
+                        language,
+                        vec![(0, "中文".into()), (1, "English".into())],
+                        cx,
+                        |s, v| {
+                            s.appearance.language = if v == 1 {
+                                Language::English
+                            } else {
+                                Language::Chinese
+                            }
+                        },
+                    ),
+                ),
+            ])
             .into_any_element(),
             heading(t("启动")).into_any_element(),
             card(vec![row(
@@ -1432,7 +1492,7 @@ impl SettingsView {
                         .into_any_element(),
                     None => div()
                         .text_xs()
-                        .text_color(rgb(MUTED))
+                        .text_color(rgb(col::muted()))
                         .child(t("未知"))
                         .into_any_element(),
                 },
@@ -1495,7 +1555,7 @@ impl SettingsView {
             .rounded_full()
             .p(px(2.0))
             .cursor_pointer()
-            .bg(rgb(if on { ACCENT } else { 0xd4d4d8 }))
+            .bg(rgb(if on { col::accent() } else { col::toggle_off() }))
             .flex()
             .justify_start()
             .when_on(on)
@@ -1512,11 +1572,11 @@ impl SettingsView {
             .items_center()
             .rounded(px(6.0))
             .border_1()
-            .border_color(rgb(BORDER))
+            .border_color(rgb(col::border()))
             .text_xs()
             .child(label);
         if enabled {
-            button.cursor_pointer().hover(|s| s.bg(rgb(PAGE_BG)))
+            button.cursor_pointer().hover(|s| s.bg(rgb(col::page_bg())))
         } else {
             button.opacity(0.5)
         }
@@ -1564,17 +1624,21 @@ impl SettingsView {
                         .justify_center()
                         .rounded(px(6.0))
                         .border_1()
-                        .border_color(rgb(if capturing.is_some() { ACCENT } else { BORDER }))
+                        .border_color(rgb(if capturing.is_some() {
+                            col::accent()
+                        } else {
+                            col::border()
+                        }))
                         .bg(rgb(if capturing.is_some() {
                             0xeff6ff
                         } else {
-                            SURFACE
+                            col::surface()
                         }))
                         .text_xs()
                         .text_color(rgb(if value.is_empty() && capturing.is_none() {
-                            MUTED
+                            col::muted()
                         } else {
-                            TEXT
+                            col::text()
                         }))
                         .cursor_pointer()
                         .child(text)
@@ -1591,9 +1655,9 @@ impl SettingsView {
                         .justify_center()
                         .rounded_full()
                         .text_xs()
-                        .text_color(rgb(MUTED))
+                        .text_color(rgb(col::muted()))
                         .cursor_pointer()
-                        .hover(|s| s.bg(rgb(PAGE_BG)))
+                        .hover(|s| s.bg(rgb(col::page_bg())))
                         .child("×")
                         .on_click(cx.listener(move |view, _: &ClickEvent, _, cx| {
                             view.change(cx, |s| set_shortcut(s, action, String::new()))
@@ -1601,14 +1665,14 @@ impl SettingsView {
                 }));
             let mut item = row(label, None, field);
             if unavailable.contains(&action) {
-                item = item.text_color(rgb(DANGER));
+                item = item.text_color(rgb(col::danger()));
             }
             rows.push(item);
         }
         let reset = div()
             .id("shortcuts-reset")
             .text_xs()
-            .text_color(rgb(ACCENT))
+            .text_color(rgb(col::accent()))
             .cursor_pointer()
             .child(t("恢复默认"))
             .on_click(cx.listener(|view, _: &ClickEvent, _, cx| {
@@ -1628,7 +1692,7 @@ impl SettingsView {
             div()
                 .mt(px(10.0))
                 .text_xs()
-                .text_color(rgb(MUTED))
+                .text_color(rgb(col::muted()))
                 .child(t("点击按键框后按下组合键；Esc 取消，Backspace 禁用。"))
                 .into_any_element(),
         ]
@@ -1707,6 +1771,8 @@ impl Folder {
 
 impl Render for SettingsView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // “跟随系统”时系统外观可能已切换；其他窗口在保存设置时统一重绘。
+        crate::theme::refresh(cx);
         let settings = crate::shell::settings(cx);
         if std::mem::take(&mut self.reload_inputs) {
             // set_value 不触发 Change，不会把重填当成编辑再次保存。
@@ -1736,8 +1802,8 @@ impl Render for SettingsView {
             .gap(px(2.0))
             .p(px(10.0))
             .border_r_1()
-            .border_color(rgb(BORDER))
-            .bg(rgb(0xfafafa));
+            .border_color(rgb(col::border()))
+            .bg(rgb(col::nav()));
         for (index, page) in Page::ALL.into_iter().enumerate() {
             let active = page == self.page;
             nav = nav.child(
@@ -1750,9 +1816,13 @@ impl Render for SettingsView {
                     .rounded(px(6.0))
                     .text_sm()
                     .cursor_pointer()
-                    .text_color(rgb(if active { ACCENT } else { TEXT }))
-                    .bg(rgb(if active { 0xeff6ff } else { 0xfafafa }))
-                    .hover(|s| s.bg(rgb(0xf4f4f5)))
+                    .text_color(rgb(if active { col::accent() } else { col::text() }))
+                    .bg(rgb(if active {
+                        col::accent_soft()
+                    } else {
+                        col::nav()
+                    }))
+                    .hover(|s| s.bg(rgb(col::hover())))
                     .child(t(page.label()))
                     .on_click(cx.listener(move |view, _: &ClickEvent, _, cx| {
                         if view.capture.is_some() {
@@ -1788,21 +1858,21 @@ impl Render for SettingsView {
                 div()
                     .mt(px(12.0))
                     .text_xs()
-                    .text_color(rgb(0x16a34a))
+                    .text_color(rgb(col::success()))
                     .child(t(self.notice.as_deref().unwrap_or_default())),
             ),
             (Some(error), _) => Some(
                 div()
                     .mt(px(12.0))
                     .text_xs()
-                    .text_color(rgb(DANGER))
+                    .text_color(rgb(col::danger()))
                     .child(snap_core::i18n::for_language(&language, error).to_owned()),
             ),
             (None, true) => Some(
                 div()
                     .mt(px(12.0))
                     .text_xs()
-                    .text_color(rgb(0x16a34a))
+                    .text_color(rgb(col::success()))
                     .child(t("已自动保存")),
             ),
             _ => None,
@@ -1812,8 +1882,8 @@ impl Render for SettingsView {
             .track_focus(&self.focus)
             .size_full()
             .flex()
-            .bg(rgb(PAGE_BG))
-            .text_color(rgb(TEXT))
+            .bg(rgb(col::page_bg()))
+            .text_color(rgb(col::text()))
             .on_key_down(cx.listener(Self::key_down))
             .on_key_up(cx.listener(Self::key_up))
             .on_modifiers_changed(cx.listener(Self::modifiers_changed))

@@ -3,7 +3,7 @@
 //! 版本号取产品版本（package.json，与 Tauri 版一致），用于和发布列表比较。检查更新复用 core
 //! `updates::latest`（只认带固定更新清单的应用发布，测试版按设置或当前版本决定）。GPUI 预览版尚无安装包，
 //! 发现新版本时只提供“打开发布页”，不在应用内下载安装；也不做后台定时复查。
-use super::{card, heading, row, SettingsView, BORDER, MUTED, PAGE_BG, SURFACE};
+use super::{card, col, heading, row, SettingsView};
 use gpui_kit::*;
 use semver::Version;
 
@@ -101,11 +101,11 @@ impl SettingsView {
                 .items_center()
                 .rounded(px(6.0))
                 .border_1()
-                .border_color(rgb(BORDER))
-                .bg(rgb(SURFACE))
+                .border_color(rgb(col::border()))
+                .bg(rgb(col::surface()))
                 .text_xs()
                 .cursor_pointer()
-                .hover(|s| s.bg(rgb(PAGE_BG)))
+                .hover(|s| s.bg(rgb(col::page_bg())))
                 .child(label)
         };
         let (status, available) = match &self.update {
@@ -129,11 +129,11 @@ impl SettingsView {
                     .mt(px(8.0))
                     .p(px(10.0))
                     .rounded(px(8.0))
-                    .bg(rgb(SURFACE))
+                    .bg(rgb(col::surface()))
                     .border_1()
-                    .border_color(rgb(BORDER))
+                    .border_color(rgb(col::border()))
                     .text_xs()
-                    .text_color(rgb(MUTED))
+                    .text_color(rgb(col::muted()))
                     .max_h(px(160.0))
                     .overflow_hidden()
                     .child(notes.chars().take(1200).collect::<String>()),
@@ -204,7 +204,7 @@ impl SettingsView {
             div()
                 .mt(px(10.0))
                 .text_xs()
-                .text_color(rgb(MUTED))
+                .text_color(rgb(col::muted()))
                 .child(t("GPUI 预览版暂不支持应用内安装更新，请从发布页下载。"))
                 .into_any_element(),
             div().children(notes).into_any_element(),

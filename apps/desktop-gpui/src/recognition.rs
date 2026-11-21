@@ -456,9 +456,9 @@ impl Panel {
             .rounded(px(6.0))
             .text_sm()
             .border_1()
-            .border_color(rgb(annotate::BORDER))
-            .text_color(rgb(if enabled { annotate::TEXT } else { 0x5b6470 }))
-            .bg(rgb(if primary && enabled { 0x2563eb } else { annotate::SURFACE }))
+            .border_color(rgb(annotate::border()))
+            .text_color(rgb(if enabled { annotate::text() } else { 0x5b6470 }))
+            .bg(rgb(if primary && enabled { 0x2563eb } else { annotate::surface() }))
             .child(label);
         if enabled {
             b = b.cursor_pointer().hover(|s| s.opacity(0.9));
@@ -474,8 +474,8 @@ impl Panel {
             .rounded(px(6.0))
             .cursor_pointer()
             .text_sm()
-            .text_color(rgb(if active { annotate::ACTIVE_FG } else { annotate::MUTED }))
-            .bg(rgb(if active { annotate::ACTIVE_BG } else { annotate::SURFACE }))
+            .text_color(rgb(if active { annotate::active_fg() } else { annotate::muted() }))
+            .bg(rgb(if active { annotate::active_bg() } else { annotate::surface() }))
             .child(label)
     }
 
@@ -520,7 +520,7 @@ impl Panel {
         // 文字翻译窗口没有识别步骤，原文由用户输入或划词带入。
         let has = self.ocr.is_some() || self.image.is_none();
         let mut targets = div().flex().flex_wrap().items_center().gap(px(4.0)).child(
-            div().text_xs().text_color(rgb(annotate::MUTED)).child(self.t("译为")),
+            div().text_xs().text_color(rgb(annotate::muted())).child(self.t("译为")),
         );
         for (index, (code, name)) in TARGETS.into_iter().enumerate() {
             let active = self.target == code;
@@ -532,8 +532,8 @@ impl Panel {
                     .rounded(px(5.0))
                     .cursor_pointer()
                     .text_xs()
-                    .text_color(rgb(if active { annotate::ACTIVE_FG } else { annotate::TEXT }))
-                    .bg(rgb(if active { annotate::ACTIVE_BG } else { annotate::SURFACE }))
+                    .text_color(rgb(if active { annotate::active_fg() } else { annotate::text() }))
+                    .bg(rgb(if active { annotate::active_bg() } else { annotate::surface() }))
                     .child(self.t(name))
                     .on_click(cx.listener(move |p, _: &ClickEvent, _, cx| {
                         p.target = code.into();
@@ -551,13 +551,13 @@ impl Panel {
             .flex_col()
             .gap(px(8.0))
             .min_h(px(0.0))
-            .child(div().text_xs().text_color(rgb(annotate::MUTED)).child(self.t("原文（可编辑）")))
+            .child(div().text_xs().text_color(rgb(annotate::muted())).child(self.t("原文（可编辑）")))
             .child(div().flex_1().min_h(px(0.0)).child(Textarea::new(&self.draft).h_full()))
             .child(targets)
             .child(
                 div()
                     .text_xs()
-                    .text_color(rgb(annotate::MUTED))
+                    .text_color(rgb(annotate::muted()))
                     .child(format!("{} {service}", self.t("只发送上方文字，不上传图片。翻译服务："))),
             )
             .child(
@@ -579,7 +579,7 @@ impl Panel {
                         }))
                     })),
             )
-            .child(div().text_xs().text_color(rgb(annotate::MUTED)).child(self.t("译文")))
+            .child(div().text_xs().text_color(rgb(annotate::muted())).child(self.t("译文")))
             .child(div().flex_1().min_h(px(0.0)).child(Textarea::new(&self.translated).h_full()))
     }
 
@@ -593,8 +593,8 @@ impl Panel {
                 .gap(px(6.0))
                 .rounded(px(8.0))
                 .border_1()
-                .border_color(rgb(annotate::BORDER))
-                .child(div().text_sm().text_color(rgb(annotate::TEXT)).child(item.text.clone()));
+                .border_color(rgb(annotate::border()))
+                .child(div().text_sm().text_color(rgb(annotate::text())).child(item.text.clone()));
             let mut actions = div().flex().gap(px(6.0)).child(
                 self.button("qr-copy", self.t("复制"), false, true)
                     .id(("qr-copy", index))
@@ -607,7 +607,7 @@ impl Panel {
             if item.url.is_some() {
                 if self.pending_link == Some(index) {
                     actions = actions
-                        .child(div().text_xs().text_color(rgb(0xfbbf24)).child(self.t("确认在浏览器中打开此链接？")))
+                        .child(div().text_xs().text_color(rgb(crate::theme::c().warn_text)).child(self.t("确认在浏览器中打开此链接？")))
                         .child(self.button("qr-open-confirm", self.t("打开"), true, true).id(("qr-open-confirm", index)).on_click(cx.listener(move |p, _: &ClickEvent, _, cx| {
                             if let Some(url) = p.qr.as_ref().and_then(|items| items.get(index)).and_then(|i| i.url.clone()) {
                                 cx.open_url(&url);
@@ -663,11 +663,11 @@ impl Render for Panel {
             Mode::Qr => self.qr_view(cx),
         };
         let status = if let Some(busy) = self.busy {
-            Some(div().text_xs().text_color(rgb(annotate::MUTED)).child(self.t(busy)))
+            Some(div().text_xs().text_color(rgb(annotate::muted())).child(self.t(busy)))
         } else if let Some(error) = self.error.clone() {
-            Some(div().text_xs().text_color(rgb(0xfb7185)).child(error))
+            Some(div().text_xs().text_color(rgb(crate::theme::c().error_text)).child(error))
         } else {
-            self.message.clone().map(|m| div().text_xs().text_color(rgb(0x86efac)).child(m))
+            self.message.clone().map(|m| div().text_xs().text_color(rgb(crate::theme::c().ok_text)).child(m))
         };
         div()
             .id("recognition")
@@ -677,8 +677,8 @@ impl Render for Panel {
             .flex()
             .gap(px(12.0))
             .p(px(12.0))
-            .bg(rgb(0x181b20))
-            .text_color(rgb(annotate::TEXT))
+            .bg(rgb(crate::theme::c().panel))
+            .text_color(rgb(annotate::text()))
             .children(self.preview.clone().map(|preview| {
                 div()
                     .w(relative(0.42))
@@ -687,7 +687,7 @@ impl Render for Panel {
                     .items_center()
                     .justify_center()
                     .rounded(px(8.0))
-                    .bg(rgb(0x0f1115))
+                    .bg(rgb(crate::theme::c().window_bg))
                     .overflow_hidden()
                     .child(img(preview).size_full().object_fit(ObjectFit::Contain))
             }))

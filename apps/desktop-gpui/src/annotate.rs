@@ -1248,13 +1248,28 @@ pub const COLORS: [&str; 9] = [
 ];
 const OPACITIES: [f64; 4] = [1.0, 0.7, 0.35, 0.15];
 
-pub const SURFACE: u32 = 0x20252c;
-pub const BORDER: u32 = 0x39424e;
-pub const TEXT: u32 = 0xe6edf3;
-pub const MUTED: u32 = 0x9aa7b4;
-pub const HOVER: u32 = 0x2b323c;
-pub const ACTIVE_BG: u32 = 0x263a57;
-pub const ACTIVE_FG: u32 = 0x93c5fd;
+/// 界面色随主题变化（见 `theme.rs`）。
+pub fn surface() -> u32 {
+    crate::theme::c().surface
+}
+pub fn border() -> u32 {
+    crate::theme::c().border
+}
+pub fn text() -> u32 {
+    crate::theme::c().text
+}
+pub fn muted() -> u32 {
+    crate::theme::c().muted
+}
+pub fn hover() -> u32 {
+    crate::theme::c().hover
+}
+pub fn active_bg() -> u32 {
+    crate::theme::c().active_bg
+}
+pub fn active_fg() -> u32 {
+    crate::theme::c().active_fg
+}
 /// 工具行与样式条高度（逻辑像素）。
 pub const ROW_HEIGHT: f32 = 40.0;
 pub const OPTIONS_HEIGHT: f32 = 36.0;
@@ -1274,9 +1289,9 @@ pub fn icon_button(
     let color = if disabled {
         0x5b6470
     } else if pressed {
-        ACTIVE_FG
+        active_fg()
     } else {
-        TEXT
+        text()
     };
     let mut button = div()
         .id(id)
@@ -1289,10 +1304,10 @@ pub fn icon_button(
         .child(icon(data, color))
         .tooltip(move |_, cx| cx.new(|_| Tooltip(tooltip.clone().into())).into());
     if pressed {
-        button = button.bg(rgb(ACTIVE_BG));
+        button = button.bg(rgb(active_bg()));
     }
     if !disabled {
-        button = button.cursor_pointer().hover(|s| s.bg(rgb(HOVER)));
+        button = button.cursor_pointer().hover(|s| s.bg(rgb(hover())));
     }
     button
 }
@@ -1307,13 +1322,13 @@ impl Render for Tooltip {
             .rounded(px(4.0))
             .bg(rgb(0x0b0d10))
             .text_xs()
-            .text_color(rgb(TEXT))
+            .text_color(rgb(text()))
             .child(self.0.clone())
     }
 }
 
 pub fn divider() -> Div {
-    div().flex_none().w(px(1.0)).h(px(18.0)).mx(px(5.0)).bg(rgb(BORDER))
+    div().flex_none().w(px(1.0)).h(px(18.0)).mx(px(5.0)).bg(rgb(border()))
 }
 
 fn text_button(id: impl Into<ElementId>, label: String, pressed: bool) -> Stateful<Div> {
@@ -1327,11 +1342,11 @@ fn text_button(id: impl Into<ElementId>, label: String, pressed: bool) -> Statef
         .rounded(px(5.0))
         .cursor_pointer()
         .text_xs()
-        .text_color(rgb(if pressed { ACTIVE_FG } else { TEXT }))
-        .hover(|s| s.bg(rgb(HOVER)))
+        .text_color(rgb(if pressed { active_fg() } else { text() }))
+        .hover(|s| s.bg(rgb(hover())))
         .child(label);
     if pressed {
-        b = b.bg(rgb(ACTIVE_BG));
+        b = b.bg(rgb(active_bg()));
     }
     b
 }
@@ -1389,8 +1404,8 @@ pub fn tool_row<T: 'static>(
         .gap(px(2.0))
         .rounded(px(10.0))
         .border_1()
-        .border_color(rgb(BORDER))
-        .bg(rgb(SURFACE))
+        .border_color(rgb(border()))
+        .bg(rgb(surface()))
         .shadow_lg()
         .children(leading);
     if props.grouped {
@@ -1409,13 +1424,13 @@ pub fn tool_row<T: 'static>(
                     .justify_center()
                     .rounded(px(4.0))
                     .text_xs()
-                    .text_color(rgb(MUTED))
+                    .text_color(rgb(muted()))
                     .child(if props.popover_up { "▴" } else { "▾" })
                     .tooltip({
                         let name = (props.text)(name);
                         move |_, cx| cx.new(|_| Tooltip(name.clone().into())).into()
                     });
-                let trigger = if locked { trigger } else { trigger.cursor_pointer().hover(|s| s.bg(rgb(HOVER))) };
+                let trigger = if locked { trigger } else { trigger.cursor_pointer().hover(|s| s.bg(rgb(hover()))) };
                 group = group.child(on(trigger, Action::Ui(UiAction::OpenGroup(index)), !locked, host));
                 if e.open_group == Some(index) && !locked {
                     let mut menu = div()
@@ -1427,8 +1442,8 @@ pub fn tool_row<T: 'static>(
                         .gap(px(2.0))
                         .rounded(px(8.0))
                         .border_1()
-                        .border_color(rgb(BORDER))
-                        .bg(rgb(SURFACE))
+                        .border_color(rgb(border()))
+                        .bg(rgb(surface()))
                         .shadow_lg();
                     menu = if props.popover_up { menu.bottom(px(36.0)) } else { menu.top(px(36.0)) };
                     for (position, tool) in tools.iter().copied().enumerate() {
@@ -1441,10 +1456,10 @@ pub fn tool_row<T: 'static>(
                             .gap(px(8.0))
                             .rounded(px(6.0))
                             .cursor_pointer()
-                            .hover(|s| s.bg(rgb(HOVER)))
-                            .bg(rgb(if props.active && e.tool == tool { ACTIVE_BG } else { SURFACE }))
-                            .child(icon(tool.icon(), if props.active && e.tool == tool { ACTIVE_FG } else { TEXT }))
-                            .child(div().text_xs().text_color(rgb(TEXT)).whitespace_nowrap().child((props.text)(tool.label())));
+                            .hover(|s| s.bg(rgb(hover())))
+                            .bg(rgb(if props.active && e.tool == tool { active_bg() } else { surface() }))
+                            .child(icon(tool.icon(), if props.active && e.tool == tool { active_fg() } else { text() }))
+                            .child(div().text_xs().text_color(rgb(text())).whitespace_nowrap().child((props.text)(tool.label())));
                         menu = menu.child(on(item, Action::Tool(tool), true, host));
                     }
                     group = group.child(menu);
@@ -1471,9 +1486,9 @@ pub fn tool_row<T: 'static>(
             .justify_center()
             .rounded(px(4.0))
             .cursor_pointer()
-            .hover(|s| s.bg(rgb(HOVER)))
+            .hover(|s| s.bg(rgb(hover())))
             .text_xs()
-            .text_color(rgb(MUTED))
+            .text_color(rgb(muted()))
             .child(if props.grouped { "»" } else { "«" })
             .tooltip({
                 let label = (props.text)(label);
@@ -1517,7 +1532,7 @@ pub fn options_row<T: 'static>(props: &ToolbarProps, host: &Host<T>) -> Option<D
     let spotlight = matches!(kind, Some(Kind::Spotlight));
     let magnify = matches!(kind, Some(Kind::Magnify));
     let enabled = !props.disabled && !e.pending && (!e.interacting() || e.text.is_some());
-    let label = |text: String| div().flex_none().text_xs().text_color(rgb(MUTED)).child(text);
+    let label = |text: String| div().flex_none().text_xs().text_color(rgb(muted())).child(text);
     let mut row = div()
         .h(px(OPTIONS_HEIGHT))
         .px(px(10.0))
@@ -1527,8 +1542,8 @@ pub fn options_row<T: 'static>(props: &ToolbarProps, host: &Host<T>) -> Option<D
         .gap(px(10.0))
         .rounded(px(8.0))
         .border_1()
-        .border_color(rgb(BORDER))
-        .bg(rgb(SURFACE))
+        .border_color(rgb(border()))
+        .bg(rgb(surface()))
         .shadow_lg();
     if !filter {
         let mut swatches = div().flex().flex_none().items_center().gap(px(4.0)).child(label((props.text)("颜色")));
@@ -1540,7 +1555,7 @@ pub fn options_row<T: 'static>(props: &ToolbarProps, host: &Host<T>) -> Option<D
                 .flex_none()
                 .rounded_full()
                 .border_2()
-                .border_color(rgb(if current { ACTIVE_FG } else { BORDER }))
+                .border_color(rgb(if current { active_fg() } else { border() }))
                 .bg(rgb(u32::from_str_radix(&color[1..], 16).unwrap_or(0)))
                 .cursor_pointer();
             swatches = swatches.child(on(swatch, Action::Style(StylePatch::Color(color.into())), enabled, host));
@@ -1565,7 +1580,7 @@ pub fn options_row<T: 'static>(props: &ToolbarProps, host: &Host<T>) -> Option<D
                 .gap(px(2.0))
                 .child(label((props.text)(name)))
                 .child(on(text_button("annotation-width-down", "−".into(), false), Action::Style(StylePatch::Width((width - step).max(1.0))), enabled, host))
-                .child(div().w(px(22.0)).flex().justify_center().text_xs().text_color(rgb(TEXT)).child(format!("{width}")))
+                .child(div().w(px(22.0)).flex().justify_center().text_xs().text_color(rgb(text())).child(format!("{width}")))
                 .child(on(text_button("annotation-width-up", "+".into(), false), Action::Style(StylePatch::Width((width + step).min(64.0))), enabled, host)),
         );
     }
@@ -1595,7 +1610,7 @@ pub fn options_row<T: 'static>(props: &ToolbarProps, host: &Host<T>) -> Option<D
                 .gap(px(2.0))
                 .child(label((props.text)("字号")))
                 .child(on(text_button("annotation-font-down", "−".into(), false), Action::Style(StylePatch::FontSize((size - 2.0).max(8.0))), enabled, host))
-                .child(div().w(px(24.0)).flex().justify_center().text_xs().text_color(rgb(TEXT)).child(format!("{size}")))
+                .child(div().w(px(24.0)).flex().justify_center().text_xs().text_color(rgb(text())).child(format!("{size}")))
                 .child(on(text_button("annotation-font-up", "+".into(), false), Action::Style(StylePatch::FontSize((size + 2.0).min(128.0))), enabled, host)),
         );
         let mut family = div().flex().flex_none().items_center().gap(px(2.0));
@@ -1630,7 +1645,7 @@ pub fn error_row(message: String) -> Div {
         .px_2()
         .py_1()
         .rounded(px(6.0))
-        .bg(rgb(SURFACE))
+        .bg(rgb(surface()))
         .text_xs()
         .text_color(rgb(0xfb7185))
         .child(message)

@@ -579,16 +579,16 @@ impl Annotator {
             .text_xs()
             .cursor_pointer()
             .text_color(rgb(if on {
-                annotate::ACTIVE_FG
+                annotate::active_fg()
             } else {
-                annotate::MUTED
+                annotate::muted()
             }))
             .bg(rgb(if on {
-                annotate::ACTIVE_BG
+                annotate::active_bg()
             } else {
-                annotate::SURFACE
+                annotate::surface()
             }))
-            .hover(|s| s.text_color(rgb(annotate::TEXT)))
+            .hover(|s| s.text_color(rgb(annotate::text())))
             .child(label)
             .on_click(cx.listener(move |view, _: &ClickEvent, _, cx| {
                 view.lifetime = value;
@@ -632,7 +632,7 @@ impl Annotator {
                 .rounded(px(6.0))
                 .text_xs()
                 .cursor_pointer()
-                .text_color(rgb(annotate::TEXT))
+                .text_color(rgb(annotate::text()))
                 .bg(rgb(0x2563eb))
                 .hover(|s| s.opacity(0.85))
                 .child(self.t("完成"))
@@ -747,7 +747,7 @@ impl Render for Annotator {
                     .h(b.y - a.y)
                     .border_1()
                     .border_dashed()
-                    .border_color(rgb(annotate::MUTED)),
+                    .border_color(rgb(annotate::muted())),
             );
         }
         let map = |p: RegionPoint| self.map(p);
