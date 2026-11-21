@@ -39,6 +39,8 @@ markup5ever_rcdom = "=0.3.0"
 zip = { version = "=6.0.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 # 录屏 GIF 编码；版本与 src-tauri 一致。
 gif = "=0.14.2"
+# 登录自启；与 tauri-plugin-autostart 依赖的版本一致（同一登录项格式）。
+auto-launch = "=0.6.0"
 
 # Windows：物理像素拼接、录屏（WGC 采集、Media Foundation 编码、WASAPI 声音、Raw Input 键鼠）、窗口与 UIA 控件候选、光标合成。版本与 src-tauri 锁定的 windows 0.62.2 一致。
 [target.'cfg(windows)'.dependencies]

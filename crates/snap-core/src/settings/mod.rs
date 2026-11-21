@@ -1,6 +1,7 @@
 //! 设置模型、校验与磁盘读写：Tauri 版和 GPUI 版共用同一份 `settings.json`。
 //! 这里只描述“设置是什么、如何合法、如何落盘”，不注册系统快捷键、不通知界面；
 //! 快捷键事务通过闭包传入注册/释放动作，由各前端外壳接到自己的快捷键管理器上。
+pub mod backup;
 mod writer;
 
 pub use writer::{persist, SettingsWriter};
