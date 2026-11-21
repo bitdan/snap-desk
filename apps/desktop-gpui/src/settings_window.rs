@@ -80,6 +80,8 @@ pub fn open(cx: &mut App) {
     }
 }
 
+#[path = "settings_about.rs"]
+mod about_page;
 #[path = "settings_logs.rs"]
 mod logs_page;
 
@@ -92,10 +94,11 @@ enum Page {
     General,
     Shortcuts,
     Logs,
+    About,
 }
 
 impl Page {
-    const ALL: [Page; 7] = [
+    const ALL: [Page; 8] = [
         Page::Capture,
         Page::Recording,
         Page::Pins,
@@ -103,6 +106,7 @@ impl Page {
         Page::General,
         Page::Shortcuts,
         Page::Logs,
+        Page::About,
     ];
     fn label(self) -> &'static str {
         match self {
@@ -113,6 +117,7 @@ impl Page {
             Page::General => "通用",
             Page::Shortcuts => "快捷键",
             Page::Logs => "日志",
+            Page::About => "关于与更新",
         }
     }
 }
@@ -123,6 +128,7 @@ enum Field {
     CapturePrefix,
     RecordingPrefix,
     ExcludedApps,
+    UpdateProxy,
 }
 
 impl Field {
@@ -131,6 +137,7 @@ impl Field {
             Field::CapturePrefix => settings.export.filename_prefix = value.to_owned(),
             Field::RecordingPrefix => settings.recording_export.filename_prefix = value.to_owned(),
             Field::ExcludedApps => settings.clipboard.excluded_apps = excluded_apps(value),
+            Field::UpdateProxy => settings.update_network.proxy = value.trim().to_owned(),
         }
     }
 }
@@ -159,6 +166,9 @@ struct SettingsView {
     capture_prefix: Entity<InputState>,
     recording_prefix: Entity<InputState>,
     excluded: Entity<InputState>,
+    update_proxy: Entity<InputState>,
+    /// 关于页的检查更新结果。
+    update: Option<about_page::UpdateState>,
     /// 每次文本修改加一；防抖任务只保存最新一次。
     generation: u64,
     capture: Option<Capture>,
@@ -194,11 +204,13 @@ impl SettingsView {
             cx,
         );
         let excluded = input(settings.clipboard.excluded_apps.join(", "), window, cx);
+        let update_proxy = input(settings.update_network.proxy.clone(), window, cx);
         let mut subscriptions = Vec::new();
         for (state, field) in [
             (&capture_prefix, Field::CapturePrefix),
             (&recording_prefix, Field::RecordingPrefix),
             (&excluded, Field::ExcludedApps),
+            (&update_proxy, Field::UpdateProxy),
         ] {
             subscriptions.push(cx.subscribe(
                 state,
@@ -224,6 +236,8 @@ impl SettingsView {
             capture_prefix,
             recording_prefix,
             excluded,
+            update_proxy,
+            update: None,
             generation: 0,
             capture: None,
             error: None,
@@ -1696,6 +1710,7 @@ impl Render for SettingsView {
                     settings.recording_export.filename_prefix.clone(),
                 ),
                 (&self.excluded, settings.clipboard.excluded_apps.join(", ")),
+                (&self.update_proxy, settings.update_network.proxy.clone()),
             ] {
                 state.update(cx, |state, cx| state.set_value(value, window, cx));
             }
@@ -1752,6 +1767,7 @@ impl Render for SettingsView {
             Page::General => self.general_page(&settings, &t, cx),
             Page::Shortcuts => self.shortcuts_page(&settings, &t, cx),
             Page::Logs => self.logs_page(&t, cx),
+            Page::About => self.about_page(&settings, &t, cx),
         };
         let status = match (&self.error, self.saved) {
             (None, _) if self.notice.is_some() => Some(

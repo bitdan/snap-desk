@@ -1190,5 +1190,21 @@
   "已导出诊断包。": "Diagnostics exported.",
   "已省略": "Omitted",
   "只读取了最近的部分": "only the most recent part was read",
-  "当前由环境变量 SNAP_DESK_LOG 决定，修改将在下次启动时生效。": "Currently set by the SNAP_DESK_LOG environment variable; changes take effect next launch."
+  "当前由环境变量 SNAP_DESK_LOG 决定，修改将在下次启动时生效。": "Currently set by the SNAP_DESK_LOG environment variable; changes take effect next launch.",
+  "版本": "Version",
+  "版本号无效。": "Invalid version number.",
+  "包括 alpha、beta 与 rc 版本；当前为测试版时始终接收。": "Includes alpha, beta and rc versions; always on while running a pre-release.",
+  "打开发布页": "Open release page",
+  "打开发布页下载": "Download from release page",
+  "当前版本号无效。": "The current version number is invalid.",
+  "更新": "Updates",
+  "更新列表格式无效。": "The release list is malformed.",
+  "关于与更新": "About & updates",
+  "接收测试版更新": "Receive pre-release updates",
+  "留空时使用系统代理；支持 http、https 与 socks5。": "Leave empty to use the system proxy; http, https and socks5 are supported.",
+  "尚未检查。": "Not checked yet.",
+  "许可证": "License",
+  "已是最新版本。": "You're on the latest version.",
+  "GPUI 预览版": "GPUI preview",
+  "GPUI 预览版暂不支持应用内安装更新，请从发布页下载。": "The GPUI preview can't install updates itself yet; download them from the release page."
 }

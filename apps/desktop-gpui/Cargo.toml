@@ -37,6 +37,8 @@ raw-window-handle = "0.6"
 tokio = { version = "1", features = ["rt", "net", "time"] }
 # 结果窗口显示翻译服务主机名。
 url = "2"
+# 关于页比较产品版本（与 core 一致）。
+semver = "1"
 
 [target.'cfg(windows)'.dependencies]
 # 单实例：命名互斥量判断首个实例，命名管道把第二次启动的参数转交过来。
