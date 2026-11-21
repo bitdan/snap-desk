@@ -204,6 +204,7 @@ pub mod icons {
     icon!(PAUSE, "pause");
     icon!(PLAY, "play");
     icon!(FOLDER_OPEN, "folder-open");
+    icon!(SCROLL, "scroll-capture");
 }
 
 /// 当前样式；选中图形时同步为该图形的样式。

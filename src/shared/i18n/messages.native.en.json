@@ -1131,5 +1131,11 @@
   "常驻": "Keep",
   "3 秒后消失": "Fade in 3s",
   "5 秒后消失": "Fade in 5s",
-  "标注时效参数无效。": "Invalid annotation duration."
+  "标注时效参数无效。": "Invalid annotation duration.",
+  "{0} 帧": "{0} frames",
+  "已复制到剪贴板": "Copied to clipboard",
+  "滚动截图不包含标注，请先清除标注。": "Scroll capture doesn't include annotations. Clear them first.",
+  "正在录屏或滚动截图，请先结束。": "A recording or scroll capture is in progress. Finish it first.",
+  "正在滚动截图，请先结束。": "A scroll capture is in progress. Finish it first.",
+  "显示器布局、尺寸或 DPI 发生变化，请重新截图。": "The display layout, size or scaling changed. Take the screenshot again."
 }

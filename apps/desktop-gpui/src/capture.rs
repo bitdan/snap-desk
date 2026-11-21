@@ -308,9 +308,13 @@ fn begin(cx: &mut App, settings: &Settings, delay: Duration, purpose: Option<Rec
         log::info!("event=gpui.capture_ignored reason=active");
         return;
     }
-    // 录屏占用屏幕期间不截图（与 Tauri 版一致）；录屏快捷键另行处理停止。
+    // 录屏、滚动截图占用屏幕期间不截图（与 Tauri 版一致）；录屏快捷键另行处理停止。
     if crate::recording::active(cx) {
         log::info!("event=gpui.capture_ignored reason=recording");
+        return;
+    }
+    if crate::scroll::active(cx) {
+        log::info!("event=gpui.capture_ignored reason=scroll");
         return;
     }
     cx.default_global::<CaptureState>().starting = true;
@@ -594,6 +598,48 @@ fn record(cx: &mut App, _owner: isize) {
         });
     })
     .detach();
+}
+
+/// 滚动截图：以选区为首帧开始采集，成功后收起浮层（暂存架保持收起，结束后恢复）；
+/// 已有标注时不可用（滚动截图只输出拼接结果）。失败时浮层保留并显示原因。
+fn scroll(cx: &mut App, _owner: isize) {
+    let Some(session) = current(cx) else {
+        return;
+    };
+    let request = {
+        let s = session.read(cx);
+        if s.busy || s.editor.pending || s.editor.text.is_some() {
+            return;
+        }
+        if !s.editor.shapes().is_empty() {
+            session.update(cx, |s, cx| {
+                s.editor.error = Some("滚动截图不包含标注，请先清除标注。".into());
+                cx.notify();
+            });
+            return;
+        }
+        let Some(rect) = s.selection else {
+            return;
+        };
+        crate::scroll::Request {
+            image: s.image.clone(),
+            rect,
+            origin: s.origin,
+            displays: s.displays.clone(),
+            language: s.language.clone(),
+        }
+    };
+    match crate::scroll::start(cx, request) {
+        Ok(()) => {
+            if let Some(session) = cx.global_mut::<CaptureState>().session.take() {
+                close_overlays(cx, &session);
+            }
+        }
+        Err(error) => session.update(cx, |s, cx| {
+            s.editor.error = Some(error);
+            cx.notify();
+        }),
+    }
 }
 
 pub fn cancel(cx: &mut App) {
@@ -1713,6 +1759,7 @@ impl Render for Overlay {
             ]
         } else {
             vec![
+            export_button("capture-scroll", annotate::icons::SCROLL, s.text("滚动截图：框选正文后慢慢滚动"), false, scroll),
             export_button("capture-record", annotate::icons::VIDEO, s.text("录屏"), false, |cx, _| enter_recording(cx)),
             export_button("capture-ocr", annotate::icons::SCAN_TEXT, s.text("识别文字"), false, |cx, _| recognize(cx, RecognitionMode::Ocr)),
             export_button("capture-translate", annotate::icons::LANGUAGES, s.text("截图翻译"), false, |cx, _| recognize(cx, RecognitionMode::Translate)),

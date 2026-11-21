@@ -240,6 +240,9 @@ pub async fn prepare(cx: &mut AsyncApp, request: Request) -> Result<Prepared, St
     if cx.update(|cx| active(cx)) {
         return Err("录屏正在进行。".into());
     }
+    if cx.update(|cx| crate::scroll::active(cx)) {
+        return Err("正在滚动截图，请先结束。".into());
+    }
     if cx.update(|cx| cx.try_global::<Recorder>().is_some_and(|r| r.quitting)) {
         return Err("程序正在退出，不能启动录屏。".into());
     }
@@ -471,7 +474,7 @@ pub fn launch(cx: &mut App, prepared: Prepared) {
 }
 
 /// 选区在 GPUI 全局逻辑坐标中的边界（显示器原点按“物理像素 ÷ 缩放”换算，与截图浮层一致）。
-fn logical_region(cx: &App, display: &Display, region: Rect) -> Bounds<Pixels> {
+pub(crate) fn logical_region(cx: &App, display: &Display, region: Rect) -> Bounds<Pixels> {
     let scale = display.scale.max(0.1) as f32;
     let fallback = point(px(display.x as f32 / scale), px(display.y as f32 / scale));
     let origin = crate::capture::matched_display(cx, display)
@@ -489,7 +492,7 @@ fn logical_region(cx: &App, display: &Display, region: Rect) -> Bounds<Pixels> {
     )
 }
 
-fn display_bounds(cx: &App, display: &Display) -> Bounds<Pixels> {
+pub(crate) fn display_bounds(cx: &App, display: &Display) -> Bounds<Pixels> {
     let scale = display.scale.max(0.1) as f32;
     crate::capture::matched_display(cx, display)
         .map(|d| d.bounds())
@@ -504,7 +507,7 @@ fn display_bounds(cx: &App, display: &Display) -> Bounds<Pixels> {
         })
 }
 
-fn popup(bounds: Bounds<Pixels>) -> WindowOptions {
+pub(crate) fn popup(bounds: Bounds<Pixels>) -> WindowOptions {
     WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(bounds)),
         titlebar: None,

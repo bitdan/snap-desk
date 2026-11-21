@@ -20,6 +20,7 @@ mod pins;
 mod recognition;
 mod live_annotate;
 mod recording;
+mod scroll;
 mod selection;
 mod shell;
 mod shelf;

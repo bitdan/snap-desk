@@ -195,6 +195,26 @@ pub fn set_visible(window: &Window, visible: bool) -> Result<(), String> {
     }
 }
 
+/// 与 [`set_visible`] 相同，但在 Windows 上投递消息（ShowWindowAsync）而不是同步发送：
+/// 在 GPUI 回调里（应用状态已借用）同步显示/隐藏会让窗口过程重入并丢帧。
+pub fn set_visible_async(window: &Window, visible: bool) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::UI::WindowsAndMessaging::*;
+        let hwnd = hwnd(window) as windows_sys::Win32::Foundation::HWND;
+        if hwnd.is_null() {
+            return Err("窗口原生句柄不可用。".into());
+        }
+        // SAFETY: hwnd 来自存活窗口；重新显示时不激活。
+        unsafe { ShowWindowAsync(hwnd, if visible { SW_SHOWNOACTIVATE } else { SW_HIDE }) };
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        set_visible(window, visible)
+    }
+}
+
 /// 以“隐藏/最小化”方式启动（快捷方式“运行方式: 最小化”、计划任务、`Start-Process -WindowStyle Hidden`）时，
 /// 系统会把 STARTUPINFO 的显示方式套用到进程第一次以普通方式显示的窗口上，导致首个截图浮层不可见。
 /// 启动时用一个屏幕外 1×1 的工具窗口先消耗掉这个标志。

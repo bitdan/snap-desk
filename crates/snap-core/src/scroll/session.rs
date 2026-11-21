@@ -132,29 +132,44 @@ pub trait Host: Send + Sync + 'static {
     fn close_session(&self, id: u64) -> Result<(), String>;
     /// 成图保存目录。
     fn results_dir(&self) -> Result<PathBuf, String>;
-    /// 把 PNG 写入 `root` 并返回最终路径；默认先写临时文件再原子改名。
+    /// 把 PNG 写入 `root` 并返回最终路径；默认见 [`write_png`]。
     fn publish(&self, root: &Path, png: &[u8]) -> Result<PathBuf, String> {
-        std::fs::create_dir_all(root).map_err(err)?;
-        let mut file = tempfile::Builder::new()
-            .prefix(".scroll-")
-            .suffix(".png")
-            .tempfile_in(root)
-            .map_err(err)?;
-        file.write_all(png).map_err(err)?;
-        file.as_file().sync_all().map_err(err)?;
-        let stamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_err(err)?
-            .as_millis();
-        let path = root.join(format!("scroll-{stamp}.png"));
-        file.persist_noclobber(&path)
-            .map_err(|e| e.error.to_string())?;
-        Ok(path)
+        write_png(root, png)
     }
     /// 把成图写入系统剪贴板（同一份 PNG 可直接复用）。
     fn copy(&self, image: &RgbaImage, png: &[u8]) -> Result<(), String>;
     /// 输出完成：`message` 含保存位置与复制结果。
     fn finished(&self, result: &ScrollView, message: String);
+}
+
+/// 先写临时文件并落盘，再以不覆盖的方式改名为 `scroll-<毫秒时间戳>.png`。
+pub fn write_png(root: &Path, png: &[u8]) -> Result<PathBuf, String> {
+    std::fs::create_dir_all(root).map_err(err)?;
+    let mut file = tempfile::Builder::new()
+        .prefix(".scroll-")
+        .suffix(".png")
+        .tempfile_in(root)
+        .map_err(err)?;
+    file.write_all(png).map_err(err)?;
+    file.as_file().sync_all().map_err(err)?;
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(err)?
+        .as_millis();
+    for attempt in 0..100 {
+        let name = if attempt == 0 {
+            format!("scroll-{stamp}.png")
+        } else {
+            format!("scroll-{stamp}-{attempt}.png")
+        };
+        let path = root.join(name);
+        match file.persist_noclobber(&path) {
+            Ok(_) => return Ok(path),
+            Err(e) if e.error.kind() == std::io::ErrorKind::AlreadyExists => file = e.file,
+            Err(e) => return Err(e.error.to_string()),
+        }
+    }
+    Err("滚动截图结果文件名冲突过多。".into())
 }
 
 /// 操作互斥的 RAII 守卫。
@@ -854,6 +869,19 @@ mod output_tests {
         assert!(!wait_for_output_action(&state, 7));
         *state.session.lock().unwrap() = None;
         assert!(!wait_for_output_action(&state, 7));
+    }
+
+    #[test]
+    fn written_results_never_overwrite_each_other() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("scroll-results");
+        let first = write_png(&root, b"one").unwrap();
+        let second = write_png(&root, b"two").unwrap();
+        assert_ne!(first, second);
+        assert_eq!(std::fs::read(&first).unwrap(), b"one");
+        assert_eq!(std::fs::read(&second).unwrap(), b"two");
+        // 临时文件不留在结果目录。
+        assert_eq!(std::fs::read_dir(&root).unwrap().count(), 2);
     }
 
     #[test]

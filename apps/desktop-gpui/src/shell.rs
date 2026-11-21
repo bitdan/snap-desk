@@ -319,6 +319,11 @@ pub fn settings(cx: &App) -> Settings {
 pub fn run_action(cx: &mut App, action: ShortcutAction, source: &str) {
     match action {
         ShortcutAction::Capture => {
+            // 滚动截图采集中按截图键：结束采集并输出（与 Tauri 版一致）。
+            if crate::scroll::stop(cx) {
+                log::info!("event=gpui.action action=scroll_stop source={source}");
+                return;
+            }
             // 截图中再按截图键：与 Tauri 版一致视为取消。
             if crate::capture::active(cx) {
                 crate::capture::cancel(cx);
