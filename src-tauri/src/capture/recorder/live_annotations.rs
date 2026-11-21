@@ -223,42 +223,13 @@ pub(super) fn initialize(
     screen: &Screen,
     region: Rect,
     origin: (i32, i32),
-    mut shapes: Vec<Annotation>,
+    shapes: Vec<Annotation>,
     annotation_origin: Point,
 ) -> Result<(), String> {
-    for shape in &mut shapes {
-        for point in std::iter::once(&mut shape.start)
-            .chain(std::iter::once(&mut shape.end))
-            .chain(shape.points.iter_mut())
-        {
-            point.x = (point.x - annotation_origin.x).clamp(0.0, f64::from(region.width));
-            point.y = (point.y - annotation_origin.y).clamp(0.0, f64::from(region.height));
-        }
-    }
-    // 完全在录制区域外的面状标注没有可绘制像素。
-    shapes.retain(|s| {
-        !matches!(
-            s.kind,
-            annotations::Kind::Text
-                | annotations::Kind::Number
-                | annotations::Kind::Mosaic
-                | annotations::Kind::Blur
-                | annotations::Kind::Magnify
-                | annotations::Kind::Spotlight
-        ) || ((s.end.x - s.start.x).abs() >= 1.0 && (s.end.y - s.start.y).abs() >= 1.0)
-    });
-    annotations::validate_live(&shapes, region.width, region.height)?;
-    if shapes
-        .iter()
-        .filter(|s| annotations::dynamic_filter(s))
-        .count()
-        > 8
-    {
-        return Err("录制中最多支持 8 个实时滤镜。".into());
-    }
-    let mut history = Vec::new();
-    let current_ids = super::annotation_track::reconcile(&mut history, &[], &shapes, 0, 0, 0)?;
-    let layer = Arc::new(Layer::timed(history.clone(), region.width, region.height)?);
+    let shapes = super::annotation_layer::region_shapes(shapes, annotation_origin, region.width, region.height)?;
+    let (layer, history, current_ids) =
+        super::annotation_layer::initial_layer(&shapes, region.width, region.height)?;
+    let layer = Arc::new(layer);
     let state = app.state::<LiveAnnotationState>();
     *state.session.lock().map_err(|e| e.to_string())? = Some(Session {
         view: AnnotationView {

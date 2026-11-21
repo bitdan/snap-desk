@@ -5,7 +5,7 @@
 //! 避免把另一块屏幕的画面按错误的坐标裁剪。Wayland 下应用无法读取全局键鼠，也无法从画面中去掉
 //! 本应用的窗口：控制条与标注画布会出现在录像中，请把它们移出录制区域。
 use super::{now, BgraImage, CaptureBackend, FramePool, NativeSource, RecorderConfig, VideoFrame};
-use crate::capture::desktop::wayland::{self, portal};
+use crate::capture::wayland::{self, portal};
 use crate::capture::Rect;
 use gstreamer as gst;
 use gstreamer::prelude::*;
@@ -22,7 +22,7 @@ const WRONG_OUTPUT: &str =
 const STOPPED: &str = "屏幕共享已停止，录制已结束。";
 
 pub fn supported() -> Result<(), String> {
-    let support = crate::shared::desktop_support::current();
+    let support = crate::desktop_support::current();
     if !support.protocols().portal_screencast {
         return Err(
             "当前 Wayland 桌面没有屏幕共享门户（xdg-desktop-portal ScreenCast），无法录屏。".into(),

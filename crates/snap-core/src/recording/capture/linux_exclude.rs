@@ -9,7 +9,7 @@
 //! 合成器自行绘制的阴影、动画和桌面背景不在任何窗口里，被遮住的那一小块无法还原。
 //! 没有合成管理器时透明窗口本身也无法正常显示，此时保留原画面。
 use super::{super::super::frame::BgraImage, Segment};
-use crate::shared::x11::X11;
+use crate::x11::X11;
 use std::{
     collections::HashMap,
     time::{Duration, Instant},

@@ -3,7 +3,7 @@
 //! 因此同样只显示命令快捷键，不记录普通文字。鼠标位置取自 QueryPointer（根窗口物理像素）。
 use super::super::{capture, config::InputEffects};
 use super::{Clicks, EventBuffer, InputEvent, InputKind, Keys};
-use crate::shared::x11::{self, keysym, X11};
+use crate::x11::{self, keysym, X11};
 use std::{
     os::fd::AsRawFd,
     sync::{

@@ -1,5 +1,6 @@
 //! 录屏退出协调：任务守卫、真实处理进度和超时兜底。
 use super::*;
+use std::{fs, path::PathBuf};
 
 /// 退出意图独立于录屏阶段：Completed 可能早于窗口和资源清理。
 #[derive(Default)]

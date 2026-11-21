@@ -86,7 +86,7 @@ fn capture_item(source: NativeSource) -> Result<GraphicsCaptureItem, String> {
 
 /// 在创建编码器之前读取真实物理像素尺寸，不启动采集或计时。
 pub fn source_dimensions(source: NativeSource) -> Result<(u32, u32), String> {
-    let _dpi = crate::capture::desktop::PhysicalDpi::enter()?;
+    let _dpi = crate::capture::PhysicalDpi::enter()?;
     let _runtime = Runtime::new()?;
     let size = capture_item(source)?.Size().map_err(error)?;
     if size.Width < 2 || size.Height < 2 {
@@ -171,7 +171,7 @@ impl Capture {
         frames: Arc<super::super::frame::FramePool>,
     ) -> Result<Self, String> {
         // 编码准备线程与实际采集线程都显式使用物理像素，避免跨 DPI 上下文比较尺寸。
-        let _dpi = crate::capture::desktop::PhysicalDpi::enter()?;
+        let _dpi = crate::capture::PhysicalDpi::enter()?;
         supported()?;
         let runtime = Runtime::new()?;
         unsafe {

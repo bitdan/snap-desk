@@ -3,7 +3,7 @@
 //! 时间戳沿用流水线的 100 ns 单位，直接作为 CMTime（timescale = 10_000_000）传入，不做重采样。
 //! 声音：混音器输出的 48 kHz 双声道 PCM16 包装成 CMSampleBuffer，交给 AAC 轨道编码。
 use super::{AudioPacket, BgraImage, Encoder, EncoderKind};
-use crate::shared::macos::{ns_string, rust_string, CMTime, Id, StreamDescription};
+use crate::macos::{ns_string, rust_string, CMTime, Id, StreamDescription};
 use objc2::{
     class,
     encode::{Encode, Encoding},

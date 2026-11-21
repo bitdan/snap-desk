@@ -1,6 +1,6 @@
 //! 标注合成计划：缓存静态栅格和淡出权重，动态滤镜仅从干净帧局部取样。
 use super::{annotation_track::TimedAnnotation, frame};
-use crate::shared::annotations::{self, Annotation, Point};
+use crate::annotations::{self, Annotation, Point};
 use std::sync::{Arc, Mutex};
 /// 普通图形只在修改时绘成透明层；动态滤镜才从每一帧的干净像素重新计算。
 pub enum Layer {
@@ -20,6 +20,59 @@ pub enum Paint {
     Static(frame::AnnotationLayer),
     Filter(Annotation),
 }
+/// 截图中画好的标注转为录制区域坐标：减去区域原点并夹在区域内，丢弃完全在区域外的面状标注，
+/// 再按实时标注规则校验（最多 8 个实时滤镜）。
+pub fn region_shapes(
+    mut shapes: Vec<Annotation>,
+    origin: Point,
+    width: u32,
+    height: u32,
+) -> Result<Vec<Annotation>, String> {
+    for shape in &mut shapes {
+        for point in std::iter::once(&mut shape.start)
+            .chain(std::iter::once(&mut shape.end))
+            .chain(shape.points.iter_mut())
+        {
+            point.x = (point.x - origin.x).clamp(0.0, f64::from(width));
+            point.y = (point.y - origin.y).clamp(0.0, f64::from(height));
+        }
+    }
+    // 完全在录制区域外的面状标注没有可绘制像素。
+    shapes.retain(|s| {
+        !matches!(
+            s.kind,
+            annotations::Kind::Text
+                | annotations::Kind::Number
+                | annotations::Kind::Mosaic
+                | annotations::Kind::Blur
+                | annotations::Kind::Magnify
+                | annotations::Kind::Spotlight
+        ) || ((s.end.x - s.start.x).abs() >= 1.0 && (s.end.y - s.start.y).abs() >= 1.0)
+    });
+    annotations::validate_live(&shapes, width, height)?;
+    if shapes
+        .iter()
+        .filter(|s| annotations::dynamic_filter(s))
+        .count()
+        > 8
+    {
+        return Err("录制中最多支持 8 个实时滤镜。".into());
+    }
+    Ok(shapes)
+}
+
+/// 开始录制时的标注层：全部标注从第 0 毫秒起常驻。返回时间轨与当前标注 ID（供实时编辑继续对账）。
+pub fn initial_layer(
+    shapes: &[Annotation],
+    width: u32,
+    height: u32,
+) -> Result<(Layer, Vec<TimedAnnotation>, Vec<String>), String> {
+    let mut history = Vec::new();
+    let current_ids = super::annotation_track::reconcile(&mut history, &[], shapes, 0, 0, 0)?;
+    let layer = Layer::timed(history.clone(), width, height)?;
+    Ok((layer, history, current_ids))
+}
+
 impl Layer {
     /// 无时间轴的构造入口仅供合成回归测试使用；实际录屏统一使用 timed。
     #[cfg(test)]
@@ -80,7 +133,7 @@ impl Layer {
             )?))
         }
     }
-    pub(super) fn timed(
+    pub fn timed(
         tracks: Vec<TimedAnnotation>,
         width: u32,
         height: u32,

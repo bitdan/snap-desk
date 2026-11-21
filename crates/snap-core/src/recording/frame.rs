@@ -63,10 +63,10 @@ pub struct AnnotationLayer {
 }
 impl AnnotationLayer {
     pub fn new(
-        shapes: &[crate::shared::annotations::Annotation],
+        shapes: &[crate::annotations::Annotation],
         width: u32,
         height: u32,
-        origin: crate::shared::annotations::Point,
+        origin: crate::annotations::Point,
     ) -> Result<Option<Self>, String> {
         if shapes.is_empty() {
             return Ok(None);
@@ -74,7 +74,7 @@ impl AnnotationLayer {
         // 普通图形只在其边界内栅格化；避免长录屏后导出时为每个箭头扫描整屏。
         let (left, top, right, bottom) = if shapes
             .iter()
-            .any(|s| matches!(s.kind, crate::shared::annotations::Kind::Spotlight))
+            .any(|s| matches!(s.kind, crate::annotations::Kind::Spotlight))
         {
             (0, 0, width, height)
         } else {
@@ -104,10 +104,10 @@ impl AnnotationLayer {
             return Ok(None);
         }
         let mut layer = image::RgbaImage::new(right - left, bottom - top);
-        crate::shared::annotations::render(
+        crate::annotations::render(
             &mut layer,
             shapes,
-            crate::shared::annotations::Point {
+            crate::annotations::Point {
                 x: origin.x + f64::from(left),
                 y: origin.y + f64::from(top),
             },
@@ -198,7 +198,7 @@ mod annotation_layer_tests {
             &[],
             2,
             2,
-            crate::shared::annotations::Point { x: 0.0, y: 0.0 }
+            crate::annotations::Point { x: 0.0, y: 0.0 }
         )
         .unwrap()
         .is_none());

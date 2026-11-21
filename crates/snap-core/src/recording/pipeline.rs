@@ -1,8 +1,21 @@
 //! 录屏流水线：帧采集、有界编码队列、音频提交和最终发布。
-use super::*;
+use super::{
+    audio, capture, compositor, config::RecorderConfig, encoder, err, frame, frame::QueuedFrame,
+    input, measured_capture, output, stats, timeline, Host, Phase, RecordingState,
+};
+use std::{
+    fs,
+    path::PathBuf,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc::{self, TrySendError},
+        Arc,
+    },
+    time::{Duration, Instant},
+};
 
 /// 编码队列容量。满时采集侧暂停取样/合成，编码侧取帧后立即释放槽位。
-pub(super) const QUEUE_CAPACITY: usize = 2;
+pub const QUEUE_CAPACITY: usize = 2;
 
 /// 丢弃复用底图时归还缓冲；直接 `None` 会释放大图，下一次仍需重新分配。
 fn clear_base(base: &mut Option<frame::BgraImage>, pool: &frame::FramePool) {
@@ -12,29 +25,32 @@ fn clear_base(base: &mut Option<frame::BgraImage>, pool: &frame::FramePool) {
 }
 
 /// 采集线程绝不等待编码队列；开启特效时额外保留一帧干净底图，动画与事件数量有界。
-pub(super) fn collect(
-    app: AppHandle,
+/// `origin` 为录制显示器的虚拟桌面原点（键鼠特效坐标换算）；`root` 为已准备好的输出目录。
+/// 返回前已写入终态并调用 [`Host::finished`]。
+#[allow(clippy::too_many_arguments)]
+pub fn collect(
+    host: Arc<dyn Host>,
     id: u64,
     config: RecorderConfig,
-    screen: super::scroll::Screen,
+    origin: (i32, i32),
     root: PathBuf,
     mut backend: Box<dyn capture::CaptureBackend>,
     audio: Option<audio::Worker>,
     queue: std::sync::Arc<stats::QueueGauge>,
     pool: std::sync::Arc<frame::FramePool>,
 ) {
-    let state = app.state::<RecordingState>();
+    let state = host.state();
     let (sender, receiver) = mpsc::sync_channel::<QueuedFrame>(QUEUE_CAPACITY);
     let abort = std::sync::Arc::new(AtomicBool::new(false));
     let writer_abort = abort.clone();
-    let writer_app = app.clone();
+    let writer_host = host.clone();
     let writer_queue = queue.clone();
     let writer_pool = pool.clone();
     let writer = std::thread::Builder::new()
         .name("recording-encoder".into())
         .spawn(move || {
             write_video(
-                &writer_app,
+                writer_host.as_ref(),
                 id,
                 config,
                 root,
@@ -53,14 +69,14 @@ pub(super) fn collect(
         Ok(writer) => {
             let mut last_sample = None;
             let mut rejected_generation = None;
-            let mut annotation_revision = live_annotations::snapshot(&app, id).0;
+            let mut annotation_revision = host.annotations(id).0;
             let mut annotation_editing = false;
             let mut check_screen = Instant::now();
             let mut waiting_since = None;
             let mut listener: Option<input::Listener> = None;
             let mut effects_generation = None;
             let mut compositor = compositor::Compositor::new(config.input_effects, config.region);
-            compositor.set_origin((screen.x, screen.y));
+            compositor.set_origin(origin);
             let mut base: Option<frame::BgraImage> = None;
             let mut base_dirty = false;
             let mut annotation_animation = false;
@@ -93,7 +109,7 @@ pub(super) fn collect(
                         std::thread::sleep(Duration::from_millis(2));
                         continue;
                     }
-                    let animated = live_annotations::has_timed_annotations(&app, id);
+                    let animated = host.timed_annotations(id);
                     if animated != annotation_animation && !config.input_effects.enabled() {
                         clear_base(&mut base, &pool);
                         base_dirty = false;
@@ -115,13 +131,13 @@ pub(super) fn collect(
                         }
                         effects_generation = Some(generation);
                     }
-                    let editing = live_annotations::editing(&app, id);
+                    let editing = host.annotation_editing(id);
                     if editing != annotation_editing {
                         compositor.clear();
                         base_dirty = base.is_some();
                         annotation_editing = editing;
                     }
-                    let revision = live_annotations::snapshot(&app, id).0;
+                    let revision = host.annotations(id).0;
                     if running && revision != annotation_revision {
                         // 即使桌面静止，确认一笔/撤销后也请求新帧，让标注变化立即进入视频。
                         capture_stage.set("capture_refresh");
@@ -134,8 +150,8 @@ pub(super) fn collect(
                     capture_stage.set("capture_source_check");
                     if check_screen.elapsed() >= Duration::from_millis(500) {
                         backend.check_source()?;
-                        live_annotations::update_origin(&app, id, backend.desktop_origin()?);
-                        if super::scroll::session::screen_at(&app, screen.x, screen.y)? != screen {
+                        host.update_origin(id, backend.desktop_origin()?);
+                        if host.screen_changed()? {
                             capture_stage.set("display_changed");
                             return Err("显示器位置、尺寸或 DPI 改变，请重新录屏。".into());
                         }
@@ -150,7 +166,7 @@ pub(super) fn collect(
                                 listener = Some(input::Listener::start(config.input_effects)?);
                             }
                             capture_stage.set("capture_frame");
-                            let frame = measured_capture(&state, id, backend.as_mut())?;
+                            let frame = measured_capture(state, id, backend.as_mut())?;
                             compositor.set_origin(backend.desktop_origin()?);
                             let events = if let Some(listener) = listener.as_ref() {
                                 capture_stage.set("input_read");
@@ -263,7 +279,7 @@ pub(super) fn collect(
                                             match sender.try_send(QueuedFrame {
                                                 generation,
                                                 pts,
-                                                annotations: live_annotations::snapshot(&app, id).1,
+                                                annotations: host.annotations(id).1,
                                                 image,
                                             }) {
                                                 Ok(()) => {
@@ -289,7 +305,7 @@ pub(super) fn collect(
                                     }
                                 }
                             }
-                        } else if let Some(frame) = measured_capture(&state, id, backend.as_mut())?
+                        } else if let Some(frame) = measured_capture(state, id, backend.as_mut())?
                         {
                             capture_stage.set("capture_state");
                             let mut guard = state.0.lock().map_err(err)?;
@@ -314,7 +330,7 @@ pub(super) fn collect(
                                     match sender.try_send(QueuedFrame {
                                         generation,
                                         pts,
-                                        annotations: live_annotations::snapshot(&app, id).1,
+                                        annotations: host.annotations(id).1,
                                         image: frame.image,
                                     }) {
                                         Ok(()) => {
@@ -422,7 +438,7 @@ pub(super) fn collect(
             collection_result(collected, encoded)
         }
     };
-    live_annotations::clear(&app, id);
+    host.release_annotations(id);
     let mut message = String::new();
     if let Ok(mut guard) = state.0.lock() {
         if let Some(s) = guard.as_mut().filter(|s| s.view.id == id) {
@@ -468,15 +484,9 @@ pub(super) fn collect(
             s.view.revision += 1;
         }
     }
-    notify_changed(&app);
-    // 成功后直接保留已经发布的成品，所有终态都收起录制交互窗口。
-    chrome::release_recording(&app);
-    app.state::<CaptureState>()
-        .active
-        .store(false, Ordering::SeqCst);
-    crate::shelf::resume_after_capture(&app);
-    let _ = app.emit_to("main", "capture-result", &message);
-    // 不主动改变主界面的显示状态；成功路径已在结果消息和原生成品状态中发布。
+    host.changed();
+    // 成功后直接保留已经发布的成品；外壳收起录制交互窗口并发布结果消息。
+    host.finished(id, &message);
 }
 
 /// 编码故障优先展示原生错误；采集异常始终失败，不把片段路径作为成功结果返回。
@@ -492,8 +502,9 @@ fn collection_result(
 }
 
 /// Finalize、sync_all 成功才发布；失败和取消先释放编码句柄，再自动清理临时输出。
+#[allow(clippy::too_many_arguments)]
 fn write_video(
-    app: &AppHandle,
+    host: &dyn Host,
     id: u64,
     config: RecorderConfig,
     root: PathBuf,
@@ -506,7 +517,7 @@ fn write_video(
     // 阶段只来自源码常量；保留 UI 的原生错误，日志不接触路径或自由文本。
     let failure_stage = std::cell::Cell::new("output_config");
     let result = (|| -> Result<String, String> {
-        let export_settings = output::preferences(app)?;
+        let export_settings = host.export_settings()?;
         failure_stage.set("output_config");
         export_settings.validate()?;
         failure_stage.set("output_create");
@@ -514,7 +525,7 @@ fn write_video(
         let pending = temporary.path().to_owned();
         // 设备与编码器在临时目录之后取得所有权；提前返回时先释放句柄，再清理输出。
         let mut audio = audio;
-        progress(app, "recording", Some(&pending));
+        host.progress("recording", Some(&pending));
         failure_stage.set("encoder_init");
         let mut encoder = encoder::create(
             &pending,
@@ -526,7 +537,7 @@ fn write_video(
             config.format,
             config.system_audio || config.microphone,
         )?;
-        let state = app.state::<RecordingState>();
+        let state = host.state();
         let encoder_kind = encoder.kind();
         {
             failure_stage.set("encoder_state");
@@ -544,7 +555,7 @@ fn write_video(
             failure_stage.set("audio_pump");
             if let Some(worker) = audio.as_mut() {
                 // 音频独立于 WGC 新帧；静态桌面和暂停期间仍排空已采集数据。
-                pump_audio(worker, &mut mixer, encoder.as_mut(), &state, id, false)?;
+                pump_audio(worker, &mut mixer, encoder.as_mut(), state, id, false)?;
             }
             let frame = match receiver.recv_timeout(Duration::from_millis(10)) {
                 Ok(frame) => {
@@ -609,7 +620,7 @@ fn write_video(
             // MF/GIF 编码器已复制到自有缓冲或完成量化；帧内存可立即归还池。
             pool.release(image);
             let written = written?;
-            progress(app, "encoding", Some(&pending));
+            host.progress("encoding", Some(&pending));
             let encoding_millis = encoding_started.elapsed().as_secs_f64() * 1000.0;
             failure_stage.set("encoder_state");
             let mut guard = state.0.lock().map_err(err)?;
@@ -646,15 +657,15 @@ fn write_video(
             failure_stage.set("audio_stop");
             worker.stop()?;
             failure_stage.set("audio_finalize");
-            pump_audio(worker, &mut mixer, encoder.as_mut(), &state, id, true)?;
+            pump_audio(worker, &mut mixer, encoder.as_mut(), state, id, true)?;
         }
         drop(audio);
-        progress(app, "finalizing", Some(&pending));
+        host.progress("finalizing", Some(&pending));
         failure_stage.set("encoder_finalize");
         encoder.finish(end)?;
         // 释放 MF 文件句柄后才能同步/重命名；取消期间仍由临时目录负责清理。
         drop(encoder);
-        progress(app, "syncing", Some(&pending));
+        host.progress("syncing", Some(&pending));
         failure_stage.set("file_open");
         let file = fs::OpenOptions::new()
             .write(true)
@@ -674,14 +685,14 @@ fn write_video(
             .filter(|s| s.view.id == id && !s.cancel)
             .ok_or("已取消录屏。")?;
         // 发布和取消共用状态锁；未发布输出由 Pending 回收，成功成品移到临时目录之外。
-        progress(app, "publishing", Some(&pending));
+        host.progress("publishing", Some(&pending));
         failure_stage.set("file_publish");
         let output = temporary.publish(
             &export_settings,
             (config.region.width, config.region.height),
         )?;
-        result::remember(app, &output);
-        progress(app, "completed", Some(&output));
+        host.published(&output);
+        host.progress("completed", Some(&output));
         // 终态与成品路径由 collect 收尾时一起发布，确保完成通知携带已经保存的路径。
         Ok(output.to_string_lossy().into_owned())
     })();

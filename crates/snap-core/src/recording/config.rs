@@ -230,7 +230,7 @@ pub struct RecorderCapabilities {
 
 impl RecorderCapabilities {
     /// 仅映射采集接口检查结果，不触发媒体组件初始化、文件写入或音频设备访问。
-    pub(super) fn from_capture_support(result: Result<(), String>) -> Self {
+    pub fn from_capture_support(result: Result<(), String>) -> Self {
         let available = result.is_ok();
         let audio_supported =
             available && cfg!(any(target_os = "windows", target_os = "macos", target_os = "linux"));

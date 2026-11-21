@@ -5,7 +5,7 @@
 //! 窗口关闭、最小化或尺寸改变时与 Windows 一致：明确结束录制，不拉伸或黑边填充。
 use super::{BgraImage, CaptureBackend, FramePool, RecorderConfig, VideoFrame};
 use crate::capture::Rect;
-use crate::shared::macos::{
+use crate::macos::{
     array_items, completed, completion, dispatch_queue, error_text, CMTime, Handoff, Id,
 };
 use block2::RcBlock;

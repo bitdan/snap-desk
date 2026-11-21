@@ -4,7 +4,7 @@
 //! 呈现时间（主机时钟，与视频 `capture::now` 同源），交给与 Windows 共用的混音器。
 //! 控制线程按录制状态门控：倒计时与暂停期间丢弃数据，停止时同步结束系统采集。
 use super::{AudioFrame, Source, CHANNELS, RATE};
-use crate::shared::macos::{
+use crate::macos::{
     array_items, completed, completion, dispatch_queue as queue, error_text, host_ticks, ns_array,
     CMTime, Handoff, Id, StreamDescription,
 };

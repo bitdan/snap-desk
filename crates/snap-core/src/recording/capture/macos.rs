@@ -20,12 +20,12 @@ use std::{
 /// 录屏时间轴的单位是 100 ns。使用主机时钟，与系统音频、麦克风回调的时间戳同源，
 /// 音画按同一时间轴对齐。
 pub fn now() -> i64 {
-    crate::shared::macos::host_ticks()
+    crate::macos::host_ticks()
 }
 
 /// 录屏需要“屏幕录制”授权；未授权时系统只返回桌面壁纸，必须提前拒绝而不是录出空白视频。
 pub fn supported() -> Result<(), String> {
-    if !crate::shared::macos::screen_capture_granted() {
+    if !crate::macos::screen_capture_granted() {
         return Err("录屏需要“屏幕录制”权限，请在“设置 → 通用 → 系统权限”中授权后重启应用。".into());
     }
     Ok(())

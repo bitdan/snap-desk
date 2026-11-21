@@ -11,7 +11,7 @@ use super::{
 };
 use crate::{
     capture::Rect,
-    shared::x11::{self, X11},
+    x11::{self, X11},
 };
 use std::{
     sync::Arc,
@@ -109,7 +109,7 @@ fn window(x11: &X11, id: u32, pid: u32) -> Result<(i32, i32, u32, u32), String> 
     if !viewable || x11.window_pid(window).is_some_and(|current| current != pid) {
         return Err("录制窗口已关闭、最小化或被替换，录制已结束。".into());
     }
-    crate::capture::desktop::linux_window_frame(x11, window)
+    crate::capture::linux_window_frame(x11, window)
         .ok_or_else(|| "读取窗口位置失败。".into())
 }
 

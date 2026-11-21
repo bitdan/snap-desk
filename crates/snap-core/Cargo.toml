@@ -37,13 +37,15 @@ blake3 = "=1.8.2"
 html5ever = "=0.27.0"
 markup5ever_rcdom = "=0.3.0"
 zip = { version = "=6.0.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+# 录屏 GIF 编码；版本与 src-tauri 一致。
+gif = "=0.14.2"
 
-# Windows：物理像素拼接、窗口与 UIA 控件候选、光标合成。版本与 src-tauri 锁定的 windows 0.62.2 一致。
+# Windows：物理像素拼接、录屏（WGC 采集、Media Foundation 编码、WASAPI 声音、Raw Input 键鼠）、窗口与 UIA 控件候选、光标合成。版本与 src-tauri 锁定的 windows 0.62.2 一致。
 [target.'cfg(windows)'.dependencies]
 clipboard-win = "=5.4.1"
 # Windows 只在首次识别时从已下载、校验过的路径加载 onnxruntime.dll。
 ort = { version = "=2.0.0-rc.13", default-features = false, features = ["load-dynamic", "api-24"] }
-windows = { version = "=0.62.2", features = ["Win32_Foundation", "Win32_Graphics_Dwm", "Win32_Graphics_Gdi", "Win32_System_Threading", "Win32_System_Com", "Win32_System_Variant", "Win32_UI_HiDpi", "Win32_UI_WindowsAndMessaging", "Win32_UI_Accessibility", "Win32_UI_Shell", "Win32_Storage_FileSystem", "Foundation", "Globalization", "Graphics_Imaging", "Media_Ocr", "Storage", "Storage_Streams", "Win32_System_WinRT", "Win32_Security_Credentials", "Win32_System_Ole", "Win32_System_Memory", "Win32_System_SystemServices", "Win32_UI_Input_KeyboardAndMouse", "Win32_System_DataExchange", "Win32_System_Com_StructuredStorage"] }
+windows = { version = "=0.62.2", features = ["Win32_Foundation", "Win32_Graphics_Dwm", "Win32_Graphics_Gdi", "Win32_System_Threading", "Win32_System_Com", "Win32_System_Variant", "Win32_UI_HiDpi", "Win32_UI_WindowsAndMessaging", "Win32_UI_Accessibility", "Win32_UI_Shell", "Win32_Storage_FileSystem", "Foundation", "Globalization", "Graphics_Imaging", "Media_Ocr", "Storage", "Storage_Streams", "Win32_System_WinRT", "Win32_Security_Credentials", "Win32_System_Ole", "Win32_System_Memory", "Win32_System_SystemServices", "Win32_UI_Input_KeyboardAndMouse", "Win32_System_DataExchange", "Win32_System_Com_StructuredStorage", "Win32_Media_Audio", "Win32_Media_MediaFoundation", "Foundation_Metadata", "Graphics_Capture", "Graphics_DirectX_Direct3D11", "Win32_Graphics_Direct3D", "Win32_Graphics_Direct3D11", "Win32_Graphics_Dxgi_Common", "Win32_System_WinRT_Direct3D11", "Win32_System_WinRT_Graphics_Capture", "Win32_System_Performance", "Win32_UI_Input", "Win32_System_LibraryLoader"] }
 # COM implement 宏（拖出用的 IDataObject / IDropSource）生成 ::windows_core 路径，必须直接声明。
 windows-core = "=0.62.2"
 
@@ -60,6 +62,8 @@ block2 = "=0.6.2"
 dbus-secret-service = { version = "=4.1.0", features = ["crypto-openssl"] }
 xcb = { version = "=1.7.1", features = ["randr", "xfixes", "xtest", "shm", "xinput"] }
 gstreamer = "=0.21.3"
+# 录屏编码管线的 appsrc。
+gstreamer-app = "=0.21.2"
 libc = "0.2"
 wayland-client = "=0.31.15"
 zbus = "=5.19.0"

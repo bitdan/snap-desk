@@ -1,5 +1,5 @@
 //! 标注的媒体时间轨道：实时展示、逐帧合成和后期编辑共用毫秒时间，不使用墙钟。
-use crate::shared::annotations::Annotation;
+use crate::annotations::Annotation;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Serialize, Deserialize)]

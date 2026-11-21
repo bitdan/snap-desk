@@ -16,6 +16,7 @@ pub mod paths;
 pub mod pins;
 pub mod platform;
 pub mod recognition;
+pub mod recording;
 pub mod resources;
 pub mod settings;
 pub mod shelf;
