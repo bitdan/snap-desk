@@ -2,6 +2,7 @@
 //! 系统剪贴板监听/读取/写回（各平台）与记录服务。导出（PDF/长图）与界面命令仍在各外壳。
 pub mod blob_store;
 pub mod classification;
+pub mod export;
 pub mod files;
 pub mod model;
 pub mod platform;

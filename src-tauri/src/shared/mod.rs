@@ -15,7 +15,6 @@ pub(crate) mod macos;
 pub(crate) mod native_i18n;
 pub(crate) use snap_core::platform;
 
-pub(crate) use snap_core::text_image;
 #[cfg(target_os = "linux")]
 pub(crate) use snap_core::{wayland_probe, x11};
 

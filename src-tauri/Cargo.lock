@@ -9133,6 +9133,7 @@ dependencies = [
  "oar-ocr",
  "objc2 0.6.5",
  "ort",
+ "printpdf",
  "reqwest 0.12.28",
  "rqrr",
  "rusqlite",

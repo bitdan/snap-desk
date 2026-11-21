@@ -17,6 +17,8 @@ tempfile = "3"
 base64 = "0.22"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "bmp"] }
 ab_glyph = "=0.2.32"
+# 剪贴板组合导出 PDF；版本与 src-tauri 一致。
+printpdf = { version = "=0.7.0", default-features = false, features = ["font_subsetting"] }
 rusqlite = { version = "=0.37.0", features = ["bundled"] }
 url = "2"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
