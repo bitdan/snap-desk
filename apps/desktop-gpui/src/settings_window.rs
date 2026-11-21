@@ -84,6 +84,8 @@ pub fn open(cx: &mut App) {
 mod about_page;
 #[path = "settings_logs.rs"]
 mod logs_page;
+#[path = "settings_recognition.rs"]
+mod recognition_page;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Page {
@@ -93,18 +95,20 @@ enum Page {
     Clipboard,
     General,
     Shortcuts,
+    Recognition,
     Logs,
     About,
 }
 
 impl Page {
-    const ALL: [Page; 8] = [
+    const ALL: [Page; 9] = [
         Page::Capture,
         Page::Recording,
         Page::Pins,
         Page::Clipboard,
         Page::General,
         Page::Shortcuts,
+        Page::Recognition,
         Page::Logs,
         Page::About,
     ];
@@ -116,6 +120,7 @@ impl Page {
             Page::Clipboard => "剪贴板",
             Page::General => "通用",
             Page::Shortcuts => "快捷键",
+            Page::Recognition => "识别与翻译",
             Page::Logs => "日志",
             Page::About => "关于与更新",
         }
@@ -169,6 +174,9 @@ struct SettingsView {
     update_proxy: Entity<InputState>,
     /// 关于页的检查更新结果。
     update: Option<about_page::UpdateState>,
+    /// 识别与翻译页：后台读取的语言与密钥状态、正在编辑的服务。
+    recognition: recognition_page::RecognitionState,
+    service_editor: Option<recognition_page::ServiceEditor>,
     /// 每次文本修改加一；防抖任务只保存最新一次。
     generation: u64,
     capture: Option<Capture>,
@@ -238,6 +246,8 @@ impl SettingsView {
             excluded,
             update_proxy,
             update: None,
+            recognition: Default::default(),
+            service_editor: None,
             generation: 0,
             capture: None,
             error: None,
@@ -1752,6 +1762,9 @@ impl Render for SettingsView {
                         if page == Page::Logs {
                             view.load_logs(cx);
                         }
+                        if page == Page::Recognition {
+                            view.load_recognition(cx);
+                        }
                         view.error = None;
                         view.saved = false;
                         view.notice = None;
@@ -1766,6 +1779,7 @@ impl Render for SettingsView {
             Page::Clipboard => self.clipboard_page(&settings, &t, cx),
             Page::General => self.general_page(&settings, &t, cx),
             Page::Shortcuts => self.shortcuts_page(&settings, &t, cx),
+            Page::Recognition => self.recognition_page(&settings, &t, window, cx),
             Page::Logs => self.logs_page(&t, cx),
             Page::About => self.about_page(&settings, &t, cx),
         };

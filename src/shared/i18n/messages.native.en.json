@@ -1206,5 +1206,21 @@
   "许可证": "License",
   "已是最新版本。": "You're on the latest version.",
   "GPUI 预览版": "GPUI preview",
-  "GPUI 预览版暂不支持应用内安装更新，请从发布页下载。": "The GPUI preview can't install updates itself yet; download them from the release page."
+  "GPUI 预览版暂不支持应用内安装更新，请从发布页下载。": "The GPUI preview can't install updates itself yet; download them from the release page.",
+  "本地 PP-OCR": "Local PP-OCR",
+  "服务地址已更改，原密钥不会发往新地址，请重新填写密钥。": "The service address changed. The old key won't be sent to the new address; enter the key again.",
+  "个可用识别语言": "recognition languages available",
+  "离线识别，需先下载识别资源": "Offline recognition; download the resources first",
+  "密钥格式无效。": "Invalid key format.",
+  "名称": "Name",
+  "模型": "Model",
+  "模型能读取图片时可用于截图识字": "Use for screenshot text recognition when the model can read images",
+  "使用系统自带的识别语言包": "Uses the system's recognition language packs",
+  "在线服务会上传图片或文字；密钥只保存在系统凭据库。": "Online services upload images or text. Keys are stored only in the system credential store.",
+  "支持图片识别": "Supports images",
+  "中文": "Chinese",
+  "API 密钥": "API key",
+  "GPUI 版暂不支持": "Not yet supported in the GPUI build",
+  "macOS 系统 OCR": "macOS system OCR",
+  "OpenAI 兼容": "OpenAI-compatible"
 }

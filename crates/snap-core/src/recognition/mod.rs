@@ -34,6 +34,16 @@ pub fn system_ocr(image: &image::RgbaImage, language: &str) -> Result<OcrResult,
     }
 }
 
+/// 系统 OCR 已安装的识别语言（每次查询，安装语言包后刷新即可看到）。
+pub fn system_ocr_languages() -> Result<Vec<ocr_config::OcrLanguage>, String> {
+    #[cfg(windows)]
+    return windows_ocr::languages();
+    #[cfg(target_os = "macos")]
+    return vision_ocr::languages();
+    #[cfg(not(any(windows, target_os = "macos")))]
+    Err("Windows 系统 OCR 仅支持 Windows。".into())
+}
+
 /// 按已保存的 OCR 设置识别；严格使用所选引擎，不跨引擎重试或自动联网。
 /// 识别后的动作开关（自动复制、合并行）随结果返回。微信 OCR 由 Tauri 外壳单独处理，这里返回错误。
 pub fn recognize(image: &image::RgbaImage, settings: &Settings, local: &LocalOcr) -> Result<OcrResult, String> {
