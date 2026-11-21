@@ -283,6 +283,29 @@ pub fn settings_dir() -> Option<PathBuf> {
     settings_path().and_then(|path| path.parent().map(|p| p.to_path_buf()))
 }
 
+/// 修改并保存剪贴板设置。先从磁盘重新读取设置文件再只改剪贴板部分：Tauri 版可能同时运行并写入同一文件，
+/// 整份覆盖会丢掉它在本进程启动后保存的其他设置。返回保存后的剪贴板设置。
+pub fn update_clipboard(
+    cx: &mut App,
+    change: impl FnOnce(&mut snap_core::clipboard::model::ClipboardSettings),
+) -> Result<snap_core::clipboard::model::ClipboardSettings, String> {
+    let path = cx.global::<Shell>().path.clone().ok_or("无法定位设置目录。")?;
+    let (mut fresh, warning) = settings::load(&path);
+    if let Some(warning) = warning {
+        log::warn!("event=gpui.settings_warning message={warning}");
+    }
+    change(&mut fresh.clipboard);
+    fresh.clipboard.validate()?;
+    settings::persist(&path, &fresh)?;
+    cx.global_mut::<Shell>().settings.clipboard = fresh.clipboard.clone();
+    log::info!(
+        "event=gpui.clipboard_settings_saved enabled={} paste_on_activate={}",
+        fresh.clipboard.enabled,
+        fresh.clipboard.paste_on_activate
+    );
+    Ok(fresh.clipboard)
+}
+
 /// 当前设置快照（截图、贴图读取外观与导出偏好）。
 pub fn settings(cx: &App) -> Settings {
     cx.global::<Shell>().settings.clone()

@@ -14,6 +14,7 @@
 //! 文本拖出文字，图片拖出临时 PNG，文件拖出原路径；拖动多选中的条目时按合并规则一起拖出。
 //! 分类标签可拖动排序，或 Alt+←/→ 移动当前分类；顺序保存在设置文件旁的 `clipboard-category-order.json`
 //! （Vue 版存于 WebView localStorage，两版不共用）。
+//! 底部开关可暂停/继续记录、切换“回车或双击后直接粘贴到原窗口”，写回 settings.json（`shell::update_clipboard`）。
 use crate::annotate;
 use futures::{channel::mpsc, StreamExt};
 use gpui_kit::{
@@ -479,6 +480,41 @@ impl HistoryView {
         self.order = move_category(&self.order, source, destination);
         if let Err(error) = save_order(&self.order) {
             self.error = Some(error);
+        }
+        cx.notify();
+    }
+
+    /// 暂停/继续记录：先落盘，再在后台按新设置重启监听与维护（与 Tauri 版 `clipboard_set_enabled` 一致）。
+    fn set_recording(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        match crate::shell::update_clipboard(cx, |c| c.enabled = enabled) {
+            Ok(settings) => {
+                self.error = None;
+                self.message = enabled.then(|| self.t("已开始记录，仅记录此后复制的内容。"));
+                let service = self.service.clone();
+                cx.spawn(async move |this, cx| {
+                    let result = cx.background_executor().spawn(async move { service.configure(settings) }).await;
+                    let _ = this.update(cx, |view, cx| {
+                        if let Err(error) = result {
+                            view.service.report(error.clone());
+                            view.error = Some(error);
+                        }
+                        cx.notify();
+                    });
+                })
+                .detach();
+            }
+            Err(error) => self.error = Some(error),
+        }
+        cx.notify();
+    }
+
+    fn set_paste_on_activate(&mut self, value: bool, cx: &mut Context<Self>) {
+        match crate::shell::update_clipboard(cx, |c| c.paste_on_activate = value) {
+            Ok(settings) => {
+                self.paste_on_activate = settings.paste_on_activate;
+                self.error = None;
+            }
+            Err(error) => self.error = Some(error),
         }
         cx.notify();
     }
@@ -1013,7 +1049,7 @@ impl Render for HistoryView {
                 text("共"),
                 status.count,
                 status.byte_size as f64 / 1_048_576.0,
-                text(if status.enabled { "记录中" } else { "未记录（可在设置中开启）" })
+                text(if status.enabled { "记录中" } else { "已暂停记录" })
             )
         };
         let actions = match self.confirm {
@@ -1077,6 +1113,30 @@ impl Render for HistoryView {
                 cx.notify();
             }))),
         };
+        let toggle = |id: &'static str, label: String, on: bool| {
+            div()
+                .id(id)
+                .flex()
+                .items_center()
+                .gap(px(4.0))
+                .px(px(6.0))
+                .py(px(2.0))
+                .rounded(px(4.0))
+                .cursor_pointer()
+                .text_xs()
+                .text_color(rgb(if on { annotate::ACTIVE_FG } else { annotate::MUTED }))
+                .hover(|s| s.bg(rgb(annotate::HOVER)))
+                .child(if on { "☑" } else { "☐" })
+                .child(label)
+        };
+        let enabled = status.enabled;
+        let paste = self.paste_on_activate;
+        let switches = div()
+            .flex()
+            .flex_wrap()
+            .gap(px(4.0))
+            .child(toggle("clipboard-recording", text("记录新复制的内容"), enabled).on_click(cx.listener(move |view, _: &ClickEvent, _, cx| view.set_recording(!enabled, cx))))
+            .child(toggle("clipboard-paste-toggle", text("回车或双击后直接粘贴到原窗口"), paste).on_click(cx.listener(move |view, _: &ClickEvent, _, cx| view.set_paste_on_activate(!paste, cx))));
         let footer = div()
             .flex()
             .items_center()
@@ -1103,8 +1163,23 @@ impl Render for HistoryView {
             .text_color(rgb(annotate::TEXT))
             .child(header)
             .child(tabs)
+            .children((status.supported && !status.enabled).then(|| {
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(8.0))
+                    .px(px(8.0))
+                    .py(px(4.0))
+                    .rounded(px(6.0))
+                    .bg(rgb(0x22364d))
+                    .text_xs()
+                    .text_color(rgb(0xc4dfff))
+                    .child(div().flex_1().child(text("记录已暂停，新复制的内容不会保存。")))
+                    .child(self.small_button("clipboard-resume", text("继续记录")).on_click(cx.listener(|view, _: &ClickEvent, _, cx| view.set_recording(true, cx))))
+            }))
             .child(list)
             .children(notice)
+            .child(switches)
             .child(footer)
     }
 }
