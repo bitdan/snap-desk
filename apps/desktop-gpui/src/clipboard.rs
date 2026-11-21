@@ -10,7 +10,8 @@
 //! “固定”时粘贴后不收起。单击选中、Ctrl/⌘ 多选、Shift 连选（按选择顺序，最多 100 条）；
 //! 多选后回车或 Ctrl+C 按 core `service::combine` 合并（文本逐行拼接，图片/文件合成文件列表）；
 //! 所选文本与图片可组合导出为 PDF、长图或分别保存（`clipboard_export.rs`）；文本与图片可在独立窗口预览
-//! 全文或原图（`clipboard_preview.rs`）。
+//! 全文或原图（`clipboard_preview.rs`）。按住条目拖动超过几像素即系统拖出（Windows OLE，core `snap_core::drag`）：
+//! 文本拖出文字，图片拖出临时 PNG，文件拖出原路径；拖动多选中的条目时按合并规则一起拖出。
 use crate::annotate;
 use futures::{channel::mpsc, StreamExt};
 use gpui_kit::{
@@ -258,6 +259,8 @@ struct HistoryView {
     /// 所选条目的快照：后台刷新把条目挤出当前页时仍能判断类型。
     picked_items: HashMap<i64, Item>,
     anchor: Option<i64>,
+    /// 左键按下的行与位置；移动超过阈值后发起拖出。
+    press: Option<(usize, Point<Pixels>)>,
     loading: bool,
     /// 每次查询递增，丢弃过期结果。
     generation: u64,
@@ -295,6 +298,7 @@ impl HistoryView {
             picked: Vec::new(),
             picked_items: HashMap::new(),
             anchor: None,
+            press: None,
             loading: false,
             generation: 0,
             thumbs: HashMap::new(),
@@ -484,6 +488,65 @@ impl HistoryView {
             window.remove_window();
         }
         cx.notify();
+    }
+
+    fn motion(&mut self, event: &MouseMoveEvent, cx: &mut Context<Self>) {
+        let Some((index, origin)) = self.press else {
+            return;
+        };
+        if event.pressed_button != Some(MouseButton::Left) {
+            self.press = None;
+            return;
+        }
+        let delta = event.position - origin;
+        if delta.x.abs() + delta.y.abs() > px(6.0) {
+            self.press = None;
+            self.drag_out(index, cx);
+        }
+    }
+
+    /// 后台读取并准备内容，回到主线程在框架状态借用之外发起系统拖拽（DoDragDrop 自带消息循环，
+    /// 会重入窗口过程，不能在 entity update 中调用）。准备期间已松开左键则不拖出（core 内检查）。
+    fn drag_out(&mut self, index: usize, cx: &mut Context<Self>) {
+        if !cfg!(windows) {
+            self.error = Some(self.t("当前平台尚未支持内容拖出。"));
+            cx.notify();
+            return;
+        }
+        let ids = self.group_for(index);
+        if ids.is_empty() {
+            return;
+        }
+        let service = self.service.clone();
+        cx.spawn(async move |this, cx| {
+            let payload = cx
+                .background_executor()
+                .spawn(async move {
+                    let contents = service.contents(&ids)?;
+                    let content = service::combine(contents, snap_core::drag::image_file)?;
+                    Ok::<_, String>(match content {
+                        Content::Text(text) => snap_core::drag::Payload::Text(text),
+                        Content::Files(paths) => snap_core::drag::Payload::Files(paths),
+                        Content::Image(image) => snap_core::drag::Payload::Files(vec![snap_core::drag::image_file(&image)?]),
+                    })
+                })
+                .await;
+            #[cfg(windows)]
+            let result = payload.and_then(snap_core::drag::start);
+            #[cfg(not(windows))]
+            let result = payload.map(|_| ());
+            match result {
+                Ok(()) => log::info!("event=gpui.clipboard_drag_finished"),
+                Err(error) => {
+                    log::warn!("event=gpui.clipboard_drag_failed message={error}");
+                    let _ = this.update(cx, |view, cx| {
+                        view.error = Some(error);
+                        cx.notify();
+                    });
+                }
+            }
+        })
+        .detach();
     }
 
     /// 底栏“贴图”：逐条创建贴图，失败时说明已创建几张。
@@ -753,6 +816,11 @@ impl Render for HistoryView {
                     .border_1()
                     .border_color(rgb(if selected { annotate::BORDER } else { 0x181b20 }))
                     .hover(|s| s.bg(rgb(annotate::HOVER)))
+                    .on_mouse_down(MouseButton::Left, cx.listener(move |view, event: &MouseDownEvent, _, _| {
+                        view.press = Some((index, event.position));
+                    }))
+                    .on_mouse_up(MouseButton::Left, cx.listener(|view, _: &MouseUpEvent, _, _| view.press = None))
+                    .on_mouse_move(cx.listener(|view, event: &MouseMoveEvent, _, cx| view.motion(event, cx)))
                     .on_click(cx.listener(move |view, event: &ClickEvent, window, cx| {
                         view.selected = index;
                         if event.click_count() >= 2 {
