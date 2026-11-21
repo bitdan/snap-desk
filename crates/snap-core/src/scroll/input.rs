@@ -38,7 +38,9 @@ mod platform {
         Foundation::{HINSTANCE, LPARAM, LRESULT, WPARAM},
         System::LibraryLoader::GetModuleHandleW,
         UI::{
-            Input::KeyboardAndMouse::{GetAsyncKeyState, VK_C, VK_CONTROL, VK_ESCAPE, VK_MENU, VK_SHIFT},
+            Input::KeyboardAndMouse::{
+                GetAsyncKeyState, VK_C, VK_CONTROL, VK_ESCAPE, VK_MENU, VK_SHIFT,
+            },
             WindowsAndMessaging::*,
         },
     };
@@ -77,13 +79,20 @@ mod platform {
 
     /// 钩子回调只记录按键意图，不在系统回调内锁会话或操作剪贴板。
     fn copy_key(message: u32, key: u32, control: bool, shift: bool, alt: bool) -> bool {
-        if key != u32::from(VK_C.0) { return false; }
+        if key != u32::from(VK_C.0) {
+            return false;
+        }
         if matches!(message, WM_KEYUP | WM_SYSKEYUP) {
             return COPY_HELD.with(|held| held.replace(false));
         }
-        if !matches!(message, WM_KEYDOWN | WM_SYSKEYDOWN) { return false; }
-        if COPY_HELD.with(Cell::get) { return true; }
-        if ESCAPE_ACTIVE.with(Cell::get) && COPY_ACTIVE.with(Cell::get) && control && !shift && !alt {
+        if !matches!(message, WM_KEYDOWN | WM_SYSKEYDOWN) {
+            return false;
+        }
+        if COPY_HELD.with(Cell::get) {
+            return true;
+        }
+        if ESCAPE_ACTIVE.with(Cell::get) && COPY_ACTIVE.with(Cell::get) && control && !shift && !alt
+        {
             COPY_HELD.with(|held| held.set(true));
             COPY_REQUESTED.with(|requested| requested.set(true));
             return true;
@@ -105,7 +114,8 @@ mod platform {
         if code >= 0 {
             let event = &*(lparam.0 as *const KBDLLHOOKSTRUCT);
             if copy_key(
-                wparam.0 as u32, event.vkCode,
+                wparam.0 as u32,
+                event.vkCode,
                 GetAsyncKeyState(i32::from(VK_CONTROL.0)) < 0,
                 GetAsyncKeyState(i32::from(VK_SHIFT.0)) < 0,
                 GetAsyncKeyState(i32::from(VK_MENU.0)) < 0,
@@ -144,7 +154,7 @@ mod platform {
                 .name("scroll-direction".into())
                 .spawn(move || unsafe {
                     // 钩子线程也必须使用物理 DPI，才能与负坐标副屏上的截图选区比较。
-                    let _dpi = match crate::capture::desktop::PhysicalDpi::enter() {
+                    let _dpi = match crate::capture::PhysicalDpi::enter() {
                         Ok(dpi) => dpi,
                         Err(error) => {
                             let _ = tx.send(Err(error));
@@ -213,8 +223,10 @@ mod platform {
                         escape_down = down;
                         let copy_pressed = copy_down();
                         let copy_hooked = COPY_REQUESTED.with(|requested| requested.replace(false));
-                        if ESCAPE_ACTIVE.with(Cell::get) && COPY_ACTIVE.with(Cell::get)
-                            && (copy_hooked || (copy_pressed && !copying)) && finish()
+                        if ESCAPE_ACTIVE.with(Cell::get)
+                            && COPY_ACTIVE.with(Cell::get)
+                            && (copy_hooked || (copy_pressed && !copying))
+                            && finish()
                         {
                             // 完成只停止采集；Esc 仍可中断末帧等待或导出。
                             COPY_ACTIVE.with(|active| active.set(false));
@@ -301,7 +313,7 @@ pub(super) use platform::Listener;
 #[cfg(target_os = "macos")]
 mod mac {
     use super::Direction;
-    use crate::shared::macos;
+    use crate::macos;
     use std::{
         sync::{
             atomic::{AtomicBool, Ordering},
@@ -398,7 +410,7 @@ pub(super) use mac::Listener;
 #[cfg(target_os = "linux")]
 mod linux {
     use super::Direction;
-    use crate::shared::x11::{self, X11};
+    use crate::x11::{self, X11};
     use std::{
         sync::{
             atomic::{AtomicBool, Ordering},

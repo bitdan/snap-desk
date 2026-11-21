@@ -37,11 +37,8 @@ pub struct CaptureState {
     history: Mutex<history::History>,
     /// 最近一次隐藏蒙层的时刻；快速连续截图仍需等待桌面合成器移除上一帧。
     hidden_at: Mutex<Option<Instant>>,
-    scroll: Mutex<Option<scroll::ScrollSession>>,
-    /// 全局快捷键只写原子停止标志，不等待后台拼接持有的图片锁。
-    scroll_collecting: AtomicBool,
-    scroll_stop: AtomicBool,
-    scroll_cancel: AtomicBool,
+    /// 滚动截图会话与控制标志（core）；全局快捷键只写原子停止标志，不等待后台拼接持有的图片锁。
+    scroll: scroll::ScrollState,
     /// 0 表示不在倒计时；取消只设置标志，由原任务清理，防止旧任务干扰新截图。
     pub delay_remaining: AtomicU8,
     delay_cancelled: AtomicBool,
@@ -612,7 +609,7 @@ pub async fn capture_native_window(
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<CaptureState>();
         let _operation = Operation::acquire(&state.operation)?;
-        if state.scroll.lock().map_err(err)?.is_some() {
+        if state.scroll.session.lock().map_err(err)?.is_some() {
             return Err("请先结束滚动截图。".into());
         }
         let (native, old, include_cursor, origin) = {
@@ -782,9 +779,9 @@ fn cleanup(app: &AppHandle) -> Result<(), String> {
     }
     scroll::chrome::hide(app);
     let state = app.state::<CaptureState>();
-    state.scroll_stop.store(true, Ordering::SeqCst);
-    state.scroll_collecting.store(false, Ordering::SeqCst);
-    let scroll_id = state.scroll.lock().map_err(err)?.take().map(|s| s.id);
+    state.scroll.stop.store(true, Ordering::SeqCst);
+    state.scroll.collecting.store(false, Ordering::SeqCst);
+    let scroll_id = state.scroll.session.lock().map_err(err)?.take().map(|s| s.id);
     let session = state.session.lock().map_err(err)?.take();
     let closed_id = session.as_ref().map(|session| session.frame.id);
     let restore_translation = session
@@ -827,6 +824,7 @@ fn close_session(app: &AppHandle, id: u64) -> Result<(), String> {
     // 滚动采集接管后，冻结桌面已释放；结束仍按滚动会话编号校验。
     let scroll_matches = state
         .scroll
+        .session
         .lock()
         .map_err(err)?
         .as_ref()
@@ -881,7 +879,7 @@ pub fn cancel_active(app: &AppHandle) -> Result<(), String> {
         .map_err(err)?
         .as_ref()
         .map(|s| s.frame.id);
-    let id = id.or(state.scroll.lock().map_err(err)?.as_ref().map(|s| s.id));
+    let id = id.or(state.scroll.session.lock().map_err(err)?.as_ref().map(|s| s.id));
     if let Some(id) = id {
         close_session(app, id)?;
     }
@@ -908,7 +906,7 @@ pub fn cancel_capture(app: AppHandle, window: WebviewWindow, id: u64) -> Result<
 fn orphaned_overlay(app: &AppHandle) -> Result<bool, String> {
     let state = app.state::<CaptureState>();
     let idle = state.session.lock().map_err(err)?.is_none()
-        && state.scroll.lock().map_err(err)?.is_none()
+        && state.scroll.session.lock().map_err(err)?.is_none()
         && !recording::is_active(app);
     Ok(idle
         && app
@@ -924,7 +922,7 @@ fn crop(
     annotations: &[crate::shared::annotations::Annotation],
 ) -> Result<RgbaImage, String> {
     let state = app.state::<CaptureState>();
-    if state.scroll.lock().map_err(err)?.is_some() {
+    if state.scroll.session.lock().map_err(err)?.is_some() {
         return Err("滚动截图进行中，请使用滚动截图预览中的导出按钮。".into());
     }
     let guard = state.session.lock().map_err(err)?;
@@ -1088,7 +1086,7 @@ pub async fn copy_capture_color(
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<CaptureState>();
         let _operation = Operation::acquire(&state.operation)?;
-        if state.scroll.lock().map_err(err)?.is_some() {
+        if state.scroll.session.lock().map_err(err)?.is_some() {
             return Err("滚动截图进行中，不能取色。".into());
         }
         let text = {

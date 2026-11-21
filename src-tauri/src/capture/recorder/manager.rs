@@ -156,7 +156,7 @@ pub async fn start_recording(
         progress(&app, "preparing", None);
         let state = app.state::<CaptureState>();
         let _operation = Operation::acquire(&state.operation)?;
-        if state.scroll.lock().map_err(err)?.is_some() {
+        if state.scroll.session.lock().map_err(err)?.is_some() {
             return Err("请先结束滚动截图。".into());
         }
         let size = state

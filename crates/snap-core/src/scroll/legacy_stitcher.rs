@@ -68,7 +68,7 @@ impl Stitch {
         let started = std::time::Instant::now();
         let signature = Signature::new(&image);
         let (result, bottom) = alignment(self.last(), &image, &self.signature, &signature);
-        if log::log_enabled!(log::Level::Debug) && crate::diagnostics::runtime::sample_debug() {
+        if log::log_enabled!(log::Level::Debug) && super::sample_debug() {
             log::debug!(
                 "event=scroll.match module=scroll duration_ms={:.2}",
                 started.elapsed().as_secs_f64() * 1000.0

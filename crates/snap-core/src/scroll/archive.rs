@@ -3,14 +3,13 @@ use image::{ImageFormat, RgbaImage};
 use std::{
     fs,
     io::Write,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering},
         mpsc::{self, SyncSender},
         Arc,
     },
 };
-use tauri::Manager;
 
 struct Writer {
     pub path: PathBuf,
@@ -18,12 +17,9 @@ struct Writer {
     bytes: u64,
 }
 impl Writer {
-    pub fn new(app: &tauri::AppHandle) -> Result<Self, String> {
-        let root = app
-            .path()
-            .app_local_data_dir()
-            .map_err(err)?
-            .join("scroll-frames");
+    /// `data` 为应用本地数据目录；帧存档写在其中的 scroll-frames 下。
+    pub fn new(data: &Path) -> Result<Self, String> {
+        let root = data.join("scroll-frames");
         fs::create_dir_all(&root).map_err(err)?;
         let directory = tempfile::Builder::new()
             .prefix("session-")
@@ -83,8 +79,8 @@ pub struct Archive {
     failed: Arc<AtomicBool>,
 }
 impl Archive {
-    pub fn new(app: &tauri::AppHandle) -> Result<Self, String> {
-        let mut writer = Writer::new(app)?;
+    pub fn new(data: &Path) -> Result<Self, String> {
+        let mut writer = Writer::new(data)?;
         let path = writer.path.clone();
         let (sender, receiver) = mpsc::sync_channel(2);
         let failed = Arc::new(AtomicBool::new(false));

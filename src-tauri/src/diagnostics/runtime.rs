@@ -1,20 +1,10 @@
-//! 运行时日志阈值：本机持久化、立即切换；高频调试采样使用独立单调时钟。
+//! 运行时日志阈值：本机持久化、立即切换（滚动截图的高频调试采样在 core `scroll`）。
 use super::logs::Level;
-use std::sync::{
-    atomic::{AtomicU64, AtomicU8, Ordering},
-    OnceLock,
-};
-use std::time::Instant;
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::{fs, io::Write, path::Path};
 use tauri::Manager;
 
-static CLOCK: OnceLock<Instant> = OnceLock::new();
 static LEVEL: AtomicU8 = AtomicU8::new(2);
-static LAST_SAMPLE: AtomicU64 = AtomicU64::new(0);
-
-fn millis() -> u64 {
-    CLOCK.get_or_init(Instant::now).elapsed().as_millis() as u64 + 1
-}
 
 fn code(level: Level) -> u8 {
     match level {
@@ -97,16 +87,6 @@ fn allows(threshold: Level, value: log::Level) -> bool {
 /// 插件上限保持 Debug，原生与前端日志统一按当前阈值过滤。
 pub fn enabled(metadata: &log::Metadata<'_>) -> bool {
     allows(level(), metadata.level())
-}
-
-/// 高频匹配细节每 500ms 最多一条；只限制 Debug，不丢弃故障与生命周期事件。
-pub fn sample_debug() -> bool {
-    let now = millis();
-    let previous = LAST_SAMPLE.load(Ordering::Relaxed);
-    now.saturating_sub(previous) >= 500
-        && LAST_SAMPLE
-            .compare_exchange(previous, now, Ordering::Relaxed, Ordering::Relaxed)
-            .is_ok()
 }
 
 #[cfg(test)]

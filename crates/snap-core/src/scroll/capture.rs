@@ -1,6 +1,7 @@
 //! 连续屏幕取样和短期帧缓存；等待稳定画面，不选择接缝或改变会话状态。
-use super::super::{CaptureState, Rect};
 use super::stability::stable;
+use super::ScrollState as CaptureState;
+use crate::capture::Rect;
 use image::RgbaImage;
 use std::{
     collections::VecDeque,
@@ -58,7 +59,7 @@ impl FrameCache {
 pub(super) fn wait(state: &CaptureState, millis: u64) -> bool {
     let deadline = Instant::now() + Duration::from_millis(millis);
     while Instant::now() < deadline {
-        if state.scroll_stop.load(Ordering::SeqCst) {
+        if state.stop.load(Ordering::SeqCst) {
             return false;
         }
         std::thread::sleep(Duration::from_millis(20));
@@ -110,7 +111,7 @@ fn sample(
     let cropped =
         image::imageops::crop_imm(&image, region.x, region.y, region.width, region.height)
             .to_image();
-    if log::log_enabled!(log::Level::Debug) && crate::diagnostics::runtime::sample_debug() {
+    if log::log_enabled!(log::Level::Debug) && super::sample_debug() {
         log::debug!(
             "event=scroll.sample module=scroll width={} height={} duration_ms={:.2}",
             region.width,
@@ -195,9 +196,9 @@ pub(super) fn sample_pair(
 }
 
 fn interrupted(state: &CaptureState, finishing: bool) -> Option<SampleOutcome> {
-    if state.scroll_cancel.load(Ordering::SeqCst) {
+    if state.cancel.load(Ordering::SeqCst) {
         Some(SampleOutcome::Cancelled)
-    } else if !finishing && state.scroll_stop.load(Ordering::SeqCst) {
+    } else if !finishing && state.stop.load(Ordering::SeqCst) {
         Some(SampleOutcome::Stopped)
     } else {
         None
@@ -216,7 +217,7 @@ fn sample_pair_impl(
         return Ok(outcome);
     }
     #[cfg(windows)]
-    let _dpi = crate::capture::desktop::PhysicalDpi::enter()?;
+    let _dpi = crate::capture::PhysicalDpi::enter()?;
     // 一轮稳定性检测绑定选区所在屏幕，全部坐标均为物理像素。
     // 区域采集与整屏回退共用同一来源监视器，尺寸校验不依赖整屏首帧。
     let monitor = xcap::Monitor::all()
@@ -336,13 +337,13 @@ mod lifecycle_tests {
     #[test]
     fn finish_ignores_stop_but_cancel_always_wins() {
         let state = CaptureState::default();
-        state.scroll_stop.store(true, Ordering::SeqCst);
+        state.stop.store(true, Ordering::SeqCst);
         assert!(matches!(
             interrupted(&state, false),
             Some(SampleOutcome::Stopped)
         ));
         assert!(interrupted(&state, true).is_none());
-        state.scroll_cancel.store(true, Ordering::SeqCst);
+        state.cancel.store(true, Ordering::SeqCst);
         for finishing in [false, true] {
             assert!(matches!(
                 interrupted(&state, finishing),
@@ -356,7 +357,7 @@ mod lifecycle_tests {
     #[ignore = "需要真实桌面，测量 xcap 区域/整屏采集耗时"]
     fn native_capture_timings() {
         #[cfg(windows)]
-        let _dpi = crate::capture::desktop::PhysicalDpi::enter().unwrap();
+        let _dpi = crate::capture::PhysicalDpi::enter().unwrap();
         let monitor = xcap::Monitor::all()
             .unwrap()
             .into_iter()

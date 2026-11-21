@@ -17,12 +17,6 @@ use snap_core::export::{
     remember_directory, validate_extension,
 };
 
-/// 专项基准只构造系统载荷，不替换开发者当前剪贴板。
-#[cfg(all(test, windows))]
-pub(crate) fn clipboard_bitmap_for_benchmark(image: &RgbaImage) -> Result<Vec<u8>, String> {
-    snap_core::clipboard::windows_image::dib(image)
-}
-
 /// Windows 剪贴板需要一个所有者窗口；沿用常驻的主窗口。
 #[cfg(target_os = "windows")]
 fn clipboard_owner(app: &AppHandle) -> Result<isize, String> {

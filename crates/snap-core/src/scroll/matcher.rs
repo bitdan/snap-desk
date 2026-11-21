@@ -606,7 +606,7 @@ fn align_axis_tolerant(a: &RgbaImage, b: &RgbaImage, roi: Content, vertical: boo
             break;
         }
     }
-    if log::log_enabled!(log::Level::Debug) && crate::diagnostics::runtime::sample_debug() {
+    if log::log_enabled!(log::Level::Debug) && super::sample_debug() {
         log::debug!(
             "event=scroll.match_tolerant module=scroll candidates={} matched={}",
             candidates,

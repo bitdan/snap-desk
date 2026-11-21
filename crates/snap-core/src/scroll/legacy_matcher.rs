@@ -119,12 +119,12 @@ fn match_region(a: &Signature, b: &Signature) -> Match {
     }
     scores.sort_by(|a, b| a.0.total_cmp(&b.0));
     let Some(&(score, shift)) = scores.first() else {
-        if log::log_enabled!(log::Level::Debug) && crate::diagnostics::runtime::sample_debug() {
+        if log::log_enabled!(log::Level::Debug) && super::sample_debug() {
             log::debug!("event=scroll.match_retry module=scroll code=MATCH_NO_CANDIDATE");
         }
         return Match::Uncertain;
     };
-    if log::log_enabled!(log::Level::Debug) && crate::diagnostics::runtime::sample_debug() {
+    if log::log_enabled!(log::Level::Debug) && super::sample_debug() {
         log::debug!(
             "event=scroll.match_candidate module=scroll frames={}",
             scores.len()
@@ -136,7 +136,7 @@ fn match_region(a: &Signature, b: &Signature) -> Match {
             .skip(1)
             .any(|&(other, delta)| delta.abs_diff(shift) > 2 && other <= score + 1.5)
     {
-        if log::log_enabled!(log::Level::Debug) && crate::diagnostics::runtime::sample_debug() {
+        if log::log_enabled!(log::Level::Debug) && super::sample_debug() {
             log::debug!("event=scroll.match_retry module=scroll code=MATCH_AMBIGUOUS");
         }
         return Match::Uncertain;
@@ -190,7 +190,7 @@ fn verified_region(a: &RgbaImage, b: &RgbaImage, sa: &Signature, sb: &Signature)
             }
         }
         if good * 100 < count * 90 {
-            if log::log_enabled!(log::Level::Debug) && crate::diagnostics::runtime::sample_debug() {
+            if log::log_enabled!(log::Level::Debug) && super::sample_debug() {
                 log::debug!("event=scroll.match_retry module=scroll code=MATCH_PIXEL_MISMATCH");
             }
             return Match::Uncertain;

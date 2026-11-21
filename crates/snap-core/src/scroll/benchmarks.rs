@@ -1,7 +1,6 @@
 //! 有真值的专项基准；耗时不设机器相关阈值，误拼和像素错误必须失败。
 use super::*;
-use crate::capture::scroll::recovery::Recovery;
-use crate::shared::benchmark::memory;
+use crate::scroll::recovery::Recovery;
 use std::{io::Cursor, time::Instant};
 
 fn pixel(x: u32, y: u32) -> Rgba<u8> {
@@ -11,6 +10,10 @@ fn pixel(x: u32, y: u32) -> Rgba<u8> {
 }
 fn frame(offset: u32) -> RgbaImage {
     RgbaImage::from_fn(320, 240, |x, y| pixel(x, offset + y))
+}
+/// 进程内存读数由外壳基准提供；core 基准只关注拼接本身。
+fn memory() -> serde_json::Value {
+    serde_json::Value::Null
 }
 fn ms(start: Instant) -> f64 {
     start.elapsed().as_secs_f64() * 1000.0
@@ -87,7 +90,7 @@ fn benchmark_length_ladder() {
             #[cfg(windows)]
             let clipboard = {
                 let start = Instant::now();
-                let dib = crate::shared::image_io::clipboard_bitmap_for_benchmark(&output).unwrap();
+                let dib = crate::clipboard::windows_image::dib(&output).unwrap();
                 serde_json::json!({"prepare_ms":ms(start),"dib_bytes":dib.len(),"scope":"payload_only_no_os_write"})
             };
             #[cfg(not(windows))]
@@ -235,7 +238,7 @@ fn benchmark_live_readouts() {
     };
     let mut stable_pairs = 0;
     for tick in 0..20 {
-        stable_pairs += u32::from(crate::capture::scroll::stability::stable(
+        stable_pairs += u32::from(crate::scroll::stability::stable(
             &source(tick, 100),
             &source(tick + 1, 100),
         ));

@@ -18,6 +18,7 @@ pub mod platform;
 pub mod recognition;
 pub mod recording;
 pub mod resources;
+pub mod scroll;
 pub mod settings;
 pub mod shelf;
 pub mod text_image;

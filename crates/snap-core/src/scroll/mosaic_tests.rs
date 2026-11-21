@@ -1007,7 +1007,7 @@ fn stationary_redraw_does_not_override_periodic_position_ambiguity() {
     });
     let mut redrawn = first.clone();
     redrawn.put_pixel(80, 80, Rgba([255, 0, 255, 255]));
-    assert!(crate::capture::scroll::stability::stable(&first, &redrawn));
+    assert!(crate::scroll::stability::stable(&first, &redrawn));
     let mut stitch = Stitch::with_mode(first.clone(), ScrollMode::Vertical).unwrap();
     assert_eq!(stitch.consider(redrawn).unwrap(), Match::Uncertain);
     assert_eq!(stitch.compose(), first);

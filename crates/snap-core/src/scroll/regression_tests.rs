@@ -95,7 +95,7 @@ fn real_scroll_sequences_match_reviewed_images() {
 /// 失去重叠后必须逐段补齐；反向返回可信区时不跳过中间内容。
 #[test]
 fn fast_scroll_gap_recovers_in_reverse_without_unverified_pixels() {
-    use crate::capture::scroll::recovery::Recovery;
+    use crate::scroll::recovery::Recovery;
     let doc = RgbaImage::from_fn(96, 640, |x, y| {
         let v = (x.wrapping_mul(73856093) ^ y.wrapping_mul(19349663)).wrapping_mul(83492791);
         Rgba([v as u8, (v >> 8) as u8, (v >> 16) as u8, 255])
@@ -198,7 +198,7 @@ fn assert_static_truth(stitch: &Stitch, seed_y: i64) {
 /// 窗口自带实时读数时，原地刷新不能阻止静止判定，也不能让后续滚动匹配失败。
 #[test]
 fn live_readouts_do_not_block_stability_or_alignment() {
-    use crate::capture::scroll::{recovery::Recovery, stability::stable};
+    use crate::scroll::{recovery::Recovery, stability::stable};
     // 原地刷新：同一位置、读数变化，必须视为静止，可继续取样。
     for tick in 0..4 {
         assert!(
@@ -249,7 +249,7 @@ fn noise_document() -> RgbaImage {
 /// 稍快滚动时，两张静止帧之间已无重叠；等待稳定期间采到的运动帧可以桥接缺口。
 #[test]
 fn fast_scroll_bridges_gap_with_motion_frames() {
-    use crate::capture::scroll::recovery::Recovery;
+    use crate::scroll::recovery::Recovery;
     let doc = noise_document();
     let frame = |y| image::imageops::crop_imm(&doc, 0, y, 320, 240).to_image();
     // 改动前的失败前提：静止帧相距 720 像素，与可信端点没有任何重叠。
@@ -296,7 +296,7 @@ fn fast_scroll_bridges_gap_with_motion_frames() {
 /// 运动帧可能尚未重绘完；静止帧在桥接副本上发现冲突时整份丢弃，不写入可信画布。
 #[test]
 fn unconfirmed_bridge_is_discarded_without_touching_trusted_canvas() {
-    use crate::capture::scroll::recovery::Recovery;
+    use crate::scroll::recovery::Recovery;
     let doc = noise_document();
     let frame = |y| image::imageops::crop_imm(&doc, 0, y, 320, 240).to_image();
     let mut stitch = Stitch::with_mode(frame(0), ScrollMode::Vertical).unwrap();
