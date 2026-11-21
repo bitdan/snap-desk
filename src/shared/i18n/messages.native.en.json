@@ -1125,5 +1125,11 @@
   "立即开始": "No countdown",
   "鼠标指针": "Cursor",
   "按键与点击": "Keys & clicks",
-  "整个窗口": "Whole window"
+  "整个窗口": "Whole window",
+  "标注": "Annotate",
+  "完成": "Done",
+  "常驻": "Keep",
+  "3 秒后消失": "Fade in 3s",
+  "5 秒后消失": "Fade in 5s",
+  "标注时效参数无效。": "Invalid annotation duration."
 }

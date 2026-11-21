@@ -1166,7 +1166,8 @@ impl Layers {
                 .shapes()
                 .iter()
                 .enumerate()
-                .filter(|(i, _)| Some(*i) != excluded)
+                // 录制中的实时滤镜不带像素（编码线程逐帧取样），预览跳过，由宿主画范围框。
+                .filter(|(i, s)| Some(*i) != excluded && drawable(s))
                 .map(|(_, s)| s.clone())
                 .collect();
             if let Some(d) = merged {

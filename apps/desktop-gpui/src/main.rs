@@ -18,6 +18,7 @@ mod native;
 mod pin_manager;
 mod pins;
 mod recognition;
+mod live_annotate;
 mod recording;
 mod selection;
 mod shell;

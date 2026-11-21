@@ -10,7 +10,10 @@
 //! 选区正好是吸附到的窗口时，可选“整个窗口”：直接采集该窗口表面（跟随窗口移动、不受遮挡），
 //! 控制条放在窗口可见面积最大的显示器上，不画红框。
 //!
-//! 与 Tauri 版的差异：没有来源下拉（窗口只能从吸附选区进入）；截图中画好的标注随视频输出，录制中不能再编辑标注；
+//! 5. 控制条“标注”打开实时标注窗口（`live_annotate.rs`）；截图中画好的标注与录制中新增的标注都由
+//!    core `recording::live::Live` 对账成媒体时间轨，编码线程按修订号换用新的标注层。
+//!
+//! 与 Tauri 版的差异：没有来源下拉（窗口只能从吸附选区进入）；窗口录制不支持实时标注；
 //! 确认选区后直接开始（按偏好倒计时），没有单独的“准备就绪”步骤。
 use gpui_kit::*;
 use snap_core::{
@@ -18,6 +21,7 @@ use snap_core::{
     capture::{Display, Rect},
     recording::{
         annotation_layer::{self, Layer},
+        live::Live,
         audio, capture as source, collect, encoder, frame, output,
         preferences::Preferences,
         exit::{self, Progress},
@@ -49,6 +53,9 @@ struct Recorder {
     progress: Arc<Mutex<Progress>>,
     /// 已请求退出：不再开始新录屏，准备中的录屏直接放弃。
     quitting: bool,
+    /// 当前录屏的实时标注入口（显示器录制才有）。
+    annotation: Option<crate::live_annotate::Target>,
+    annotator: Option<WindowHandle<crate::live_annotate::Annotator>>,
 }
 
 impl Global for Recorder {}
@@ -202,6 +209,7 @@ pub struct Prepared {
     language: Language,
     go: mpsc::SyncSender<bool>,
     window: bool,
+    live: Arc<Mutex<Live>>,
 }
 
 /// 选区所在显示器与显示器内的局部选区；跨屏选区不支持。
@@ -270,17 +278,14 @@ pub async fn prepare(cx: &mut AsyncApp, request: Request) -> Result<Prepared, St
     request.preferences.apply(&mut config);
     config.validate(source_size)?;
     // 截图中的标注使用截图坐标；录制层以选区左上角为原点。
-    let layer = if request.shapes.is_empty() {
-        None
+    let shapes = if request.shapes.is_empty() {
+        Vec::new()
     } else {
         let origin = Point {
             x: f64::from(request.rect.x),
             y: f64::from(request.rect.y),
         };
-        let shapes =
-            annotation_layer::region_shapes(request.shapes, origin, region.width, region.height)?;
-        let (layer, _, _) = annotation_layer::initial_layer(&shapes, region.width, region.height)?;
-        Some(Arc::new(layer))
+        annotation_layer::region_shapes(request.shapes, origin, region.width, region.height)?
     };
     let export = cx.update(|cx| crate::shell::settings(cx).recording_export);
     export.validate()?;
@@ -289,6 +294,7 @@ pub async fn prepare(cx: &mut AsyncApp, request: Request) -> Result<Prepared, St
         recorder.next_id += 1;
         (recorder.state.clone(), recorder.next_id, recorder.progress.clone())
     });
+    let live = Arc::new(Mutex::new(Live::new(id, shapes, region.width, region.height)?));
     let probe_config = config;
     let probe_export = export.clone();
     let (root, kind, encoding, fallback) = cx
@@ -323,7 +329,7 @@ pub async fn prepare(cx: &mut AsyncApp, request: Request) -> Result<Prepared, St
     ));
     let host = Arc::new(GpuiHost {
         state: state.clone(),
-        layer,
+        live: live.clone(),
         display: display.clone(),
         export,
         progress,
@@ -396,6 +402,7 @@ pub async fn prepare(cx: &mut AsyncApp, request: Request) -> Result<Prepared, St
         language: request.language,
         go: go_tx,
         window: request.window.is_some(),
+        live,
     })
 }
 
@@ -408,6 +415,7 @@ pub fn launch(cx: &mut App, prepared: Prepared) {
         language,
         go,
         window,
+        live,
     } = prepared;
     let recorder = cx.default_global::<Recorder>();
     let state = recorder.state.clone();
@@ -424,10 +432,30 @@ pub fn launch(cx: &mut App, prepared: Prepared) {
     let logical = logical_region(cx, &display, region);
     // 窗口录制跟随窗口移动，固定位置的红框会误导，不显示（Windows 采集本身会给窗口加系统边框）。
     let border = if window { None } else { open_border(cx, logical) };
-    let controls = open_controls(cx, &display, logical, id, state.clone(), language);
+    let screen = display_bounds(cx, &display);
+    let bar = bar_bounds(screen, logical);
+    let annotation = (!window).then(|| crate::live_annotate::Target {
+        id,
+        live,
+        state: state.clone(),
+        language: language.clone(),
+        display_id: crate::capture::matched_display(cx, &display).map(|d| d.id()),
+        screen,
+        region: logical,
+        bar,
+        scale: display.scale.max(0.1) as f32,
+    });
+    // 截图中画好的标注在屏幕上也显示出来（鼠标穿透），与录像一致。
+    let annotator = annotation
+        .clone()
+        .filter(|target| target.has_shapes())
+        .and_then(|target| crate::live_annotate::open(cx, target, false));
+    let controls = open_controls(cx, &display, logical, id, state.clone(), language, annotation.is_some());
     let recorder = cx.global_mut::<Recorder>();
     recorder.border = border;
     recorder.controls = controls;
+    recorder.annotation = annotation;
+    recorder.annotator = annotator;
     if go.send(true).is_err() {
         log::error!("event=gpui.recording_worker_gone id={id}");
     }
@@ -524,8 +552,63 @@ fn open_border(cx: &mut App, region: Bounds<Pixels>) -> Option<AnyWindowHandle> 
     }
 }
 
+/// 控制条“标注”：打开实时标注窗口或切换编辑状态；控制条随后重新置顶，保持在标注窗口之上。
+pub fn toggle_annotations(cx: &mut App) {
+    let Some(recorder) = cx.try_global::<Recorder>() else {
+        return;
+    };
+    let (target, annotator, controls) =
+        (recorder.annotation.clone(), recorder.annotator, recorder.controls);
+    let Some(target) = target.filter(|t| t.state.is_active()) else {
+        return;
+    };
+    let reused = annotator.is_some_and(|handle| {
+        handle
+            .update(cx, |view, window, cx| {
+                let editing = !view.editing;
+                view.set_editing(editing, window, cx);
+            })
+            .is_ok()
+    });
+    if !reused {
+        let handle = crate::live_annotate::open(cx, target, true);
+        cx.global_mut::<Recorder>().annotator = handle;
+    }
+    if let Some(controls) = controls {
+        let _ = controls.update(cx, |_, window, _| {
+            let _ = crate::native::set_topmost(window, true);
+        });
+    }
+}
+
+/// 标注窗口自行关闭（结束编辑时没有标注、标注全部到期）。
+pub fn annotator_closed(cx: &mut App, id: u64) {
+    if let Some(recorder) = cx.has_global::<Recorder>().then(|| cx.global_mut::<Recorder>()) {
+        if recorder.annotation.as_ref().is_some_and(|t| t.id == id) {
+            recorder.annotator = None;
+        }
+    }
+}
+
+/// 录屏结束：关闭标注窗口并清除入口。
+fn close_annotations(cx: &mut App) {
+    let Some(recorder) = cx.has_global::<Recorder>().then(|| cx.global_mut::<Recorder>()) else {
+        return;
+    };
+    if let Some(target) = recorder.annotation.take() {
+        if let Ok(mut live) = target.live.lock() {
+            live.editing = false;
+        }
+    }
+    if let Some(handle) = recorder.annotator.take() {
+        cx.defer(move |cx| {
+            let _ = handle.update(cx, |_, window, _| window.remove_window());
+        });
+    }
+}
+
 /// 录屏辅助窗口置顶（切换到其他应用后仍可见）且不进入录像；失败只记日志（控制条通常在选区外）。
-fn protect(window: &Window) {
+pub fn protect(window: &Window) {
     if let Err(error) = crate::native::set_topmost(window, true) {
         log::warn!("event=gpui.recording_topmost_failed message={error}");
     }
@@ -534,7 +617,7 @@ fn protect(window: &Window) {
     }
 }
 
-const BAR_WIDTH: f32 = 460.0;
+const BAR_WIDTH: f32 = 540.0;
 const BAR_HEIGHT: f32 = 44.0;
 
 /// 控制条放在选区下方；放不下时放在上方，再不行放在选区内底部。
@@ -564,6 +647,7 @@ fn open_controls(
     id: u64,
     state: Arc<RecordingState>,
     language: Language,
+    annotations: bool,
 ) -> Option<AnyWindowHandle> {
     let bounds = bar_bounds(display_bounds(cx, display), region);
     let result = cx.open_window(popup(bounds), |window, cx| {
@@ -576,6 +660,7 @@ fn open_controls(
                 view: None,
                 finished: false,
                 notice: None,
+                annotations,
             };
             cx.spawn(
                 async move |this: WeakEntity<Controls>, cx: &mut AsyncApp| loop {
@@ -632,6 +717,8 @@ struct Controls {
     finished: bool,
     /// 操作反馈（已复制路径、打开目录失败等）。
     notice: Option<String>,
+    /// 可在录制中标注（显示器录制）。
+    annotations: bool,
 }
 
 impl Controls {
@@ -674,6 +761,7 @@ impl Controls {
                 self.id
             );
             close_border(cx);
+            close_annotations(cx);
             crate::shelf::resume(cx);
         }
         cx.notify();
@@ -801,6 +889,17 @@ impl Render for Controls {
                         )),
                     );
                 }
+                if self.annotations && phase != Some(Phase::Countdown) {
+                    buttons = buttons.child(
+                        self.button(
+                            "rec-annotate",
+                            crate::annotate::icons::PENCIL,
+                            self.t("标注"),
+                            false,
+                        )
+                        .on_click(|_, _, cx| toggle_annotations(cx)),
+                    );
+                }
                 buttons = buttons
                     .child(
                         self.button(
@@ -922,10 +1021,10 @@ impl Render for Controls {
     }
 }
 
-/// GPUI 外壳为录屏流水线提供的能力：截图时画好的标注常驻视频，显示器变化时中止，状态由控制条轮询。
+/// GPUI 外壳为录屏流水线提供的能力：标注层来自实时标注会话，显示器变化时中止，状态由控制条轮询。
 struct GpuiHost {
     state: Arc<RecordingState>,
-    layer: Option<Arc<Layer>>,
+    live: Arc<Mutex<Live>>,
     display: Display,
     export: RecordingExportSettings,
     /// 真实处理进展（阶段变化时记录日志；退出等待据此判断是否卡死）。
@@ -936,8 +1035,24 @@ impl Host for GpuiHost {
     fn state(&self) -> &RecordingState {
         &self.state
     }
-    fn annotations(&self, _id: u64) -> (u64, Option<Arc<Layer>>) {
-        (u64::from(self.layer.is_some()), self.layer.clone())
+    fn annotations(&self, id: u64) -> (u64, Option<Arc<Layer>>) {
+        self.live
+            .lock()
+            .ok()
+            .filter(|live| live.id == id)
+            .map(|live| {
+                let (revision, layer) = live.snapshot();
+                (revision, Some(layer))
+            })
+            .unwrap_or((0, None))
+    }
+    /// 编辑标注时不录入键鼠特效，避免录下标注工具栏的按键与点击。
+    fn annotation_editing(&self, id: u64) -> bool {
+        self.live.lock().is_ok_and(|live| live.id == id && live.editing)
+    }
+    fn timed_annotations(&self, id: u64) -> bool {
+        let ms = self.state.media_time_ms().unwrap_or(0);
+        self.live.lock().is_ok_and(|live| live.id == id && live.has_timed(ms))
     }
     fn screen_changed(&self) -> Result<bool, String> {
         snap_core::recording::display_unchanged(&self.display).map(|same| !same)
@@ -961,7 +1076,7 @@ impl Host for GpuiHost {
 
 #[cfg(test)]
 mod tests {
-    use super::{bar_bounds, clock, locate, Display, Rect, BAR_HEIGHT};
+    use super::{bar_bounds, clock, locate, Display, Rect, BAR_HEIGHT, BAR_WIDTH};
     use gpui_kit::{point, px, size, Bounds};
 
     #[test]
@@ -982,7 +1097,7 @@ mod tests {
         let inside = bar_bounds(screen, region(10.0, 785.0));
         assert_eq!(inside.origin.y, px(10.0 + 785.0 - BAR_HEIGHT - 8.0));
         // 水平居中于选区，且不超出屏幕左边。
-        assert_eq!(below.origin.x, px(20.0));
+        assert_eq!(below.origin.x, px((250.0 - BAR_WIDTH / 2.0).max(0.0)));
         let left = bar_bounds(
             screen,
             Bounds::new(point(px(0.0), px(100.0)), size(px(40.0), px(40.0))),
