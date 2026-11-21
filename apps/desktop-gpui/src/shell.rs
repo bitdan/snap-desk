@@ -58,10 +58,7 @@ pub fn start(
     sender: Sender,
     receiver: mpsc::UnboundedReceiver<ShellEvent>,
 ) -> Result<(), String> {
-    // 开发调试用：`SNAP_DESK_SETTINGS` 指向另一份 settings.json，可与已安装的 Tauri 版同时运行而不抢快捷键。
-    let path = std::env::var_os("SNAP_DESK_SETTINGS")
-        .map(PathBuf::from)
-        .or_else(settings::default_path);
+    let path = settings_path();
     let (settings, warning) = match &path {
         Some(path) => settings::load(path),
         None => (Settings::default(), Some("无法定位设置目录，使用默认设置。".into())),
@@ -271,6 +268,19 @@ fn handle(cx: &mut App, event: ShellEvent) {
             }
         }
     }
+}
+
+/// 设置文件路径。开发调试用：`SNAP_DESK_SETTINGS` 指向另一份 settings.json，可与已安装的 Tauri 版
+/// 同时运行而不抢快捷键。
+fn settings_path() -> Option<PathBuf> {
+    std::env::var_os("SNAP_DESK_SETTINGS")
+        .map(PathBuf::from)
+        .or_else(settings::default_path)
+}
+
+/// 设置文件所在目录：GPUI 版自己的小偏好（如剪贴板分类顺序）放在这里，随 `SNAP_DESK_SETTINGS` 一起隔离。
+pub fn settings_dir() -> Option<PathBuf> {
+    settings_path().and_then(|path| path.parent().map(|p| p.to_path_buf()))
 }
 
 /// 当前设置快照（截图、贴图读取外观与导出偏好）。

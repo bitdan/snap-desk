@@ -12,6 +12,8 @@
 //! 所选文本与图片可组合导出为 PDF、长图或分别保存（`clipboard_export.rs`）；文本与图片可在独立窗口预览
 //! 全文或原图（`clipboard_preview.rs`）。按住条目拖动超过几像素即系统拖出（Windows OLE，core `snap_core::drag`）：
 //! 文本拖出文字，图片拖出临时 PNG，文件拖出原路径；拖动多选中的条目时按合并规则一起拖出。
+//! 分类标签可拖动排序，或 Alt+←/→ 移动当前分类；顺序保存在设置文件旁的 `clipboard-category-order.json`
+//! （Vue 版存于 WebView localStorage，两版不共用）。
 use crate::annotate;
 use futures::{channel::mpsc, StreamExt};
 use gpui_kit::{
@@ -136,7 +138,7 @@ pub fn open(cx: &mut App) {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Category {
     All,
     Text,
@@ -148,18 +150,46 @@ enum Category {
     Favorites,
 }
 
-const CATEGORIES: [(Category, &str); 8] = [
-    (Category::All, "全部"),
-    (Category::Text, "文本"),
-    (Category::Link, "链接"),
-    (Category::Color, "颜色"),
-    (Category::Path, "文件路径"),
-    (Category::Image, "图片"),
-    (Category::File, "文件"),
-    (Category::Favorites, "收藏"),
+/// 默认顺序与 Vue 版 `use-category-order.ts` 一致。
+const CATEGORIES: [Category; 8] = [
+    Category::All,
+    Category::Text,
+    Category::Image,
+    Category::File,
+    Category::Link,
+    Category::Path,
+    Category::Color,
+    Category::Favorites,
 ];
 
 impl Category {
+    fn label(self) -> &'static str {
+        match self {
+            Self::All => "全部",
+            Self::Text => "文本",
+            Self::Link => "链接",
+            Self::Color => "颜色",
+            Self::Path => "文件路径",
+            Self::Image => "图片",
+            Self::File => "文件",
+            Self::Favorites => "收藏",
+        }
+    }
+
+    /// 持久化用的键，与 Vue 版的分类值一致（全部为空字符串）。
+    fn key(self) -> &'static str {
+        match self {
+            Self::All => "",
+            Self::Text => "text",
+            Self::Link => "link",
+            Self::Color => "color",
+            Self::Path => "path",
+            Self::Image => "image",
+            Self::File => "file",
+            Self::Favorites => "favorites",
+        }
+    }
+
     fn query(self, keyword: &str, cursor: Option<String>) -> Query {
         let (kind, text_category) = match self {
             Self::Text => (Some(Kind::Text), None),
@@ -178,6 +208,68 @@ impl Category {
             limit: Some(PAGE),
             cursor,
         }
+    }
+}
+
+/// 读取保存的顺序：去掉未知与重复的键，缺少的分类按默认顺序补在末尾；无效内容回到默认顺序。
+fn parse_order(json: &str) -> Vec<Category> {
+    let saved: Vec<String> = serde_json::from_str(json).unwrap_or_default();
+    let mut order: Vec<Category> = Vec::new();
+    for key in saved {
+        if let Some(category) = CATEGORIES.into_iter().find(|c| c.key() == key) {
+            if !order.contains(&category) {
+                order.push(category);
+            }
+        }
+    }
+    let missing: Vec<Category> = CATEGORIES.into_iter().filter(|c| !order.contains(c)).collect();
+    order.extend(missing);
+    order
+}
+
+/// 把 `source` 移到 `destination` 当前所在的位置（与前端 save 的 splice 规则一致）。
+fn move_category(order: &[Category], source: Category, destination: Category) -> Vec<Category> {
+    let mut next = order.to_vec();
+    let (Some(from), Some(to)) = (next.iter().position(|c| *c == source), next.iter().position(|c| *c == destination)) else {
+        return next;
+    };
+    let item = next.remove(from);
+    next.insert(to, item);
+    next
+}
+
+fn order_path() -> Option<PathBuf> {
+    crate::shell::settings_dir().map(|dir| dir.join("clipboard-category-order.json"))
+}
+
+fn load_order() -> Vec<Category> {
+    order_path()
+        .and_then(|path| std::fs::read_to_string(path).ok())
+        .map(|json| parse_order(&json))
+        .unwrap_or_else(|| CATEGORIES.to_vec())
+}
+
+fn save_order(order: &[Category]) -> Result<(), String> {
+    let path = order_path().ok_or("应用数据目录不可用。")?;
+    let keys: Vec<&str> = order.iter().map(|c| c.key()).collect();
+    let json = serde_json::to_string(&keys).map_err(|e| e.to_string())?;
+    std::fs::write(path, json).map_err(|_| "分类顺序仅在当前窗口生效，无法保存。".to_string())
+}
+
+/// 拖动中的分类标签。
+struct CategoryDrag(Category);
+struct DragChip(String);
+impl Render for DragChip {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .px(px(8.0))
+            .py(px(3.0))
+            .rounded(px(6.0))
+            .text_xs()
+            .bg(rgb(annotate::ACTIVE_BG))
+            .text_color(rgb(annotate::ACTIVE_FG))
+            .opacity(0.85)
+            .child(self.0.clone())
     }
 }
 
@@ -250,6 +342,7 @@ struct HistoryView {
     paste_on_activate: bool,
     search: Entity<InputState>,
     category: Category,
+    order: Vec<Category>,
     items: Vec<Item>,
     next_cursor: Option<String>,
     /// 键盘焦点所在行（浏览不改变多选）。
@@ -292,6 +385,7 @@ impl HistoryView {
             paste_on_activate: settings.clipboard.paste_on_activate,
             search,
             category: Category::All,
+            order: load_order(),
             items: Vec::new(),
             next_cursor: None,
             selected: 0,
@@ -376,6 +470,17 @@ impl HistoryView {
             });
         })
         .detach();
+    }
+
+    fn reorder(&mut self, source: Category, destination: Category, cx: &mut Context<Self>) {
+        if source == destination {
+            return;
+        }
+        self.order = move_category(&self.order, source, destination);
+        if let Err(error) = save_order(&self.order) {
+            self.error = Some(error);
+        }
+        cx.notify();
     }
 
     fn set_category(&mut self, category: Category, cx: &mut Context<Self>) {
@@ -632,6 +737,14 @@ impl HistoryView {
                     window.remove_window();
                 }
             }
+            "left" | "right" if keystroke.modifiers.alt => {
+                // Alt+←/→：把当前分类与相邻分类交换位置。
+                let index = self.order.iter().position(|c| *c == self.category).unwrap_or(0);
+                let target = if key == "left" { index.checked_sub(1) } else { Some(index + 1) };
+                if let Some(destination) = target.and_then(|i| self.order.get(i).copied()) {
+                    self.reorder(self.category, destination, cx);
+                }
+            }
             "down" => self.selected = (self.selected + 1).min(self.items.len().saturating_sub(1)),
             "up" => self.selected = self.selected.saturating_sub(1),
             "enter" => self.activate(self.selected, self.paste_on_activate, window, cx),
@@ -734,11 +847,18 @@ impl Render for HistoryView {
         let language = self.language.clone();
         let text = move |key: &'static str| snap_core::i18n::for_language(&language, key).to_owned();
         let mut tabs = div().flex().flex_wrap().gap(px(4.0));
-        for (index, (category, label)) in CATEGORIES.into_iter().enumerate() {
+        for (index, category) in self.order.clone().into_iter().enumerate() {
             let active = self.category == category;
+            let label = category.label();
+            let chip = text(label);
             tabs = tabs.child(
                 div()
                     .id(("clipboard-tab", index))
+                    .border_l_2()
+                    .border_color(rgb(0x181b20))
+                    .on_drag(CategoryDrag(category), move |_, _, _, cx| cx.new(|_| DragChip(chip.clone())))
+                    .drag_over::<CategoryDrag>(|style, _, _, _| style.border_color(rgb(annotate::ACTIVE_FG)))
+                    .on_drop(cx.listener(move |view, drag: &CategoryDrag, _, cx| view.reorder(drag.0, category, cx)))
                     .px(px(8.0))
                     .py(px(3.0))
                     .rounded(px(6.0))
@@ -991,7 +1111,7 @@ impl Render for HistoryView {
 
 #[cfg(test)]
 mod tests {
-    use super::{can_combine, select_items, swatch, Category};
+    use super::{can_combine, move_category, parse_order, select_items, swatch, Category, CATEGORIES};
     use snap_core::clipboard::model::{Kind, TextCategory};
 
     #[test]
@@ -1017,6 +1137,19 @@ mod tests {
         assert_eq!(select_items(&[], 2, &ordered, Some(9), false, true), vec![2]);
         let full: Vec<i64> = (0..100).collect();
         assert_eq!(select_items(&full, 200, &ordered, None, true, false).len(), 100);
+    }
+
+    #[test]
+    fn category_order_is_restored_and_moved() {
+        assert_eq!(parse_order("not json"), CATEGORIES.to_vec());
+        let order = parse_order(r#"["favorites","bogus","image","image"]"#);
+        assert_eq!(&order[..3], &[Category::Favorites, Category::Image, Category::All]);
+        assert_eq!(order.len(), CATEGORIES.len());
+        let moved = move_category(&CATEGORIES, Category::Favorites, Category::All);
+        assert_eq!(moved[0], Category::Favorites);
+        assert_eq!(moved[1], Category::All);
+        let moved = move_category(&CATEGORIES, Category::All, Category::Text);
+        assert_eq!(&moved[..2], &[Category::Text, Category::All]);
     }
 
     #[test]

@@ -9219,6 +9219,7 @@ dependencies = [
  "log",
  "raw-window-handle",
  "rfd",
+ "serde_json",
  "snap-core",
  "tokio",
  "tray-icon",
