@@ -518,6 +518,9 @@ impl SettingsView {
             engines = engines.child(option);
         }
         let mut ocr_rows = Vec::new();
+        if s.ocr.provider == "local-ppocr" {
+            ocr_rows.push(self.ocr_resource_row(t, cx));
+        }
         if s.ocr.provider == "windows-media" {
             let mut languages = div().flex().flex_wrap().gap(px(4.0)).max_w(px(360.0));
             let mut options: Vec<(String, String)> = vec![("auto".into(), t("跟随系统"))];

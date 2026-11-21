@@ -118,6 +118,8 @@ mod about_page;
 mod logs_page;
 #[path = "settings_recognition.rs"]
 mod recognition_page;
+#[path = "settings_resources.rs"]
+mod resources_page;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Page {
@@ -209,6 +211,10 @@ struct SettingsView {
     /// 识别与翻译页：后台读取的语言与密钥状态、正在编辑的服务。
     recognition: recognition_page::RecognitionState,
     service_editor: Option<recognition_page::ServiceEditor>,
+    /// 资源状态、下载中标记与进度（识别页、通用页共用）。
+    resources: Option<snap_core::resources::Status>,
+    resource_busy: bool,
+    resource_progress: resources_page::Progress,
     /// 每次文本修改加一；防抖任务只保存最新一次。
     generation: u64,
     capture: Option<Capture>,
@@ -280,6 +286,9 @@ impl SettingsView {
             update: None,
             recognition: Default::default(),
             service_editor: None,
+            resources: None,
+            resource_busy: false,
+            resource_progress: Default::default(),
             generation: 0,
             capture: None,
             error: None,
@@ -1534,6 +1543,8 @@ impl SettingsView {
                 ),
             ])
             .into_any_element(),
+            heading(t("资源")).into_any_element(),
+            card(vec![self.font_resource_row(t, cx)]).into_any_element(),
             heading(t("目录")).into_any_element(),
             card(rows).into_any_element(),
         ]
@@ -1834,6 +1845,9 @@ impl Render for SettingsView {
                         }
                         if page == Page::Recognition {
                             view.load_recognition(cx);
+                        }
+                        if matches!(page, Page::Recognition | Page::General) {
+                            view.load_resources(cx);
                         }
                         view.error = None;
                         view.saved = false;

@@ -1223,5 +1223,17 @@
   "GPUI 版暂不支持": "Not yet supported in the GPUI build",
   "macOS 系统 OCR": "macOS system OCR",
   "OpenAI 兼容": "OpenAI-compatible",
-  "跟随系统时随系统浅色/深色切换。": "When following the system, switches with the system's light or dark mode."
+  "跟随系统时随系统浅色/深色切换。": "When following the system, switches with the system's light or dark mode.",
+  "本地识别资源": "Local recognition resources",
+  "未配置导出字体，组合导出与文字贴图使用系统字体。": "No export font set; combined export and text pins use a system font.",
+  "下载推荐字体": "Download recommended font",
+  "选择字体…": "Choose font…",
+  "已配置导出字体": "Export font set",
+  "约": "about",
+  "正在检查识别资源…": "Checking recognition resources…",
+  "正在检查字体…": "Checking font…",
+  "正在下载": "Downloading",
+  "正在准备下载…": "Preparing download…",
+  "重新校验": "Verify again",
+  "资源": "Resources"
 }
