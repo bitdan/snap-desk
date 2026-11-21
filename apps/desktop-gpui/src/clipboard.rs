@@ -14,6 +14,8 @@
 //! 文本拖出文字，图片拖出临时 PNG，文件拖出原路径；拖动多选中的条目时按合并规则一起拖出。
 //! 分类标签可拖动排序，或 Alt+←/→ 移动当前分类；顺序保存在设置文件旁的 `clipboard-category-order.json`
 //! （Vue 版存于 WebView localStorage，两版不共用）。
+//! 唤出时窗口左上角贴近光标并夹紧在所在显示器工作区内；失去焦点约 200 毫秒后仍未回到本窗口即收起
+//! （固定、确认中、拖出中、预览或导出窗口打开时不收起）；固定时失焦记下切换到的窗口，作为之后的粘贴目标。
 //! 底部开关可暂停/继续记录、切换“回车或双击后直接粘贴到原窗口”，写回 settings.json（`shell::update_clipboard`）。
 use crate::annotate;
 use futures::{channel::mpsc, StreamExt};
@@ -108,9 +110,10 @@ pub fn open(cx: &mut App) {
     }
     let service = cx.global::<History>().service.clone();
     let settings = crate::shell::settings(cx);
-    let size = size(px(460.0), px(640.0));
+    let (bounds, display_id) = placement(cx, size(px(460.0), px(640.0)));
     let options = WindowOptions {
-        window_bounds: Some(WindowBounds::Windowed(Bounds::centered(None, size, cx))),
+        window_bounds: Some(WindowBounds::Windowed(bounds)),
+        display_id,
         titlebar: Some(TitlebarOptions {
             title: Some(snap_core::i18n::for_language(&settings.appearance.language, "剪贴板历史").to_owned().into()),
             ..Default::default()
@@ -137,6 +140,27 @@ pub fn open(cx: &mut App) {
         }
         Err(error) => log::error!("event=gpui.clipboard_window_failed message={error}"),
     }
+}
+
+/// 光标右下方 12 像素，夹紧到工作区（单轴）；窗口比工作区大时贴齐起点。
+fn near_cursor(cursor: f32, size: f32, start: f32, extent: f32) -> f32 {
+    (cursor + 12.0).min(start + extent - size).max(start)
+}
+
+/// 窗口靠近光标显示（与 Tauri 版 `window::place` 一致）；取不到光标或显示器时居中。
+fn placement(cx: &App, size: Size<Pixels>) -> (Bounds<Pixels>, Option<DisplayId>) {
+    let centered = || (Bounds::centered(None, size, cx), None);
+    let Some(cursor) = crate::native::cursor_point() else {
+        return centered();
+    };
+    let displays = cx.displays();
+    let Some(display) = displays.iter().find(|d| d.bounds().contains(&cursor)) else {
+        return centered();
+    };
+    let area = display.visible_bounds();
+    let x = near_cursor(f32::from(cursor.x), f32::from(size.width), f32::from(area.origin.x), f32::from(area.size.width));
+    let y = near_cursor(f32::from(cursor.y), f32::from(size.height), f32::from(area.origin.y), f32::from(area.size.height));
+    (Bounds::new(point(px(x), px(y)), size), Some(display.id()))
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -355,6 +379,8 @@ struct HistoryView {
     anchor: Option<i64>,
     /// 左键按下的行与位置；移动超过阈值后发起拖出。
     press: Option<(usize, Point<Pixels>)>,
+    /// 系统拖出进行中（模态消息循环期间焦点可能离开窗口，不能当作失焦收起）。
+    dragging: bool,
     loading: bool,
     /// 每次查询递增，丢弃过期结果。
     generation: u64,
@@ -366,6 +392,7 @@ struct HistoryView {
     confirm: Option<Confirm>,
     focus: FocusHandle,
     _search: Subscription,
+    _activation: Subscription,
 }
 
 impl HistoryView {
@@ -380,6 +407,11 @@ impl HistoryView {
             }
         });
         search.update(cx, |state, cx| state.focus(window, cx));
+        let activation = cx.observe_window_activation(window, |view: &mut Self, window, cx| {
+            if !window.is_window_active() {
+                view.blurred(window, cx);
+            }
+        });
         let mut view = Self {
             service,
             language,
@@ -394,6 +426,7 @@ impl HistoryView {
             picked_items: HashMap::new(),
             anchor: None,
             press: None,
+            dragging: false,
             loading: false,
             generation: 0,
             thumbs: HashMap::new(),
@@ -404,6 +437,7 @@ impl HistoryView {
             confirm: None,
             focus: cx.focus_handle(),
             _search: subscription,
+            _activation: activation,
         };
         view.reload(cx);
         view
@@ -411,6 +445,43 @@ impl HistoryView {
 
     fn t(&self, key: &'static str) -> String {
         snap_core::i18n::for_language(&self.language, key).to_owned()
+    }
+
+    /// 预览、导出、确认或拖出期间失焦不收起。
+    fn occupied(&self, cx: &App) -> bool {
+        self.confirm.is_some()
+            || self.dragging
+            || crate::clipboard_preview::is_open(cx)
+            || crate::clipboard_export::is_open(cx)
+    }
+
+    /// 失焦后延迟复核：点击标题栏、打开系统菜单等会短暂失焦再取回；仍未回到本窗口才收起。
+    fn blurred(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let handle = window.window_handle();
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(std::time::Duration::from_millis(200)).await;
+            let active = handle.update(cx, |_, window, _| window.is_window_active()).unwrap_or(true);
+            if active {
+                return;
+            }
+            let keep = this
+                .update(cx, |view, cx| {
+                    // 切到了其他应用：记下它作为之后的粘贴目标（前台仍是本程序时 core 返回 0，保留原目标）。
+                    let switched = platform::foreground_window();
+                    if switched != 0 {
+                        if cx.has_global::<History>() {
+                            cx.global_mut::<History>().target = switched;
+                        }
+                    }
+                    view.keep_open || view.occupied(cx)
+                })
+                .unwrap_or(true);
+            if !keep {
+                let _ = handle.update(cx, |_, window, _| window.remove_window());
+                log::info!("event=gpui.clipboard_window_hidden reason=blur");
+            }
+        })
+        .detach();
     }
 
     fn on_event(&mut self, event: Event, cx: &mut Context<Self>) {
@@ -659,6 +730,7 @@ impl HistoryView {
             return;
         }
         let service = self.service.clone();
+        self.dragging = true;
         cx.spawn(async move |this, cx| {
             let payload = cx
                 .background_executor()
@@ -676,6 +748,7 @@ impl HistoryView {
             let result = payload.and_then(snap_core::drag::start);
             #[cfg(not(windows))]
             let result = payload.map(|_| ());
+            let _ = this.update(cx, |view, _| view.dragging = false);
             match result {
                 Ok(()) => log::info!("event=gpui.clipboard_drag_finished"),
                 Err(error) => {
@@ -913,7 +986,7 @@ impl Render for HistoryView {
             .gap(px(6.0))
             .child(div().flex_1().child(Input::new(&self.search)))
             .child(
-                annotate::icon_button("clipboard-keep-open", annotate::icons::PIN, text("固定：粘贴后不收起窗口"), keep_open, false)
+                annotate::icon_button("clipboard-keep-open", annotate::icons::PIN, text("固定窗口，失去焦点时不收起"), keep_open, false)
                     .on_click(cx.listener(|view, _: &ClickEvent, _, cx| {
                         view.keep_open = !view.keep_open;
                         cx.notify();
@@ -1186,7 +1259,7 @@ impl Render for HistoryView {
 
 #[cfg(test)]
 mod tests {
-    use super::{can_combine, move_category, parse_order, select_items, swatch, Category, CATEGORIES};
+    use super::{can_combine, near_cursor, move_category, parse_order, select_items, swatch, Category, CATEGORIES};
     use snap_core::clipboard::model::{Kind, TextCategory};
 
     #[test]
@@ -1225,6 +1298,17 @@ mod tests {
         assert_eq!(moved[1], Category::All);
         let moved = move_category(&CATEGORIES, Category::All, Category::Text);
         assert_eq!(&moved[..2], &[Category::Text, Category::All]);
+    }
+
+    #[test]
+    fn window_is_placed_near_cursor_inside_work_area() {
+        assert_eq!(near_cursor(100.0, 460.0, 0.0, 1920.0), 112.0);
+        // 靠近右/下边缘时贴住工作区边界。
+        assert_eq!(near_cursor(1800.0, 460.0, 0.0, 1920.0), 1460.0);
+        // 副屏在左侧（负坐标）。
+        assert_eq!(near_cursor(-50.0, 460.0, -1280.0, 1280.0), -460.0);
+        // 窗口比工作区大时贴齐起点。
+        assert_eq!(near_cursor(10.0, 900.0, 0.0, 800.0), 0.0);
     }
 
     #[test]

@@ -249,3 +249,42 @@ pub fn offset_window(window: &Window, dy: i32) -> bool {
         false
     }
 }
+
+/// 鼠标位置，换算为 GPUI 的全局逻辑坐标（与 `PlatformDisplay::bounds` 同一坐标系）；取不到时为 None。
+/// Windows：GPUI 的显示器边界是“物理像素 ÷ 该屏缩放”，按光标所在显示器的 DPI 换算。
+/// macOS：CGEvent 的全局点坐标即左上角原点的逻辑点。Linux 暂不支持（窗口居中显示）。
+pub fn cursor_point() -> Option<gpui_kit::Point<gpui_kit::Pixels>> {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::{
+            Foundation::POINT,
+            Graphics::Gdi::{MonitorFromPoint, MONITOR_DEFAULTTONEAREST},
+            UI::{
+                HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI},
+                WindowsAndMessaging::GetCursorPos,
+            },
+        };
+        let mut point = POINT { x: 0, y: 0 };
+        // SAFETY: 输出参数指向栈上有效的 POINT；显示器句柄由系统返回，只用于查询 DPI。
+        unsafe {
+            if GetCursorPos(&mut point) == 0 {
+                return None;
+            }
+            let monitor = MonitorFromPoint(point, MONITOR_DEFAULTTONEAREST);
+            let (mut dpi_x, mut dpi_y) = (96u32, 96u32);
+            if GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &mut dpi_x, &mut dpi_y) != 0 {
+                dpi_x = 96;
+            }
+            let scale = dpi_x.max(1) as f32 / 96.0;
+            Some(gpui_kit::point(gpui_kit::px(point.x as f32 / scale), gpui_kit::px(point.y as f32 / scale)))
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        snap_core::macos::cursor_point().map(|(x, y)| gpui_kit::point(gpui_kit::px(x as f32), gpui_kit::px(y as f32)))
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
+    {
+        None
+    }
+}
