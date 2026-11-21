@@ -14,7 +14,7 @@ pub(crate) mod translation_runtime;
 /// 引擎、网络服务、凭据与运行库在 core（GPUI 版共用）；这里保留原路径与 Tauri 命令、窗口状态。
 pub(crate) use snap_core::recognition::{ai_credentials, online_ocr, providers};
 #[cfg(windows)]
-pub(crate) use snap_core::recognition::{ocr_runtime, windows_ocr};
+pub(crate) use snap_core::recognition::windows_ocr;
 #[cfg(target_os = "macos")]
 pub(crate) use snap_core::recognition::vision_ocr;
 pub use snap_core::recognition::ocr::OcrResult;
