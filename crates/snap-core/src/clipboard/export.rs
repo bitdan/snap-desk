@@ -312,6 +312,102 @@ pub fn needs_font(items: &[Snapshot], mode: Mode) -> bool {
     mode != Mode::Separate && items.iter().any(|item| matches!(item, Snapshot::Text(_)))
 }
 
+/// 校验参数并把所选历史复制成快照；临时目录随返回值释放（没有恢复中心的外壳使用，例如 GPUI 版）。
+pub fn stage(
+    service: &Service,
+    options: &Options,
+) -> Result<(tempfile::TempDir, Vec<Snapshot>), String> {
+    options.validate()?;
+    let dir = tempfile::Builder::new()
+        .prefix("snapdesk-export-")
+        .tempdir()
+        .map_err(io_error)?;
+    let items = snapshot(service, &options.ids, &options.texts, dir.path())?;
+    Ok((dir, items))
+}
+
+/// 写出 PDF 或长图：先写入目标目录中的临时文件并同步到磁盘，完整成功后才改名为目标路径，
+/// 失败时不留半个文件。目标已存在时覆盖（由保存对话框向用户确认）。
+pub fn write_combined(
+    items: &[Snapshot],
+    options: &Options,
+    target: &Path,
+    font_bytes: &[u8],
+) -> Result<(), String> {
+    let ext = if options.mode == Mode::Pdf {
+        "pdf"
+    } else {
+        "png"
+    };
+    if options.mode == Mode::Separate {
+        return Err("分别保存请选择目录。".into());
+    }
+    if !target
+        .extension()
+        .is_some_and(|v| v.to_string_lossy().eq_ignore_ascii_case(ext))
+    {
+        return Err(format!("请选择 .{ext} 扩展名。"));
+    }
+    let directory = target.parent().ok_or("导出路径无效。")?;
+    let mut file = tempfile::Builder::new()
+        .prefix(".snapdesk-")
+        .suffix(&format!(".{ext}.tmp"))
+        .tempfile_in(directory)
+        .map_err(io_error)?;
+    if options.mode == Mode::Pdf {
+        pdf_with_font(items, options, file.as_file_mut(), font_bytes)?;
+    } else {
+        long_png_with_font(items, options, file.as_file_mut(), font_bytes)?;
+    }
+    file.as_file().sync_all().map_err(io_error)?;
+    file.persist(target).map_err(|e| io_error(e.error))?;
+    Ok(())
+}
+
+/// 分别保存：在 `parent` 下新建批次目录（`SnapDesk-<stamp>`，重名时追加序号），逐个写入 001.txt / 002.png …，
+/// 不覆盖任何已有文件；中途失败时删除这个新建的批次目录。返回写出的文件路径。
+pub fn write_separate(
+    items: &[Snapshot],
+    parent: &Path,
+    stamp: &str,
+) -> Result<Vec<PathBuf>, String> {
+    let mut directory = parent.join(format!("SnapDesk-{stamp}"));
+    let mut suffix = 1;
+    loop {
+        match fs::create_dir(&directory) {
+            Ok(()) => break,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists && suffix < 100 => {
+                suffix += 1;
+                directory = parent.join(format!("SnapDesk-{stamp}-{suffix}"));
+            }
+            Err(error) => return Err(io_error(error)),
+        }
+    }
+    let result = (|| {
+        let mut outputs = Vec::new();
+        for (item, name) in items.iter().zip(separate_names(items)) {
+            let path = directory.join(name);
+            match item {
+                Snapshot::Text(text) => fs::write(&path, text.as_bytes()).map_err(io_error)?,
+                Snapshot::Image(source, _, _) => {
+                    fs::copy(source, &path).map_err(io_error)?;
+                }
+            }
+            fs::OpenOptions::new()
+                .write(true)
+                .open(&path)
+                .and_then(|f| f.sync_all())
+                .map_err(io_error)?;
+            outputs.push(path);
+        }
+        Ok(outputs)
+    })();
+    if result.is_err() {
+        let _ = fs::remove_dir_all(&directory);
+    }
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -459,6 +555,43 @@ mod tests {
             .contains("TXT"));
         assert!(text_image("中文 English").unwrap().height() > 0);
     }
+    #[test]
+    fn combined_and_separate_outputs_land_atomically() {
+        let dir = tempfile::tempdir().unwrap();
+        let image = dir.path().join("source.png");
+        RgbaImage::from_pixel(4, 3, Rgba([1, 2, 3, 255]))
+            .save(&image)
+            .unwrap();
+        let items = vec![
+            Snapshot::Text("中文 English".into()),
+            Snapshot::Image(image, 4, 3),
+        ];
+        let mut settings = options();
+        settings.mode = Mode::LongPng;
+        let target = dir.path().join("out.png");
+        assert!(
+            write_combined(&items, &settings, &dir.path().join("out.pdf"), FONT)
+                .unwrap_err()
+                .contains(".png")
+        );
+        write_combined(&items, &settings, &target, FONT).unwrap();
+        assert!(image::open(&target).unwrap().width() > 0);
+        // 只留下目标文件与原素材，没有残留的临时文件。
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 2);
+
+        let out = dir.path().join("batch");
+        fs::create_dir(&out).unwrap();
+        fs::create_dir(out.join("SnapDesk-1")).unwrap();
+        let written = write_separate(&items, &out, "1").unwrap();
+        assert_eq!(written[0], out.join("SnapDesk-1-2").join("001.txt"));
+        assert_eq!(fs::read_to_string(&written[0]).unwrap(), "中文 English");
+        assert_eq!(written[1].file_name().unwrap(), "002.png");
+        // 素材缺失时整个新批次目录被删除。
+        let missing = vec![Snapshot::Image(dir.path().join("missing.png"), 1, 1)];
+        assert!(write_separate(&missing, &out, "2").is_err());
+        assert!(!out.join("SnapDesk-2").exists());
+    }
+
     #[test]
     fn rejects_unbounded_and_duplicate_requests() {
         let mut value = Options {
