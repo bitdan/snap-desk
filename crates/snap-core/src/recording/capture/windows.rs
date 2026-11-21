@@ -98,11 +98,26 @@ pub fn source_dimensions(source: NativeSource) -> Result<(u32, u32), String> {
 struct Runtime(PhantomData<Rc<()>>);
 impl Runtime {
     fn new() -> Result<Self, String> {
+        keep_multithreaded_apartment();
         unsafe {
             RoInitialize(RO_INIT_MULTITHREADED).map_err(error)?;
         }
         Ok(Self(PhantomData))
     }
+}
+
+/// windows-rs 在进程级缓存 WinRT 激活工厂；最后一个 MTA 线程 RoUninitialize 后套间被拆除，
+/// 缓存的工厂指针随之失效，下一次调用（如另一线程上的 `IsSupported`）会访问违例。
+/// Tauri 进程里 WebView2 等线程一直持有 MTA，没有暴露该问题；GPUI 与测试进程没有，
+/// 因此首次使用时让 MTA 在进程内常驻（只增加一次引用，不随录屏结束释放）。
+fn keep_multithreaded_apartment() {
+    static KEEP: std::sync::Once = std::sync::Once::new();
+    KEEP.call_once(|| {
+        // SAFETY: 只增加进程 MTA 引用计数，返回的 cookie 有意不释放。
+        if let Err(e) = unsafe { windows::Win32::System::Com::CoIncrementMTAUsage() } {
+            log::warn!("event=recording.mta_keep_failed module=recording error={e}");
+        }
+    });
 }
 impl Drop for Runtime {
     fn drop(&mut self) {

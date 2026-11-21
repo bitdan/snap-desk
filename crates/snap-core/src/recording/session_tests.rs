@@ -207,3 +207,75 @@ fn control_pauses_resumes_and_closes_completed_sessions() {
         .control(Some(1), RecordingAction::Resume, |_| Ok(()))
         .is_err());
 }
+
+/// 端到端：不经任何界面外壳，用测试 Host 录制主屏左上角 1.5 秒并发布 MP4。
+/// 需要真实桌面与编码器，默认忽略：`cargo test -p snap-core recording_pipeline -- --ignored`。
+/// 成品写在临时目录，测试结束即删除。
+#[test]
+#[ignore]
+fn recording_pipeline_publishes_video_without_ui_shell() {
+    struct TestHost(RecordingState, crate::settings::RecordingExportSettings);
+    impl Host for TestHost {
+        fn state(&self) -> &RecordingState {
+            &self.0
+        }
+        fn screen_changed(&self) -> Result<bool, String> {
+            Ok(false)
+        }
+        fn export_settings(&self) -> Result<crate::settings::RecordingExportSettings, String> {
+            Ok(self.1.clone())
+        }
+        fn changed(&self) {}
+        fn finished(&self, _: u64, _: &str) {}
+    }
+    let root = tempfile::tempdir().unwrap();
+    let region = crate::capture::Rect { x: 0, y: 0, width: 320, height: 240 };
+    let mut config = RecorderConfig::for_region(region);
+    config.source = CaptureSource::SelectedMonitor;
+    config.fps = 30;
+    #[cfg(windows)]
+    let _dpi = crate::capture::PhysicalDpi::enter().unwrap();
+    let monitor = xcap::Monitor::all()
+        .unwrap()
+        .into_iter()
+        .find(|m| m.is_primary().unwrap_or(false))
+        .unwrap();
+    let (x, y) = (monitor.x().unwrap(), monitor.y().unwrap());
+    let size = (monitor.width().unwrap(), monitor.height().unwrap());
+    capture::supported().unwrap();
+    let (kind, encoding, fallback) = encoder::probe(
+        root.path(), 320, 240, 30, config.target_bitrate(), config.encoding, config.format, false,
+    )
+    .unwrap();
+    config.encoding = encoding;
+    let queue = Arc::new(stats::QueueGauge::default());
+    let pool = frame::FramePool::new(QUEUE_CAPACITY + 2);
+    let host = Arc::new(TestHost(RecordingState::default(), Default::default()));
+    *host.0 .0.lock().unwrap() = Some(Session::prepared(7, &config, kind, fallback, queue.clone()));
+    let worker_host = host.clone();
+    let directory = root.path().to_owned();
+    let worker = std::thread::spawn(move || {
+        let backend = capture::prepare(
+            &config,
+            size,
+            capture::NativeSource::Monitor { x, y },
+            pool.clone(),
+        )
+        .unwrap();
+        collect(worker_host, 7, config, (x, y), directory, backend, None, queue, pool);
+    });
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(
+        host.0.control(Some(7), RecordingAction::Start, |_| Ok(())).unwrap(),
+        ControlOutcome::Started
+    );
+    std::thread::sleep(Duration::from_millis(1500));
+    assert!(host.0.request_stop(false));
+    worker.join().unwrap();
+    let view = host.0.current().unwrap().unwrap();
+    assert_eq!(view.phase, Phase::Completed, "{}", view.message);
+    let path = std::path::PathBuf::from(view.path.unwrap());
+    assert!(path.starts_with(root.path()));
+    assert!(std::fs::metadata(&path).unwrap().len() > 1000);
+    assert!(view.frames > 0);
+}
