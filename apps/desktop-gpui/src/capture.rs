@@ -79,6 +79,10 @@ pub struct Session {
     layout_key: String,
     /// 由“截图识字”快捷键发起：框选完成后直接识别，不执行“截图后动作”。
     purpose: Option<RecognitionMode>,
+    /// 录屏框选：工具栏换成录制选项与“开始录屏”，框选完成不执行“截图后动作”。
+    recording: bool,
+    /// 录制偏好（格式、帧率、倒计时、光标、键鼠、声音），修改即保存。
+    record: snap_core::recording::preferences::Preferences,
 }
 
 impl Session {
@@ -261,8 +265,22 @@ pub fn active(cx: &App) -> bool {
 
 /// 开始截图。`delay` 用于等托盘菜单等短暂界面消失；设置中的截图延时显示倒计时，期间可取消。
 pub fn start(cx: &mut App, settings: &Settings, delay: Duration, purpose: Option<RecognitionMode>) {
+    begin(cx, settings, delay, purpose, false);
+}
+
+/// 录屏框选：与截图共用浮层，确认后交给 `recording`（不使用截图延时，也不预选上次选区）。
+pub fn start_recording(cx: &mut App, settings: &Settings) {
+    begin(cx, settings, Duration::ZERO, None, true);
+}
+
+fn begin(cx: &mut App, settings: &Settings, delay: Duration, purpose: Option<RecognitionMode>, recording: bool) {
     if active(cx) {
         log::info!("event=gpui.capture_ignored reason=active");
+        return;
+    }
+    // 录屏占用屏幕期间不截图（与 Tauri 版一致）；录屏快捷键另行处理停止。
+    if crate::recording::active(cx) {
+        log::info!("event=gpui.capture_ignored reason=recording");
         return;
     }
     cx.default_global::<CaptureState>().starting = true;
@@ -338,11 +356,13 @@ pub fn start(cx: &mut App, settings: &Settings, delay: Duration, purpose: Option
                         recent: None,
                         layout_key: String::new(),
                         purpose,
+                        recording,
+                        record: crate::recording::preferences(),
                     });
                     session.update(cx, |s, _| {
                         s.layout_key = recent::layout_key(&s.displays);
                         s.recent = recent::default_path().and_then(|path| recent::load(&path));
-                        if reuse_last && purpose.is_none() {
+                        if reuse_last && purpose.is_none() && !recording {
                             s.selection = recent::restore(s.recent.as_ref(), s.image.width(), s.image.height(), &s.layout_key);
                         }
                     });
@@ -429,6 +449,16 @@ fn open_overlays(cx: &mut App, session: &Entity<Session>) {
     session.update(cx, |s, _| s.windows = handles);
 }
 
+/// 截图显示器对应的 GPUI 显示器（录屏红框与控制条定位）。
+pub fn matched_display(cx: &App, display: &Display) -> Option<std::rc::Rc<dyn PlatformDisplay>> {
+    let scale = display.scale as f32;
+    let logical = Bounds::new(
+        point(px(display.x as f32 / scale), px(display.y as f32 / scale)),
+        size(px(display.width as f32 / scale), px(display.height as f32 / scale)),
+    );
+    match_display(&cx.displays(), logical).cloned()
+}
+
 /// 按逻辑边界（物理像素 ÷ 该屏缩放）找到对应的 GPUI 显示器。
 fn match_display(
     displays: &[std::rc::Rc<dyn PlatformDisplay>],
@@ -475,6 +505,62 @@ fn finish(cx: &mut App) {
     };
     close_overlays(cx, &session);
     crate::shelf::resume(cx);
+}
+
+/// 截图中按录屏快捷键或点“录屏”：工具栏切换为录制选项。
+pub fn enter_recording(cx: &mut App) {
+    if let Some(session) = current(cx) {
+        session.update(cx, |s, cx| {
+            s.recording = true;
+            s.purpose = None;
+            cx.notify();
+        });
+    }
+}
+
+/// 修改录制偏好并保存。
+fn set_record(session: &Entity<Session>, cx: &mut App, change: impl FnOnce(&mut snap_core::recording::preferences::Preferences)) {
+    session.update(cx, |s, cx| {
+        change(&mut s.record);
+        crate::recording::save_preferences(&s.record);
+        cx.notify();
+    });
+}
+
+/// 开始录屏：后台准备编码器与采集，成功后收起浮层交给录屏控制条（暂存架保持收起，录屏结束再恢复）；
+/// 失败时浮层保留并在工具栏下显示原因。
+fn record(cx: &mut App, _owner: isize) {
+    let Some((session, _, rect, shapes)) = begin_export(cx) else {
+        return;
+    };
+    let request = {
+        let s = session.read(cx);
+        crate::recording::Request {
+            rect,
+            origin: s.origin,
+            displays: s.displays.clone(),
+            shapes,
+            preferences: s.record,
+            language: s.language.clone(),
+        }
+    };
+    cx.spawn(async move |cx| {
+        let prepared = crate::recording::prepare(cx, request).await;
+        cx.update(|cx| match prepared {
+            Ok(prepared) => {
+                if let Some(session) = cx.global_mut::<CaptureState>().session.take() {
+                    close_overlays(cx, &session);
+                }
+                crate::recording::launch(cx, prepared);
+            }
+            Err(error) => session.update(cx, |s, cx| {
+                s.busy = false;
+                s.editor.error = Some(error);
+                cx.notify();
+            }),
+        });
+    })
+    .detach();
 }
 
 pub fn cancel(cx: &mut App) {
@@ -1009,7 +1095,7 @@ impl Overlay {
             }
             s.sync();
             cx.notify();
-            let after = matches!(drag, Some(Drag::Create { .. }))
+            let after = (matches!(drag, Some(Drag::Create { .. })) && !s.recording)
                 .then(|| {
                     s.selection.map(|_| match s.purpose {
                         Some(RecognitionMode::Ocr) => "ocr".to_owned(),
@@ -1151,8 +1237,10 @@ impl Overlay {
         if handled {
             return;
         }
+        let recording = self.session.read(cx).recording;
         match key {
             "escape" => cancel(cx),
+            "enter" if recording => record(cx, 0),
             "enter" => copy(cx, crate::native::hwnd(window)),
             "c" if command => copy(cx, crate::native::hwnd(window)),
             "s" if command => save(cx),
@@ -1284,6 +1372,77 @@ fn export_button(
     button
         .on_click(move |_, window, cx| action(cx, crate::native::hwnd(window)))
         .into_any_element()
+}
+
+/// 录屏框选时工具栏上方的录制选项：格式、帧率、倒计时、光标、键鼠特效、声音。
+fn record_options(
+    session: &Entity<Session>,
+    p: &snap_core::recording::preferences::Preferences,
+    text: &dyn Fn(&'static str) -> String,
+) -> AnyElement {
+    use snap_core::recording::config::OutputFormat;
+    let chip = |id: &'static str, label: String, on: bool, change: Box<dyn Fn(&mut snap_core::recording::preferences::Preferences)>| {
+        let session = session.clone();
+        div()
+            .id(id)
+            .h(px(24.0))
+            .px(px(8.0))
+            .flex()
+            .items_center()
+            .rounded(px(5.0))
+            .text_xs()
+            .cursor_pointer()
+            .text_color(rgb(if on { annotate::ACTIVE_FG } else { annotate::MUTED }))
+            .bg(rgb(if on { annotate::ACTIVE_BG } else { annotate::SURFACE }))
+            .hover(|s| s.text_color(rgb(annotate::TEXT)))
+            .child(label)
+            .on_click(move |_, _, cx| set_record(&session, cx, |p| change(p)))
+            .into_any_element()
+    };
+    let gif = p.format == OutputFormat::Gif;
+    let fps = if gif { [10, 20] } else { [30, 60] };
+    let current_fps = p.fps();
+    let mut row = div()
+        .h(px(annotate::OPTIONS_HEIGHT))
+        .px(px(8.0))
+        .flex()
+        .items_center()
+        .gap(px(4.0))
+        .rounded(px(8.0))
+        .bg(rgb(annotate::SURFACE))
+        .border_1()
+        .border_color(rgb(annotate::BORDER))
+        .child(chip("rec-mp4", "MP4".into(), !gif, Box::new(|p| p.format = OutputFormat::Mp4)))
+        .child(chip("rec-gif", "GIF".into(), gif, Box::new(|p| p.format = OutputFormat::Gif)))
+        .child(annotate::divider());
+    for (index, value) in fps.into_iter().enumerate() {
+        let id = ["rec-fps-low", "rec-fps-high"][index];
+        row = row.child(chip(id, format!("{value} FPS"), current_fps == value, Box::new(move |p| {
+            if p.format == OutputFormat::Gif { p.gif_fps = value } else { p.mp4_fps = value }
+        })));
+    }
+    row = row.child(annotate::divider());
+    for (id, seconds) in [("rec-countdown-0", 0u8), ("rec-countdown-3", 3), ("rec-countdown-5", 5)] {
+        let label = if seconds == 0 { text("立即开始") } else { format!("{seconds}s") };
+        row = row.child(chip(id, label, p.countdown == seconds, Box::new(move |p| p.countdown = seconds)));
+    }
+    let cursor = p.capture_cursor;
+    let effects = p.effects.keyboard || p.effects.clicks;
+    row = row
+        .child(annotate::divider())
+        .child(chip("rec-cursor", text("鼠标指针"), cursor, Box::new(move |p| p.capture_cursor = !cursor)))
+        .child(chip("rec-effects", text("按键与点击"), effects, Box::new(move |p| {
+            p.effects.keyboard = !effects;
+            p.effects.clicks = !effects;
+        })));
+    if p.audio_supported() {
+        let (system, mic) = (p.system_audio, p.microphone);
+        row = row
+            .child(annotate::divider())
+            .child(chip("rec-system-audio", text("系统声音"), system, Box::new(move |p| p.system_audio = !system)))
+            .child(chip("rec-microphone", text("麦克风"), mic, Box::new(move |p| p.microphone = !mic)));
+    }
+    row.into_any_element()
 }
 
 impl Render for Overlay {
@@ -1489,7 +1648,14 @@ impl Render for Overlay {
                 .into_any_element(),
             annotate::divider().into_any_element(),
         ];
-        let trailing = vec![
+        let trailing = if s.recording {
+            vec![
+                export_button("capture-cancel", annotate::icons::CLOSE, s.text("取消"), false, |cx, _| cancel(cx)),
+                export_button("capture-record-start", annotate::icons::VIDEO, s.text("开始录屏"), true, record),
+            ]
+        } else {
+            vec![
+            export_button("capture-record", annotate::icons::VIDEO, s.text("录屏"), false, |cx, _| enter_recording(cx)),
             export_button("capture-ocr", annotate::icons::SCAN_TEXT, s.text("识别文字"), false, |cx, _| recognize(cx, RecognitionMode::Ocr)),
             export_button("capture-translate", annotate::icons::LANGUAGES, s.text("截图翻译"), false, |cx, _| recognize(cx, RecognitionMode::Translate)),
             export_button("capture-qr", annotate::icons::QR_CODE, s.text("识别二维码"), false, |cx, _| recognize(cx, RecognitionMode::Qr)),
@@ -1498,11 +1664,14 @@ impl Render for Overlay {
             export_button("capture-pin", annotate::icons::PIN, s.text("贴图"), false, |cx, _| pin(cx)),
             export_button("capture-save", annotate::icons::SAVE, s.text("保存"), false, |cx, _| save(cx)),
             export_button("capture-copy", annotate::icons::COPY, s.text("复制"), true, copy),
-        ];
+            ]
+        };
         let tools = annotate::tool_row(&props, leading, trailing, &host);
         let options = annotate::options_row(&props, &host);
         let error = s.editor.error.clone();
+        let record_row = s.recording.then(|| record_options(&self.session, &s.record, &text));
         let height = annotate::ROW_HEIGHT
+            + record_row.as_ref().map_or(0.0, |_| annotate::OPTIONS_HEIGHT + 6.0)
             + options.as_ref().map_or(0.0, |_| annotate::OPTIONS_HEIGHT + 6.0)
             + error.as_ref().map_or(0.0, |_| 30.0);
         let right = b.origin.x + b.size.width;
@@ -1528,6 +1697,7 @@ impl Render for Overlay {
             // 工具栏上的按下不能冒泡到浮层，否则会被当作新建选区或绘制。
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
+            .children(record_row)
             .child(tools)
             .children(options)
             .children(error.map(annotate::error_row));

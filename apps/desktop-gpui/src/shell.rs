@@ -312,7 +312,7 @@ pub fn settings(cx: &App) -> Settings {
     cx.global::<Shell>().settings.clone()
 }
 
-/// 托盘、快捷键与命令行共用的动作入口。截图、贴图已接入；录屏等在后续迁移步骤接入，目前只记录触发。
+/// 托盘、快捷键与命令行共用的动作入口。
 pub fn run_action(cx: &mut App, action: ShortcutAction, source: &str) {
     match action {
         ShortcutAction::Capture => {
@@ -369,10 +369,10 @@ pub fn run_action(cx: &mut App, action: ShortcutAction, source: &str) {
             log::info!("event=gpui.action action=history source={source}");
             crate::clipboard::open(cx);
         }
-        _ => log::info!(
-            "event=gpui.action action={} source={source} status=not_implemented",
-            action.id()
-        ),
+        ShortcutAction::Record => {
+            log::info!("event=gpui.action action=record source={source}");
+            crate::recording::shortcut(cx);
+        }
     }
 }
 

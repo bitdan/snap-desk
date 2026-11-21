@@ -137,6 +137,29 @@ pub fn set_topmost(window: &Window, topmost: bool) -> Result<(), String> {
     }
 }
 
+/// 录屏辅助窗口（红框、控制条）不进入屏幕采集画面：Windows 10 2004+ 的 WDA_EXCLUDEFROMCAPTURE。
+/// 其他平台暂未实现（macOS 需在 ScreenCaptureKit 过滤器中排除窗口）。
+pub fn exclude_from_capture(window: &Window) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{SetWindowDisplayAffinity, WDA_EXCLUDEFROMCAPTURE};
+        let hwnd = hwnd(window) as windows_sys::Win32::Foundation::HWND;
+        if hwnd.is_null() {
+            return Err("窗口原生句柄不可用。".into());
+        }
+        // SAFETY: hwnd 来自存活窗口，只修改其显示亲和性。
+        if unsafe { SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE) } == 0 {
+            return Err(format!("无法排除录屏辅助窗口：{}", std::io::Error::last_os_error()));
+        }
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = window;
+        Err("当前平台暂不支持排除录屏辅助窗口。".into())
+    }
+}
+
 /// 临时隐藏或不抢焦点地重新显示窗口（保存/打开对话框期间隐藏置顶贴图）。
 pub fn set_visible(window: &Window, visible: bool) -> Result<(), String> {
     #[cfg(windows)]
