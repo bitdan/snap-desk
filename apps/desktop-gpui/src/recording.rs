@@ -7,7 +7,10 @@
 //!
 //! 4. 托盘退出时先停止并保存录屏，等流水线封装完成再退出（无进展超时规则与 Tauri 版共用 core `recording::exit`）。
 //!
-//! 与 Tauri 版的差异：只录显示器区域（窗口录制未接入）；截图中画好的标注随视频输出，录制中不能再编辑标注；
+//! 选区正好是吸附到的窗口时，可选“整个窗口”：直接采集该窗口表面（跟随窗口移动、不受遮挡），
+//! 控制条放在窗口可见面积最大的显示器上，不画红框。
+//!
+//! 与 Tauri 版的差异：没有来源下拉（窗口只能从吸附选区进入）；截图中画好的标注随视频输出，录制中不能再编辑标注；
 //! 确认选区后直接开始（按偏好倒计时），没有单独的“准备就绪”步骤。
 use gpui_kit::*;
 use snap_core::{
@@ -172,8 +175,18 @@ pub fn save_preferences(preferences: &Preferences) {
 }
 
 /// 截图浮层交给录屏的内容：选区（截图物理像素）、截图原点、显示器布局与已画的标注。
+/// 截图时吸附到的顶层窗口：截图坐标中的边界与原生身份（只在本进程内使用，不写日志）。
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct WindowTarget {
+    pub rect: Rect,
+    pub id: u32,
+    pub pid: u32,
+}
+
 pub struct Request {
     pub rect: Rect,
+    /// 录制整个窗口（选区即该窗口边界）；None 为录制显示器上的选区。
+    pub window: Option<WindowTarget>,
     pub origin: (i32, i32),
     pub displays: Vec<Display>,
     pub shapes: Vec<Annotation>,
@@ -188,15 +201,15 @@ pub struct Prepared {
     region: Rect,
     language: Language,
     go: mpsc::SyncSender<bool>,
+    window: bool,
 }
 
 /// 选区所在显示器与显示器内的局部选区；跨屏选区不支持。
-fn locate(request: &Request) -> Result<(Display, Rect), String> {
-    request
-        .displays
+fn locate(rect: Rect, origin: (i32, i32), displays: &[Display]) -> Result<(Display, Rect), String> {
+    displays
         .iter()
         .find_map(|display| {
-            snap_core::capture::within_display(request.rect, request.origin, display)
+            snap_core::capture::within_display(rect, origin, display)
                 .map(|local| (display.clone(), local))
         })
         .ok_or_else(|| "请选择单个显示器内的区域；跨屏录制与滚动截图暂不支持。".into())
@@ -222,13 +235,39 @@ pub async fn prepare(cx: &mut AsyncApp, request: Request) -> Result<Prepared, St
     if cx.update(|cx| cx.try_global::<Recorder>().is_some_and(|r| r.quitting)) {
         return Err("程序正在退出，不能启动录屏。".into());
     }
-    let (display, local) = locate(&request)?;
-    let mut config = RecorderConfig::for_region(local);
-    config.source = CaptureSource::SelectedMonitor;
+    // 窗口录制：控制条按窗口可见面积最大的显示器放置（该交集只用于布局，视频取整个窗口表面）。
+    let placement = match request.window {
+        Some(window) => {
+            snap_core::capture::display_intersection(window.rect, request.origin, &request.displays)
+                .ok_or("窗口没有可见的显示器区域，请重新选择。")?
+        }
+        None => request.rect,
+    };
+    let (display, local) = locate(placement, request.origin, &request.displays)?;
+    let native = match request.window {
+        Some(window) => source::NativeSource::Window { id: window.id, pid: window.pid },
+        None => source::NativeSource::Monitor { x: display.x, y: display.y },
+    };
+    // 编码器、区域复制和帧池均使用采集表面的实际尺寸（窗口最小化或已关闭时在这里报错）。
+    let (source_size, region) = match request.window {
+        Some(_) => {
+            let size = cx
+                .background_executor()
+                .spawn(async move { source::source_dimensions(native) })
+                .await?;
+            (size, Rect { x: 0, y: 0, width: size.0, height: size.1 })
+        }
+        None => ((display.width, display.height), local),
+    };
+    let mut config = RecorderConfig::for_region(region);
+    config.source = if request.window.is_some() {
+        CaptureSource::SelectedWindow
+    } else {
+        CaptureSource::SelectedMonitor
+    };
     // GPUI 版没有主界面需要收起。
     config.hide_main_window = false;
     request.preferences.apply(&mut config);
-    let source_size = (display.width, display.height);
     config.validate(source_size)?;
     // 截图中的标注使用截图坐标；录制层以选区左上角为原点。
     let layer = if request.shapes.is_empty() {
@@ -239,8 +278,8 @@ pub async fn prepare(cx: &mut AsyncApp, request: Request) -> Result<Prepared, St
             y: f64::from(request.rect.y),
         };
         let shapes =
-            annotation_layer::region_shapes(request.shapes, origin, local.width, local.height)?;
-        let (layer, _, _) = annotation_layer::initial_layer(&shapes, local.width, local.height)?;
+            annotation_layer::region_shapes(request.shapes, origin, region.width, region.height)?;
+        let (layer, _, _) = annotation_layer::initial_layer(&shapes, region.width, region.height)?;
         Some(Arc::new(layer))
     };
     let export = cx.update(|cx| crate::shell::settings(cx).recording_export);
@@ -292,17 +331,13 @@ pub async fn prepare(cx: &mut AsyncApp, request: Request) -> Result<Prepared, St
     let (ready_tx, ready_rx) = mpsc::sync_channel::<Result<(), String>>(1);
     let (go_tx, go_rx) = mpsc::sync_channel::<bool>(1);
     let origin = (display.x, display.y);
-    let monitor = source::NativeSource::Monitor {
-        x: display.x,
-        y: display.y,
-    };
     let audio_state = state.clone();
     let worker = std::thread::Builder::new()
         .name("screen-recording".into())
         .spawn(move || {
             // 采集后端必须在所属线程初始化/释放；握手成功后等待开始信号。
             let prepared =
-                source::prepare(&config, source_size, monitor, pool.clone()).and_then(|backend| {
+                source::prepare(&config, source_size, native, pool.clone()).and_then(|backend| {
                     let audio = if config.system_audio || config.microphone {
                         // 设备在此初始化，只在 Recording 阶段启动。
                         Some(audio::Worker::start(
@@ -360,6 +395,7 @@ pub async fn prepare(cx: &mut AsyncApp, request: Request) -> Result<Prepared, St
         region: local,
         language: request.language,
         go: go_tx,
+        window: request.window.is_some(),
     })
 }
 
@@ -371,6 +407,7 @@ pub fn launch(cx: &mut App, prepared: Prepared) {
         region,
         language,
         go,
+        window,
     } = prepared;
     let recorder = cx.default_global::<Recorder>();
     let state = recorder.state.clone();
@@ -385,7 +422,8 @@ pub fn launch(cx: &mut App, prepared: Prepared) {
         return;
     }
     let logical = logical_region(cx, &display, region);
-    let border = open_border(cx, logical);
+    // 窗口录制跟随窗口移动，固定位置的红框会误导，不显示（Windows 采集本身会给窗口加系统边框）。
+    let border = if window { None } else { open_border(cx, logical) };
     let controls = open_controls(cx, &display, logical, id, state.clone(), language);
     let recorder = cx.global_mut::<Recorder>();
     recorder.border = border;
@@ -923,9 +961,7 @@ impl Host for GpuiHost {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        bar_bounds, clock, locate, Display, Language, Preferences, Rect, Request, BAR_HEIGHT,
-    };
+    use super::{bar_bounds, clock, locate, Display, Rect, BAR_HEIGHT};
     use gpui_kit::{point, px, size, Bounds};
 
     #[test]
@@ -964,28 +1000,10 @@ mod tests {
             primary: x == 0,
             scale: 1.0,
         };
-        let request = |rect: Rect| Request {
-            rect,
-            origin: (-1920, 0),
-            displays: vec![display(-1920), display(0)],
-            shapes: Vec::new(),
-            preferences: Preferences::default(),
-            language: Language::default(),
-        };
-        let (screen, local) = locate(&request(Rect {
-            x: 2000,
-            y: 10,
-            width: 100,
-            height: 50,
-        }))
-        .unwrap();
+        let displays = vec![display(-1920), display(0)];
+        let rect = |x: u32| Rect { x, y: 10, width: 100, height: 50 };
+        let (screen, local) = locate(rect(2000), (-1920, 0), &displays).unwrap();
         assert_eq!((screen.x, local.x, local.y), (0, 80, 10));
-        assert!(locate(&request(Rect {
-            x: 1900,
-            y: 10,
-            width: 100,
-            height: 50
-        }))
-        .is_err());
+        assert!(locate(rect(1900), (-1920, 0), &displays).is_err());
     }
 }

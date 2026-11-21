@@ -83,6 +83,21 @@ pub struct Session {
     recording: bool,
     /// 录制偏好（格式、帧率、倒计时、光标、键鼠、声音），修改即保存。
     record: snap_core::recording::preferences::Preferences,
+    /// 截图时的顶层窗口（录屏“整个窗口”来源）；选区与其边界一致时可选。
+    window_targets: Vec<crate::recording::WindowTarget>,
+    /// 本次录屏选择录制整个窗口（不保存为偏好，与 Tauri 版来源选择一致）。
+    record_window: bool,
+}
+
+impl Session {
+    /// 选区正好是某个顶层窗口时返回该窗口。
+    fn selected_window(&self) -> Option<crate::recording::WindowTarget> {
+        let selection = self.selection?;
+        self.window_targets
+            .iter()
+            .find(|w| snap_core::capture::same_bounds(w.rect, selection))
+            .copied()
+    }
 }
 
 impl Session {
@@ -199,6 +214,7 @@ struct Grabbed {
     origin: (i32, i32),
     displays: Vec<Display>,
     targets: Vec<Rect>,
+    windows: Vec<crate::recording::WindowTarget>,
     /// Windows：UI Automation 控件候选在浮层显示后再后台补充（控件枚举占拍屏耗时大半）。
     deferred: Option<Deferred>,
 }
@@ -212,12 +228,26 @@ fn snap_rects(targets: &[snap_core::capture::Target]) -> Vec<Rect> {
     targets.iter().filter(|target| !target.recording_only).map(|target| target.rect).collect()
 }
 
+/// 可吸附的顶层窗口及其原生身份（录屏“整个窗口”来源）；读取失败的窗口跳过。
+fn window_targets(desktop: &snap_core::capture::Desktop) -> Vec<crate::recording::WindowTarget> {
+    desktop
+        .targets
+        .iter()
+        .filter(|t| t.kind == "window" && !t.recording_only)
+        .filter_map(|t| {
+            let native = desktop.windows.get(t.window_index)?;
+            Some(crate::recording::WindowTarget { rect: t.rect, id: native.id().ok()?, pid: native.pid().ok()? })
+        })
+        .collect()
+}
+
 fn grab(include_cursor: bool, snap: bool) -> Result<Grabbed, String> {
     #[cfg(windows)]
     let (desktop, deferred) = snap_core::capture::capture_deferred(false, include_cursor, snap)?;
     #[cfg(not(windows))]
     let (desktop, deferred) = (snap_core::capture::capture(false, include_cursor, snap)?, None);
     Ok(Grabbed {
+        windows: window_targets(&desktop),
         targets: snap_rects(&desktop.targets),
         image: desktop.image,
         origin: (desktop.x, desktop.y),
@@ -358,6 +388,8 @@ fn begin(cx: &mut App, settings: &Settings, delay: Duration, purpose: Option<Rec
                         purpose,
                         recording,
                         record: crate::recording::preferences(),
+                        window_targets: grabbed.windows,
+                        record_window: false,
                     });
                     session.update(cx, |s, _| {
                         s.layout_key = recent::layout_key(&s.displays);
@@ -539,6 +571,7 @@ fn record(cx: &mut App, _owner: isize) {
             rect,
             origin: s.origin,
             displays: s.displays.clone(),
+            window: s.record_window.then(|| s.selected_window()).flatten(),
             shapes,
             preferences: s.record,
             language: s.language.clone(),
@@ -1378,6 +1411,7 @@ fn export_button(
 fn record_options(
     session: &Entity<Session>,
     p: &snap_core::recording::preferences::Preferences,
+    window: Option<bool>,
     text: &dyn Fn(&'static str) -> String,
 ) -> AnyElement {
     use snap_core::recording::config::OutputFormat;
@@ -1412,6 +1446,30 @@ fn record_options(
         .bg(rgb(annotate::SURFACE))
         .border_1()
         .border_color(rgb(annotate::BORDER))
+        .children(window.map(|on| {
+            // 选区正好是吸附到的窗口：可改为录制整个窗口（跟随窗口移动）。
+            let session = session.clone();
+            div()
+                .id("rec-window")
+                .h(px(24.0))
+                .px(px(8.0))
+                .flex()
+                .items_center()
+                .rounded(px(5.0))
+                .text_xs()
+                .cursor_pointer()
+                .text_color(rgb(if on { annotate::ACTIVE_FG } else { annotate::MUTED }))
+                .bg(rgb(if on { annotate::ACTIVE_BG } else { annotate::SURFACE }))
+                .hover(|s| s.text_color(rgb(annotate::TEXT)))
+                .child(text("整个窗口"))
+                .on_click(move |_, _, cx| {
+                    session.update(cx, |s, cx| {
+                        s.record_window = !s.record_window;
+                        cx.notify();
+                    })
+                })
+        }))
+        .children(window.map(|_| annotate::divider()))
         .child(chip("rec-mp4", "MP4".into(), !gif, Box::new(|p| p.format = OutputFormat::Mp4)))
         .child(chip("rec-gif", "GIF".into(), gif, Box::new(|p| p.format = OutputFormat::Gif)))
         .child(annotate::divider());
@@ -1669,7 +1727,8 @@ impl Render for Overlay {
         let tools = annotate::tool_row(&props, leading, trailing, &host);
         let options = annotate::options_row(&props, &host);
         let error = s.editor.error.clone();
-        let record_row = s.recording.then(|| record_options(&self.session, &s.record, &text));
+        let window_choice = s.selected_window().map(|_| s.record_window);
+        let record_row = s.recording.then(|| record_options(&self.session, &s.record, window_choice, &text));
         let height = annotate::ROW_HEIGHT
             + record_row.as_ref().map_or(0.0, |_| annotate::OPTIONS_HEIGHT + 6.0)
             + options.as_ref().map_or(0.0, |_| annotate::OPTIONS_HEIGHT + 6.0)
