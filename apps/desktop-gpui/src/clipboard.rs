@@ -7,7 +7,8 @@
 //! 窗口（对照 Vue 版 `ClipboardHistory.vue`）：搜索、分类（全部/文本/链接/颜色/文件路径/图片/文件/收藏）、
 //! 分页加载、键盘导航；回车/双击按设置“唤出后直接粘贴”粘贴到唤出前的窗口（否则只复制），
 //! Ctrl+1～9 取第 N 条；每条可复制、贴图、收藏、删除；清空（默认保留收藏，二次确认）；
-//! “固定”时粘贴后不收起。未接入：多选合并复制、导出（PDF/长图）、拖出、预览窗口、分类排序。
+//! “固定”时粘贴后不收起。单击选中、Ctrl/⌘ 多选、Shift 连选（按选择顺序，最多 100 条）；
+//! 多选后回车或 Ctrl+C 按 core `service::combine` 合并（文本逐行拼接，图片/文件合成文件列表）。
 use crate::annotate;
 use futures::{channel::mpsc, StreamExt};
 use gpui_kit::{
@@ -19,7 +20,7 @@ use snap_core::clipboard::{
     classification,
     model::{ClipboardSettings, Item, Kind, Query, TextCategory},
     platform,
-    service::{self, Content, Event, Service},
+    service::{self, Content, Event, Service, MAX_SELECTION},
 };
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
@@ -194,6 +195,45 @@ fn ago(millis: i64, text: &dyn Fn(&'static str) -> String) -> String {
     }
 }
 
+/// 选择规则（与前端 `selectClipboardItems` 一致）：普通单击替换为单选；`toggle`（Ctrl/⌘）保留顺序增删；
+/// `range`（Shift）按当前列表从锚点连选，同时按 Ctrl 时并入原选择。最多 [`MAX_SELECTION`] 条。
+fn select_items(ids: &[i64], id: i64, ordered: &[i64], anchor: Option<i64>, toggle: bool, range: bool) -> Vec<i64> {
+    let position = |value: i64| ordered.iter().position(|v| *v == value);
+    if range {
+        if let (Some(start), Some(end)) = (anchor.and_then(position), position(id)) {
+            let mut result: Vec<i64> = if toggle { ids.to_vec() } else { Vec::new() };
+            for value in &ordered[start.min(end)..=start.max(end)] {
+                if !result.contains(value) {
+                    result.push(*value);
+                }
+            }
+            result.truncate(MAX_SELECTION);
+            return result;
+        }
+    }
+    if !toggle {
+        return vec![id];
+    }
+    if ids.contains(&id) {
+        ids.iter().copied().filter(|v| *v != id).collect()
+    } else if ids.len() < MAX_SELECTION {
+        ids.iter().copied().chain([id]).collect()
+    } else {
+        ids.to_vec()
+    }
+}
+
+/// 所选条目能否一起复制：文本不能与图片/文件混选（core 合并时同样拒绝），按钮提前说明。
+fn can_combine(kinds: &[Kind]) -> bool {
+    !kinds.is_empty() && (kinds.iter().all(|k| *k == Kind::Text) || kinds.iter().all(|k| *k != Kind::Text))
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Confirm {
+    Clear,
+    Delete,
+}
+
 /// 颜色文本的色块（#RGB/#RRGGBB 等，经 core 的贴图拖出规范化为 HEX）。
 fn swatch(text: &str) -> Option<u32> {
     let hex = snap_core::pins::text::drag_text(text.trim());
@@ -209,7 +249,13 @@ struct HistoryView {
     category: Category,
     items: Vec<Item>,
     next_cursor: Option<String>,
+    /// 键盘焦点所在行（浏览不改变多选）。
     selected: usize,
+    /// 多选的条目 ID，按选择顺序（即合并与导出顺序）。
+    picked: Vec<i64>,
+    /// 所选条目的快照：后台刷新把条目挤出当前页时仍能判断类型。
+    picked_items: HashMap<i64, Item>,
+    anchor: Option<i64>,
     loading: bool,
     /// 每次查询递增，丢弃过期结果。
     generation: u64,
@@ -218,7 +264,7 @@ struct HistoryView {
     error: Option<String>,
     message: Option<String>,
     keep_open: bool,
-    confirm_clear: bool,
+    confirm: Option<Confirm>,
     focus: FocusHandle,
     _search: Subscription,
 }
@@ -230,6 +276,7 @@ impl HistoryView {
         let search = cx.new(|cx| InputState::new(window, cx).placeholder(placeholder));
         let subscription = cx.subscribe_in(&search, window, |this: &mut Self, _, event: &InputEvent, _, cx| {
             if matches!(event, InputEvent::Change) {
+                this.clear_selection();
                 this.reload(cx);
             }
         });
@@ -243,6 +290,9 @@ impl HistoryView {
             items: Vec::new(),
             next_cursor: None,
             selected: 0,
+            picked: Vec::new(),
+            picked_items: HashMap::new(),
+            anchor: None,
             loading: false,
             generation: 0,
             thumbs: HashMap::new(),
@@ -250,7 +300,7 @@ impl HistoryView {
             error: None,
             message: None,
             keep_open: false,
-            confirm_clear: false,
+            confirm: None,
             focus: cx.focus_handle(),
             _search: subscription,
         };
@@ -306,6 +356,12 @@ impl HistoryView {
                             view.items = page.items;
                             view.selected = view.selected.min(view.items.len().saturating_sub(1));
                         }
+                        // 同一条目以新数据为准（收藏状态等）；不在当前页的所选条目保留旧快照。
+                        for item in &view.items {
+                            if let Some(picked) = view.picked_items.get_mut(&item.id) {
+                                *picked = item.clone();
+                            }
+                        }
                         view.next_cursor = page.next_cursor;
                     }
                     Err(error) => view.error = Some(error),
@@ -319,6 +375,7 @@ impl HistoryView {
     fn set_category(&mut self, category: Category, cx: &mut Context<Self>) {
         self.category = category;
         self.selected = 0;
+        self.clear_selection();
         self.reload(cx);
     }
 
@@ -336,20 +393,70 @@ impl HistoryView {
         self.service.mark_restored(content)
     }
 
-    fn content(&self, id: i64) -> Result<Content, String> {
-        self.service.contents(&[id]).map(|mut c| c.remove(0))
+    /// 按选择顺序读取并合并：一条原样写回；多条交给 core `combine`（图片写成临时 PNG 作为文件引用）。
+    fn combined(&self, ids: &[i64]) -> Result<Content, String> {
+        let contents = self.service.contents(ids)?;
+        service::combine(contents, snap_core::drag::image_file)
+    }
+
+    fn clear_selection(&mut self) {
+        self.picked.clear();
+        self.picked_items.clear();
+        self.anchor = None;
+    }
+
+    fn pick(&mut self, index: usize, toggle: bool, range: bool) {
+        let Some(item) = self.items.get(index).cloned() else {
+            return;
+        };
+        let ordered: Vec<i64> = self.items.iter().map(|i| i.id).collect();
+        self.picked = select_items(&self.picked, item.id, &ordered, self.anchor, toggle, range);
+        if !range {
+            self.anchor = Some(item.id);
+        }
+        let previous = std::mem::take(&mut self.picked_items);
+        let items = &self.items;
+        self.picked_items = self
+            .picked
+            .iter()
+            .filter_map(|id| {
+                let item = items.iter().find(|i| i.id == *id).cloned().or_else(|| previous.get(id).cloned())?;
+                Some((*id, item))
+            })
+            .collect();
+    }
+
+    fn picked_kinds(&self) -> Vec<Kind> {
+        self.picked.iter().filter_map(|id| self.picked_items.get(id).map(|i| i.kind)).collect()
+    }
+
+    /// 回车、双击：焦点条目在多选之中时作用于整组，否则只取这一条。
+    fn group_for(&self, index: usize) -> Vec<i64> {
+        let Some(id) = self.items.get(index).map(|i| i.id) else {
+            return Vec::new();
+        };
+        if self.picked.len() > 1 && self.picked.contains(&id) { self.picked.clone() } else { vec![id] }
     }
 
     /// 复制所选条目；`paste` 时交还唤出前的窗口并发送粘贴键。
     fn activate(&mut self, index: usize, paste: bool, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(item) = self.items.get(index).cloned() else {
+        let ids = self.group_for(index);
+        self.activate_ids(ids, paste, window, cx);
+    }
+
+    fn activate_ids(&mut self, ids: Vec<i64>, paste: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if ids.is_empty() {
             return;
-        };
-        let result = self.content(item.id).and_then(|content| self.write_back(&content, window, cx));
+        }
+        let result = self.combined(&ids).and_then(|content| self.write_back(&content, window, cx));
         if let Err(error) = result {
             self.error = Some(error);
             cx.notify();
             return;
+        }
+        if ids.len() > 1 && paste && !self.keep_open {
+            // 收起时清除选择，下次唤出回到最新记录。
+            self.clear_selection();
         }
         let target = cx.try_global::<History>().map_or(0, |h| h.target);
         if paste && target != 0 {
@@ -365,7 +472,7 @@ impl HistoryView {
             if let Err(error) = platform::send_paste(target) {
                 log::warn!("event=gpui.clipboard_paste_failed message={error}");
             }
-            log::info!("event=gpui.clipboard_pasted");
+            log::info!("event=gpui.clipboard_pasted count={}", ids.len());
             return;
         }
         self.message = Some(self.t("已复制"));
@@ -377,6 +484,41 @@ impl HistoryView {
         cx.notify();
     }
 
+    /// 底栏“贴图”：逐条创建贴图，失败时说明已创建几张。
+    fn pin_picked(&mut self, cx: &mut Context<Self>) {
+        let ids = self.picked.clone();
+        let service = self.service.clone();
+        let created = self.t("已创建贴图");
+        cx.spawn(async move |this, cx| {
+            let mut done = 0;
+            let mut failure = None;
+            for id in ids {
+                let service = service.clone();
+                let prepared = cx.background_executor().spawn(async move { prepare_pin(&service, id) }).await;
+                let result = cx.update(|cx| {
+                    prepared.and_then(|(image, drag)| {
+                        crate::pins::create(cx, image, Vec::new(), crate::pins::Placement::Centered, drag)
+                    })
+                });
+                match result {
+                    Ok(()) => done += 1,
+                    Err(error) => {
+                        failure = Some(error);
+                        break;
+                    }
+                }
+            }
+            let _ = this.update(cx, |view, cx| {
+                match failure {
+                    Some(error) => view.error = Some(format!("{created} {done}；{error}")),
+                    None => view.message = Some(format!("{created} {done}")),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     fn pin(&mut self, index: usize, cx: &mut Context<Self>) {
         let Some(item) = self.items.get(index).cloned() else {
             return;
@@ -385,14 +527,7 @@ impl HistoryView {
         cx.spawn(async move |this, cx| {
             let prepared = cx
                 .background_executor()
-                .spawn(async move {
-                    let content = service.contents(&[item.id])?.remove(0);
-                    match content {
-                        Content::Image(image) => Ok((image, None)),
-                        Content::Text(text) => text_pin(&text),
-                        Content::Files(paths) => text_pin(&paths.join("\n")),
-                    }
-                })
+                .spawn(async move { prepare_pin(&service, item.id) })
                 .await;
             let result = cx.update(|cx| {
                 prepared.and_then(|(image, drag)| {
@@ -422,8 +557,10 @@ impl HistoryView {
         let key = keystroke.key.as_str();
         match key {
             "escape" => {
-                if self.confirm_clear {
-                    self.confirm_clear = false;
+                if self.confirm.is_some() {
+                    self.confirm = None;
+                } else if !self.picked.is_empty() {
+                    self.clear_selection();
                 } else if !self.search.read(cx).value().is_empty() {
                     self.search.update(cx, |state, cx| state.set_value("", window, cx));
                 } else {
@@ -437,15 +574,21 @@ impl HistoryView {
             "c" if command && !self.search.read(cx).focus_handle(cx).is_focused(window) => {
                 self.activate(self.selected, false, window, cx)
             }
+            "space" if !self.search.read(cx).focus_handle(cx).is_focused(window) => self.pick(self.selected, true, false),
             "delete" if !self.search.read(cx).focus_handle(cx).is_focused(window) => {
-                if let Some(id) = self.items.get(self.selected).map(|i| i.id) {
+                if self.group_for(self.selected).len() > 1 {
+                    self.confirm = Some(Confirm::Delete);
+                } else if let Some(id) = self.items.get(self.selected).map(|i| i.id) {
                     let result = self.service.delete(&[id]);
                     self.run(result, cx);
                 }
             }
             digit if command && digit.len() == 1 && ('1'..='9').contains(&digit.chars().next().unwrap_or('0')) => {
+                // Ctrl/⌘+1～9 始终只取第 N 条，不作用于多选。
                 let index = digit.parse::<usize>().unwrap_or(1) - 1;
-                self.activate(index, self.paste_on_activate, window, cx);
+                if let Some(id) = self.items.get(index).map(|i| i.id) {
+                    self.activate_ids(vec![id], self.paste_on_activate, window, cx);
+                }
             }
             _ => return,
         }
@@ -494,6 +637,15 @@ impl HistoryView {
             .cursor_pointer()
             .hover(|s| s.bg(rgb(annotate::HOVER)).text_color(rgb(annotate::TEXT)))
             .child(label)
+    }
+}
+
+/// 读取一条历史并准备贴图画面：图片原样，文字与文件路径排版成图片。
+fn prepare_pin(service: &Service, id: i64) -> Result<(RgbaImage, Option<String>), String> {
+    match service.contents(&[id])?.remove(0) {
+        Content::Image(image) => Ok((image, None)),
+        Content::Text(text) => text_pin(&text),
+        Content::Files(paths) => text_pin(&paths.join("\n")),
     }
 }
 
@@ -554,6 +706,7 @@ impl Render for HistoryView {
         let items = self.items.clone();
         for (index, item) in items.iter().enumerate() {
             let selected = index == self.selected;
+            let picked = self.picked.contains(&item.id);
             let leading: AnyElement = match item.kind {
                 Kind::Image => match self.thumbnail(item.id, cx) {
                     Some(thumb) => img(thumb).size(px(44.0)).object_fit(ObjectFit::Contain).into_any_element(),
@@ -594,12 +747,17 @@ impl Render for HistoryView {
                     .gap(px(8.0))
                     .rounded(px(6.0))
                     .cursor_pointer()
-                    .bg(rgb(if selected { annotate::ACTIVE_BG } else { 0x181b20 }))
+                    .bg(rgb(if picked { annotate::ACTIVE_BG } else if selected { 0x232830 } else { 0x181b20 }))
+                    .border_1()
+                    .border_color(rgb(if selected { annotate::BORDER } else { 0x181b20 }))
                     .hover(|s| s.bg(rgb(annotate::HOVER)))
                     .on_click(cx.listener(move |view, event: &ClickEvent, window, cx| {
                         view.selected = index;
                         if event.click_count() >= 2 {
                             view.activate(index, view.paste_on_activate, window, cx);
+                        } else {
+                            let modifiers = event.modifiers();
+                            view.pick(index, modifiers.control || modifiers.platform, modifiers.shift);
                         }
                         cx.notify();
                     }))
@@ -635,6 +793,8 @@ impl Render for HistoryView {
                             .child(self.small_button(("clipboard-delete", index), text("删除")).on_click(cx.listener(move |view, _: &ClickEvent, _, cx| {
                                 cx.stop_propagation();
                                 let result = view.service.delete(&[id]);
+                                view.picked.retain(|v| *v != id);
+                                view.picked_items.remove(&id);
                                 view.run(result, cx);
                             }))),
                     ),
@@ -647,37 +807,79 @@ impl Render for HistoryView {
             })));
         }
         let status = self.service.status();
+        let picked = self.picked.len();
+        let summary = if picked > 0 {
+            format!("{} {picked}", text("已选"))
+        } else {
+            format!(
+                "{} {} · {:.1} MiB · {}",
+                text("共"),
+                status.count,
+                status.byte_size as f64 / 1_048_576.0,
+                text(if status.enabled { "记录中" } else { "未记录（可在设置中开启）" })
+            )
+        };
+        let actions = match self.confirm {
+            Some(confirm) => {
+                let label = match confirm {
+                    Confirm::Clear => text("确认清空（保留收藏）"),
+                    Confirm::Delete => format!("{} {picked}", text("确认删除所选")),
+                };
+                div()
+                    .flex()
+                    .gap(px(4.0))
+                    .child(self.small_button("clipboard-confirm", label).on_click(cx.listener(move |view, _: &ClickEvent, _, cx| {
+                        view.confirm = None;
+                        let result = match confirm {
+                            Confirm::Clear => view.service.clear(false),
+                            Confirm::Delete => {
+                                let ids = view.picked.clone();
+                                view.clear_selection();
+                                view.service.delete(&ids)
+                            }
+                        };
+                        view.run(result, cx);
+                    })))
+                    .child(self.small_button("clipboard-confirm-cancel", text("取消")).on_click(cx.listener(|view, _: &ClickEvent, _, cx| {
+                        view.confirm = None;
+                        cx.notify();
+                    })))
+            }
+            None if picked > 0 => {
+                let combinable = can_combine(&self.picked_kinds());
+                let copy_label = text(if combinable { "复制所选" } else { "文本不能与图片或文件一起复制" });
+                div()
+                    .flex()
+                    .gap(px(2.0))
+                    .child(self.small_button("clipboard-copy-picked", copy_label).on_click(cx.listener(move |view, _: &ClickEvent, window, cx| {
+                        if combinable {
+                            let ids = view.picked.clone();
+                            view.activate_ids(ids, false, window, cx);
+                        }
+                    })))
+                    .child(self.small_button("clipboard-pin-picked", text("贴图")).on_click(cx.listener(|view, _: &ClickEvent, _, cx| view.pin_picked(cx))))
+                    .child(self.small_button("clipboard-delete-picked", text("删除所选")).on_click(cx.listener(|view, _: &ClickEvent, _, cx| {
+                        view.confirm = Some(Confirm::Delete);
+                        cx.notify();
+                    })))
+                    .child(self.small_button("clipboard-unpick", text("取消选择")).on_click(cx.listener(|view, _: &ClickEvent, _, cx| {
+                        view.clear_selection();
+                        cx.notify();
+                    })))
+            }
+            None => div().child(self.small_button("clipboard-clear", text("清空")).on_click(cx.listener(|view, _: &ClickEvent, _, cx| {
+                view.confirm = Some(Confirm::Clear);
+                cx.notify();
+            }))),
+        };
         let footer = div()
             .flex()
             .items_center()
             .gap(px(8.0))
             .text_xs()
-            .text_color(rgb(annotate::MUTED))
-            .child(div().flex_1().child(format!(
-                "{} {} · {}",
-                text("共"),
-                status.count,
-                text(if status.enabled { "记录中" } else { "未记录（可在设置中开启）" })
-            )))
-            .child(if self.confirm_clear {
-                div()
-                    .flex()
-                    .gap(px(4.0))
-                    .child(self.small_button("clipboard-clear-confirm", text("确认清空（保留收藏）")).on_click(cx.listener(|view, _: &ClickEvent, _, cx| {
-                        view.confirm_clear = false;
-                        let result = view.service.clear(false);
-                        view.run(result, cx);
-                    })))
-                    .child(self.small_button("clipboard-clear-cancel", text("取消")).on_click(cx.listener(|view, _: &ClickEvent, _, cx| {
-                        view.confirm_clear = false;
-                        cx.notify();
-                    })))
-            } else {
-                div().child(self.small_button("clipboard-clear", text("清空")).on_click(cx.listener(|view, _: &ClickEvent, _, cx| {
-                    view.confirm_clear = true;
-                    cx.notify();
-                })))
-            });
+            .text_color(rgb(if picked > 0 { annotate::ACTIVE_FG } else { annotate::MUTED }))
+            .child(div().flex_1().min_w(px(0.0)).truncate().child(summary))
+            .child(actions);
         let notice = if let Some(error) = self.error.clone().or(status.error.clone()) {
             Some(div().text_xs().text_color(rgb(0xfb7185)).child(error))
         } else {
@@ -704,7 +906,7 @@ impl Render for HistoryView {
 
 #[cfg(test)]
 mod tests {
-    use super::{swatch, Category};
+    use super::{can_combine, select_items, swatch, Category};
     use snap_core::clipboard::model::{Kind, TextCategory};
 
     #[test]
@@ -716,6 +918,28 @@ mod tests {
         assert!(Category::Favorites.query("", Some("1:2".into())).favorites_only);
         assert_eq!(Category::Image.query(&"x".repeat(300), None).keyword.chars().count(), 200);
         q.validate().unwrap();
+    }
+
+    #[test]
+    fn selection_follows_click_modifiers() {
+        let ordered = [5, 4, 3, 2, 1];
+        assert_eq!(select_items(&[5, 3], 2, &ordered, Some(3), false, false), vec![2]);
+        assert_eq!(select_items(&[5, 3], 2, &ordered, Some(3), true, false), vec![5, 3, 2]);
+        assert_eq!(select_items(&[5, 3, 2], 3, &ordered, Some(3), true, false), vec![5, 2]);
+        assert_eq!(select_items(&[5], 2, &ordered, Some(4), false, true), vec![4, 3, 2]);
+        assert_eq!(select_items(&[1], 2, &ordered, Some(4), true, true), vec![1, 4, 3, 2]);
+        // 锚点不在当前列表时 Shift 退化为普通单击。
+        assert_eq!(select_items(&[], 2, &ordered, Some(9), false, true), vec![2]);
+        let full: Vec<i64> = (0..100).collect();
+        assert_eq!(select_items(&full, 200, &ordered, None, true, false).len(), 100);
+    }
+
+    #[test]
+    fn mixed_text_and_images_cannot_combine() {
+        assert!(can_combine(&[Kind::Text, Kind::Text]));
+        assert!(can_combine(&[Kind::Image, Kind::File]));
+        assert!(!can_combine(&[Kind::Text, Kind::Image]));
+        assert!(!can_combine(&[]));
     }
 
     #[test]
