@@ -20,6 +20,7 @@ mod pins;
 mod recognition;
 mod selection;
 mod shell;
+mod shelf;
 mod single_instance;
 
 use futures::channel::mpsc;

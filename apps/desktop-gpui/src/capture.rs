@@ -295,6 +295,10 @@ pub fn start(cx: &mut App, settings: &Settings, delay: Duration, purpose: Option
                 return;
             }
         }
+        // 展开中的暂存架先临时收起，等桌面合成去掉它再拍屏；会话结束后恢复。
+        if cx.update(crate::shelf::suspend) {
+            cx.background_executor().timer(Duration::from_millis(120)).await;
+        }
         let started = Instant::now();
         let result = cx
             .background_executor()
@@ -353,6 +357,7 @@ pub fn start(cx: &mut App, settings: &Settings, delay: Duration, purpose: Option
                 }
                 Err(error) => {
                     log::error!("event=gpui.capture_failed message={error}");
+                    crate::shelf::resume(cx);
                     None
                 }
             }
@@ -469,6 +474,7 @@ fn finish(cx: &mut App) {
         return;
     };
     close_overlays(cx, &session);
+    crate::shelf::resume(cx);
 }
 
 pub fn cancel(cx: &mut App) {

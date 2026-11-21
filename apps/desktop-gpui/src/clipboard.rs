@@ -88,6 +88,59 @@ pub fn init(cx: &mut App, settings: &ClipboardSettings) {
     });
 }
 
+/// 记录服务句柄（暂存架等其他窗口共用同一份历史）。
+pub fn service(cx: &App) -> Option<Service> {
+    cx.try_global::<History>().map(|h| h.service.clone())
+}
+
+/// 写回系统剪贴板，并标记自写入（监听线程跳过，不记成新条目）。`window` 是 Windows 图片剪贴板的所有者。
+pub fn write_back(service: &Service, content: &Content, window: &Window, cx: &mut App) -> Result<(), String> {
+    let _gate = service.write_gate.lock().map_err(|_| "剪贴板写入状态不可用。")?;
+    match content {
+        Content::Text(text) => cx.write_to_clipboard(ClipboardItem::new_string(text.clone())),
+        Content::Image(image) => {
+            let png = crate::capture::png(image)?;
+            crate::capture::write_clipboard(cx, crate::native::hwnd(window), image, png)?;
+        }
+        Content::Files(paths) => platform::write_files(paths)?,
+    }
+    service.mark_restored(content)
+}
+
+/// 后台读取一条历史并创建居中贴图（文字与文件路径排版成图片）。
+pub fn pin_item(cx: &mut App, service: Service, id: i64) -> Task<Result<(), String>> {
+    cx.spawn(async move |cx| {
+        let prepared = cx.background_executor().spawn(async move { prepare_pin(&service, id) }).await;
+        cx.update(|cx| {
+            prepared.and_then(|(image, drag)| crate::pins::create(cx, image, Vec::new(), crate::pins::Placement::Centered, drag))
+        })
+    })
+}
+
+/// 系统拖出：后台读取并按合并规则准备内容，回到主线程在框架状态借用之外发起拖拽（DoDragDrop 自带消息循环，
+/// 会重入窗口过程，不能在 entity update 中调用）。准备期间已松开左键则不拖出（core 内检查）。
+pub fn drag_ids(cx: &mut App, service: Service, ids: Vec<i64>) -> Task<Result<(), String>> {
+    cx.spawn(async move |cx| {
+        let payload = cx
+            .background_executor()
+            .spawn(async move {
+                let contents = service.contents(&ids)?;
+                let content = service::combine(contents, snap_core::drag::image_file)?;
+                Ok::<_, String>(match content {
+                    Content::Text(text) => snap_core::drag::Payload::Text(text),
+                    Content::Files(paths) => snap_core::drag::Payload::Files(paths),
+                    Content::Image(image) => snap_core::drag::Payload::Files(vec![snap_core::drag::image_file(&image)?]),
+                })
+            })
+            .await;
+        #[cfg(windows)]
+        let result = payload.and_then(snap_core::drag::start);
+        #[cfg(not(windows))]
+        let result = payload.and_then(|_| Err("当前平台尚未支持内容拖出。".to_string()));
+        result
+    })
+}
+
 /// 退出前停止监听并等待在途写入。
 pub fn shutdown(cx: &mut App) {
     if let Some(history) = cx.try_global::<History>() {
@@ -597,18 +650,8 @@ impl HistoryView {
         self.reload(cx);
     }
 
-    /// 写回系统剪贴板，并标记自写入（监听线程跳过，不记成新条目）。
     fn write_back(&self, content: &Content, window: &Window, cx: &mut App) -> Result<(), String> {
-        let _gate = self.service.write_gate.lock().map_err(|_| "剪贴板写入状态不可用。")?;
-        match content {
-            Content::Text(text) => cx.write_to_clipboard(ClipboardItem::new_string(text.clone())),
-            Content::Image(image) => {
-                let png = crate::capture::png(image)?;
-                crate::capture::write_clipboard(cx, crate::native::hwnd(window), image, png)?;
-            }
-            Content::Files(paths) => platform::write_files(paths)?,
-        }
-        self.service.mark_restored(content)
+        write_back(&self.service, content, window, cx)
     }
 
     /// 按选择顺序读取并合并：一条原样写回；多条交给 core `combine`（图片写成临时 PNG 作为文件引用）。
@@ -729,25 +772,10 @@ impl HistoryView {
         if ids.is_empty() {
             return;
         }
-        let service = self.service.clone();
         self.dragging = true;
+        let task = drag_ids(cx, self.service.clone(), ids);
         cx.spawn(async move |this, cx| {
-            let payload = cx
-                .background_executor()
-                .spawn(async move {
-                    let contents = service.contents(&ids)?;
-                    let content = service::combine(contents, snap_core::drag::image_file)?;
-                    Ok::<_, String>(match content {
-                        Content::Text(text) => snap_core::drag::Payload::Text(text),
-                        Content::Files(paths) => snap_core::drag::Payload::Files(paths),
-                        Content::Image(image) => snap_core::drag::Payload::Files(vec![snap_core::drag::image_file(&image)?]),
-                    })
-                })
-                .await;
-            #[cfg(windows)]
-            let result = payload.and_then(snap_core::drag::start);
-            #[cfg(not(windows))]
-            let result = payload.map(|_| ());
+            let result = task.await;
             let _ = this.update(cx, |view, _| view.dragging = false);
             match result {
                 Ok(()) => log::info!("event=gpui.clipboard_drag_finished"),
@@ -799,21 +827,12 @@ impl HistoryView {
     }
 
     fn pin(&mut self, index: usize, cx: &mut Context<Self>) {
-        let Some(item) = self.items.get(index).cloned() else {
+        let Some(id) = self.items.get(index).map(|i| i.id) else {
             return;
         };
-        let service = self.service.clone();
+        let task = pin_item(cx, self.service.clone(), id);
         cx.spawn(async move |this, cx| {
-            let prepared = cx
-                .background_executor()
-                .spawn(async move { prepare_pin(&service, item.id) })
-                .await;
-            let result = cx.update(|cx| {
-                prepared.and_then(|(image, drag)| {
-                    crate::pins::create(cx, image, Vec::new(), crate::pins::Placement::Centered, drag)
-                })
-            });
-            if let Err(error) = result {
+            if let Err(error) = task.await {
                 let _ = this.update(cx, |view, cx| {
                     view.error = Some(error);
                     cx.notify();

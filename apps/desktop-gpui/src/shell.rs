@@ -133,6 +133,7 @@ pub fn start(
     cx.set_global(shell);
     // 剪贴板历史记录服务（按设置启用）；历史窗口由托盘“剪贴板”或快捷键打开。
     crate::clipboard::init(cx, &clipboard);
+    crate::shelf::init(cx);
 
     cx.spawn(async move |cx| {
         let mut receiver = receiver;
@@ -355,6 +356,10 @@ pub fn run_action(cx: &mut App, action: ShortcutAction, source: &str) {
             } else if !crate::pins::restore_click_through(cx) {
                 crate::pins::from_clipboard(cx);
             }
+        }
+        ShortcutAction::Shelf => {
+            log::info!("event=gpui.action action=shelf source={source}");
+            crate::shelf::toggle(cx);
         }
         ShortcutAction::History => {
             log::info!("event=gpui.action action=history source={source}");
