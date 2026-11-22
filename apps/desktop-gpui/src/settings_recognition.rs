@@ -5,7 +5,7 @@
 //! - 服务管理：服务列表（能力、地址、密钥状态）、按预设新增、编辑名称/地址/模型/图片能力/密钥、删除。
 //!   密钥只写入系统凭据库（core `ai_credentials`，键随服务标识与地址变化），配置里只保存密钥标识。
 //!
-//! 多密钥的列表、逐个测试与删除在 `settings_keys.rs`。与 Tauri 版的差异：没有打开服务商密钥页面的入口。
+//! 多密钥的列表、逐个测试与删除在 `settings_keys.rs`；服务商目录与品牌图标在 `settings_services.rs`。
 use super::{SettingsView, card, col, heading, row};
 use gpui_kit::{
     component::input::{Input, InputState},
@@ -141,6 +141,19 @@ fn service_kind(service: &RecognitionService) -> &'static str {
         }
         _ if service.vision => "AI 视觉 / 翻译",
         _ => "AI 翻译",
+    }
+}
+
+/// 服务商的密钥页面（与 Tauri `open_recognition_portal` 一致）；按协议与地址识别，自定义服务没有。
+fn portal(protocol: &str, endpoint: &str) -> Option<&'static str> {
+    let host = url::Url::parse(endpoint).ok().and_then(|u| u.host_str().map(str::to_owned)).unwrap_or_default();
+    match protocol {
+        "deepl" => Some("https://www.deepl.com/your-account/keys"),
+        "ocr-space" => Some("https://ocr.space/ocrapi"),
+        "paddle-ocr" => Some("https://aistudio.baidu.com/paddleocr/task"),
+        _ if host.ends_with("groq.com") => Some("https://console.groq.com/keys"),
+        _ if host.ends_with("deepseek.com") => Some("https://platform.deepseek.com/api_keys"),
+        _ => None,
     }
 }
 
@@ -702,6 +715,26 @@ impl SettingsView {
             );
         let (test, result) = self.test_controls(editor, t, cx);
         actions = actions.child(test);
+        // 浏览器登录只用于获取凭据，不会自动授权 Snap Desk。
+        if let Some(url) = portal(editor.protocol, &editor.endpoint.read(cx).value()) {
+            actions = actions.child(
+                div()
+                    .id("service-portal")
+                    .h(px(28.0))
+                    .flex()
+                    .items_center()
+                    .text_xs()
+                    .text_color(rgb(col::accent_fg()))
+                    .cursor_pointer()
+                    .child(t("获取 API Key / Token"))
+                    .on_click(cx.listener(move |view, _: &ClickEvent, _, cx| {
+                        if let Err(error) = snap_core::platform::open_web_page(url) {
+                            view.error = Some(error);
+                            cx.notify();
+                        }
+                    })),
+            );
+        }
         if let Some(id) = editor.existing.clone() {
             actions = actions.child(
                 button("service-delete", false, true)
@@ -732,7 +765,15 @@ impl SettingsView {
 
 #[cfg(test)]
 mod tests {
-    use super::{PRESETS, new_id, remove_service, service_kind};
+    use super::{PRESETS, new_id, portal, remove_service, service_kind};
+
+    #[test]
+    fn key_pages_follow_protocol_and_host() {
+        assert_eq!(portal("deepl", ""), Some("https://www.deepl.com/your-account/keys"));
+        assert_eq!(portal("openai-compatible", "https://api.groq.com/openai/v1/chat/completions"), Some("https://console.groq.com/keys"));
+        assert_eq!(portal("openai-compatible", "https://api.deepseek.com/chat/completions"), Some("https://platform.deepseek.com/api_keys"));
+        assert_eq!(portal("openai-compatible", "http://127.0.0.1:11434/v1"), None);
+    }
     use snap_core::{recognition::services::RecognitionService, settings::Settings};
 
     fn service(protocol: &str, endpoint: &str, vision: bool) -> RecognitionService {
