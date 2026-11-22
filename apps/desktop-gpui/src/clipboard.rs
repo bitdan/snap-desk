@@ -16,16 +16,15 @@
 //! （Vue 版存于 WebView localStorage，两版不共用）。
 //! 唤出时窗口左上角贴近光标并夹紧在所在显示器工作区内；失去焦点约 200 毫秒后仍未回到本窗口即收起
 //! （固定、确认中、拖出中、预览或导出窗口打开时不收起）；固定时失焦记下切换到的窗口，作为之后的粘贴目标。
-//! 底部开关可暂停/继续记录、切换“回车或双击后直接粘贴到原窗口”，写回 settings.json（`shell::update_clipboard`）。
+//! 界面（无边框、置顶的工具窗口，配色与布局同 Vue 版）在 `clipboard_ui.rs`；暂停记录时提示条可“继续记录”。
 use crate::annotate;
 use futures::{channel::mpsc, StreamExt};
 use gpui_kit::{
-    component::input::{Input, InputEvent, InputState},
+    component::input::{InputEvent, InputState},
     *,
 };
 use image::RgbaImage;
 use snap_core::clipboard::{
-    classification,
     model::{ClipboardSettings, Item, Kind, Query, TextCategory},
     platform,
     service::{self, Content, Event, Service, MAX_SELECTION},
@@ -163,19 +162,18 @@ pub fn open(cx: &mut App) {
     }
     let service = cx.global::<History>().service.clone();
     let settings = crate::shell::settings(cx);
-    let (bounds, display_id) = placement(cx, size(px(460.0), px(640.0)));
+    // 与 Tauri 版一致：460×680、最小 420×460，无边框、置顶、不进任务栏（创建后改为工具窗口）。
+    let (bounds, display_id) = placement(cx, size(px(460.0), px(680.0)));
     let options = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(bounds)),
         display_id,
-        titlebar: Some(TitlebarOptions {
-            title: Some(snap_core::i18n::for_language(&settings.appearance.language, "剪贴板历史").to_owned().into()),
-            ..Default::default()
-        }),
+        titlebar: None,
         focus: true,
         show: true,
         kind: WindowKind::Normal,
         is_resizable: true,
-        window_min_size: Some(gpui_kit::size(px(360.0), px(360.0))),
+        is_minimizable: false,
+        window_min_size: Some(gpui_kit::size(px(420.0), px(460.0))),
         ..Default::default()
     };
     let mut created = None;
@@ -188,7 +186,12 @@ pub fn open(cx: &mut App) {
             let history = cx.global_mut::<History>();
             history.window = Some(handle.into());
             history.view = created;
-            let _ = handle.update(cx, |_, window, _| window.activate_window());
+            let _ = handle.update(cx, |_, window, _| {
+                if let Err(error) = crate::native::utility_window(window) {
+                    log::warn!("event=gpui.clipboard_window_style_failed message={error}");
+                }
+                window.activate_window();
+            });
             log::info!("event=gpui.clipboard_window_opened");
         }
         Err(error) => log::error!("event=gpui.clipboard_window_failed message={error}"),
@@ -335,6 +338,9 @@ fn save_order(order: &[Category]) -> Result<(), String> {
 }
 
 /// 拖动中的分类标签。
+#[path = "clipboard_ui.rs"]
+mod ui;
+
 struct CategoryDrag(Category);
 struct DragChip(String);
 impl Render for DragChip {
@@ -348,23 +354,6 @@ impl Render for DragChip {
             .text_color(rgb(annotate::active_fg()))
             .opacity(0.85)
             .child(self.0.clone())
-    }
-}
-
-/// 相对时间：刚刚 / N 分钟前 / N 小时前 / 月-日 时:分。
-fn ago(millis: i64, text: &dyn Fn(&'static str) -> String) -> String {
-    let now = chrono::Utc::now().timestamp_millis();
-    let minutes = (now - millis).max(0) / 60_000;
-    if minutes < 1 {
-        text("刚刚")
-    } else if minutes < 60 {
-        format!("{minutes} {}", text("分钟前"))
-    } else if minutes < 24 * 60 {
-        format!("{} {}", minutes / 60, text("小时前"))
-    } else {
-        chrono::DateTime::from_timestamp_millis(millis)
-            .map(|t| t.with_timezone(&chrono::Local).format("%m-%d %H:%M").to_string())
-            .unwrap_or_default()
     }
 }
 
@@ -443,6 +432,13 @@ struct HistoryView {
     message: Option<String>,
     keep_open: bool,
     confirm: Option<Confirm>,
+    /// 删除确认里“同时删除收藏”；帮助浮层是否打开。
+    include_favorites: bool,
+    help: bool,
+    /// 列表滚动位置（接近底部时加载下一页）。
+    scroll: ScrollHandle,
+    /// 最近一次用键盘移动焦点（显示焦点框）；鼠标点击后清除。
+    keyboard: bool,
     /// 右键菜单：条目序号、窗口内位置、条目是否在暂存架上（None：暂存架未开启，不显示联动入口）。
     menu: Option<(usize, Point<Pixels>, Option<bool>)>,
     focus: FocusHandle,
@@ -453,7 +449,8 @@ struct HistoryView {
 impl HistoryView {
     fn new(service: Service, settings: snap_core::settings::Settings, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let language = settings.appearance.language.clone();
-        let placeholder = snap_core::i18n::for_language(&language, "搜索剪贴板历史（Ctrl+F）").to_owned();
+        let placeholder = snap_core::i18n::for_language(&language, "搜索文本或文件路径（{0}+F）")
+            .replace("{0}", if cfg!(target_os = "macos") { "⌘" } else { "Ctrl" });
         let search = cx.new(|cx| InputState::new(window, cx).placeholder(placeholder));
         let subscription = cx.subscribe_in(&search, window, |this: &mut Self, _, event: &InputEvent, _, cx| {
             if matches!(event, InputEvent::Change) {
@@ -491,6 +488,10 @@ impl HistoryView {
             keep_open: false,
             confirm: None,
             menu: None,
+            include_favorites: false,
+            help: false,
+            scroll: ScrollHandle::new(),
+            keyboard: false,
             focus: cx.focus_handle(),
             _search: subscription,
             _activation: activation,
@@ -629,17 +630,6 @@ impl HistoryView {
                     });
                 })
                 .detach();
-            }
-            Err(error) => self.error = Some(error),
-        }
-        cx.notify();
-    }
-
-    fn set_paste_on_activate(&mut self, value: bool, cx: &mut Context<Self>) {
-        match crate::shell::update_clipboard(cx, |c| c.paste_on_activate = value) {
-            Ok(settings) => {
-                self.paste_on_activate = settings.paste_on_activate;
-                self.error = None;
             }
             Err(error) => self.error = Some(error),
         }
@@ -878,8 +868,16 @@ impl HistoryView {
                     self.reorder(self.category, destination, cx);
                 }
             }
-            "down" => self.selected = (self.selected + 1).min(self.items.len().saturating_sub(1)),
-            "up" => self.selected = self.selected.saturating_sub(1),
+            "down" | "up" => {
+                self.selected = if key == "down" {
+                    (self.selected + 1).min(self.items.len().saturating_sub(1))
+                } else {
+                    self.selected.saturating_sub(1)
+                };
+                // 键盘浏览时才显示焦点框（Vue `:focus-visible`），并滚动到可见。
+                self.keyboard = true;
+                self.scroll.scroll_to_item(self.selected);
+            }
             "enter" => self.activate(self.selected, self.paste_on_activate, window, cx),
             "f" if command => self.search.update(cx, |state, cx| state.focus(window, cx)),
             "c" if command && !self.search.read(cx).focus_handle(cx).is_focused(window) => {
@@ -936,19 +934,6 @@ impl HistoryView {
         }
         None
     }
-
-    fn small_button(&self, id: impl Into<ElementId>, label: String) -> Stateful<Div> {
-        div()
-            .id(id)
-            .px(px(6.0))
-            .py(px(2.0))
-            .rounded(px(4.0))
-            .text_xs()
-            .text_color(rgb(annotate::muted()))
-            .cursor_pointer()
-            .hover(|s| s.bg(rgb(annotate::hover())).text_color(rgb(annotate::text())))
-            .child(label)
-    }
 }
 
 /// 读取一条历史并准备贴图画面：图片原样，文字与文件路径排版成图片。
@@ -965,344 +950,6 @@ fn text_pin(text: &str) -> Result<(RgbaImage, Option<String>), String> {
     let font = snap_core::pins::text::font_bytes(annotate::user_font())?;
     let drag = snap_core::pins::text::drag_text(text);
     snap_core::pins::text::render(text, &font).map(|image| (image, Some(drag)))
-}
-
-impl Render for HistoryView {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // 释放已不在列表中的缩略图纹理。
-        let ids: std::collections::HashSet<i64> = self.items.iter().map(|i| i.id).collect();
-        let stale: Vec<i64> = self.thumbs.keys().filter(|id| !ids.contains(id)).copied().collect();
-        for id in stale {
-            if let Some(thumb) = self.thumbs.remove(&id) {
-                cx.drop_image(thumb, Some(window));
-            }
-        }
-        let language = self.language.clone();
-        let text = move |key: &'static str| snap_core::i18n::for_language(&language, key).to_owned();
-        let mut tabs = div().flex().flex_wrap().gap(px(4.0));
-        for (index, category) in self.order.clone().into_iter().enumerate() {
-            let active = self.category == category;
-            let label = category.label();
-            let chip = text(label);
-            tabs = tabs.child(
-                div()
-                    .id(("clipboard-tab", index))
-                    .border_l_2()
-                    .border_color(rgb(crate::theme::c().panel))
-                    .on_drag(CategoryDrag(category), move |_, _, _, cx| cx.new(|_| DragChip(chip.clone())))
-                    .drag_over::<CategoryDrag>(|style, _, _, _| style.border_color(rgb(annotate::active_fg())))
-                    .on_drop(cx.listener(move |view, drag: &CategoryDrag, _, cx| view.reorder(drag.0, category, cx)))
-                    .px(px(8.0))
-                    .py(px(3.0))
-                    .rounded(px(6.0))
-                    .cursor_pointer()
-                    .text_xs()
-                    .text_color(rgb(if active { annotate::active_fg() } else { annotate::muted() }))
-                    .bg(rgb(if active { annotate::active_bg() } else { annotate::surface() }))
-                    .child(text(label))
-                    .on_click(cx.listener(move |view, _: &ClickEvent, _, cx| view.set_category(category, cx))),
-            );
-        }
-        let keep_open = self.keep_open;
-        let header = div()
-            .flex()
-            .items_center()
-            .gap(px(6.0))
-            .child(div().flex_1().child(Input::new(&self.search)))
-            .child(
-                annotate::icon_button("clipboard-keep-open", annotate::icons::PIN, text("固定窗口，失去焦点时不收起"), keep_open, false)
-                    .on_click(cx.listener(|view, _: &ClickEvent, _, cx| {
-                        view.keep_open = !view.keep_open;
-                        cx.notify();
-                    })),
-            );
-        let mut list = div().id("clipboard-list").flex_1().flex().flex_col().gap(px(2.0)).overflow_y_scroll();
-        if self.items.is_empty() && !self.loading {
-            let empty = if self.service.data().is_err() { "剪贴板历史不可用。" } else { "没有匹配的记录。" };
-            list = list.child(div().p(px(16.0)).text_sm().text_color(rgb(annotate::muted())).child(text(empty)));
-        }
-        let items = self.items.clone();
-        for (index, item) in items.iter().enumerate() {
-            let selected = index == self.selected;
-            let picked = self.picked.contains(&item.id);
-            let leading: AnyElement = match item.kind {
-                Kind::Image => match self.thumbnail(item.id, cx) {
-                    Some(thumb) => img(thumb).size(px(44.0)).object_fit(ObjectFit::Contain).into_any_element(),
-                    None => div().size(px(44.0)).rounded(px(4.0)).bg(rgb(crate::theme::c().window_bg)).into_any_element(),
-                },
-                Kind::File => div().size(px(44.0)).flex().items_center().justify_center().text_xs().text_color(rgb(annotate::muted())).child(text("文件")).into_any_element(),
-                Kind::Text => match classification::classify(&item.preview) {
-                    Some(TextCategory::Color) => div()
-                        .size(px(44.0))
-                        .rounded(px(4.0))
-                        .border_1()
-                        .border_color(rgb(annotate::border()))
-                        .bg(rgb(swatch(&item.preview).unwrap_or(0)))
-                        .into_any_element(),
-                    Some(TextCategory::Link) => div().size(px(44.0)).flex().items_center().justify_center().text_xs().text_color(rgb(annotate::active_fg())).child(text("链接")).into_any_element(),
-                    Some(TextCategory::Path) => div().size(px(44.0)).flex().items_center().justify_center().text_xs().text_color(rgb(annotate::muted())).child(text("路径")).into_any_element(),
-                    None => div().size(px(44.0)).flex().items_center().justify_center().text_xs().text_color(rgb(annotate::muted())).child("T").into_any_element(),
-                },
-            };
-            let title = match item.kind {
-                Kind::Image => format!("{} {}×{}", text("图片"), item.width.unwrap_or(0), item.height.unwrap_or(0)),
-                _ => item.preview.lines().take(2).collect::<Vec<_>>().join(" ⏎ "),
-            };
-            let meta = format!(
-                "{}{}{}",
-                ago(item.last_seen_at, &text),
-                if item.seen_count > 1 { format!(" · ×{}", item.seen_count) } else { String::new() },
-                if index < 9 { format!(" · Ctrl+{}", index + 1) } else { String::new() },
-            );
-            let favorite = item.favorite;
-            let id = item.id;
-            list = list.child(
-                div()
-                    .id(("clipboard-item", index))
-                    .p(px(6.0))
-                    .flex()
-                    .items_center()
-                    .gap(px(8.0))
-                    .rounded(px(6.0))
-                    .cursor_pointer()
-                    .bg(rgb(if picked { annotate::active_bg() } else if selected { 0x232830 } else { 0x181b20 }))
-                    .border_1()
-                    .border_color(rgb(if selected { annotate::border() } else { 0x181b20 }))
-                    .hover(|s| s.bg(rgb(annotate::hover())))
-                    .on_mouse_down(MouseButton::Left, cx.listener(move |view, event: &MouseDownEvent, _, _| {
-                        view.press = Some((index, event.position));
-                    }))
-                    .on_mouse_up(MouseButton::Left, cx.listener(|view, _: &MouseUpEvent, _, _| view.press = None))
-                    .on_mouse_down(MouseButton::Right, cx.listener(move |view, event: &MouseDownEvent, _, cx| {
-                        cx.stop_propagation();
-                        view.selected = index;
-                        let shelf = crate::shelf::shows(cx, id);
-                        view.menu = Some((index, event.position, shelf));
-                        cx.notify();
-                    }))
-                    .on_mouse_move(cx.listener(|view, event: &MouseMoveEvent, _, cx| view.motion(event, cx)))
-                    .on_click(cx.listener(move |view, event: &ClickEvent, window, cx| {
-                        view.selected = index;
-                        if event.click_count() >= 2 {
-                            view.activate(index, view.paste_on_activate, window, cx);
-                        } else {
-                            let modifiers = event.modifiers();
-                            view.pick(index, modifiers.control || modifiers.platform, modifiers.shift);
-                        }
-                        cx.notify();
-                    }))
-                    .child(div().flex_none().child(leading))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w(px(0.0))
-                            .flex()
-                            .flex_col()
-                            .gap(px(2.0))
-                            .child(div().text_sm().text_color(rgb(annotate::text())).truncate().child(title))
-                            .child(div().text_xs().text_color(rgb(annotate::muted())).child(meta)),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .flex_none()
-                            .gap(px(2.0))
-                            .child(self.small_button(("clipboard-copy", index), text("复制")).on_click(cx.listener(move |view, _: &ClickEvent, window, cx| {
-                                cx.stop_propagation();
-                                view.activate(index, false, window, cx);
-                            })))
-                            .children((item.kind != Kind::File).then(|| {
-                                let item = item.clone();
-                                self.small_button(("clipboard-preview", index), text("预览")).on_click(cx.listener(move |view, _: &ClickEvent, _, cx| {
-                                    cx.stop_propagation();
-                                    crate::clipboard_preview::open(cx, view.service.clone(), item.clone());
-                                }))
-                            }))
-                            .child(self.small_button(("clipboard-pin", index), text("贴图")).on_click(cx.listener(move |view, _: &ClickEvent, _, cx| {
-                                cx.stop_propagation();
-                                view.pin(index, cx);
-                            })))
-                            .child(self.small_button(("clipboard-favorite", index), if favorite { "★".into() } else { "☆".into() }).on_click(cx.listener(move |view, _: &ClickEvent, _, cx| {
-                                cx.stop_propagation();
-                                let result = view.service.set_favorite(id, !favorite);
-                                view.run(result, cx);
-                            })))
-                            .child(self.small_button(("clipboard-delete", index), text("删除")).on_click(cx.listener(move |view, _: &ClickEvent, _, cx| {
-                                cx.stop_propagation();
-                                let result = view.service.delete(&[id]);
-                                view.picked.retain(|v| *v != id);
-                                view.picked_items.remove(&id);
-                                view.run(result, cx);
-                            }))),
-                    ),
-            );
-        }
-        if self.next_cursor.is_some() {
-            list = list.child(self.small_button("clipboard-more", text("加载更多")).on_click(cx.listener(|view, _: &ClickEvent, _, cx| {
-                let cursor = view.next_cursor.clone();
-                view.load(cursor, cx);
-            })));
-        }
-        let status = self.service.status();
-        let picked = self.picked.len();
-        let summary = if picked > 0 {
-            format!("{} {picked}", text("已选"))
-        } else {
-            format!(
-                "{} {} · {:.1} MiB · {}",
-                text("共"),
-                status.count,
-                status.byte_size as f64 / 1_048_576.0,
-                text(if status.enabled { "记录中" } else { "已暂停记录" })
-            )
-        };
-        let actions = match self.confirm {
-            Some(confirm) => {
-                let label = match confirm {
-                    Confirm::Clear => text("确认清空（保留收藏）"),
-                    Confirm::Delete => format!("{} {picked}", text("确认删除所选")),
-                };
-                div()
-                    .flex()
-                    .gap(px(4.0))
-                    .child(self.small_button("clipboard-confirm", label).on_click(cx.listener(move |view, _: &ClickEvent, _, cx| {
-                        view.confirm = None;
-                        let result = match confirm {
-                            Confirm::Clear => view.service.clear(false),
-                            Confirm::Delete => {
-                                let ids = view.picked.clone();
-                                view.clear_selection();
-                                view.service.delete(&ids)
-                            }
-                        };
-                        view.run(result, cx);
-                    })))
-                    .child(self.small_button("clipboard-confirm-cancel", text("取消")).on_click(cx.listener(|view, _: &ClickEvent, _, cx| {
-                        view.confirm = None;
-                        cx.notify();
-                    })))
-            }
-            None if picked > 0 => {
-                let kinds = self.picked_kinds();
-                let combinable = can_combine(&kinds);
-                let exportable = kinds.len() == picked && kinds.iter().all(|k| *k != Kind::File);
-                let copy_label = text(if combinable { "复制所选" } else { "文本不能与图片或文件一起复制" });
-                div()
-                    .flex()
-                    .gap(px(2.0))
-                    .child(self.small_button("clipboard-copy-picked", copy_label).on_click(cx.listener(move |view, _: &ClickEvent, window, cx| {
-                        if combinable {
-                            let ids = view.picked.clone();
-                            view.activate_ids(ids, false, window, cx);
-                        }
-                    })))
-                    .child(self.small_button("clipboard-export-picked", text(if exportable { "组合导出" } else { "组合导出仅支持文本和图片，文件引用请复制后粘贴" })).on_click(cx.listener(move |view, _: &ClickEvent, _, cx| {
-                        if exportable {
-                            let items: Vec<Item> = view.picked.iter().filter_map(|id| view.picked_items.get(id).cloned()).collect();
-                            crate::clipboard_export::open(cx, view.service.clone(), items);
-                        }
-                    })))
-                    .child(self.small_button("clipboard-pin-picked", text("贴图")).on_click(cx.listener(|view, _: &ClickEvent, _, cx| view.pin_picked(cx))))
-                    .child(self.small_button("clipboard-delete-picked", text("删除所选")).on_click(cx.listener(|view, _: &ClickEvent, _, cx| {
-                        view.confirm = Some(Confirm::Delete);
-                        cx.notify();
-                    })))
-                    .child(self.small_button("clipboard-unpick", text("取消选择")).on_click(cx.listener(|view, _: &ClickEvent, _, cx| {
-                        view.clear_selection();
-                        cx.notify();
-                    })))
-            }
-            None => div().child(self.small_button("clipboard-clear", text("清空")).on_click(cx.listener(|view, _: &ClickEvent, _, cx| {
-                view.confirm = Some(Confirm::Clear);
-                cx.notify();
-            }))),
-        };
-        let toggle = |id: &'static str, label: String, on: bool| {
-            div()
-                .id(id)
-                .flex()
-                .items_center()
-                .gap(px(4.0))
-                .px(px(6.0))
-                .py(px(2.0))
-                .rounded(px(4.0))
-                .cursor_pointer()
-                .text_xs()
-                .text_color(rgb(if on { annotate::active_fg() } else { annotate::muted() }))
-                .hover(|s| s.bg(rgb(annotate::hover())))
-                .child(if on { "☑" } else { "☐" })
-                .child(label)
-        };
-        let enabled = status.enabled;
-        let paste = self.paste_on_activate;
-        let switches = div()
-            .flex()
-            .flex_wrap()
-            .gap(px(4.0))
-            .child(toggle("clipboard-recording", text("记录新复制的内容"), enabled).on_click(cx.listener(move |view, _: &ClickEvent, _, cx| view.set_recording(!enabled, cx))))
-            .child(toggle("clipboard-paste-toggle", text("回车或双击后直接粘贴到原窗口"), paste).on_click(cx.listener(move |view, _: &ClickEvent, _, cx| view.set_paste_on_activate(!paste, cx))));
-        let footer = div()
-            .flex()
-            .items_center()
-            .gap(px(8.0))
-            .text_xs()
-            .text_color(rgb(if picked > 0 { annotate::active_fg() } else { annotate::muted() }))
-            .child(div().flex_1().min_w(px(0.0)).truncate().child(summary))
-            .child(actions);
-        let notice = if let Some(error) = self.error.clone().or(status.error.clone()) {
-            Some(div().text_xs().text_color(rgb(crate::theme::c().error_text)).child(error))
-        } else {
-            self.message.clone().map(|m| div().text_xs().text_color(rgb(crate::theme::c().ok_text)).child(m))
-        };
-        let menu = self.menu.and_then(|(index, at, shelf)| {
-            let item = self.items.get(index)?.clone();
-            Some(self.context_menu(index, item, at, shelf, window, &text, cx))
-        });
-        div()
-            .id("clipboard-history")
-            .track_focus(&self.focus)
-            .on_key_down(cx.listener(Self::key))
-            // 菜单外按下即关闭（菜单本身阻止冒泡）。
-            .on_mouse_down(MouseButton::Left, cx.listener(|view, _: &MouseDownEvent, _, cx| {
-                if view.menu.take().is_some() {
-                    cx.notify();
-                }
-            }))
-            .on_mouse_down(MouseButton::Right, cx.listener(|view, _: &MouseDownEvent, _, cx| {
-                if view.menu.take().is_some() {
-                    cx.notify();
-                }
-            }))
-            .relative()
-            .size_full()
-            .flex()
-            .flex_col()
-            .gap(px(8.0))
-            .p(px(10.0))
-            .bg(rgb(crate::theme::c().panel))
-            .text_color(rgb(annotate::text()))
-            .child(header)
-            .child(tabs)
-            .children((status.supported && !status.enabled).then(|| {
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(8.0))
-                    .px(px(8.0))
-                    .py(px(4.0))
-                    .rounded(px(6.0))
-                    .bg(rgb(crate::theme::c().active_bg))
-                    .text_xs()
-                    .text_color(rgb(crate::theme::c().active_fg))
-                    .child(div().flex_1().child(text("记录已暂停，新复制的内容不会保存。")))
-                    .child(self.small_button("clipboard-resume", text("继续记录")).on_click(cx.listener(|view, _: &ClickEvent, _, cx| view.set_recording(true, cx))))
-            }))
-            .child(list)
-            .children(notice)
-            .child(switches)
-            .child(footer)
-            .children(menu)
-    }
 }
 
 /// 右键菜单项（对照 Vue `ClipboardItem.vue` 的 `ContextMenuContent`）。
@@ -1344,79 +991,6 @@ impl HistoryView {
             }
         }
         cx.notify();
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn context_menu(
-        &self,
-        index: usize,
-        item: Item,
-        at: Point<Pixels>,
-        shelf: Option<bool>,
-        window: &Window,
-        text: &dyn Fn(&'static str) -> String,
-        cx: &mut Context<Self>,
-    ) -> Stateful<Div> {
-        let mut entries: Vec<Option<(MenuItem, &'static str)>> = vec![Some((MenuItem::Copy, "复制"))];
-        if item.kind != Kind::File {
-            entries.push(Some((MenuItem::Preview, "预览")));
-        }
-        entries.push(Some((MenuItem::Pin, "悬浮贴图")));
-        if let Some(on_shelf) = shelf {
-            entries.push(Some((MenuItem::Shelf(on_shelf), if on_shelf { "从暂存架取下" } else { "放到暂存架" })));
-        }
-        entries.push(None);
-        entries.push(Some((MenuItem::Favorite(item.favorite), if item.favorite { "取消收藏" } else { "收藏" })));
-        entries.push(Some((MenuItem::Delete, "删除")));
-        const WIDTH: f32 = 168.0;
-        const ROW: f32 = 28.0;
-        let height = entries.iter().map(|e| if e.is_some() { ROW } else { 9.0 }).sum::<f32>() + 8.0;
-        // 贴边时向内翻转，避免菜单超出窗口。
-        let viewport = window.viewport_size();
-        let x = if at.x + px(WIDTH) > viewport.width { (at.x - px(WIDTH)).max(px(4.0)) } else { at.x };
-        let y = if at.y + px(height) > viewport.height { (at.y - px(height)).max(px(4.0)) } else { at.y };
-        let mut menu = div()
-            .id("clipboard-menu")
-            .absolute()
-            .left(x)
-            .top(y)
-            .w(px(WIDTH))
-            .p(px(4.0))
-            .flex()
-            .flex_col()
-            .rounded(px(8.0))
-            .border_1()
-            .border_color(rgb(annotate::border()))
-            .bg(rgb(annotate::surface()))
-            .shadow_lg()
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation());
-        for (row, entry) in entries.into_iter().enumerate() {
-            let Some((action, label)) = entry else {
-                menu = menu.child(div().h(px(9.0)).flex().items_center().child(div().h(px(1.0)).w_full().bg(rgb(annotate::border()))));
-                continue;
-            };
-            let item = item.clone();
-            let danger = matches!(action, MenuItem::Delete);
-            menu = menu.child(
-                div()
-                    .id(("clipboard-menu-item", row))
-                    .h(px(ROW))
-                    .px(px(10.0))
-                    .flex()
-                    .items_center()
-                    .rounded(px(5.0))
-                    .text_sm()
-                    .cursor_pointer()
-                    .text_color(rgb(if danger { crate::theme::c().error_text } else { annotate::text() }))
-                    .hover(|s| s.bg(rgb(annotate::hover())))
-                    .child(text(label))
-                    .on_click(cx.listener(move |view, _: &ClickEvent, window, cx| {
-                        view.menu_action(index, item.clone(), action, window, cx)
-                    })),
-            );
-        }
-        menu
     }
 }
 

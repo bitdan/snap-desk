@@ -89,6 +89,104 @@ pub const LIGHT_PALETTE: Palette = Palette {
     warn_text: 0xb45309,
 };
 
+/// 剪贴板历史窗口的色值（与 Vue `ClipboardHistory.vue` 的 `--clip-*` 变量一致）。
+pub struct ClipPalette {
+    pub bg: u32,
+    pub text: u32,
+    pub muted: u32,
+    pub border: u32,
+    pub card: u32,
+    pub card_hover: u32,
+    pub actions: u32,
+    pub press: u32,
+    pub selected: u32,
+    pub selected_border: u32,
+    pub accent: u32,
+    pub notice: u32,
+    pub notice_text: u32,
+    pub danger: u32,
+    pub danger_bg: u32,
+    pub success: u32,
+    /// 右键菜单与弹出卡片（`.history-context-menu`、`.confirm-dialog`）。
+    pub menu_bg: u32,
+    pub menu_border: u32,
+    pub menu_hover_bg: u32,
+    pub menu_hover_fg: u32,
+    pub dialog_text: u32,
+    pub dialog_muted: u32,
+    /// 勾选框（control-theme.css）。
+    pub check_fill: u32,
+    pub control_border: u32,
+}
+
+pub const CLIP_LIGHT: ClipPalette = ClipPalette {
+    bg: 0xffffff,
+    text: 0x24292f,
+    muted: 0x6b7280,
+    border: 0xe1e4e8,
+    card: 0xf6f7f8,
+    card_hover: 0xeef1f4,
+    actions: 0xeef1f4,
+    press: 0xdfe5ec,
+    selected: 0xeff6ff,
+    selected_border: 0x93b4ff,
+    accent: 0x2563eb,
+    notice: 0xeef4fc,
+    notice_text: 0x315a86,
+    danger: 0xb42318,
+    danger_bg: 0xfff1f0,
+    success: 0x24834b,
+    menu_bg: 0xffffff,
+    menu_border: 0xe4e4e7,
+    menu_hover_bg: 0xeff6ff,
+    menu_hover_fg: 0x2563eb,
+    dialog_text: 0x24292f,
+    dialog_muted: 0x57606a,
+    check_fill: 0xedf8f1,
+    control_border: 0x8c959f,
+};
+
+pub const CLIP_DARK: ClipPalette = ClipPalette {
+    bg: 0x1b1f24,
+    text: 0xe6edf3,
+    muted: 0x9aa7b4,
+    border: 0x39424e,
+    card: 0x252b33,
+    card_hover: 0x2d3540,
+    actions: 0x2d3540,
+    press: 0x3a4452,
+    selected: 0x223c62,
+    selected_border: 0x6386b8,
+    accent: 0x6ea8ff,
+    notice: 0x22364d,
+    notice_text: 0xc4dfff,
+    danger: 0xff9c95,
+    danger_bg: 0x3b2327,
+    success: 0x73d69a,
+    menu_bg: 0x20252c,
+    menu_border: 0x39424e,
+    menu_hover_bg: 0x223c62,
+    menu_hover_fg: 0xa9ccff,
+    dialog_text: 0xe6edf3,
+    dialog_muted: 0xa8b3c2,
+    check_fill: 0x203d2c,
+    control_border: 0x768390,
+};
+
+/// 当前主题是否为深色。
+pub fn dark() -> bool {
+    DARK.load(Ordering::Relaxed)
+}
+
+/// 剪贴板历史窗口的当前色值。
+pub fn clip() -> &'static ClipPalette {
+    if dark() {
+        &CLIP_DARK
+    } else {
+        &CLIP_LIGHT
+    }
+}
+
 /// 当前调色板。
 pub fn c() -> &'static Palette {
     if DARK.load(Ordering::Relaxed) {

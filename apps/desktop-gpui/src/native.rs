@@ -137,6 +137,30 @@ pub fn set_topmost(window: &Window, topmost: bool) -> Result<(), String> {
     }
 }
 
+/// 无边框的工具窗口（剪贴板历史、翻译）：置顶且不出现在任务栏，与 Tauri 版的 `always_on_top` + `skip_taskbar` 一致。
+/// 以普通窗口创建以保留可调整大小的边框，再改成工具窗口样式；Windows 需重新显示一次任务栏才会移除按钮。
+pub fn utility_window(window: &Window) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::UI::WindowsAndMessaging::*;
+        let hwnd = hwnd(window) as windows_sys::Win32::Foundation::HWND;
+        if hwnd.is_null() {
+            return Err("窗口原生句柄不可用。".into());
+        }
+        // SAFETY: hwnd 来自存活窗口；只改扩展样式与 Z 序，显示切换以异步消息投递，避免窗口过程重入。
+        unsafe {
+            let style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+            let next = (style | WS_EX_TOOLWINDOW as isize) & !(WS_EX_APPWINDOW as isize);
+            if next != style {
+                SetWindowLongPtrW(hwnd, GWL_EXSTYLE, next);
+                ShowWindowAsync(hwnd, SW_HIDE);
+                ShowWindowAsync(hwnd, SW_SHOW);
+            }
+        }
+    }
+    set_topmost(window, true)
+}
+
 /// 录屏辅助窗口（红框、控制条）不进入屏幕采集画面：Windows 10 2004+ 的 WDA_EXCLUDEFROMCAPTURE。
 /// 其他平台暂未实现（macOS 需在 ScreenCaptureKit 过滤器中排除窗口）。
 pub fn exclude_from_capture(window: &Window) -> Result<(), String> {
