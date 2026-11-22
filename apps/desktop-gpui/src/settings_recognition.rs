@@ -114,10 +114,11 @@ pub(super) struct ServiceEditor {
     key: Entity<InputState>,
 }
 
-/// 页面后台读取的状态：系统 OCR 语言与各服务已保存的密钥数。
+/// 页面后台读取的状态：系统 OCR 语言、WeChat OCR 组件与各服务已保存的密钥数。
 #[derive(Default)]
 pub(super) struct RecognitionState {
     languages: Option<Result<Vec<OcrLanguage>, String>>,
+    wechat: Option<snap_core::recognition::wechat_ocr::WechatOcrStatus>,
     credentials: HashMap<String, usize>,
     pub(super) loading: bool,
 }
@@ -175,12 +176,14 @@ impl SettingsView {
             return;
         }
         self.recognition.loading = true;
+        cx.notify();
         let services = crate::shell::settings(cx).recognition_services;
         cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
-            let (languages, credentials) = cx
+            let (languages, wechat, credentials) = cx
                 .background_executor()
                 .spawn(async move {
                     let languages = snap_core::recognition::system_ocr_languages();
+                    let wechat = snap_core::recognition::wechat_ocr::status();
                     let credentials = services
                         .iter()
                         .map(|s| {
@@ -189,12 +192,13 @@ impl SettingsView {
                             (s.id.clone(), count)
                         })
                         .collect::<HashMap<_, _>>();
-                    (languages, credentials)
+                    (languages, wechat, credentials)
                 })
                 .await;
             let _ = this.update(cx, |view, cx| {
                 view.recognition.loading = false;
                 view.recognition.languages = Some(languages);
+                view.recognition.wechat = Some(wechat);
                 view.recognition.credentials = credentials;
                 cx.notify();
             });
@@ -469,9 +473,9 @@ impl SettingsView {
             ),
             (
                 "wechat-ocr",
-                "WeChat OCR",
-                Some(t("GPUI 版暂不支持")),
-                false,
+                "WeChat OCR（实验性）",
+                Some(t("实验性 · 离线")),
+                cfg!(all(windows, target_arch = "x86_64")),
             ),
         ];
         for (index, (provider, label, hint, enabled)) in fixed.into_iter().enumerate() {
@@ -520,6 +524,27 @@ impl SettingsView {
         let mut ocr_rows = Vec::new();
         if s.ocr.provider == "local-ppocr" {
             ocr_rows.push(self.ocr_resource_row(t, cx));
+        }
+        if s.ocr.provider == "wechat-ocr" {
+            let status = match (&self.recognition.wechat, self.recognition.loading) {
+                (_, true) => t("正在检测 WeChat OCR…"),
+                (None, _) => t("状态未读取"),
+                (Some(w), _) => match &w.error {
+                    Some(error) => {
+                        snap_core::i18n::for_language(&s.appearance.language, error).to_owned()
+                    }
+                    None if w.detected => t("已找到 WeChat OCR 组件"),
+                    None => t("未找到 WeChat OCR 组件"),
+                },
+            };
+            let idle = !self.recognition.loading;
+            let mut recheck = self.action_button("wechat-recheck", t("重新检测"), idle);
+            if idle {
+                recheck = recheck.on_click(
+                    cx.listener(|view, _: &ClickEvent, _, cx| view.load_recognition(cx)),
+                );
+            }
+            ocr_rows.push(row(t("WeChat OCR"), Some(status), recheck));
         }
         if s.ocr.provider == "windows-media" {
             let mut languages = div().flex().flex_wrap().gap(px(4.0)).max_w(px(360.0));

@@ -20,7 +20,8 @@ use image::RgbaImage;
 use snap_core::{
     recognition::{
         self,
-        ocr::{LocalOcr, OcrResult},
+        ocr::OcrResult,
+        Engines,
         providers::TranslationRequest,
         qr::QrItem,
     },
@@ -45,18 +46,16 @@ const TARGETS: [(&str, &str); 6] = [
     ("de", "德语"),
 ];
 
-/// 本地 OCR 引擎在进程内共享；空闲五分钟后释放模型。
-struct Engines {
-    local: Arc<LocalOcr>,
-}
-impl Global for Engines {}
+/// 本地 PP-OCR 与微信 OCR 连接在进程内共享；空闲五分钟后释放模型与连接。
+struct SharedEngines(Arc<Engines>);
+impl Global for SharedEngines {}
 
-fn local_engine(cx: &mut App) -> Arc<LocalOcr> {
-    if let Some(engines) = cx.try_global::<Engines>() {
-        return engines.local.clone();
+fn local_engine(cx: &mut App) -> Arc<Engines> {
+    if let Some(engines) = cx.try_global::<SharedEngines>() {
+        return engines.0.clone();
     }
-    let local = Arc::new(LocalOcr::default());
-    cx.set_global(Engines { local: local.clone() });
+    let local = Arc::new(Engines::default());
+    cx.set_global(SharedEngines(local.clone()));
     // 定期检查空闲模型；只持有弱引用不必要：引擎随进程常驻，模型本身按空闲时间释放。
     let sweeper = local.clone();
     cx.spawn(async move |cx| {
@@ -204,7 +203,7 @@ struct Panel {
     preview: Option<Arc<RenderImage>>,
     mode: Mode,
     settings: Settings,
-    local: Arc<LocalOcr>,
+    local: Arc<Engines>,
     /// 识别结果草稿（可编辑）与原始识别结果。
     draft: Entity<TextareaState>,
     ocr: Option<OcrResult>,
@@ -228,7 +227,7 @@ impl Panel {
         image: Option<Arc<RgbaImage>>,
         mode: Mode,
         settings: Settings,
-        local: Arc<LocalOcr>,
+        local: Arc<Engines>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
