@@ -4,7 +4,6 @@
 //! Tauri 版没有独立的管理列表（主窗口贴图页只有创建入口与外观设置，单张贴图在自身菜单里操作）；
 //! GPUI 版没有主窗口，托盘“贴图管理”打开本窗口。列表每秒刷新一次；缩略图最长边 96 像素，
 //! 按贴图图像缓存，图像变化（变换）或贴图关闭后释放对应纹理。
-use crate::annotate;
 use gpui_kit::*;
 use image::RgbaImage;
 use std::{collections::HashMap, sync::Arc, time::Duration};
@@ -82,7 +81,10 @@ impl Manager {
         snap_core::i18n::for_language(&self.language, key).to_owned()
     }
 
+    /// 按钮：与剪贴板历史窗口同一套色值（`theme::clip`）；`danger` 为红字浅红悬停。
     fn button(&self, id: impl Into<ElementId>, label: String, danger: bool) -> Stateful<Div> {
+        let c = crate::theme::clip();
+        let (hover, fg) = if danger { (c.danger_bg, c.danger) } else { (c.card_hover, c.text) };
         div()
             .id(id)
             .h(px(28.0))
@@ -92,23 +94,26 @@ impl Manager {
             .items_center()
             .rounded(px(6.0))
             .border_1()
-            .border_color(rgb(annotate::border()))
-            .bg(rgb(annotate::surface()))
-            .text_sm()
-            .text_color(rgb(if danger { 0xfb7185 } else { annotate::text() }))
+            .border_color(rgb(c.border))
+            .bg(rgb(c.bg))
+            .text_xs()
+            .text_color(rgb(fg))
             .cursor_pointer()
-            .hover(|s| s.bg(rgb(annotate::hover())))
+            .hover(move |s| s.bg(rgb(hover)))
             .child(label)
     }
 
     fn tag(&self, label: String) -> Div {
+        let c = crate::theme::clip();
         div()
-            .px(px(6.0))
-            .py(px(1.0))
-            .rounded(px(4.0))
-            .bg(rgb(annotate::active_bg()))
-            .text_xs()
-            .text_color(rgb(annotate::active_fg()))
+            .h(px(20.0))
+            .px(px(8.0))
+            .flex()
+            .items_center()
+            .rounded(px(10.0))
+            .bg(rgb(c.selected))
+            .text_size(px(11.0))
+            .text_color(rgb(c.accent))
             .child(label)
     }
 }
@@ -134,7 +139,14 @@ impl Render for Manager {
             .flex()
             .flex_wrap()
             .gap(px(6.0))
-            .child(self.button("pins-clipboard", self.t("剪贴板贴图"), false).on_click(|_, _, cx| crate::pins::from_clipboard(cx)))
+            .child(
+                self.button("pins-clipboard", self.t("剪贴板贴图"), false)
+                    .bg(rgb(0x2563eb))
+                    .border_color(rgb(0x2563eb))
+                    .text_color(rgb(0xffffff))
+                    .hover(|s| s.bg(rgb(0x1d4ed8)))
+                    .on_click(|_, _, cx| crate::pins::from_clipboard(cx)),
+            )
             .child(self.button("pins-file", self.t("打开图片贴图"), false).on_click(|_, _, cx| crate::pins::open_file(cx)))
             .child(if any_hidden {
                 self.button("pins-show", self.t("显示全部贴图"), false).on_click(|_, _, cx| crate::pins::show_hidden(cx))
@@ -149,7 +161,9 @@ impl Render for Manager {
             }));
         let mut list = div().id("pins-list").flex_1().flex().flex_col().gap(px(6.0)).overflow_y_scroll();
         if pins.is_empty() {
-            list = list.child(div().p(px(16.0)).text_sm().text_color(rgb(annotate::muted())).child(self.t("当前没有贴图。")));
+            list = list.child(
+                div().py(px(48.0)).px(px(16.0)).flex().justify_center().text_color(rgb(crate::theme::clip().muted)).child(self.t("当前没有贴图。")),
+            );
         }
         for (index, pin) in pins.iter().enumerate() {
             let handle = pin.handle;
@@ -172,13 +186,14 @@ impl Render for Manager {
             }
             list = list.child(
                 div()
+                    .id(("pin-row", index))
                     .p(px(8.0))
                     .flex()
                     .items_center()
                     .gap(px(10.0))
                     .rounded(px(8.0))
-                    .border_1()
-                    .border_color(rgb(annotate::border()))
+                    .bg(rgb(crate::theme::clip().card))
+                    .hover(|s| s.bg(rgb(crate::theme::clip().card_hover)))
                     .child(
                         div()
                             .size(px(THUMB as f32))
@@ -187,7 +202,7 @@ impl Render for Manager {
                             .items_center()
                             .justify_center()
                             .rounded(px(6.0))
-                            .bg(rgb(crate::theme::c().window_bg))
+                            .bg(rgb(crate::theme::clip().bg))
                             .children(thumb.map(|t| img(t).max_w_full().max_h_full().object_fit(ObjectFit::Contain))),
                     )
                     .child(
@@ -226,11 +241,12 @@ impl Render for Manager {
             .flex()
             .flex_col()
             .gap(px(10.0))
-            .p(px(12.0))
-            .bg(rgb(crate::theme::c().panel))
-            .text_color(rgb(annotate::text()))
+            .p(px(10.0))
+            .bg(rgb(crate::theme::clip().bg))
+            .text_color(rgb(crate::theme::clip().text))
+            .text_size(px(13.0))
             .child(header)
-            .child(div().text_xs().text_color(rgb(annotate::muted())).child(format!("{} {}", self.t("当前贴图："), pins.len())))
+            .child(div().text_xs().text_color(rgb(crate::theme::clip().muted)).child(format!("{} {}", self.t("当前贴图："), pins.len())))
             .child(list)
     }
 }

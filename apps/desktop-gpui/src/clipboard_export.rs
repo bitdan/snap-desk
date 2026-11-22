@@ -6,7 +6,10 @@
 //! 文本排版字体：设置里下载/选择的导出字体，没有时回退到本机中文字体。
 use crate::annotate;
 use gpui_kit::{
-    component::input::{Textarea, TextareaState},
+    component::{
+        input::{Textarea, TextareaState},
+        Icon,
+    },
     *,
 };
 use snap_core::clipboard::{
@@ -52,7 +55,7 @@ pub fn open(cx: &mut App, service: Service, items: Vec<Item>) {
     let options = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
             None,
-            size(px(480.0), px(520.0)),
+            size(px(960.0), px(640.0)),
             cx,
         ))),
         titlebar: Some(TitlebarOptions {
@@ -63,7 +66,7 @@ pub fn open(cx: &mut App, service: Service, items: Vec<Item>) {
         show: true,
         kind: WindowKind::Normal,
         is_resizable: true,
-        window_min_size: Some(size(px(400.0), px(360.0))),
+        window_min_size: Some(size(px(640.0), px(420.0))),
         ..Default::default()
     };
     match cx.open_window(options, |_, cx| {
@@ -82,6 +85,8 @@ pub fn open(cx: &mut App, service: Service, items: Vec<Item>) {
             },
             edits: HashMap::new(),
             editing: None,
+            thumbs: HashMap::new(),
+            thumbs_pending: Default::default(),
             busy: false,
             error: None,
             message: None,
@@ -126,6 +131,9 @@ struct Composer {
     edits: HashMap<i64, String>,
     /// 正在改写的条目与输入框。
     editing: Option<(i64, Entity<TextareaState>)>,
+    /// 图片素材的缩略图（列表与预览共用）。
+    thumbs: HashMap<i64, std::sync::Arc<RenderImage>>,
+    thumbs_pending: std::collections::HashSet<i64>,
     busy: bool,
     error: Option<String>,
     message: Option<String>,
@@ -135,28 +143,6 @@ struct Composer {
 impl Composer {
     fn t(&self, key: &'static str) -> String {
         snap_core::i18n::for_language(&self.language, key).to_owned()
-    }
-
-    fn pill(&self, id: impl Into<ElementId>, label: String, active: bool) -> Stateful<Div> {
-        div()
-            .id(id)
-            .px(px(9.0))
-            .py(px(3.0))
-            .rounded(px(12.0))
-            .text_xs()
-            .cursor_pointer()
-            .text_color(rgb(if active {
-                annotate::active_fg()
-            } else {
-                annotate::muted()
-            }))
-            .bg(rgb(if active {
-                annotate::active_bg()
-            } else {
-                annotate::surface()
-            }))
-            .hover(|s| s.text_color(rgb(annotate::text())))
-            .child(label)
     }
 
     fn step(&mut self, gap: i32, margin: f32, cx: &mut Context<Self>) {
@@ -369,264 +355,485 @@ async fn run(
     Ok(Some(count))
 }
 
-impl Render for Composer {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let language = self.language.clone();
-        let text =
-            move |key: &'static str| snap_core::i18n::for_language(&language, key).to_owned();
-        let mode = self.options.mode;
-        let mut modes = div().flex().gap(px(4.0));
-        for (index, (value, label)) in [
-            (Mode::Pdf, "PDF"),
-            (Mode::LongPng, "长图"),
-            (Mode::Separate, "分别保存"),
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            modes = modes.child(
-                self.pill(("export-mode", index), text(label), mode == value)
-                    .on_click(cx.listener(move |view, _: &ClickEvent, _, cx| {
-                        view.options.mode = value;
-                        cx.notify();
-                    })),
-            );
+/// `--cmp-*` 色值（Vue `ClipboardComposer.vue`）。
+struct Colors {
+    bg: u32,
+    soft: u32,
+    card: u32,
+    border: u32,
+    text: u32,
+    muted: u32,
+    accent: u32,
+    selected: u32,
+    danger: u32,
+    success: u32,
+    hover: u32,
+}
+
+fn colors() -> Colors {
+    if crate::theme::dark() {
+        Colors { bg: 0x1b1f24, soft: 0x14181d, card: 0x252b33, border: 0x39424e, text: 0xe6edf3, muted: 0x9aa7b4, accent: 0x79a6ff, selected: 0x1f3352, danger: 0xff8a80, success: 0x73d69a, hover: 0x2b323c }
+    } else {
+        Colors { bg: 0xffffff, soft: 0xf3f5f8, card: 0xffffff, border: 0xe1e4e8, text: 0x24292f, muted: 0x6b7280, accent: 0x2563eb, selected: 0xeff6ff, danger: 0xb42318, success: 0x24834b, hover: 0xeef1f4 }
+    }
+}
+
+impl Composer {
+    fn thumbnail(&mut self, id: i64, cx: &mut Context<Self>) -> Option<std::sync::Arc<RenderImage>> {
+        if let Some(thumb) = self.thumbs.get(&id) {
+            return Some(thumb.clone());
         }
-        let mut options = div().flex().flex_col().gap(px(6.0)).child(modes);
-        let row = |label: String| {
+        if self.thumbs_pending.insert(id) {
+            let service = self.service.clone();
+            cx.spawn(async move |this, cx| {
+                let decoded = cx
+                    .background_executor()
+                    .spawn(async move {
+                        let bytes = service.thumbnail(id)?;
+                        let mut image = image::load_from_memory(&bytes).map_err(|e| e.to_string())?.to_rgba8();
+                        for pixel in image.pixels_mut() {
+                            pixel.0.swap(0, 2);
+                        }
+                        Ok::<_, String>(std::sync::Arc::new(RenderImage::new(vec![image::Frame::new(image)])))
+                    })
+                    .await;
+                let _ = this.update(cx, |view, cx| {
+                    if let Ok(thumb) = decoded {
+                        view.thumbs.insert(id, thumb);
+                        cx.notify();
+                    }
+                });
+            })
+            .detach();
+        }
+        None
+    }
+
+    fn entry_text(&self, item: &Item) -> String {
+        self.edits.get(&item.id).cloned().unwrap_or_else(|| item.preview.clone())
+    }
+
+    fn icon_button(&self, id: impl Into<ElementId>, data: &'static [u8], tip: String, pressed: bool, danger: bool, c: &Colors) -> Stateful<Div> {
+        let (hover_fg, bg) = (if danger { c.danger } else { c.text }, if pressed { Some(c.selected) } else { None });
+        let mut button = div()
+            .id(id)
+            .size(px(24.0))
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(px(4.0))
+            .cursor_pointer()
+            .text_color(rgb(if pressed { c.accent } else { c.muted }))
+            .child(Icon::default().data(data).size(px(14.0)))
+            .tooltip(move |_, cx| cx.new(|_| annotate::Tooltip(tip.clone().into())).into());
+        if let Some(bg) = bg {
+            button = button.bg(rgb(bg));
+        }
+        let soft = c.soft;
+        button.hover(move |s| s.bg(rgb(soft)).text_color(rgb(hover_fg)))
+    }
+
+    /// 数值输入（−/+ 与数值，样式同 Vue 的 64 像素数字框）。
+    fn stepper(&self, id: &'static str, value: String, unit: &'static str, down: fn(&mut Self, &mut Context<Self>), up: fn(&mut Self, &mut Context<Self>), c: &Colors, cx: &mut Context<Self>) -> Div {
+        let small = |index: usize, label: &'static str, action: fn(&mut Self, &mut Context<Self>)| {
+            let hover = c.hover;
             div()
+                .id((id, index))
+                .w(px(20.0))
+                .h_full()
                 .flex()
                 .items_center()
-                .gap(px(6.0))
-                .text_xs()
-                .text_color(rgb(annotate::muted()))
-                .child(div().w(px(72.0)).child(label))
+                .justify_center()
+                .cursor_pointer()
+                .hover(move |s| s.bg(rgb(hover)))
+                .child(label)
+                .on_click(cx.listener(move |view, _: &ClickEvent, _, cx| action(view, cx)))
         };
+        div()
+            .flex()
+            .items_center()
+            .gap(px(6.0))
+            .child(
+                div()
+                    .h(px(30.0))
+                    .flex()
+                    .items_center()
+                    .rounded(px(6.0))
+                    .border_1()
+                    .border_color(rgb(c.border))
+                    .bg(rgb(c.bg))
+                    .overflow_hidden()
+                    .text_color(rgb(c.text))
+                    .child(small(0, "−", down))
+                    .child(div().w(px(32.0)).flex().justify_center().child(value))
+                    .child(small(1, "+", up)),
+            )
+            .child(unit)
+    }
+}
+
+impl Render for Composer {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let c = colors();
+        let language = self.language.clone();
+        let text = move |key: &'static str| snap_core::i18n::for_language(&language, key).to_owned();
+        let mode = self.options.mode;
+        let busy = self.busy;
+
+        // ---- 工具栏：导出方式 + 参数 ----
+        let mut modes = div().flex().p(px(2.0)).rounded(px(8.0)).bg(rgb(c.soft));
+        for (index, (value, label)) in [(Mode::Pdf, "PDF"), (Mode::LongPng, "长图"), (Mode::Separate, "分别保存")].into_iter().enumerate() {
+            let checked = mode == value;
+            let mut button = div()
+                .id(("export-mode", index))
+                .h(px(28.0))
+                .px(px(12.0))
+                .flex()
+                .items_center()
+                .rounded(px(6.0))
+                .cursor_pointer()
+                .child(text(label))
+                .on_click(cx.listener(move |view, _: &ClickEvent, _, cx| {
+                    if !view.busy {
+                        view.options.mode = value;
+                        cx.notify();
+                    }
+                }));
+            button = if checked {
+                button.bg(rgb(c.bg)).text_color(rgb(c.accent)).font_weight(FontWeight::SEMIBOLD).shadow_sm()
+            } else {
+                button.text_color(rgb(c.muted))
+            };
+            modes = modes.child(button);
+        }
+        let choice = |id: &'static str, label: String, on: bool, action: fn(&mut Self, &mut Context<Self>), cx: &mut Context<Self>| {
+            let hover = c.hover;
+            div()
+                .id(id)
+                .h(px(30.0))
+                .px(px(10.0))
+                .flex()
+                .items_center()
+                .rounded(px(6.0))
+                .border_1()
+                .border_color(rgb(if on { c.accent } else { c.border }))
+                .bg(rgb(if on { c.selected } else { c.bg }))
+                .text_color(rgb(if on { c.accent } else { c.text }))
+                .cursor_pointer()
+                .hover(move |s| s.bg(rgb(hover)))
+                .child(label)
+                .on_click(cx.listener(move |view, _: &ClickEvent, _, cx| action(view, cx)))
+        };
+        let mut params = div().flex().flex_wrap().items_center().gap(px(10.0)).text_color(rgb(c.muted));
         match mode {
             Mode::Pdf => {
-                let page = self.options.page_size;
-                options = options
-                    .child(
-                        row(text("页面"))
-                            .child(
-                                self.pill("export-a4", "A4".into(), page == PageSize::A4)
-                                    .on_click(cx.listener(|view, _: &ClickEvent, _, cx| {
-                                        view.options.page_size = PageSize::A4;
-                                        cx.notify();
-                                    })),
-                            )
-                            .child(
-                                self.pill(
-                                    "export-original",
-                                    text("原始比例"),
-                                    page == PageSize::Original,
-                                )
-                                .on_click(cx.listener(
-                                    |view, _: &ClickEvent, _, cx| {
-                                        view.options.page_size = PageSize::Original;
-                                        cx.notify();
-                                    },
-                                )),
-                            ),
-                    )
-                    .child(
-                        row(text("边距"))
-                            .child(self.pill("export-margin-down", "−".into(), false).on_click(
-                                cx.listener(|view, _: &ClickEvent, _, cx| view.step(0, -2.0, cx)),
-                            ))
-                            .child(format!("{} mm", self.options.margin_mm))
-                            .child(self.pill("export-margin-up", "+".into(), false).on_click(
-                                cx.listener(|view, _: &ClickEvent, _, cx| view.step(0, 2.0, cx)),
-                            )),
-                    );
+                let a4 = self.options.page_size == PageSize::A4;
+                params = params
+                    .child(choice("export-a4", "A4".into(), a4, |v, cx| {
+                        v.options.page_size = PageSize::A4;
+                        cx.notify();
+                    }, cx))
+                    .child(choice("export-original", text("图片原始比例"), !a4, |v, cx| {
+                        v.options.page_size = PageSize::Original;
+                        cx.notify();
+                    }, cx))
+                    .child(text("边距"))
+                    .child(self.stepper("export-margin", format!("{}", self.options.margin_mm), "mm", |v, cx| v.step(0, -2.0, cx), |v, cx| v.step(0, 2.0, cx), &c, cx));
             }
             Mode::LongPng => {
-                let background = self.options.background;
-                options = options
-                    .child(
-                        row(text("背景"))
-                            .child(
-                                self.pill(
-                                    "export-white",
-                                    text("白色"),
-                                    background == Background::White,
-                                )
-                                .on_click(cx.listener(
-                                    |view, _: &ClickEvent, _, cx| {
-                                        view.options.background = Background::White;
-                                        cx.notify();
-                                    },
-                                )),
-                            )
-                            .child(
-                                self.pill(
-                                    "export-transparent",
-                                    text("透明"),
-                                    background == Background::Transparent,
-                                )
-                                .on_click(cx.listener(
-                                    |view, _: &ClickEvent, _, cx| {
-                                        view.options.background = Background::Transparent;
-                                        cx.notify();
-                                    },
-                                )),
-                            ),
-                    )
-                    .child(
-                        row(text("间距"))
-                            .child(self.pill("export-gap-down", "−".into(), false).on_click(
-                                cx.listener(|view, _: &ClickEvent, _, cx| view.step(-8, 0.0, cx)),
-                            ))
-                            .child(format!("{} px", self.options.gap_px))
-                            .child(self.pill("export-gap-up", "+".into(), false).on_click(
-                                cx.listener(|view, _: &ClickEvent, _, cx| view.step(8, 0.0, cx)),
-                            )),
-                    );
+                let white = self.options.background == Background::White;
+                params = params
+                    .child(text("间距"))
+                    .child(self.stepper("export-gap", format!("{}", self.options.gap_px), "px", |v, cx| v.step(-8, 0.0, cx), |v, cx| v.step(8, 0.0, cx), &c, cx))
+                    .child(choice("export-white", text("白底"), white, |v, cx| {
+                        v.options.background = Background::White;
+                        cx.notify();
+                    }, cx))
+                    .child(choice("export-transparent", text("透明背景"), !white, |v, cx| {
+                        v.options.background = Background::Transparent;
+                        cx.notify();
+                    }, cx));
             }
             Mode::Separate => {
-                options = options.child(div().text_xs().text_color(rgb(annotate::muted())).child(
-                    text("在所选目录中新建批次文件夹，文本存为 TXT，图片存为 PNG。"),
-                ));
+                params = params.child(div().text_xs().child(text("文本存为 TXT，图片按原图存为 PNG，放进新建的批次文件夹。")));
             }
         }
-        let count = self.entries.len();
+        let toolbar = div()
+            .flex()
+            .flex_none()
+            .flex_wrap()
+            .items_center()
+            .gap(px(16.0))
+            .px(px(14.0))
+            .py(px(10.0))
+            .border_b_1()
+            .border_color(rgb(c.border))
+            .child(modes)
+            .child(params);
+
+        // ---- 左侧素材卡片 ----
         let mut list = div()
             .id("export-entries")
-            .flex_1()
+            .w(px(300.0))
+            .flex_none()
+            .h_full()
+            .p(px(10.0))
             .flex()
             .flex_col()
-            .gap(px(2.0))
-            .overflow_y_scroll();
-        if count == 0 {
-            list = list.child(
-                div()
-                    .p(px(12.0))
-                    .text_sm()
-                    .text_color(rgb(annotate::muted()))
-                    .child(text("组合导出仅支持文本和图片，文件引用请复制后粘贴")),
-            );
+            .gap(px(6.0))
+            .overflow_y_scroll()
+            .border_r_1()
+            .border_color(rgb(c.border))
+            .child(div().mx(px(2.0)).mb(px(2.0)).text_xs().line_height(relative(1.5)).text_color(rgb(c.muted)).child(text("用 ↑ ↓ 调整顺序，改写只影响本次导出。")));
+        if self.entries.is_empty() {
+            list = list.child(div().mx(px(2.0)).text_xs().text_color(rgb(c.muted)).child(text("素材已全部移除，关闭后重新选择。")));
         }
-        for (index, item) in self.entries.iter().enumerate() {
+        let entries = self.entries.clone();
+        for (index, item) in entries.iter().enumerate() {
             let id = item.id;
             let edited = self.edits.contains_key(&id);
             let editing = self.editing.as_ref().filter(|(current, _)| *current == id).map(|(_, state)| state.clone());
-            let label = match item.kind {
-                Kind::Image => format!(
-                    "{} {}×{}",
-                    text("图片"),
-                    item.width.unwrap_or(0),
-                    item.height.unwrap_or(0)
-                ),
-                _ => self
-                    .edits
-                    .get(&id)
-                    .map(String::as_str)
-                    .unwrap_or(&item.preview)
-                    .lines()
-                    .next()
-                    .unwrap_or_default()
-                    .to_string(),
-            };
             let is_text = item.kind == Kind::Text;
+            let mut actions = div().ml_auto().flex().gap(px(2.0));
+            if index > 0 {
+                actions = actions.child(self.icon_button(("export-up", index), annotate::icons::CHEVRON_UP, text("上移"), false, false, &c).on_click(cx.listener(move |view, _: &ClickEvent, _, cx| view.move_entry(index, index - 1, cx))));
+            }
+            if index + 1 < entries.len() {
+                actions = actions.child(self.icon_button(("export-down", index), annotate::icons::CHEVRON_DOWN, text("下移"), false, false, &c).on_click(cx.listener(move |view, _: &ClickEvent, _, cx| view.move_entry(index, index + 1, cx))));
+            }
+            if edited && editing.is_none() {
+                actions = actions.child(self.icon_button(("export-restore", index), annotate::icons::UNDO, text("还原原文"), false, false, &c).on_click(cx.listener(move |view, _: &ClickEvent, _, cx| {
+                    if !view.busy {
+                        view.edits.remove(&id);
+                        cx.notify();
+                    }
+                })));
+            }
+            if is_text {
+                actions = actions.child(self.icon_button(("export-edit", index), annotate::icons::PENCIL, text("改写文本"), editing.is_some(), false, &c).on_click(cx.listener(move |view, _: &ClickEvent, window, cx| view.toggle_edit(id, window, cx))));
+            }
+            actions = actions.child(self.icon_button(("export-remove", index), annotate::icons::CLOSE, text("从本次导出移除"), false, true, &c).on_click(cx.listener(move |view, _: &ClickEvent, _, cx| {
+                if !view.busy && index < view.entries.len() {
+                    let removed = view.entries.remove(index);
+                    view.edits.remove(&removed.id);
+                    if view.editing.as_ref().is_some_and(|(current, _)| *current == removed.id) {
+                        view.editing = None;
+                    }
+                    cx.notify();
+                }
+            })));
+            let head = div()
+                .flex()
+                .items_center()
+                .gap(px(6.0))
+                .min_h(px(24.0))
+                .child(
+                    div()
+                        .min_w(px(18.0))
+                        .h(px(18.0))
+                        .px(px(4.0))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded(px(9.0))
+                        .bg(rgb(c.selected))
+                        .text_size(px(11.0))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(rgb(c.accent))
+                        .child(format!("{}", index + 1)),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(4.0))
+                        .text_xs()
+                        .text_color(rgb(c.muted))
+                        .child(Icon::default().data(if is_text { annotate::icons::TYPE } else { annotate::icons::SQUARE }).size(px(13.0)))
+                        .child(if is_text { text("文本") } else { format!("{} × {}", item.width.unwrap_or(0), item.height.unwrap_or(0)) }),
+                )
+                .children(edited.then(|| div().px(px(6.0)).rounded(px(4.0)).bg(rgb(c.selected)).text_size(px(11.0)).text_color(rgb(c.accent)).child(text("已改写"))))
+                .child(actions);
+            let body: AnyElement = if let Some(state) = editing {
+                div()
+                    .mt(px(6.0))
+                    .px(px(8.0))
+                    .py(px(6.0))
+                    .min_h(px(120.0))
+                    .rounded(px(6.0))
+                    .border_1()
+                    .border_color(rgb(c.border))
+                    .bg(rgb(c.bg))
+                    .text_xs()
+                    .child(Textarea::new(&state).appearance(false))
+                    .into_any_element()
+            } else if is_text {
+                div().mt(px(4.0)).text_xs().line_height(relative(1.5)).line_clamp(3).child(self.entry_text(item)).into_any_element()
+            } else {
+                div()
+                    .mt(px(4.0))
+                    .h(px(72.0))
+                    .flex()
+                    .justify_center()
+                    .rounded(px(4.0))
+                    .bg(rgb(c.soft))
+                    .overflow_hidden()
+                    .children(self.thumbnail(id, cx).map(|t| img(t).h_full().object_fit(ObjectFit::Contain)))
+                    .into_any_element()
+            };
             list = list.child(
                 div()
-                    .flex()
-                    .items_center()
-                    .gap(px(6.0))
-                    .p(px(6.0))
-                    .rounded(px(6.0))
-                    .bg(rgb(annotate::surface()))
-                    .child(
-                        div()
-                            .w(px(24.0))
-                            .text_xs()
-                            .text_color(rgb(annotate::muted()))
-                            .child(format!("{}", index + 1)),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w(px(0.0))
-                            .truncate()
-                            .text_sm()
-                            .child(label),
-                    )
-                    .children(edited.then(|| {
-                        div().text_xs().text_color(rgb(annotate::active_fg())).child(text("已改写"))
-                    }))
-                    .children((edited && editing.is_none()).then(|| {
-                        self.pill(("export-restore", index), text("还原原文"), false).on_click(cx.listener(
-                            move |view, _: &ClickEvent, _, cx| {
-                                if !view.busy {
-                                    view.edits.remove(&id);
-                                    cx.notify();
-                                }
-                            },
-                        ))
-                    }))
-                    .children(is_text.then(|| {
-                        let label = text(if editing.is_some() { "完成" } else { "改写文本" });
-                        self.pill(("export-edit", index), label, editing.is_some()).on_click(cx.listener(
-                            move |view, _: &ClickEvent, window, cx| view.toggle_edit(id, window, cx),
-                        ))
-                    }))
-                    .child(self.pill(("export-up", index), "↑".into(), false).on_click(
-                        cx.listener(move |view, _: &ClickEvent, _, cx| {
-                            view.move_entry(index, index.saturating_sub(1), cx)
-                        }),
-                    ))
-                    .child(
-                        self.pill(("export-down", index), "↓".into(), false)
-                            .on_click(cx.listener(move |view, _: &ClickEvent, _, cx| {
-                                view.move_entry(index, index + 1, cx)
-                            })),
-                    )
-                    .child(
-                        self.pill(("export-remove", index), text("移除"), false)
-                            .on_click(cx.listener(move |view, _: &ClickEvent, _, cx| {
-                                if !view.busy && index < view.entries.len() {
-                                    let removed = view.entries.remove(index);
-                                    view.edits.remove(&removed.id);
-                                    if view.editing.as_ref().is_some_and(|(current, _)| *current == removed.id) {
-                                        view.editing = None;
-                                    }
-                                    cx.notify();
-                                }
-                            })),
-                    ),
+                    .pt(px(6.0))
+                    .px(px(8.0))
+                    .pb(px(8.0))
+                    .rounded(px(8.0))
+                    .border_1()
+                    .border_color(rgb(if self.editing.as_ref().is_some_and(|(e, _)| *e == id) { c.accent } else { c.border }))
+                    .bg(rgb(c.card))
+                    .child(head)
+                    .child(body),
             );
-            if let Some(state) = editing {
-                list = list.child(
-                    div()
-                        .p(px(4.0))
-                        .rounded(px(6.0))
-                        .border_1()
-                        .border_color(rgb(annotate::border()))
-                        .child(Textarea::new(&state)),
-                );
+        }
+
+        // ---- 右侧近似预览 ----
+        let mut preview = div()
+            .id("export-preview")
+            .flex_1()
+            .min_w_0()
+            .h_full()
+            .p(px(20.0))
+            .flex()
+            .flex_col()
+            .items_center()
+            .gap(px(18.0))
+            .overflow_y_scroll()
+            .bg(rgb(c.soft));
+        match mode {
+            Mode::Pdf => {
+                let a4 = self.options.page_size == PageSize::A4;
+                let pad = (self.options.margin_mm as f32 / 210.0 * 320.0).max(0.0);
+                for (index, item) in entries.iter().enumerate() {
+                    let (w, h) = if a4 || item.kind == Kind::Text {
+                        (320.0, 320.0 * 297.0 / 210.0)
+                    } else {
+                        let (iw, ih) = (item.width.unwrap_or(1).max(1) as f32, item.height.unwrap_or(1).max(1) as f32);
+                        (320.0, (320.0 * ih / iw).min(600.0))
+                    };
+                    let sheet_content: AnyElement = if item.kind == Kind::Text {
+                        div().size_full().text_size(px(9.0)).line_height(relative(1.6)).text_color(rgb(0x111111)).overflow_hidden().child(self.entry_text(item)).into_any_element()
+                    } else {
+                        div().size_full().flex().items_center().justify_center().children(self.thumbnail(item.id, cx).map(|t| img(t).size_full().object_fit(ObjectFit::Contain))).into_any_element()
+                    };
+                    preview = preview.child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .items_center()
+                            .child(div().w(px(w)).h(px(h)).p(px(pad)).bg(rgb(0xffffff)).shadow_sm().overflow_hidden().child(sheet_content))
+                            .child(div().mt(px(6.0)).text_size(px(11.0)).text_color(rgb(c.muted)).child(format!("{} · {}", text("第 {0} 页").replace("{0}", &(index + 1).to_string()), text("素材 {0}").replace("{0}", &(index + 1).to_string())))),
+                    );
+                }
+            }
+            Mode::LongPng => {
+                let mut long = div()
+                    .w(px(420.0))
+                    .flex()
+                    .flex_col()
+                    .gap(px(self.options.gap_px as f32 * 420.0 / 1000.0))
+                    .bg(rgb(if self.options.background == Background::White { 0xffffff } else { 0xe6e6e6 }))
+                    .shadow_sm();
+                for item in &entries {
+                    long = long.child(if item.kind == Kind::Text {
+                        div().w_full().p(px(8.0)).bg(rgb(0xffffff)).text_size(px(6.0)).line_height(relative(2.0)).text_color(rgb(0x111111)).child(self.entry_text(item)).into_any_element()
+                    } else {
+                        let (iw, ih) = (item.width.unwrap_or(1).max(1) as f32, item.height.unwrap_or(1).max(1) as f32);
+                        div().w_full().h(px(420.0 * ih / iw)).children(self.thumbnail(item.id, cx).map(|t| img(t).size_full().object_fit(ObjectFit::Fill))).into_any_element()
+                    });
+                }
+                preview = preview.child(long);
+            }
+            Mode::Separate => {
+                let mut grid = div().w_full().flex().flex_wrap().gap(px(12.0));
+                for (index, item) in entries.iter().enumerate() {
+                    let tile: AnyElement = if item.kind == Kind::Text {
+                        div().size_full().p(px(8.0)).text_size(px(11.0)).line_height(relative(1.4)).line_clamp(5).child(self.entry_text(item)).into_any_element()
+                    } else {
+                        div().size_full().flex().items_center().justify_center().children(self.thumbnail(item.id, cx).map(|t| img(t).size_full().object_fit(ObjectFit::Contain))).into_any_element()
+                    };
+                    grid = grid.child(
+                        div()
+                            .w(px(140.0))
+                            .flex()
+                            .flex_col()
+                            .gap(px(6.0))
+                            .child(div().w_full().h(px(105.0)).rounded(px(6.0)).border_1().border_color(rgb(c.border)).bg(rgb(c.bg)).overflow_hidden().child(tile))
+                            .child(div().text_xs().text_color(rgb(c.muted)).child(format!("{:02}.{}", index + 1, if item.kind == Kind::Text { "txt" } else { "png" }))),
+                    );
+                }
+                preview = preview.items_start().child(grid);
             }
         }
-        let notice = match (&self.error, &self.message) {
-            (Some(error), _) => Some(
-                div()
-                    .text_xs()
-                    .text_color(rgb(crate::theme::c().error_text))
-                    .child(error.clone()),
-            ),
-            (None, Some(message)) => Some(
-                div()
-                    .text_xs()
-                    .text_color(rgb(crate::theme::c().ok_text))
-                    .child(message.clone()),
-            ),
-            _ => None,
+        preview = preview.child(div().text_size(px(11.0)).text_color(rgb(c.muted)).child(text("预览为近似排版，文字换行以导出结果为准。")));
+
+        // ---- 底栏 ----
+        let count = entries.len();
+        let images = entries.iter().filter(|i| i.kind != Kind::Text).count();
+        let status: AnyElement = match (&self.error, &self.message) {
+            (Some(error), _) => div().text_color(rgb(c.danger)).child(error.clone()).into_any_element(),
+            (None, Some(message)) => div().text_color(rgb(c.success)).child(message.clone()).into_any_element(),
+            _ => div().child(format!("{} {count} · {} {} · {} {}", text("素材"), text("图片"), images, text("文本"), count - images)).into_any_element(),
         };
-        let busy = self.busy;
-        let action = if busy {
-            text("正在导出…")
-        } else {
-            text("导出…")
-        };
+        let can_export = !busy && count > 0;
+        let hover = c.hover;
+        let footer = div()
+            .flex()
+            .flex_none()
+            .items_center()
+            .gap(px(8.0))
+            .px(px(14.0))
+            .py(px(10.0))
+            .border_t_1()
+            .border_color(rgb(c.border))
+            .child(div().flex_1().min_w_0().truncate().text_xs().text_color(rgb(c.muted)).child(status))
+            .child(
+                div()
+                    .id("export-cancel")
+                    .h(px(32.0))
+                    .px(px(16.0))
+                    .flex()
+                    .items_center()
+                    .rounded(px(6.0))
+                    .border_1()
+                    .border_color(rgb(c.border))
+                    .bg(rgb(c.bg))
+                    .cursor_pointer()
+                    .hover(move |s| s.bg(rgb(hover)))
+                    .child(text("关闭"))
+                    .on_click(cx.listener(|view, _: &ClickEvent, window, _| {
+                        if !view.busy {
+                            window.remove_window();
+                        }
+                    })),
+            )
+            .child({
+                let button = div()
+                    .id("export-run")
+                    .h(px(32.0))
+                    .px(px(16.0))
+                    .flex()
+                    .items_center()
+                    .rounded(px(6.0))
+                    .bg(rgb(0x2563eb))
+                    .text_color(rgb(0xffffff))
+                    .font_weight(FontWeight::MEDIUM)
+                    .child(text(if busy { "正在导出…" } else { "选择位置并导出" }));
+                if can_export {
+                    button.cursor_pointer().hover(|s| s.bg(rgb(0x1d4ed8))).on_click(cx.listener(|view, _: &ClickEvent, window, cx| view.export(window, cx)))
+                } else {
+                    button.opacity(0.5)
+                }
+            });
+
         div()
             .id("clipboard-export")
             .track_focus(&self.focus)
@@ -638,38 +845,12 @@ impl Render for Composer {
             .size_full()
             .flex()
             .flex_col()
-            .gap(px(10.0))
-            .p(px(12.0))
-            .bg(rgb(crate::theme::c().panel))
-            .text_color(rgb(annotate::text()))
-            .child(options)
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(rgb(annotate::muted()))
-                    .child(format!("{} {count}", text("素材"))),
-            )
-            .child(list)
-            .children(notice)
-            .child(
-                div()
-                    .flex()
-                    .justify_end()
-                    .gap(px(6.0))
-                    .child(
-                        self.pill("export-cancel", text("关闭"), false)
-                            .on_click(cx.listener(|view, _: &ClickEvent, window, _| {
-                                if !view.busy {
-                                    window.remove_window();
-                                }
-                            })),
-                    )
-                    .child(
-                        self.pill("export-run", action, !busy && count > 0)
-                            .on_click(cx.listener(|view, _: &ClickEvent, window, cx| {
-                                view.export(window, cx)
-                            })),
-                    ),
-            )
+            .bg(rgb(c.bg))
+            .text_color(rgb(c.text))
+            .text_size(px(13.0))
+            .child(toolbar)
+            .child(div().flex_1().min_h_0().flex().child(list).child(preview))
+            .child(footer)
     }
 }
+

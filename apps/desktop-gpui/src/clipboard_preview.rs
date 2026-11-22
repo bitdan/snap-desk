@@ -6,7 +6,7 @@ use crate::annotate;
 use gpui_kit::*;
 use snap_core::clipboard::{
     classification,
-    model::{Item, Kind},
+    model::{Item, Kind, TextCategory},
     service::{Content, Service},
 };
 use std::sync::Arc;
@@ -182,20 +182,6 @@ impl Preview {
         .detach();
     }
 
-    fn button(&self, id: &'static str, label: String) -> Stateful<Div> {
-        div()
-            .id(id)
-            .px(px(9.0))
-            .py(px(3.0))
-            .rounded(px(6.0))
-            .text_xs()
-            .cursor_pointer()
-            .text_color(rgb(annotate::muted()))
-            .bg(rgb(annotate::surface()))
-            .hover(|s| s.text_color(rgb(annotate::text())).bg(rgb(annotate::hover())))
-            .child(label)
-    }
-
     fn result(
         &mut self,
         result: Result<(), String>,
@@ -215,108 +201,140 @@ impl Preview {
 
 impl Render for Preview {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let language = self.language.clone();
-        let text =
-            move |key: &'static str| snap_core::i18n::for_language(&language, key).to_owned();
-        let mut actions = div().flex().gap(px(6.0)).items_center();
-        let mut note = None;
-        let content: AnyElement = match &self.body {
-            Body::Loading => div()
-                .p(px(16.0))
-                .text_sm()
-                .text_color(rgb(annotate::muted()))
-                .child(text("正在加载…"))
-                .into_any_element(),
-            Body::Image(image) => div()
-                .flex_1()
-                .min_h(px(0.0))
-                .flex()
-                .items_center()
-                .justify_center()
-                .bg(rgb(crate::theme::c().window_bg))
-                .child(
-                    img(image.clone())
-                        .size_full()
-                        .object_fit(ObjectFit::Contain),
-                )
-                .into_any_element(),
-            Body::Text {
-                lines,
-                truncated,
-                link,
-                path,
-            } => {
-                if *truncated {
-                    note = Some(text("内容较长，仅显示开头部分；复制仍使用完整原文。"));
-                }
-                if let Some(url) = link.clone() {
-                    actions = actions.child(
-                        self.button("preview-link", text("打开链接"))
-                            .on_click(cx.listener(move |view, _: &ClickEvent, _, cx| {
-                                cx.open_url(&url);
-                                view.result(Ok(()), "已交给浏览器打开。", cx);
-                            })),
-                    );
-                }
-                if let Some(path) = path.clone() {
-                    actions = actions.child(
-                        self.button("preview-path", text("在文件夹中显示"))
-                            .on_click(cx.listener(move |view, _: &ClickEvent, _, cx| {
-                                let result =
-                                    snap_core::platform::reveal_path(std::path::Path::new(&path));
-                                view.result(result, "已在文件夹中显示。", cx);
-                            })),
-                    );
-                }
-                let mut body = div()
-                    .flex()
-                    .flex_col()
-                    .p(px(12.0))
-                    .text_sm()
-                    .font_family("Consolas")
-                    .text_color(rgb(annotate::text()));
-                for line in lines {
-                    // 空行保留高度。
-                    body = body.child(div().min_h(px(18.0)).child(line.clone()));
-                }
-                div()
-                    .id("preview-text")
-                    .flex_1()
-                    .min_h(px(0.0))
-                    .overflow_y_scroll()
-                    .bg(rgb(crate::theme::c().inset))
-                    .child(body)
-                    .into_any_element()
-            }
+        // 还原 Vue `ClipboardPreview.vue`：顶栏尺寸与关闭，浅底内容区（原图 / 色块 / 链接 / 路径 / 全文）。
+        let dark = crate::theme::dark();
+        let (bg, soft, border, text_fg, muted, accent, danger) = if dark {
+            (0x20252c, 0x181b20, 0x39424e, 0xe6edf3, 0xa8b3c2, 0x6ea8ff, 0xff9c95)
+        } else {
+            (0xffffff, 0xf6f7f8, 0xe1e4e8, 0x24292f, 0x57606a, 0x2563eb, 0xb42318)
         };
-        actions = actions.child(
-            self.button("preview-close", text("关闭"))
-                .on_click(cx.listener(|_, _: &ClickEvent, window, _| window.remove_window())),
-        );
-        let notice = match (&self.error, &self.message) {
-            (Some(error), _) => Some(
-                div()
-                    .text_xs()
-                    .text_color(rgb(crate::theme::c().error_text))
-                    .child(error.clone()),
-            ),
-            (None, Some(message)) => Some(
-                div()
-                    .text_xs()
-                    .text_color(rgb(crate::theme::c().ok_text))
-                    .child(message.clone()),
-            ),
+        let language = self.language.clone();
+        let text = move |key: &'static str| snap_core::i18n::for_language(&language, key).to_owned();
+        let feedback = match (&self.error, &self.message) {
+            (Some(error), _) => Some(div().text_color(rgb(danger)).child(error.clone())),
+            (None, Some(message)) => Some(div().text_color(rgb(muted)).child(message.clone())),
             _ => None,
         };
-        let meta = match self.item.kind {
-            Kind::Image => format!(
-                "{} {}×{}",
-                text("图片"),
-                self.item.width.unwrap_or(0),
-                self.item.height.unwrap_or(0)
-            ),
-            _ => format!("{} · {} B", text("文本"), self.item.byte_size),
+        let content: AnyElement = match &self.body {
+            Body::Loading => div().text_color(rgb(muted)).child(text("正在加载…")).into_any_element(),
+            Body::Image(image) => img(image.clone()).size_full().object_fit(ObjectFit::Contain).into_any_element(),
+            Body::Text { lines, truncated, link, path } => {
+                let joined = lines.join("\n");
+                let color = (classification::classify(&joined) == Some(TextCategory::Color))
+                    .then(|| {
+                        let hex = snap_core::pins::text::drag_text(joined.trim());
+                        let hex = hex.strip_prefix('#')?;
+                        (hex.len() >= 6).then(|| u32::from_str_radix(&hex[..6], 16).ok()).flatten()
+                    })
+                    .flatten();
+                if let Some(value) = color {
+                    div()
+                        .w_full()
+                        .max_w(px(240.0))
+                        .flex()
+                        .flex_col()
+                        .gap(px(8.0))
+                        .child(div().h(px(120.0)).rounded(px(6.0)).border_1().border_color(rgb(border)).bg(rgb(value)))
+                        .child(
+                            div()
+                                .px(px(12.0))
+                                .py(px(8.0))
+                                .rounded(px(4.0))
+                                .border_1()
+                                .border_color(rgb(border))
+                                .bg(rgb(bg))
+                                .text_size(px(14.0))
+                                .font_family("Consolas")
+                                .child(joined.trim().to_owned()),
+                        )
+                        .into_any_element()
+                } else if let Some(url) = link.clone() {
+                    div()
+                        .size_full()
+                        .p(px(16.0))
+                        .rounded(px(6.0))
+                        .border_1()
+                        .border_color(rgb(border))
+                        .bg(rgb(bg))
+                        .line_height(relative(1.7))
+                        .child(
+                            div()
+                                .id("preview-link")
+                                .flex()
+                                .items_start()
+                                .gap(px(8.0))
+                                .text_color(rgb(accent))
+                                .underline()
+                                .cursor_pointer()
+                                .child(div().mt(px(4.0)).child(annotate::icon(annotate::icons::ARROW, accent)))
+                                .child(div().min_w_0().child(joined.trim().to_owned()))
+                                .on_click(cx.listener(move |view, _: &ClickEvent, _, cx| {
+                                    cx.open_url(&url);
+                                    view.result(Ok(()), "已交给浏览器打开。", cx);
+                                })),
+                        )
+                        .children(feedback)
+                        .into_any_element()
+                } else if let Some(path) = path.clone() {
+                    let label = path.clone();
+                    div()
+                        .w_full()
+                        .max_w(px(640.0))
+                        .flex()
+                        .flex_col()
+                        .items_center()
+                        .gap(px(8.0))
+                        .line_height(relative(1.7))
+                        .child(
+                            div()
+                                .id("preview-path")
+                                .flex()
+                                .items_start()
+                                .gap(px(10.0))
+                                .px(px(16.0))
+                                .py(px(12.0))
+                                .rounded(px(6.0))
+                                .border_1()
+                                .border_color(rgb(border))
+                                .bg(rgb(bg))
+                                .text_color(rgb(accent))
+                                .cursor_pointer()
+                                .hover(|s| s.underline())
+                                .child(div().mt(px(2.0)).child(annotate::icon(annotate::icons::FOLDER_OPEN, accent).size(px(20.0))))
+                                .child(div().min_w_0().child(label))
+                                .on_click(cx.listener(move |view, _: &ClickEvent, _, cx| {
+                                    let result = snap_core::platform::reveal_path(std::path::Path::new(&path));
+                                    view.result(result, "已在文件夹中显示。", cx);
+                                })),
+                        )
+                        .children(feedback)
+                        .into_any_element()
+                } else {
+                    let mut body = div().flex().flex_col().p(px(16.0)).text_size(px(14.0)).line_height(relative(1.7));
+                    for line in lines {
+                        body = body.child(div().min_h(px(23.0)).child(line.clone()));
+                    }
+                    if *truncated {
+                        body = body.child(div().mt(px(8.0)).text_xs().text_color(rgb(muted)).child(text("内容较长，仅显示开头部分；复制仍使用完整原文。")));
+                    }
+                    div()
+                        .id("preview-text")
+                        .size_full()
+                        .overflow_y_scroll()
+                        .rounded(px(6.0))
+                        .border_1()
+                        .border_color(rgb(border))
+                        .bg(rgb(bg))
+                        .child(body)
+                        .into_any_element()
+                }
+            }
         };
+        let meta = match self.item.kind {
+            Kind::Image => format!("{} × {} px", self.item.width.unwrap_or(0), self.item.height.unwrap_or(0)),
+            _ => format!("{} B", self.item.byte_size),
+        };
+        let hover = if dark { 0x2b323c } else { 0xeef1f4 };
         div()
             .id("clipboard-preview")
             .track_focus(&self.focus)
@@ -328,26 +346,49 @@ impl Render for Preview {
             .size_full()
             .flex()
             .flex_col()
-            .gap(px(8.0))
-            .p(px(10.0))
-            .bg(rgb(crate::theme::c().panel))
-            .text_color(rgb(annotate::text()))
-            .child(content)
-            .children(note.map(|n| div().text_xs().text_color(rgb(annotate::muted())).child(n)))
-            .children(notice)
+            .bg(rgb(bg))
+            .text_color(rgb(text_fg))
+            .text_size(px(13.0))
             .child(
                 div()
                     .flex()
+                    .flex_none()
                     .items_center()
-                    .gap(px(8.0))
+                    .gap(px(12.0))
+                    .px(px(12.0))
+                    .py(px(8.0))
+                    .border_b_1()
+                    .border_color(rgb(border))
+                    .child(div().text_xs().text_color(rgb(muted)).child(meta))
+                    .child(div().flex_1())
                     .child(
                         div()
-                            .flex_1()
-                            .text_xs()
-                            .text_color(rgb(annotate::muted()))
-                            .child(meta),
-                    )
-                    .child(actions),
+                            .id("preview-close")
+                            .size(px(32.0))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded(px(6.0))
+                            .cursor_pointer()
+                            .hover(move |s| s.bg(rgb(hover)))
+                            .child(annotate::icon(annotate::icons::CLOSE, muted).size(px(18.0)))
+                            .tooltip({
+                                let tip = text("Esc 关闭");
+                                move |_, cx| cx.new(|_| annotate::Tooltip(tip.clone().into())).into()
+                            })
+                            .on_click(|_, window, _| window.remove_window()),
+                    ),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .p(px(16.0))
+                    .bg(rgb(soft))
+                    .child(content),
             )
     }
 }

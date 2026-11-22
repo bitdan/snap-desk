@@ -24,13 +24,8 @@ pub struct Palette {
     pub hover: u32,
     pub active_bg: u32,
     pub active_fg: u32,
-    /// 列表类窗口（剪贴板历史、预览、结果、贴图管理）的窗口底色、面板底色与内嵌区底色。
-    pub window_bg: u32,
-    pub panel: u32,
-    pub inset: u32,
     /// 成功、错误、警告提示文字。
     pub ok_text: u32,
-    pub error_text: u32,
     pub warn_text: u32,
 }
 
@@ -42,11 +37,7 @@ pub const DARK_PALETTE: Palette = Palette {
     hover: 0x2b323c,
     active_bg: 0x263a57,
     active_fg: 0x93c5fd,
-    window_bg: 0x0f1115,
-    panel: 0x181b20,
-    inset: 0x14171c,
     ok_text: 0x86efac,
-    error_text: 0xfb7185,
     warn_text: 0xfbbf24,
 };
 
@@ -58,11 +49,7 @@ pub const LIGHT_PALETTE: Palette = Palette {
     hover: 0xf1f3f5,
     active_bg: 0xe8f0fe,
     active_fg: 0x2563eb,
-    window_bg: 0xf4f4f5,
-    panel: 0xfafafa,
-    inset: 0xececef,
     ok_text: 0x15803d,
-    error_text: 0xb91c1c,
     warn_text: 0xb45309,
 };
 
