@@ -2,6 +2,7 @@
 //! 这里只描述“设置是什么、如何合法、如何落盘”，不注册系统快捷键、不通知界面；
 //! 快捷键事务通过闭包传入注册/释放动作，由各前端外壳接到自己的快捷键管理器上。
 pub mod backup;
+pub mod shortcut_probe;
 mod writer;
 
 pub use writer::{persist, SettingsWriter};
