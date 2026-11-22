@@ -9133,6 +9133,7 @@ dependencies = [
  "libwayshot-xcap",
  "log",
  "markup5ever_rcdom",
+ "minisign-verify",
  "oar-ocr",
  "objc2 0.6.5",
  "ort",
@@ -9216,6 +9217,7 @@ name = "snap-desk-gpui"
 version = "0.0.0"
 dependencies = [
  "ab_glyph",
+ "base64 0.22.1",
  "chrono",
  "futures",
  "global-hotkey",
@@ -9226,7 +9228,9 @@ dependencies = [
  "rfd",
  "semver",
  "serde_json",
+ "sha2 0.10.9",
  "snap-core",
+ "tempfile",
  "tokio",
  "tray-icon",
  "url",

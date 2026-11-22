@@ -1,10 +1,22 @@
 //! 应用版本发现：在 GitHub 发布列表中选出比当前版本新、且带固定更新清单的应用发布。
 //!
 //! 同一仓库还发布翻译模型/引擎等资源，只匹配 SemVer 标签与固定清单地址；测试版是否纳入由调用方决定。
-//! 下载、签名校验与安装由外壳完成（Tauri 版用 updater 插件；GPUI 版目前只提示并打开发布页）。
+//! 下载与签名校验：Tauri 版用 updater 插件；GPUI 版用这里的 `download`（断点续传、镜像）与 `package`
+//! （读取固定清单、校验地址与 minisign 签名）。安装（运行 NSIS 安装器或替换独立 EXE）由外壳完成。
+pub mod download;
+pub mod package;
 use semver::Version;
 use serde::Deserialize;
 use std::time::Duration;
+
+/// 在当前线程上运行异步下载（调用方在后台线程）；reqwest 需要带 IO 与计时器的 tokio 运行时。
+pub fn block_on<F: std::future::Future>(future: F) -> Result<F::Output, String> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| format!("无法启动更新下载：{e}"))?;
+    Ok(runtime.block_on(future))
+}
 
 pub const REPOSITORY: &str = "bitdan/snap-desk";
 

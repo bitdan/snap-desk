@@ -43,6 +43,8 @@ gif = "=0.14.2"
 auto-launch = "=0.6.0"
 # 应用版本比较（与 src-tauri 一致）。
 semver = "1"
+# 应用更新包签名校验（minisign，与 tauri-plugin-updater 同一实现与版本）。
+minisign-verify = "0.3"
 # 本地翻译 worker 进程桥（异步管道与超时）；版本与 src-tauri 一致。
 tokio = { version = "1", features = ["rt", "sync", "process", "io-util", "time"] }
 
