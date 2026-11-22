@@ -18,8 +18,6 @@ pub(crate) use snap_core::recognition::windows_ocr;
 #[cfg(target_os = "macos")]
 pub(crate) use snap_core::recognition::vision_ocr;
 pub use snap_core::recognition::ocr::OcrResult;
-#[cfg(windows)]
-pub use snap_core::recognition::ocr::{OcrLine, PolygonPoint};
 
 /// 引擎共享结果契约；严格使用已保存配置，不跨引擎重试或自动联网。
 pub trait OcrProvider {

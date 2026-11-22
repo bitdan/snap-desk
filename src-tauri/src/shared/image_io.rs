@@ -9,9 +9,6 @@ use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_dialog::DialogExt;
 
 pub(crate) use snap_core::export::validate_directory;
-/// 组合导出移入 core 后只剩微信 OCR（Windows x64）使用。
-#[cfg(all(windows, target_arch = "x86_64"))]
-pub(crate) use snap_core::export::white_background;
 use snap_core::export::{
     configure_directory_record, encode, filename, preferred_directory, read_directory,
     remember_directory, validate_extension,

@@ -3,10 +3,6 @@
 use tauri::{AppHandle, Manager, WebviewWindow};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
-#[cfg(windows)]
-pub(super) use snap_core::recognition::ocr::next_request;
-pub(super) use snap_core::recognition::ocr::validate_image;
-
 /// 模型首次使用时加载；空闲五分钟后释放（见 `LocalOcr`）。
 #[derive(Default)]
 pub struct OcrState(pub snap_core::recognition::ocr::LocalOcr);

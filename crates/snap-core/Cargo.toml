@@ -55,6 +55,11 @@ windows = { version = "=0.62.2", features = ["Win32_Foundation", "Win32_Graphics
 # COM implement 宏（拖出用的 IDataObject / IDropSource）生成 ::windows_core 路径，必须直接声明。
 windows-core = "=0.62.2"
 
+# 微信 OCR：锁定已核对的 SDK，微信运行库和模型仅使用用户本机安装；windows-sys 只读注册表安装路径。版本与 src-tauri 一致。
+[target.'cfg(all(windows, target_arch = "x86_64"))'.dependencies]
+windows-sys = { version = "=0.59.0", features = ["Win32_System_Registry", "Win32_Foundation"] }
+wechat-ocr-core = { git = "https://github.com/MapleREHub/wechat_ocr_sdk", rev = "146d838ba045aba82451a187a0fb459cc784d086" }
+
 # macOS：光标、窗口层级、隐私授权与辅助功能控件候选；版本与 Tauri/native-tls 已锁定的一致。
 [target.'cfg(target_os = "macos")'.dependencies]
 # AI 密钥存于钥匙串。

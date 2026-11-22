@@ -1,6 +1,6 @@
 //! 识别与翻译：配置模型（服务目录、翻译与 OCR 设置及地址白名单）、OCR 引擎（本地 PP-OCR、
 //! Windows OCR / Apple Vision、在线 OCR 与 PaddleOCR 服务）、二维码、在线翻译与系统凭据库。
-//! 本地 CTranslate2 翻译（引擎安装、语言包、worker 进程桥）在 local_*；微信 OCR 仍在 `src-tauri/src/recognition`。
+//! 本地 CTranslate2 翻译（引擎安装、语言包、worker 进程桥）在 local_*；微信 OCR（仅 Windows x64）在 wechat_ocr。
 pub mod ai_credentials;
 pub mod local_models;
 pub mod local_runtime;
@@ -18,11 +18,28 @@ pub mod services;
 pub mod translation;
 #[cfg(target_os = "macos")]
 pub mod vision_ocr;
+pub mod wechat_ocr;
 #[cfg(windows)]
 pub mod windows_ocr;
 
 use crate::settings::Settings;
 use ocr::{LocalOcr, OcrResult};
+use wechat_ocr::WechatOcr;
+
+/// 进程内常驻的本地识别引擎（GPUI 外壳持有；Tauri 外壳各自放在托管状态）。
+#[derive(Default)]
+pub struct Engines {
+    pub local: LocalOcr,
+    pub wechat: WechatOcr,
+}
+
+impl Engines {
+    /// 空闲五分钟后释放本地模型与微信 OCR 连接；正在识别的引擎跳过。
+    pub fn release_idle(&self) {
+        self.local.release_idle();
+        self.wechat.release_idle(wechat_ocr::IDLE);
+    }
+}
 
 /// 系统 OCR：Windows 为 Windows.Media.Ocr，macOS 为 Apple Vision（沿用同一提供方标识）。
 pub fn system_ocr(image: &image::RgbaImage, language: &str) -> Result<OcrResult, String> {
@@ -48,16 +65,16 @@ pub fn system_ocr_languages() -> Result<Vec<ocr_config::OcrLanguage>, String> {
 }
 
 /// 按已保存的 OCR 设置识别；严格使用所选引擎，不跨引擎重试或自动联网。
-/// 识别后的动作开关（自动复制、合并行）随结果返回。微信 OCR 由 Tauri 外壳单独处理，这里返回错误。
-pub fn recognize(image: &image::RgbaImage, settings: &Settings, local: &LocalOcr) -> Result<OcrResult, String> {
+/// 识别后的动作开关（自动复制、合并行）随结果返回。
+pub fn recognize(image: &image::RgbaImage, settings: &Settings, engines: &Engines) -> Result<OcrResult, String> {
     let (ocr, service) = ocr_config::snapshot(settings)?;
     let mut result = match (service, ocr.provider.as_str()) {
         (Some(service), _) => online_ocr::recognize(image, &service)?,
-        (None, "local-ppocr") => local.recognize(image, || {
+        (None, "local-ppocr") => engines.local.recognize(image, || {
             crate::resources::ocr_models(&crate::resources::directory().ok_or("无法定位资源目录。")?)
         })?,
         (None, "windows-media") => system_ocr(image, &ocr.language)?,
-        (None, "wechat-ocr") => return Err("当前版本暂不支持微信 OCR，请在设置中改用其他引擎。".into()),
+        (None, "wechat-ocr") => engines.wechat.recognize(image)?,
         _ => return Err("此 OCR 引擎尚未接入。".into()),
     };
     result.auto_copy = ocr.auto_copy;
@@ -75,14 +92,15 @@ mod tests {
         let font = crate::pins::text::font_bytes(None).unwrap();
         let image = crate::text_image::render("Snap Desk 文字识别 2026", &font, 640, 16_000_000).unwrap();
         let mut settings = crate::settings::Settings::default();
-        let local = super::ocr::LocalOcr::default();
-        let result = super::recognize(&image, &settings, &local).unwrap();
+        let engines = super::Engines::default();
+        let result = super::recognize(&image, &settings, &engines).unwrap();
         eprintln!("local: {:?} ({} ms)", result.full_text, result.elapsed_ms);
         assert!(result.full_text.contains("Snap") && result.full_text.contains("2026"));
         settings.ocr.provider = "windows-media".into();
-        let system = super::recognize(&image, &settings, &local);
+        let system = super::recognize(&image, &settings, &engines);
         eprintln!("system: {:?}", system.as_ref().map(|r| &r.full_text));
         settings.ocr.provider = "wechat-ocr".into();
-        assert!(super::recognize(&image, &settings, &local).is_err());
+        let wechat = super::recognize(&image, &settings, &engines);
+        eprintln!("wechat: {:?}", wechat.as_ref().map(|r| &r.full_text));
     }
 }
