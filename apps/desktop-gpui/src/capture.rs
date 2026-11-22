@@ -31,6 +31,9 @@ use snap_core::{
 };
 use std::{sync::Arc, time::{Duration, Instant}};
 
+#[path = "capture_history.rs"]
+mod history;
+
 const ACCENT: u32 = 0x2f80ff;
 /// 选区外的遮罩：半透明黑，保留冻结画面可辨认。
 const MASK: u32 = 0x0000_0088;
@@ -403,6 +406,7 @@ fn begin(cx: &mut App, settings: &Settings, delay: Duration, purpose: Option<Rec
                         }
                     });
                     session.update(cx, |s, _| s.sync());
+                    history::reset(cx);
                     cx.global_mut::<CaptureState>().session = Some(session.clone());
                     open_overlays(cx, &session);
                     log::info!(
@@ -525,6 +529,7 @@ fn remember(cx: &mut App) {
     let Some(session) = current(cx) else {
         return;
     };
+    history::remember(cx, &session);
     let s = session.read(cx);
     let (Some(rect), Some(path)) = (s.selection, recent::default_path()) else {
         return;
@@ -540,6 +545,7 @@ fn finish(cx: &mut App) {
         return;
     };
     close_overlays(cx, &session);
+    history::reset(cx);
     crate::shelf::resume(cx);
 }
 
@@ -938,6 +944,56 @@ fn reopen(cx: &mut App, session: &Entity<Session>) {
     open_overlays(cx, session);
 }
 
+/// 截图历史模式条：上一张、位置、下一张（对照 Vue `capture-modebar`）。
+fn mode_bar(s: &Session, position: Option<(usize, usize)>) -> Stateful<Div> {
+    let enabled = !s.busy && !s.editor.pending && !s.editor.interacting();
+    let button = |id: &'static str, label: String, on: bool, direction: history::Direction| {
+        let button = div()
+            .id(id)
+            .h(px(26.0))
+            .px(px(10.0))
+            .flex()
+            .items_center()
+            .rounded(px(6.0))
+            .text_xs()
+            .text_color(rgb(0xffffff))
+            .child(label);
+        if on {
+            button
+                .cursor_pointer()
+                .hover(|b| b.bg(rgba(0xffffff26)))
+                .on_click(move |_, _, cx| history::replay(cx, direction))
+        } else {
+            button.opacity(0.45)
+        }
+    };
+    let mut bar = div()
+        .id("capture-modebar")
+        .absolute()
+        .left(px(16.0))
+        .top(px(16.0))
+        .p(px(3.0))
+        .flex()
+        .items_center()
+        .gap(px(2.0))
+        .rounded(px(8.0))
+        .bg(rgba(0x111827d9))
+        .cursor_default()
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
+        .child(button("capture-replay-previous", s.text("上一张 ,"), enabled, history::Direction::Previous));
+    if let Some((index, total)) = position {
+        bar = bar.child(
+            div()
+                .px(px(6.0))
+                .text_xs()
+                .text_color(rgb(0xd1d5db))
+                .child(s.text("截图历史 {0}/{1}").replace("{0}", &index.to_string()).replace("{1}", &total.to_string())),
+        );
+    }
+    bar.child(button("capture-replay-next", s.text("下一张 ."), enabled && position.is_some(), history::Direction::Next))
+}
+
 /// 单个显示器上的浮层视图。
 struct Overlay {
     session: Entity<Session>,
@@ -1108,9 +1164,11 @@ impl Overlay {
             );
             let at = Some((index, pixel.0, pixel.1));
             if s.picker.at != at {
+                // 换屏时模式条跟随光标所在屏重画。
+                let moved_screen = s.picker.at.map(|(owner, _, _)| owner) != Some(index);
                 s.picker.at = at;
                 s.picker.copied = false;
-                if s.picking() {
+                if s.picking() || moved_screen {
                     cx.notify();
                 }
             }
@@ -1174,7 +1232,8 @@ impl Overlay {
             }
             s.sync();
             cx.notify();
-            let after = (matches!(drag, Some(Drag::Create { .. })) && !s.recording)
+            // 回放的截图不执行“截图后动作”（与 Tauri 版一致）。
+            let after = (matches!(drag, Some(Drag::Create { .. })) && !s.recording && history::position(cx).is_none())
                 .then(|| {
                     s.selection.map(|_| match s.purpose {
                         Some(RecognitionMode::Ocr) => "ocr".to_owned(),
@@ -1261,6 +1320,12 @@ impl Overlay {
                 }
                 cx.notify();
             });
+            return;
+        }
+        // , / .：截图历史上一张、下一张（越过最新一张回到现场）。
+        if matches!(key, "," | ".") && !command && !keystroke.modifiers.alt {
+            let direction = if key == "," { history::Direction::Previous } else { history::Direction::Next };
+            history::replay(cx, direction);
             return;
         }
         // R：恢复最近选区（已有标注或正在编辑时选区固定）。
@@ -1608,7 +1673,12 @@ impl Render for Overlay {
             }
         }
 
-        // 取色放大镜画在最上层（工具栏之后追加），光标在本屏时才显示。
+        // 左上角模式条：截图历史上一张 / 下一张（录屏框选时不显示），只画在光标所在屏。
+        let active = s.picker.at.map_or(0, |(owner, _, _)| owner);
+        if active == self.index && !s.recording && !dragging && history::has_entries(cx) {
+            root = root.child(mode_bar(s, history::position(cx)));
+        }
+                // 取色放大镜画在最上层（工具栏之后追加），光标在本屏时才显示。
         let picker = s.picker;
         let loupe = picker.at.filter(|(owner, _, _)| *owner == self.index && s.picking()).map(|(_, x, y)| {
             let pointer = (
@@ -1758,9 +1828,14 @@ impl Render for Overlay {
                 export_button("capture-record-start", annotate::icons::VIDEO, s.text("开始录屏"), true, record),
             ]
         } else {
-            vec![
-            export_button("capture-scroll", annotate::icons::SCROLL, s.text("滚动截图：框选正文后慢慢滚动"), false, scroll),
-            export_button("capture-record", annotate::icons::VIDEO, s.text("录屏"), false, |cx, _| enter_recording(cx)),
+            // 回放中的画面不是现场，不能开始滚动截图或录屏。
+            let replaying = history::position(cx).is_some();
+            let mut live = Vec::new();
+            if !replaying {
+                live.push(export_button("capture-scroll", annotate::icons::SCROLL, s.text("滚动截图：框选正文后慢慢滚动"), false, scroll));
+                live.push(export_button("capture-record", annotate::icons::VIDEO, s.text("录屏"), false, |cx, _| enter_recording(cx)));
+            }
+            live.into_iter().chain([
             export_button("capture-ocr", annotate::icons::SCAN_TEXT, s.text("识别文字"), false, |cx, _| recognize(cx, RecognitionMode::Ocr)),
             export_button("capture-translate", annotate::icons::LANGUAGES, s.text("截图翻译"), false, |cx, _| recognize(cx, RecognitionMode::Translate)),
             export_button("capture-qr", annotate::icons::QR_CODE, s.text("识别二维码"), false, |cx, _| recognize(cx, RecognitionMode::Qr)),
@@ -1769,7 +1844,7 @@ impl Render for Overlay {
             export_button("capture-pin", annotate::icons::PIN, s.text("贴图"), false, |cx, _| pin(cx)),
             export_button("capture-save", annotate::icons::SAVE, s.text("保存"), false, |cx, _| save(cx)),
             export_button("capture-copy", annotate::icons::COPY, s.text("复制"), true, copy),
-            ]
+            ]).collect()
         };
         let tools = annotate::tool_row(&props, leading, trailing, &host);
         let options = annotate::options_row(&props, &host);
