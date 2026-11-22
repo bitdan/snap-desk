@@ -656,7 +656,7 @@ impl SettingsView {
             let vision = editor.vision;
             rows.push(row(
                 t("支持图片识别"),
-                Some(t("模型能读取图片时可用于截图识字")),
+                None,
                 self.plain_toggle("service-vision", vision, cx, |view, on, cx| {
                     if let Some(editor) = view.service_editor.as_mut() {
                         editor.vision = on;
@@ -746,20 +746,14 @@ impl SettingsView {
         }
         rows.push(row(
             String::new(),
-            Some(t("先保存当前配置，再发送一次测试请求，可能产生少量费用。")),
+            None,
             actions,
         ));
         if let Some(result) = result {
             rows.push(div().px(px(14.0)).pb(px(10.0)).child(result));
         }
-        div()
-            .mt(px(10.0))
-            .child(heading(t(if editor.existing.is_some() {
-                "编辑服务"
-            } else {
-                "新增服务"
-            })))
-            .child(card(rows))
+        // 标题由弹窗提供。
+        card(rows)
     }
 }
 

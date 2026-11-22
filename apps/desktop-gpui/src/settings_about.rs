@@ -135,7 +135,7 @@ impl SettingsView {
                         super::button("update-browser", t("在浏览器中下载"), super::ButtonKind::Outline, true)
                             .on_click(cx.listener(|view, _: &ClickEvent, _, cx| view.open_release(cx))),
                     )
-                    .child(t("也可以在“设置 → 应用更新”中填写代理或下载镜像后重试。")),
+
             );
         }
         if let Some(notes) = view.notes.as_ref().filter(|n| !n.trim().is_empty()) {
@@ -236,22 +236,18 @@ impl SettingsView {
             card(vec![
                 row(
                     t("测试版更新"),
-                    Some(t(if prerelease_build {
-                        "当前为测试版，始终接收测试版更新；升级到正式版后按此开关决定。"
-                    } else {
-                        "包括 alpha、beta 与 rc 版本。"
-                    })),
+                    None,
                     preview_toggle,
                 ),
                 row(t("检查更新间隔"), None, interval),
                 row(
                     t("下载镜像"),
-                    Some(t("无法直连 GitHub 时填写镜像前缀，下载时放在 github.com 地址前，失败会改为直连。安装包仍须通过签名校验，镜像无法替换内容。")),
+                    None,
                     self.text_input(&self.update_mirror, 240.0),
                 ),
                 row(
                     t("更新代理"),
-                    Some(t("只用于检查和下载更新；留空时使用系统代理。支持 http、https、socks5。")),
+                    None,
                     self.text_input(&self.update_proxy, 240.0),
                 ),
                 row(
@@ -291,7 +287,6 @@ impl SettingsView {
                 row(t("遇到其他问题"), None, goto("help-logs", t("查看日志"), super::Page::Logs, cx)),
             ])
             .into_any_element(),
-            super::note(t("Esc 收起主窗口，应用继续在托盘运行。退出会清空贴图，请先保存需要的内容。")).into_any_element(),
             heading(t("应用信息")).into_any_element(),
             card(vec![
                 row(t("开源许可"), None, div().text_color(rgb(col::muted())).child("GPL-3.0-only")),

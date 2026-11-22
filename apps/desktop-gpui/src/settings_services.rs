@@ -534,9 +534,6 @@ impl SettingsView {
                 .into_any_element(),
             heading(t("在线服务")).child(add).into_any_element(),
         ];
-        if self.service_picker {
-            elements.push(self.preset_picker(s, t, cx).into_any_element());
-        }
         elements.push(
             div()
                 .rounded(px(8.0))
@@ -547,9 +544,6 @@ impl SettingsView {
                 .children(online)
                 .into_any_element(),
         );
-        if let Some(editor) = &self.service_editor {
-            elements.push(self.service_editor_card(editor, t, cx).into_any_element());
-        }
         elements.push(note(t("密钥保存在系统凭据中，不随配置导出。")).into_any_element());
         elements
     }
@@ -583,16 +577,8 @@ impl SettingsView {
                 Box::new(|p: &Preset| p.id == "custom"),
             ),
         ];
-        let mut panel = div()
-            .mb(px(8.0))
-            .px(px(16.0))
-            .pt(px(12.0))
-            .pb(px(4.0))
-            .rounded(px(8.0))
-            .border_1()
-            .border_color(rgb(col::border()))
-            .bg(rgb(col::surface()));
-        for (title, hint, filter) in groups.iter() {
+        let mut panel = div();
+        for (title, _, filter) in groups.iter() {
             let presets: Vec<(usize, &Preset)> = PRESETS
                 .iter()
                 .enumerate()
@@ -608,7 +594,7 @@ impl SettingsView {
                     .iter()
                     .any(|x| preset_id(x) == preset.id);
                 let label = match preset.id {
-                    "custom" => t("自定义兼容服务"),
+                    "custom" => t("自定义"),
                     "paddle-ocr" => "Paddle API".into(),
                     "deepl" => "DeepL".into(),
                     _ => preset.name.into(),
@@ -618,7 +604,7 @@ impl SettingsView {
                     grid.child(
                         div()
                             .id(("preset", index))
-                            .w(px(150.0))
+                            .w(px(164.0))
                             .min_h(px(36.0))
                             .px(px(8.0))
                             .py(px(4.0))
@@ -651,19 +637,92 @@ impl SettingsView {
                             .mb(px(6.0))
                             .text_size(px(13.0))
                             .font_weight(FontWeight::SEMIBOLD)
-                            .child(t(title))
-                            .child(
-                                div()
-                                    .text_size(px(11.0))
-                                    .font_weight(FontWeight::NORMAL)
-                                    .text_color(rgb(col::muted()))
-                                    .child(t(hint)),
-                            ),
+                            .child(t(title)),
                     )
                     .child(grid),
             );
         }
         panel
+    }
+
+    /// “添加服务”与服务编辑器的弹窗（Vue 的服务对话框）；铺满设置窗口，点遮罩或 Esc 关闭。
+    pub(in super::super) fn service_dialog(&self, s: &Settings, t: &dyn Fn(&str) -> String, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let (title, body) = match &self.service_editor {
+            Some(editor) => (
+                t(if editor.existing.is_some() { "编辑服务" } else { "添加服务" }),
+                self.service_editor_card(editor, t, cx),
+            ),
+            None if self.service_picker => (t("添加服务"), self.preset_picker(s, t, cx)),
+            None => return None,
+        };
+        let close = div()
+            .id("service-dialog-close")
+            .size(px(26.0))
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(px(6.0))
+            .cursor_pointer()
+            .hover(|s| s.bg(rgb(col::hover())))
+            .child(Icon::default().data(super::super::icons::X).size(px(14.0)).text_color(rgb(col::muted())))
+            .on_click(cx.listener(|view, _: &ClickEvent, _, cx| {
+                view.service_picker = false;
+                view.service_editor = None;
+                cx.notify();
+            }));
+        let dialog = div()
+            .id("service-dialog")
+            .w(px(560.0))
+            .max_w(relative(0.92))
+            .max_h(relative(0.88))
+            .flex()
+            .flex_col()
+            .rounded(px(10.0))
+            .border_1()
+            .border_color(rgb(col::border()))
+            .bg(rgb(col::page_bg()))
+            .shadow_lg()
+            // 弹窗内的点击不传到遮罩。
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .child(
+                div()
+                    .flex_none()
+                    .h(px(46.0))
+                    .px(px(16.0))
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .border_b_1()
+                    .border_color(rgb(col::border()))
+                    .text_size(px(14.0))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child(title)
+                    .child(close),
+            )
+            .child(div().id("service-dialog-body").flex_1().min_h_0().overflow_y_scroll().p(px(16.0)).child(body));
+        Some(
+            deferred(
+                div()
+                    .id("service-dialog-backdrop")
+                    .absolute()
+                    .inset_0()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .bg(rgba(0x0000004d))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|view, _: &MouseDownEvent, _, cx| {
+                            view.service_picker = false;
+                            view.service_editor = None;
+                            cx.notify();
+                        }),
+                    )
+                    .child(dialog),
+            )
+            .with_priority(2)
+            .into_any_element(),
+        )
     }
 }
 

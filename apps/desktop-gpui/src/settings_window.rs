@@ -716,7 +716,10 @@ impl SettingsView {
             let k = &event.keystroke;
             if k.key == "escape" && !event.is_held && !k.modifiers.modified() {
                 cx.stop_propagation();
-                if self.open_select.take().is_some() || std::mem::take(&mut self.service_picker) {
+                if self.open_select.take().is_some()
+                    || std::mem::take(&mut self.service_picker)
+                    || self.service_editor.take().is_some()
+                {
                     cx.notify();
                 } else {
                     window.remove_window();
@@ -1460,9 +1463,9 @@ impl SettingsView {
             (Some(path), true) => format!("{} · {}", t("默认"), path.display()),
             (None, _) => t("系统默认位置（保存对话框决定）"),
         };
-        let (label, hint, id) = match folder {
-            Folder::Captures => ("截图保存目录", "保存对话框的默认位置", 0usize),
-            Folder::Recordings => ("录屏保存目录", "视频输出位置，恢复默认不会移动已有视频", 1),
+        let (label, id) = match folder {
+            Folder::Captures => ("截图保存目录", 0usize),
+            Folder::Recordings => ("录屏保存目录", 1),
         };
         let small =
             |id: (&'static str, usize), label: String| button(id, label, ButtonKind::Outline, true);
@@ -1484,7 +1487,7 @@ impl SettingsView {
             .child(self.open_button(("folder-open", id), t("打开"), path, cx));
         row(
             t(label),
-            Some(format!("{} · {location}", t(hint))),
+            Some(location),
             controls,
         )
     }
@@ -2050,12 +2053,6 @@ impl SettingsView {
                 row(t("边框颜色"), None, swatches),
             ])
             .into_any_element(),
-            div()
-                .mt(px(10.0))
-                .text_xs()
-                .text_color(rgb(col::muted()))
-                .child(t("新外观用于之后创建的贴图。"))
-                .into_any_element(),
         ]
     }
 
@@ -3040,9 +3037,14 @@ impl Render for SettingsView {
                         )),
                     ),
             );
+        let dialog = (self.page == Page::Recognition)
+            .then(|| self.service_dialog(&settings, &t, cx))
+            .flatten();
         div()
             .id("settings")
             .track_focus(&self.focus)
+            .relative()
+            .children(dialog)
             .size_full()
             .flex()
             .bg(rgb(col::page_bg()))
