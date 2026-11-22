@@ -958,6 +958,18 @@ impl Render for Controls {
             .bg(rgb(if recording { 0xe5484d } else if phase == Some(Phase::Completed) { 0x22c55e } else { 0xa1a1aa }));
         let dot = if recording { dot.border_3().border_color(rgba(0xe5484d33)).size(px(16.0)).mx(px(-3.0)) } else { dot };
         div()
+            // 录屏不能直接隐藏：Esc 录制中结束并保存，就绪/倒计时时取消（Vue `RecordingControls.vue`）。
+            .on_key_down(move |event: &KeyDownEvent, _, cx| {
+                if event.keystroke.key != "escape" {
+                    return;
+                }
+                match phase {
+                    Some(Phase::Recording | Phase::Paused) => stop(cx, false),
+                    Some(Phase::Ready | Phase::Countdown) => stop(cx, true),
+                    _ => return,
+                }
+                cx.stop_propagation();
+            })
             .size_full()
             .flex()
             .items_center()

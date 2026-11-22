@@ -728,7 +728,14 @@ impl Render for Controls {
             .bg(rgb(0xfafafa))
             .border_1()
             .border_color(rgb(0xd4d4d8))
-            .text_color(rgb(0x27272a));
+            .text_color(rgb(0x27272a))
+            // Esc 取消且不保存（Vue `ScrollPreview.vue`）。
+            .on_key_down(cx.listener(|v, event: &KeyDownEvent, _, cx| {
+                if event.keystroke.key == "escape" && v.result.is_none() {
+                    cx.stop_propagation();
+                    v.act(true, cx);
+                }
+            }));
         if let Some((text, path, _)) = self.result.clone() {
             let folder = path
                 .as_ref()

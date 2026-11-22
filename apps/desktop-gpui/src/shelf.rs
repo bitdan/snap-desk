@@ -884,6 +884,13 @@ impl Render for ShelfView {
             .id("shelf")
             .size_full()
             .relative()
+            // Esc 收起（暂存架被点击激活后才收得到按键）。
+            .on_key_down(cx.listener(|_, event: &KeyDownEvent, _, cx| {
+                if event.keystroke.key == "escape" {
+                    cx.stop_propagation();
+                    hide(cx);
+                }
+            }))
             .on_hover(cx.listener(|view, hovered: &bool, _, cx| {
                 view.hovered = *hovered;
                 if !*hovered {

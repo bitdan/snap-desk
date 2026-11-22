@@ -697,8 +697,18 @@ impl SettingsView {
         cx.notify();
     }
 
-    fn key_down(&mut self, event: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
+    fn key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let Some(capture) = self.capture.as_mut() else {
+            // Esc：先收起展开的下拉/预设面板，否则关闭设置窗口。
+            let k = &event.keystroke;
+            if k.key == "escape" && !event.is_held && !k.modifiers.modified() {
+                cx.stop_propagation();
+                if self.open_select.take().is_some() || std::mem::take(&mut self.service_picker) {
+                    cx.notify();
+                } else {
+                    window.remove_window();
+                }
+            }
             return;
         };
         cx.stop_propagation();
