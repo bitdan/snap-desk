@@ -110,3 +110,7 @@ jobs:
       - name: Test native library
         working-directory: src-tauri
         run: cargo test --locked --lib -p snap-desk -p snap-core
+      # 发布的主程序是 GPUI 外壳；单元测试不打开窗口，各平台都能运行。
+      - name: Test GPUI shell
+        working-directory: src-tauri
+        run: cargo test --locked -p snap-desk-gpui

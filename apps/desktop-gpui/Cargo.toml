@@ -2,7 +2,7 @@
 name = "snap-desk-gpui"
 version = "0.0.0"
 license = "GPL-3.0-only"
-description = "Snap Desk on GPUI (migration in progress; the Tauri build remains the shipped app)"
+description = "Snap Desk desktop app on GPUI (packaged by scripts/package-gpui.mjs with the Tauri bundler)"
 # gpui-kit 与 gpui-pre 使用 2024 edition。
 edition = "2024"
 rust-version = "1.95"
