@@ -581,13 +581,33 @@ impl SettingsView {
         ));
         // ---- 翻译 ----
         let mut translators = div().flex().flex_col();
-        translators = translators.child(self.option(
+        let local_selected = s.ai.provider == "local-ctranslate2";
+        let local_supported = snap_core::recognition::local_runtime::supported();
+        let mut local = self.option(
             ("tr-local", 0),
             t("本地翻译"),
-            Some(t("GPUI 版暂不支持")),
-            s.ai.provider == "local-ctranslate2",
-            false,
-        ));
+            Some(t(if local_supported {
+                "离线翻译，文字不上传（仅中英互译）"
+            } else {
+                "翻译引擎下载和导入目前仅支持 Windows x64。"
+            })),
+            local_selected,
+            local_supported,
+        );
+        if local_supported && !local_selected {
+            local = local.on_click(cx.listener(|view, _: &ClickEvent, _, cx| {
+                view.change(cx, |s| {
+                    s.ai.provider = "local-ctranslate2".into();
+                    s.ai.service_id.clear();
+                    // 本地语言包只支持中英互译。
+                    if !["zh-CN", "en"].contains(&s.ai.target_language.as_str()) {
+                        s.ai.target_language = "zh-CN".into();
+                    }
+                });
+                view.load_local(cx);
+            }));
+        }
+        translators = translators.child(local);
         for (index, service) in s
             .recognition_services
             .iter()
@@ -639,7 +659,7 @@ impl SettingsView {
             cx,
             |s, v| s.ai.target_language = TARGETS[v].0.into(),
         );
-        let translation_rows = vec![
+        let mut translation_rows = vec![
             row(t("默认目标语言"), None, targets),
             row(
                 t("超时（秒）"),
@@ -666,6 +686,9 @@ impl SettingsView {
                 self.toggle("tr-overlay", s.ai.overlay, cx, |s, v| s.ai.overlay = v),
             ),
         ];
+        if local_selected {
+            translation_rows.extend(self.local_rows(t, cx));
+        }
         // ---- 服务管理 ----
         let mut list = div().flex().flex_col();
         for (index, service) in s.recognition_services.iter().enumerate() {

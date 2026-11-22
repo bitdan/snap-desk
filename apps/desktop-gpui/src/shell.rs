@@ -141,6 +141,7 @@ pub fn start(
     // 剪贴板历史记录服务（按设置启用）；历史窗口由托盘“剪贴板”或快捷键打开。
     crate::clipboard::init(cx, &clipboard);
     crate::shelf::init(cx);
+    crate::local_translate::init(cx);
 
     cx.spawn(async move |cx| {
         let mut receiver = receiver;
@@ -271,6 +272,7 @@ fn handle(cx: &mut App, event: ShellEvent) {
                 log::info!("event=gpui.quit source=tray");
                 // 录屏中先停止并等视频保存完成再退出。
                 crate::recording::quit_when_idle(cx, |cx| {
+                    crate::local_translate::shutdown();
                     crate::clipboard::shutdown(cx);
                     cx.quit();
                 });

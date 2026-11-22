@@ -50,22 +50,7 @@ impl SettingsView {
         if let Ok(mut slot) = progress.lock() {
             *slot = None;
         }
-        // 下载期间定时重绘进度。
-        cx.spawn(
-            async move |this: WeakEntity<Self>, cx: &mut AsyncApp| loop {
-                cx.background_executor()
-                    .timer(Duration::from_millis(150))
-                    .await;
-                let busy = this.update(cx, |view, cx| {
-                    cx.notify();
-                    view.resource_busy
-                });
-                if !busy.unwrap_or(false) {
-                    break;
-                }
-            },
-        )
-        .detach();
+        self.watch_progress(cx);
         cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let sink = progress.clone();
             let result = cx
@@ -95,6 +80,25 @@ impl SettingsView {
                 cx.notify();
             });
         })
+        .detach();
+    }
+
+    /// 下载期间定时重绘进度，直到 `resource_busy` 复位。
+    pub(super) fn watch_progress(&mut self, cx: &mut Context<Self>) {
+        cx.spawn(
+            async move |this: WeakEntity<Self>, cx: &mut AsyncApp| loop {
+                cx.background_executor()
+                    .timer(Duration::from_millis(150))
+                    .await;
+                let busy = this.update(cx, |view, cx| {
+                    cx.notify();
+                    view.resource_busy
+                });
+                if !busy.unwrap_or(false) {
+                    break;
+                }
+            },
+        )
         .detach();
     }
 

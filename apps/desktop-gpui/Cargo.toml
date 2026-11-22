@@ -34,7 +34,7 @@ rfd = "0.16"
 # 取浮层窗口的原生句柄，作为 Windows 剪贴板所有者。
 raw-window-handle = "0.6"
 # 在线翻译的异步 HTTP 请求在后台线程的单线程运行时上执行（GPUI 执行器不是 tokio）；版本与 Tauri 一致。
-tokio = { version = "1", features = ["rt", "net", "time"] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "net", "time"] }
 # 结果窗口显示翻译服务主机名。
 url = "2"
 # 关于页比较产品版本（与 core 一致）。

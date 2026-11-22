@@ -114,6 +114,8 @@ pub fn open(cx: &mut App) {
 
 #[path = "settings_about.rs"]
 mod about_page;
+#[path = "settings_local.rs"]
+mod local_page;
 #[path = "settings_logs.rs"]
 mod logs_page;
 #[path = "settings_recognition.rs"]
@@ -215,6 +217,8 @@ struct SettingsView {
     resources: Option<snap_core::resources::Status>,
     resource_busy: bool,
     resource_progress: resources_page::Progress,
+    /// 本地翻译引擎与语言包状态。
+    local: Option<Result<snap_core::recognition::local_models::LocalStatus, String>>,
     /// 每次文本修改加一；防抖任务只保存最新一次。
     generation: u64,
     capture: Option<Capture>,
@@ -289,6 +293,7 @@ impl SettingsView {
             resources: None,
             resource_busy: false,
             resource_progress: Default::default(),
+            local: None,
             generation: 0,
             capture: None,
             error: None,
@@ -1845,6 +1850,7 @@ impl Render for SettingsView {
                         }
                         if page == Page::Recognition {
                             view.load_recognition(cx);
+                            view.load_local(cx);
                         }
                         if matches!(page, Page::Recognition | Page::General) {
                             view.load_resources(cx);

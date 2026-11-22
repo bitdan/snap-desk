@@ -4,7 +4,7 @@
 //! - 识别出内容后截图浮层即关闭，结果窗口独立存活，直到用户关闭；
 //! - OCR 严格使用设置中所选引擎（本地 PP-OCR、系统 OCR、在线服务；微信 OCR 暂不支持），
 //!   设置“自动复制”“自动合并换行”与 Tauri 版一致；
-//! - 在线翻译只发送识别出的文字，发送前需要用户点击“发送翻译”确认；本地 CTranslate2 翻译暂不支持；
+//! - 在线翻译只发送识别出的文字，发送前需要用户点击“发送翻译”确认；本地 CTranslate2 翻译在本机进程中执行（`local_translate.rs`）；
 //! - 二维码只在用户确认后才打开 HTTP/HTTPS 链接。
 //! 识别与翻译在后台线程执行（翻译用一个临时的单线程 tokio 运行时承载异步 HTTP 请求）。
 //!
@@ -380,11 +380,6 @@ impl Panel {
             cx.notify();
             return;
         }
-        if ai.provider == "local-ctranslate2" {
-            self.error = Some(self.t("当前版本暂不支持本地翻译模型，请在设置中改用在线翻译服务。"));
-            cx.notify();
-            return;
-        }
         let request = TranslationRequest { texts, source_language: None, target_language: self.target.clone() };
         if let Err(error) = request.validate() {
             self.error = Some(error);
@@ -400,6 +395,10 @@ impl Panel {
             let result = cx
                 .background_executor()
                 .spawn(async move {
+                    // 本地翻译在常驻运行时上复用 worker；在线翻译每次用临时运行时。
+                    if ai.provider == "local-ctranslate2" {
+                        return crate::local_translate::translate(&request.texts, &request.target_language, ai.timeout_seconds);
+                    }
                     let runtime = tokio::runtime::Builder::new_current_thread()
                         .enable_all()
                         .build()

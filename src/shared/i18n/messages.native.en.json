@@ -1235,5 +1235,15 @@
   "正在下载": "Downloading",
   "正在准备下载…": "Preparing download…",
   "重新校验": "Verify again",
-  "资源": "Resources"
+  "资源": "Resources",
+  "导入 ZIP…": "Import ZIP…",
+  "导入…": "Import…",
+  "离线翻译，文字不上传（仅中英互译）": "Offline translation; text never leaves this device (Chinese ↔ English only)",
+  "未安装，可导入离线包": "Not installed; you can import an offline pack",
+  "未安装翻译引擎": "Translation engine not installed",
+  "未选择目录。": "No folder selected.",
+  "无法初始化本地翻译运行时。": "Couldn't start the local translation runtime.",
+  "英译中语言包": "English → Chinese pack",
+  "正在处理…": "Working…",
+  "中译英语言包": "Chinese → English pack"
 }

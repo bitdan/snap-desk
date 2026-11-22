@@ -19,6 +19,7 @@ mod pin_manager;
 mod pins;
 mod recognition;
 mod live_annotate;
+mod local_translate;
 mod recording;
 mod scroll;
 mod settings_window;
