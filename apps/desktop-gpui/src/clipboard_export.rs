@@ -1,16 +1,20 @@
 //! 剪贴板组合导出窗口（对照 Vue 版 `ClipboardComposer.vue`）：所选文本与图片按顺序导出为 PDF、长图或分别保存。
 //!
 //! 素材可上移、下移、移除；参数与 Tauri 版相同（页面 A4/原始比例、长图背景、间距 0～200px、边距 0～30mm），
-//! 编码与校验在 core `snap_core::clipboard::export`。Vue 版的“改写文本”与分页预览未迁移，导出始终使用历史原文。
+//! 编码与校验在 core `snap_core::clipboard::export`。文本素材可改写（只作用于本次导出，不修改历史，可还原原文）；
+//! Vue 版的分页预览未迁移。
 //! 文本排版字体：设置里下载/选择的导出字体，没有时回退到本机中文字体。
 use crate::annotate;
-use gpui_kit::*;
+use gpui_kit::{
+    component::input::{Textarea, TextareaState},
+    *,
+};
 use snap_core::clipboard::{
     export::{self, Background, Mode, Options, PageSize},
     model::{Item, Kind},
     service::Service,
 };
-use std::sync::atomic::Ordering;
+use std::{collections::HashMap, sync::atomic::Ordering};
 
 struct ExportState {
     window: Option<AnyWindowHandle>,
@@ -29,6 +33,8 @@ pub fn open(cx: &mut App, service: Service, items: Vec<Item>) {
                 view.update(cx, |view, cx| {
                     if !view.busy {
                         view.entries = entries.clone();
+                        view.edits.clear();
+                        view.editing = None;
                         view.error = None;
                         view.message = None;
                         cx.notify();
@@ -74,6 +80,8 @@ pub fn open(cx: &mut App, service: Service, items: Vec<Item>) {
                 margin_mm: 12.0,
                 background: Background::White,
             },
+            edits: HashMap::new(),
+            editing: None,
             busy: false,
             error: None,
             message: None,
@@ -87,6 +95,14 @@ pub fn open(cx: &mut App, service: Service, items: Vec<Item>) {
             log::info!("event=gpui.clipboard_export_opened");
         }
         Err(error) => log::error!("event=gpui.clipboard_export_open_failed message={error}"),
+    }
+}
+
+/// 条目的完整原文（改写与判断是否改动时读取）。
+fn original_text(service: &Service, id: i64) -> Result<String, String> {
+    match service.contents(&[id])?.pop() {
+        Some(snap_core::clipboard::service::Content::Text(text)) => Ok(text),
+        _ => Err("只能改写文本素材。".into()),
     }
 }
 
@@ -106,6 +122,10 @@ struct Composer {
     language: snap_core::settings::Language,
     entries: Vec<Item>,
     options: Options,
+    /// 本次导出改写过的文本（条目 ID → 新文本）。
+    edits: HashMap<i64, String>,
+    /// 正在改写的条目与输入框。
+    editing: Option<(i64, Entity<TextareaState>)>,
     busy: bool,
     error: Option<String>,
     message: Option<String>,
@@ -154,8 +174,58 @@ impl Composer {
     }
 
     /// 快照、字体与排版在后台；对话框为异步（独立线程弹出），期间置顶贴图临时隐藏。
+    /// 结束改写：把输入框内容记为改写（与原文相同则视为未改写）。
+    fn commit_edit(&mut self, cx: &mut Context<Self>) {
+        let Some((id, state)) = self.editing.take() else {
+            return;
+        };
+        let value = state.read(cx).value().to_string();
+        let original = original_text(&self.service, id).ok();
+        if original.as_deref() == Some(value.as_str()) {
+            self.edits.remove(&id);
+        } else {
+            self.edits.insert(id, value);
+        }
+    }
+
+    /// 改写文本：读取完整原文（或已改写的文本）放进输入框；再次点击结束改写。
+    fn toggle_edit(&mut self, id: i64, window: &mut Window, cx: &mut Context<Self>) {
+        let same = self.editing.as_ref().is_some_and(|(current, _)| *current == id);
+        self.commit_edit(cx);
+        if same || self.busy {
+            cx.notify();
+            return;
+        }
+        let text = match self.edits.get(&id) {
+            Some(text) => Ok(text.clone()),
+            None => original_text(&self.service, id),
+        };
+        match text {
+            Ok(text) => {
+                let state = cx.new(|cx| {
+                    let mut state = TextareaState::new(window, cx);
+                    state.set_auto_grow(3, 12, cx);
+                    state.set_value(text, window, cx);
+                    state
+                });
+                state.update(cx, |state, cx| state.focus(window, cx));
+                self.editing = Some((id, state));
+                self.error = None;
+            }
+            Err(error) => self.error = Some(error),
+        }
+        cx.notify();
+    }
+
     fn export(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.busy || self.entries.is_empty() {
+            return;
+        }
+        self.commit_edit(cx);
+        // 改写后的文本不能为空（core 也会拒绝，这里提前给出对应条目的提示）。
+        if self.entries.iter().any(|item| self.edits.get(&item.id).is_some_and(|t| t.trim().is_empty())) {
+            self.error = Some(self.t("改写后的文本不能为空。"));
+            cx.notify();
             return;
         }
         if self
@@ -170,6 +240,10 @@ impl Composer {
         }
         let mut options = self.options.clone();
         options.ids = self.entries.iter().map(|item| item.id).collect();
+        options.texts = self.entries.iter().map(|item| self.edits.get(&item.id).cloned()).collect();
+        if options.texts.iter().all(Option::is_none) {
+            options.texts.clear();
+        }
         let service = self.service.clone();
         let (title, filter) = (self.t("导出剪贴板素材"), self.t("导出文件"));
         let remember = crate::shell::settings(cx).export.remember_directory;
@@ -433,6 +507,9 @@ impl Render for Composer {
             );
         }
         for (index, item) in self.entries.iter().enumerate() {
+            let id = item.id;
+            let edited = self.edits.contains_key(&id);
+            let editing = self.editing.as_ref().filter(|(current, _)| *current == id).map(|(_, state)| state.clone());
             let label = match item.kind {
                 Kind::Image => format!(
                     "{} {}×{}",
@@ -440,8 +517,17 @@ impl Render for Composer {
                     item.width.unwrap_or(0),
                     item.height.unwrap_or(0)
                 ),
-                _ => item.preview.lines().next().unwrap_or_default().to_string(),
+                _ => self
+                    .edits
+                    .get(&id)
+                    .map(String::as_str)
+                    .unwrap_or(&item.preview)
+                    .lines()
+                    .next()
+                    .unwrap_or_default()
+                    .to_string(),
             };
+            let is_text = item.kind == Kind::Text;
             list = list.child(
                 div()
                     .flex()
@@ -465,6 +551,25 @@ impl Render for Composer {
                             .text_sm()
                             .child(label),
                     )
+                    .children(edited.then(|| {
+                        div().text_xs().text_color(rgb(annotate::active_fg())).child(text("已改写"))
+                    }))
+                    .children((edited && editing.is_none()).then(|| {
+                        self.pill(("export-restore", index), text("还原原文"), false).on_click(cx.listener(
+                            move |view, _: &ClickEvent, _, cx| {
+                                if !view.busy {
+                                    view.edits.remove(&id);
+                                    cx.notify();
+                                }
+                            },
+                        ))
+                    }))
+                    .children(is_text.then(|| {
+                        let label = text(if editing.is_some() { "完成" } else { "改写文本" });
+                        self.pill(("export-edit", index), label, editing.is_some()).on_click(cx.listener(
+                            move |view, _: &ClickEvent, window, cx| view.toggle_edit(id, window, cx),
+                        ))
+                    }))
                     .child(self.pill(("export-up", index), "↑".into(), false).on_click(
                         cx.listener(move |view, _: &ClickEvent, _, cx| {
                             view.move_entry(index, index.saturating_sub(1), cx)
@@ -480,12 +585,26 @@ impl Render for Composer {
                         self.pill(("export-remove", index), text("移除"), false)
                             .on_click(cx.listener(move |view, _: &ClickEvent, _, cx| {
                                 if !view.busy && index < view.entries.len() {
-                                    view.entries.remove(index);
+                                    let removed = view.entries.remove(index);
+                                    view.edits.remove(&removed.id);
+                                    if view.editing.as_ref().is_some_and(|(current, _)| *current == removed.id) {
+                                        view.editing = None;
+                                    }
                                     cx.notify();
                                 }
                             })),
                     ),
             );
+            if let Some(state) = editing {
+                list = list.child(
+                    div()
+                        .p(px(4.0))
+                        .rounded(px(6.0))
+                        .border_1()
+                        .border_color(rgb(annotate::border()))
+                        .child(Textarea::new(&state)),
+                );
+            }
         }
         let notice = match (&self.error, &self.message) {
             (Some(error), _) => Some(
