@@ -52,12 +52,12 @@ pub const DARK_PALETTE: Palette = Palette {
 
 pub const LIGHT_PALETTE: Palette = Palette {
     surface: 0xffffff,
-    border: 0xd4d4d8,
-    text: 0x27272a,
-    muted: 0x71717a,
-    hover: 0xf4f4f5,
-    active_bg: 0xdbeafe,
-    active_fg: 0x1d4ed8,
+    border: 0xdfe3e8,
+    text: 0x24292f,
+    muted: 0x6b7280,
+    hover: 0xf1f3f5,
+    active_bg: 0xe8f0fe,
+    active_fg: 0x2563eb,
     window_bg: 0xf4f4f5,
     panel: 0xfafafa,
     inset: 0xececef,

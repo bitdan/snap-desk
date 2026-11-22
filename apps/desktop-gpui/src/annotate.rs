@@ -189,7 +189,6 @@ pub mod icons {
     icon!(UNDO, "undo-2");
     icon!(REDO, "redo-2");
     icon!(TRASH, "trash");
-    icon!(CLEAR, "brush-cleaning");
     icon!(MOVE, "move");
     icon!(SLIDERS, "sliders-horizontal");
     icon!(PIN, "pin");
@@ -205,6 +204,10 @@ pub mod icons {
     icon!(PLAY, "play");
     icon!(FOLDER_OPEN, "folder-open");
     icon!(SCROLL, "scroll-capture");
+    icon!(CHEVRON_DOWN, "chevron-down");
+    icon!(CHEVRON_UP, "chevron-up");
+    icon!(MONITOR, "monitor");
+    icon!(RESELECT, "rotate-ccw");
 }
 
 /// 当前样式；选中图形时同步为该图形的样式。
@@ -1286,13 +1289,7 @@ pub fn icon_button(
     pressed: bool,
     disabled: bool,
 ) -> Stateful<Div> {
-    let color = if disabled {
-        0x5b6470
-    } else if pressed {
-        active_fg()
-    } else {
-        text()
-    };
+    let color = if pressed { active_fg() } else { text() };
     let mut button = div()
         .id(id)
         .size(px(30.0))
@@ -1306,7 +1303,9 @@ pub fn icon_button(
     if pressed {
         button = button.bg(rgb(active_bg()));
     }
-    if !disabled {
+    if disabled {
+        button = button.opacity(0.4);
+    } else {
         button = button.cursor_pointer().hover(|s| s.bg(rgb(hover())));
     }
     button
@@ -1423,9 +1422,7 @@ pub fn tool_row<T: 'static>(
                     .items_center()
                     .justify_center()
                     .rounded(px(4.0))
-                    .text_xs()
-                    .text_color(rgb(muted()))
-                    .child(if props.popover_up { "▴" } else { "▾" })
+                    .child(icon(if props.popover_up { icons::CHEVRON_UP } else { icons::CHEVRON_DOWN }, muted()).size(px(12.0)))
                     .tooltip({
                         let name = (props.text)(name);
                         move |_, cx| cx.new(|_| Tooltip(name.clone().into())).into()
@@ -1478,18 +1475,16 @@ pub fn tool_row<T: 'static>(
         let label = if props.grouped { "展开全部工具" } else { "折叠相似工具" };
         let toggle = div()
             .id("annotation-expand")
-            .w(px(18.0))
+            .w(px(30.0))
             .h(px(30.0))
             .flex()
             .flex_none()
             .items_center()
             .justify_center()
-            .rounded(px(4.0))
+            .rounded(px(6.0))
             .cursor_pointer()
             .hover(|s| s.bg(rgb(hover())))
-            .text_xs()
-            .text_color(rgb(muted()))
-            .child(if props.grouped { "»" } else { "«" })
+            .child(icon(if props.grouped { icons::CHEVRON_DOWN } else { icons::CHEVRON_UP }, text()))
             .tooltip({
                 let label = (props.text)(label);
                 move |_, cx| cx.new(|_| Tooltip(label.clone().into())).into()
@@ -1506,7 +1501,11 @@ pub fn tool_row<T: 'static>(
     let delete = icon_button("annotation-delete", icons::TRASH, (props.text)("删除选中标注 Delete"), false, !delete_ok);
     row = row.child(on(delete, Action::Delete, delete_ok, host));
     let clear_ok = !locked && !e.shapes().is_empty();
-    let clear = icon_button("annotation-clear", icons::CLEAR, (props.text)("清空标注，可撤销恢复"), false, !clear_ok);
+    let clear = icon_button("annotation-clear", icons::ERASER, (props.text)("清空标注，可撤销恢复"), false, !clear_ok)
+        .w_auto()
+        .px(px(6.0))
+        .gap(px(4.0))
+        .child(div().text_size(px(13.0)).text_color(rgb(text())).child((props.text)("清空")));
     row = row.child(on(clear, Action::Clear, clear_ok, host));
     }
     if !trailing.is_empty() {

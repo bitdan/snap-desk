@@ -34,12 +34,15 @@ use std::{sync::Arc, time::{Duration, Instant}};
 #[path = "capture_history.rs"]
 mod history;
 
-const ACCENT: u32 = 0x2f80ff;
+/// 选区边框与吸附框（Vue `.selection` / `.snap-target` 的 #60a5fa）。
+const ACCENT: u32 = 0x60a5fa;
+/// 手柄边框（Vue `.resize-handle`）。
+const HANDLE_BORDER: u32 = 0x3b82f6;
 /// 选区外的遮罩：半透明黑，保留冻结画面可辨认。
-const MASK: u32 = 0x0000_0088;
+const MASK: u32 = 0x0000_0066;
 /// 手柄命中半径与绘制边长（逻辑像素）。
 const HANDLE_HIT: f32 = 6.0;
-const HANDLE_SIZE: f32 = 7.0;
+const HANDLE_SIZE: f32 = 8.0;
 /// 新建选区前允许的抖动（物理像素）：小于它视为单击，用于选中吸附候选。
 const CLICK_SLOP: i64 = 4;
 
@@ -549,6 +552,44 @@ fn finish(cx: &mut App) {
     crate::shelf::resume(cx);
 }
 
+/// 选择光标所在的整个屏幕（Ctrl/⌘+A 或工具栏）；已有标注时选区固定。
+fn select_screen(cx: &mut App, _owner: isize) {
+    if let Some(session) = current(cx) {
+        session.update(cx, |s, cx| {
+            if s.selection_locked() || s.busy {
+                return;
+            }
+            let index = s.picker.at.map_or(0, |(owner, _, _)| owner).min(s.displays.len().saturating_sub(1));
+            s.selection = Some(s.region(index));
+            s.hover = None;
+            s.drag = None;
+            s.sync();
+            cx.notify();
+        });
+    }
+}
+
+/// 清空标注并重新框选。
+fn reselect(cx: &mut App, _owner: isize) {
+    let Some(session) = current(cx) else {
+        return;
+    };
+    session.update(cx, |s, cx| {
+        if s.busy {
+            return;
+        }
+        s.editor.reset(Vec::new());
+        s.annotating = false;
+        s.text_input = None;
+        s.selection = None;
+        s.drag = None;
+        s.layers.clear();
+        s.sync();
+        cx.notify();
+    });
+    flush(&session, None, cx);
+}
+
 /// 截图中按录屏快捷键或点“录屏”：工具栏切换为录制选项。
 pub fn enter_recording(cx: &mut App) {
     if let Some(session) = current(cx) {
@@ -945,53 +986,122 @@ fn reopen(cx: &mut App, session: &Entity<Session>) {
 }
 
 /// 截图历史模式条：上一张、位置、下一张（对照 Vue `capture-modebar`）。
-fn mode_bar(s: &Session, position: Option<(usize, usize)>) -> Stateful<Div> {
+fn mode_bar(s: &Session, position: Option<(usize, usize)>, has_history: bool) -> Stateful<Div> {
     let enabled = !s.busy && !s.editor.pending && !s.editor.interacting();
-    let button = |id: &'static str, label: String, on: bool, direction: history::Direction| {
+    let button = |id: &'static str, label: String, on: bool| {
         let button = div()
             .id(id)
-            .h(px(26.0))
-            .px(px(10.0))
+            .h(px(30.0))
+            .px(px(8.0))
             .flex()
             .items_center()
+            .gap(px(5.0))
             .rounded(px(6.0))
-            .text_xs()
-            .text_color(rgb(0xffffff))
             .child(label);
         if on {
-            button
-                .cursor_pointer()
-                .hover(|b| b.bg(rgba(0xffffff26)))
-                .on_click(move |_, _, cx| history::replay(cx, direction))
+            button.cursor_pointer().hover(|b| b.bg(rgb(annotate::hover())))
         } else {
-            button.opacity(0.45)
+            button.opacity(0.4)
         }
     };
     let mut bar = div()
         .id("capture-modebar")
         .absolute()
-        .left(px(16.0))
-        .top(px(16.0))
-        .p(px(3.0))
+        .left(px(8.0))
+        .top(px(8.0))
+        .min_h(px(40.0))
+        .px(px(6.0))
+        .py(px(4.0))
         .flex()
         .items_center()
         .gap(px(2.0))
-        .rounded(px(8.0))
-        .bg(rgba(0x111827d9))
+        .rounded(px(10.0))
+        .border_1()
+        .border_color(rgb(annotate::border()))
+        .bg(rgb(annotate::surface()))
+        .shadow_lg()
+        .text_xs()
+        .text_color(rgb(annotate::text()))
         .cursor_default()
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
-        .child(button("capture-replay-previous", s.text("上一张 ,"), enabled, history::Direction::Previous));
-    if let Some((index, total)) = position {
-        bar = bar.child(
-            div()
-                .px(px(6.0))
-                .text_xs()
-                .text_color(rgb(0xd1d5db))
-                .child(s.text("截图历史 {0}/{1}").replace("{0}", &index.to_string()).replace("{1}", &total.to_string())),
-        );
+        .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation());
+    if !s.recording {
+        let previous = enabled && has_history;
+        let mut back = button("capture-replay-previous", s.text("上一张 ,"), previous);
+        if previous {
+            back = back.on_click(|_, _, cx| history::replay(cx, history::Direction::Previous));
+        }
+        bar = bar.child(back);
+        if let Some((index, total)) = position {
+            bar = bar.child(
+                div()
+                    .px(px(6.0))
+                    .text_color(rgb(annotate::muted()))
+                    .child(s.text("截图历史 {0}/{1}").replace("{0}", &index.to_string()).replace("{1}", &total.to_string())),
+            );
+        }
+        let next = enabled && position.is_some();
+        let mut forward = button("capture-replay-next", s.text("下一张 ."), next);
+        if next {
+            forward = forward.on_click(|_, _, cx| history::replay(cx, history::Direction::Next));
+        }
+        bar = bar.child(forward);
     }
-    bar.child(button("capture-replay-next", s.text("下一张 ."), enabled && position.is_some(), history::Direction::Next))
+    let recent = enabled
+        && !s.selection_locked()
+        && recent::restore(s.recent.as_ref(), s.image.width(), s.image.height(), &s.layout_key).is_some();
+    let mut restore = button("capture-recent", s.text("最近选区 R"), recent)
+        .child(annotate::icon(annotate::icons::FOCUS, annotate::text()).size(px(15.0)));
+    if recent {
+        restore = restore.on_click(|_, _, cx| {
+            if let Some(session) = current(cx) {
+                session.update(cx, |s, cx| {
+                    if let Some(rect) = recent::restore(s.recent.as_ref(), s.image.width(), s.image.height(), &s.layout_key) {
+                        s.selection = Some(rect);
+                        s.drag = None;
+                        s.hover = None;
+                        s.sync();
+                        cx.notify();
+                    }
+                });
+            }
+        });
+    }
+    bar.child(restore)
+}
+
+/// 未框选时的提示（Vue `.capture-tip`）：显示器顶部居中的深色圆角框。
+fn capture_tip(s: &Session) -> Div {
+    let (main, keys) = if s.recording {
+        ("拖动选择录屏范围", "Esc 退出 · Ctrl / ⌘ + A 全屏 · R 最近选区")
+    } else if !s.targets.is_empty() {
+        ("点击吸附 · Tab 切换层级 · 拖动框选 · Alt 选窗口 · Shift 自由框选", "C 取色 · Esc 取消 · Ctrl / ⌘ + A 全屏 · R 最近选区")
+    } else {
+        ("拖动框选屏幕", "C 取色 · Esc 取消 · Ctrl / ⌘ + A 全屏 · R 最近选区")
+    };
+    div()
+        .absolute()
+        .top(px(64.0))
+        .left_0()
+        .right_0()
+        .flex()
+        .justify_center()
+        .child(
+            div()
+                .px(px(24.0))
+                .py(px(14.0))
+                .rounded(px(10.0))
+                .bg(rgba(0x242330ed))
+                .text_size(px(14.0))
+                .text_color(rgb(0xffffff))
+                .flex()
+                .flex_wrap()
+                .items_baseline()
+                .justify_center()
+                .gap_x(px(20.0))
+                .child(s.text(main))
+                .child(div().text_xs().text_color(rgb(0xb7b4c8)).child(s.text(keys))),
+        )
 }
 
 /// 单个显示器上的浮层视图。
@@ -1328,6 +1438,10 @@ impl Overlay {
             history::replay(cx, direction);
             return;
         }
+        if key == "a" && command && !keystroke.modifiers.alt {
+            select_screen(cx, 0);
+            return;
+        }
         // R：恢复最近选区（已有标注或正在编辑时选区固定）。
         if key == "r" && !command && !keystroke.modifiers.alt {
             self.session.update(cx, |s, cx| {
@@ -1509,10 +1623,24 @@ fn export_button(
     primary: bool,
     action: fn(&mut App, isize),
 ) -> AnyElement {
-    let mut button = annotate::icon_button(id, icon, label, false, false);
-    if primary {
-        button = button.bg(rgb(0x2563eb));
-    }
+    let button = if primary {
+        // 主操作（复制）：蓝底白色图标（Vue `.copy-button`）。
+        div()
+            .id(id)
+            .size(px(30.0))
+            .flex()
+            .flex_none()
+            .items_center()
+            .justify_center()
+            .rounded(px(6.0))
+            .bg(rgb(0x2563eb))
+            .cursor_pointer()
+            .hover(|s| s.bg(rgb(0x1d4ed8)))
+            .child(annotate::icon(icon, 0xffffff))
+            .tooltip(move |_, cx| cx.new(|_| annotate::Tooltip(label.clone().into())).into())
+    } else {
+        annotate::icon_button(id, icon, label, false, false)
+    };
     button
         .on_click(move |_, window, cx| action(cx, crate::native::hwnd(window)))
         .into_any_element()
@@ -1675,8 +1803,11 @@ impl Render for Overlay {
 
         // 左上角模式条：截图历史上一张 / 下一张（录屏框选时不显示），只画在光标所在屏。
         let active = s.picker.at.map_or(0, |(owner, _, _)| owner);
-        if active == self.index && !s.recording && !dragging && history::has_entries(cx) {
-            root = root.child(mode_bar(s, history::position(cx)));
+        if active == self.index && !dragging {
+            if selection.is_none() {
+                root = root.child(capture_tip(s));
+            }
+            root = root.child(mode_bar(s, history::position(cx), history::has_entries(cx)));
         }
                 // 取色放大镜画在最上层（工具栏之后追加），光标在本屏时才显示。
         let picker = s.picker;
@@ -1736,18 +1867,19 @@ impl Render for Overlay {
                 .border_color(rgb(ACCENT)),
         );
         // 尺寸标签显示物理像素，与导出图片一致；顶部放不下时放进选区内。
-        let label_top = if b.origin.y > px(24.0) { b.origin.y - px(24.0) } else { b.origin.y + px(4.0) };
+        let label_top = if b.origin.y >= px(30.0) { b.origin.y - px(28.0) } else { b.origin.y + px(6.0) };
         root = root.child(
             div()
                 .absolute()
                 .left(b.origin.x)
                 .top(label_top)
-                .px_1()
-                .rounded_sm()
-                .bg(rgba(0x000000b0))
-                .text_xs()
+                .px(px(7.0))
+                .py(px(3.0))
+                .bg(rgba(0x242330dc))
+                .text_size(px(11.0))
                 .text_color(rgb(0xffffff))
-                .child(format!("{} × {}", rect.width, rect.height)),
+                .whitespace_nowrap()
+                .child(format!("{} × {} px · ({}, {})", rect.width, rect.height, rect.x, rect.y)),
         );
         if !s.selection_locked() {
             for handle in Handle::ALL {
@@ -1764,7 +1896,7 @@ impl Render for Overlay {
                         .size(px(HANDLE_SIZE))
                         .bg(rgb(0xffffff))
                         .border_1()
-                        .border_color(rgb(ACCENT)),
+                        .border_color(rgb(HANDLE_BORDER)),
                 );
             }
         }
@@ -1828,23 +1960,27 @@ impl Render for Overlay {
                 export_button("capture-record-start", annotate::icons::VIDEO, s.text("开始录屏"), true, record),
             ]
         } else {
+            // 顺序同 Vue：重新框选、全屏、滚动截图、录屏 | 贴图、识别文字、截图翻译、二维码、保存、复制（主色）、取消。
             // 回放中的画面不是现场，不能开始滚动截图或录屏。
             let replaying = history::position(cx).is_some();
-            let mut live = Vec::new();
+            let mut actions = vec![
+                export_button("capture-reselect", annotate::icons::RESELECT, s.text("清空标注并重新框选"), false, reselect),
+                export_button("capture-fullscreen", annotate::icons::MONITOR, s.text("选择整个屏幕 Ctrl/⌘+A"), false, select_screen),
+            ];
             if !replaying {
-                live.push(export_button("capture-scroll", annotate::icons::SCROLL, s.text("滚动截图：框选正文后慢慢滚动"), false, scroll));
-                live.push(export_button("capture-record", annotate::icons::VIDEO, s.text("录屏"), false, |cx, _| enter_recording(cx)));
+                actions.push(export_button("capture-scroll", annotate::icons::SCROLL, s.text("滚动截图：框选正文后慢慢滚动"), false, scroll));
+                actions.push(export_button("capture-record", annotate::icons::VIDEO, s.text("切换到录屏"), false, |cx, _| enter_recording(cx)));
             }
-            live.into_iter().chain([
-            export_button("capture-ocr", annotate::icons::SCAN_TEXT, s.text("识别文字"), false, |cx, _| recognize(cx, RecognitionMode::Ocr)),
-            export_button("capture-translate", annotate::icons::LANGUAGES, s.text("截图翻译"), false, |cx, _| recognize(cx, RecognitionMode::Translate)),
-            export_button("capture-qr", annotate::icons::QR_CODE, s.text("识别二维码"), false, |cx, _| recognize(cx, RecognitionMode::Qr)),
-            annotate::divider().into_any_element(),
-            export_button("capture-cancel", annotate::icons::CLOSE, s.text("取消"), false, |cx, _| cancel(cx)),
-            export_button("capture-pin", annotate::icons::PIN, s.text("贴图"), false, |cx, _| pin(cx)),
-            export_button("capture-save", annotate::icons::SAVE, s.text("保存"), false, |cx, _| save(cx)),
-            export_button("capture-copy", annotate::icons::COPY, s.text("复制"), true, copy),
-            ]).collect()
+            actions.extend([
+                export_button("capture-pin", annotate::icons::PIN, s.text("贴图 Ctrl/⌘+P"), false, |cx, _| pin(cx)),
+                export_button("capture-ocr", annotate::icons::SCAN_TEXT, s.text("识别文字"), false, |cx, _| recognize(cx, RecognitionMode::Ocr)),
+                export_button("capture-translate", annotate::icons::LANGUAGES, s.text("截图翻译"), false, |cx, _| recognize(cx, RecognitionMode::Translate)),
+                export_button("capture-qr", annotate::icons::QR_CODE, s.text("识别二维码"), false, |cx, _| recognize(cx, RecognitionMode::Qr)),
+                export_button("capture-save", annotate::icons::SAVE, s.text("保存图片 Ctrl/⌘+S"), false, |cx, _| save(cx)),
+                export_button("capture-copy", annotate::icons::COPY, s.text("复制图片 Enter"), true, copy),
+                export_button("capture-cancel", annotate::icons::CLOSE, s.text("取消截图"), false, |cx, _| cancel(cx)),
+            ]);
+            actions
         };
         let tools = annotate::tool_row(&props, leading, trailing, &host);
         let options = annotate::options_row(&props, &host);
