@@ -93,6 +93,9 @@ pub struct Session {
     window_targets: Vec<crate::recording::WindowTarget>,
     /// 本次录屏选择录制整个窗口（不保存为偏好，与 Tauri 版来源选择一致）。
     record_window: bool,
+    /// 已识别的顶层窗口及原生句柄（“原生窗口截图”只接受这些窗口）与截图是否含光标。
+    natives: Vec<(Rect, snap_core::capture::NativeWindow)>,
+    include_cursor: bool,
     /// 工具栏被拖动后的偏移（逻辑像素，Vue 的“拖动工具栏；双击恢复位置”），与拖动起点。
     toolbar_offset: (f32, f32),
     toolbar_drag: Option<(Point<Pixels>, (f32, f32))>,
@@ -224,6 +227,8 @@ struct Grabbed {
     displays: Vec<Display>,
     targets: Vec<Rect>,
     windows: Vec<crate::recording::WindowTarget>,
+    natives: Vec<(Rect, snap_core::capture::NativeWindow)>,
+    include_cursor: bool,
     /// Windows：UI Automation 控件候选在浮层显示后再后台补充（控件枚举占拍屏耗时大半）。
     deferred: Option<Deferred>,
 }
@@ -255,7 +260,15 @@ fn grab(include_cursor: bool, snap: bool) -> Result<Grabbed, String> {
     let (desktop, deferred) = snap_core::capture::capture_deferred(false, include_cursor, snap)?;
     #[cfg(not(windows))]
     let (desktop, deferred) = (snap_core::capture::capture(false, include_cursor, snap)?, None);
+    let natives = desktop
+        .targets
+        .iter()
+        .filter(|t| t.kind == "window" && !t.recording_only)
+        .filter_map(|t| Some((t.rect, desktop.windows.get(t.window_index)?.clone())))
+        .collect();
     Ok(Grabbed {
+        natives,
+        include_cursor: desktop.include_cursor,
         windows: window_targets(&desktop),
         targets: snap_rects(&desktop.targets),
         image: desktop.image,
@@ -403,6 +416,8 @@ fn begin(cx: &mut App, settings: &Settings, delay: Duration, purpose: Option<Rec
                         record: crate::recording::preferences(),
                         window_targets: grabbed.windows,
                         record_window: false,
+                        natives: grabbed.natives,
+                        include_cursor: grabbed.include_cursor,
                         toolbar_offset: (0.0, 0.0),
                         toolbar_drag: None,
                     });
@@ -572,6 +587,97 @@ fn select_screen(cx: &mut App, _owner: isize) {
             cx.notify();
         });
     }
+}
+
+/// 选区正好是已识别窗口时的原生句柄（Vue：选中的吸附目标是窗口才显示“原生窗口截图”）。
+fn selected_native(s: &Session) -> Option<(Rect, snap_core::capture::NativeWindow)> {
+    let selection = s.selection?;
+    s.natives.iter().find(|(rect, _)| snap_core::capture::same_bounds(*rect, selection)).cloned()
+}
+
+/// 原生窗口截图：隐藏浮层后用 PrintWindow 等重抓该窗口（取到被遮挡部分），贴回冻结画面；
+/// 窗口位置或尺寸变化时保留原图。成功与失败都恢复浮层。
+fn native_window(cx: &mut App, _owner: isize) {
+    let Some(session) = current(cx) else {
+        return;
+    };
+    let prepared = session.update(cx, |s, cx| {
+        if s.busy || s.selection_locked() {
+            return None;
+        }
+        let (rect, native) = selected_native(s)?;
+        s.busy = true;
+        s.editor.error = None;
+        cx.notify();
+        Some((rect, native, s.include_cursor, s.origin, s.windows.clone()))
+    });
+    let Some((old, native, include_cursor, origin, handles)) = prepared else {
+        return;
+    };
+    let visible = move |cx: &mut App, visible: bool| {
+        for handle in &handles {
+            let _ = handle.update(cx, |_, window, _| crate::native::set_visible_async(window, visible));
+        }
+    };
+    visible(cx, false);
+    let shown = visible.clone();
+    cx.spawn(async move |cx: &mut AsyncApp| {
+        // 等浮层真正从屏幕上消失再抓取。
+        cx.background_executor().timer(Duration::from_millis(180)).await;
+        let grabbed = cx
+            .background_executor()
+            .spawn(async move { snap_core::capture::native_window(&native, include_cursor) })
+            .await;
+        cx.update(|cx| {
+            let result = session.update(cx, |s, cx| {
+                s.busy = false;
+                let (image, x, y) = grabbed?;
+                let size = (s.image.width(), s.image.height());
+                let rect = snap_core::capture::clipped(x, y, image.width(), image.height(), origin, size)
+                    .ok_or("窗口已移出截图范围。")?;
+                if !snap_core::capture::same_bounds(rect, old) {
+                    return Err("窗口位置或尺寸已变化，请重新截图。".to_string());
+                }
+                image::imageops::replace(
+                    Arc::make_mut(&mut s.image),
+                    &image,
+                    i64::from(x) - i64::from(origin.0),
+                    i64::from(y) - i64::from(origin.1),
+                );
+                cx.notify();
+                Ok((0..s.displays.len()).map(|i| (s.windows.get(i).copied(), s.region(i))).collect::<Vec<_>>())
+            });
+            match result {
+                Ok(regions) => {
+                    let image = session.read(cx).image.clone();
+                    for (handle, region) in regions {
+                        let Some(overlay) = handle.and_then(|h| h.downcast::<Overlay>()) else {
+                            continue;
+                        };
+                        let frame = display_frame(&image, region);
+                        let _ = overlay.update(cx, |view, window, cx| {
+                            let old = std::mem::replace(&mut view.frame, frame);
+                            cx.drop_image(old, Some(window));
+                            cx.notify();
+                        });
+                    }
+                    log::info!("event=gpui.capture_native_replaced");
+                }
+                Err(error) => {
+                    log::warn!("event=gpui.capture_native_failed message={error}");
+                    session.update(cx, |s, cx| {
+                        s.editor.error = Some(error);
+                        cx.notify();
+                    });
+                }
+            }
+            shown(cx, true);
+            if let Some(first) = session.read(cx).windows.first().copied() {
+                let _ = first.update(cx, |_, window, _| window.activate_window());
+            }
+        });
+    })
+    .detach();
 }
 
 /// 清空标注并重新框选。
@@ -2008,6 +2114,9 @@ impl Render for Overlay {
                 export_button("capture-reselect", annotate::icons::RESELECT, s.text("清空标注并重新框选"), false, reselect),
                 export_button("capture-fullscreen", annotate::icons::MONITOR, s.text("选择整个屏幕 Ctrl/⌘+A"), false, select_screen),
             ];
+            if !replaying && !s.selection_locked() && selected_native(s).is_some() {
+                actions.push(export_button("capture-native", annotate::icons::APP_WINDOW, s.text("原生窗口截图"), false, native_window));
+            }
             if !replaying {
                 actions.push(export_button("capture-scroll", annotate::icons::SCROLL, s.text("滚动截图：框选正文后慢慢滚动"), false, scroll));
                 actions.push(export_button("capture-record", annotate::icons::VIDEO, s.text("切换到录屏"), false, |cx, _| enter_recording(cx)));
