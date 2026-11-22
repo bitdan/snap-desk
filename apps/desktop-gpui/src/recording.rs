@@ -153,6 +153,26 @@ pub fn shortcut(cx: &mut App) {
     crate::capture::start_recording(cx, &settings);
 }
 
+/// 设置页用：未结束录屏的阶段；没有录屏或已结束时为 None。
+pub fn phase(cx: &App) -> Option<Phase> {
+    cx.try_global::<Recorder>()?
+        .state
+        .current()
+        .ok()
+        .flatten()
+        .map(|v| v.phase)
+        .filter(|p| p.active())
+}
+
+/// 设置页的录屏控制（与控制条同一入口；结果为关闭时一并收起控制条）。
+pub fn control(cx: &mut App, action: RecordingAction) -> Result<(), String> {
+    let state = cx.try_global::<Recorder>().map(|r| r.state.clone()).ok_or("没有进行中的录屏。")?;
+    if state.control(None, action, |_| Ok(()))? == ControlOutcome::Closed {
+        close_controls(cx);
+    }
+    Ok(())
+}
+
 /// 停止（保存）或取消当前录屏；清理由录屏线程完成。
 pub fn stop(cx: &mut App, cancel: bool) {
     if let Some(recorder) = cx.try_global::<Recorder>() {

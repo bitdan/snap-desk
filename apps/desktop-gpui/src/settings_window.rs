@@ -331,6 +331,8 @@ struct SettingsView {
     managing_local: Option<usize>,
     /// 服务管理页：“添加服务”预设面板是否展开。
     service_picker: bool,
+    /// 录屏页在录屏进行中每秒刷新一次（阶段由录屏线程推进）。
+    recording_poll: bool,
     /// 资源状态、下载中标记与进度（识别页、通用页共用）。
     resources: Option<snap_core::resources::Status>,
     resource_busy: bool,
@@ -442,6 +444,7 @@ impl SettingsView {
             service_editor: None,
             managing_local: None,
             service_picker: false,
+            recording_poll: false,
             resources: None,
             resource_busy: false,
             resource_progress: Default::default(),
@@ -1839,6 +1842,55 @@ impl SettingsView {
                 self.rec_segmented("fx-duration", fx.duration_ms, [400, 800, 1200, 2000].into_iter().map(|v| (v, format!("{v} ms"))).collect(), cx, |p, v| p.effects.duration_ms = v),
             ));
         }
+        // 特效颜色（Vue 用系统取色器；GPUI 没有原生取色控件，改为色板，含各自的默认色）。
+        const FX_COLORS: [[u8; 3]; 8] = [
+            [64, 160, 255],
+            [255, 112, 80],
+            [190, 100, 255],
+            [34, 197, 94],
+            [250, 204, 21],
+            [236, 72, 153],
+            [255, 255, 255],
+            [24, 24, 27],
+        ];
+        let colors: [(&str, [u8; 3], bool); 3] = [
+            ("左键 / 移动 / 滚轮", fx.left_color, fx.clicks || fx.movement || fx.wheel),
+            ("右键 / 拖动", fx.right_color, fx.clicks || fx.drag),
+            ("双击", fx.double_color, fx.clicks),
+        ];
+        for (field, (label, current, shown)) in colors.into_iter().enumerate() {
+            if !shown {
+                continue;
+            }
+            let mut swatches = div().flex().items_center().gap(px(6.0));
+            for (index, color) in FX_COLORS.into_iter().enumerate() {
+                let selected = color == current;
+                let value = (u32::from(color[0]) << 16) | (u32::from(color[1]) << 8) | u32::from(color[2]);
+                swatches = swatches.child(
+                    div()
+                        .id(("fx-color", field * 16 + index))
+                        .size(px(20.0))
+                        .rounded_full()
+                        .bg(rgb(value))
+                        .border_2()
+                        .border_color(rgb(if selected { col::accent() } else { col::border() }))
+                        .cursor_pointer()
+                        .on_click(cx.listener(move |view, _: &ClickEvent, _, cx| {
+                            view.change_recording(cx, |p| match field {
+                                0 => p.effects.left_color = color,
+                                1 => p.effects.right_color = color,
+                                _ => p.effects.double_color = color,
+                            })
+                        })),
+                );
+            }
+            let hex = format!("#{:02X}{:02X}{:02X}", current[0], current[1], current[2]);
+            effects.push(row(
+                t(label),
+                None,
+                swatches.child(div().min_w(px(56.0)).text_xs().text_color(rgb(col::muted())).child(hex)),
+            ));
+        }
         let reset = div()
             .id("fx-reset")
             .text_xs()
@@ -1847,15 +1899,47 @@ impl SettingsView {
             .cursor_pointer()
             .child(t("恢复默认"))
             .on_click(cx.listener(|view, _: &ClickEvent, _, cx| view.change_recording(cx, |p| p.effects = Default::default())));
+        // 录屏进行中：主操作换成开始/暂停/恢复/停止并导出/取消并清理（Vue `RecordingPanel.vue`）。
+        use snap_core::recording::{Phase, RecordingAction};
+        let control = |id: &'static str, label: &str, kind: ButtonKind, action: RecordingAction, cx: &mut Context<Self>| {
+            button(id, t(label), kind, true)
+                .on_click(cx.listener(move |view, _: &ClickEvent, _, cx| {
+                    let result = crate::recording::control(cx, action);
+                    view.report(result, cx);
+                }))
+                .into_any_element()
+        };
+        let record_actions = match crate::recording::phase(cx) {
+            None => vec![button("hero-record", t("选择录制范围"), ButtonKind::Primary, true)
+                .on_click(|_, _, cx| crate::shell::run_action(cx, ShortcutAction::Record, "settings"))
+                .into_any_element()],
+            Some(phase) => {
+                let mut actions = Vec::new();
+                if phase == Phase::Ready {
+                    actions.push(control("rec-start", "开始录制", ButtonKind::Primary, RecordingAction::Start, cx));
+                }
+                if phase == Phase::Recording {
+                    actions.push(control("rec-pause", "暂停", ButtonKind::Outline, RecordingAction::Pause, cx));
+                }
+                if phase == Phase::Paused {
+                    actions.push(control("rec-resume", "恢复", ButtonKind::Outline, RecordingAction::Resume, cx));
+                }
+                if matches!(phase, Phase::Recording | Phase::Paused) {
+                    actions.push(control("rec-stop", "停止并导出", ButtonKind::Primary, RecordingAction::Stop, cx));
+                }
+                if phase != Phase::Encoding {
+                    actions.push(control("rec-cancel", "取消并清理", ButtonKind::Outline, RecordingAction::Cancel, cx));
+                }
+                actions
+            }
+        };
         vec![
             hero(
                 icons::VIDEO,
                 t("录屏"),
                 None,
                 s.shortcuts_enabled.then(|| s.shortcuts.record.clone()),
-                vec![button("hero-record", t("选择录制范围"), ButtonKind::Primary, true)
-                    .on_click(|_, _, cx| crate::shell::run_action(cx, ShortcutAction::Record, "settings"))
-                    .into_any_element()],
+                record_actions,
             )
             .into_any_element(),
             heading(t("视频与导出")).into_any_element(),
@@ -2648,6 +2732,24 @@ impl Render for SettingsView {
         let language = Self::language(cx);
         let words = language.clone();
         let has_update = crate::updater::view(cx).has_update();
+        if self.page == Page::Recording && !self.recording_poll && crate::recording::phase(cx).is_some() {
+            self.recording_poll = true;
+            cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| loop {
+                cx.background_executor().timer(Duration::from_secs(1)).await;
+                let keep = this
+                    .update(cx, |view, cx| {
+                        cx.notify();
+                        let keep = view.page == Page::Recording && crate::recording::phase(cx).is_some();
+                        view.recording_poll = keep;
+                        keep
+                    })
+                    .unwrap_or(false);
+                if !keep {
+                    break;
+                }
+            })
+            .detach();
+        }
         let t = move |key: &str| snap_core::i18n::for_language(&words, key).to_owned();
         let query = self.nav_search.read(cx).value().to_string();
         let mut nav = div()
