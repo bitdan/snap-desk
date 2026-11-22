@@ -3,80 +3,62 @@
 //! 读取 GPUI 版日志文件（`snap-desk-gpui.log` 与轮转的 `.log.old`）的有限尾部，经 core 白名单清洗后显示：
 //! GPUI 外壳事件只显示事件名，core 事件按审计字段显示，其余行计入“已省略”。可修改日志级别（立即生效，
 //! 与 Tauri 版共用本机偏好）、按级别筛选、刷新、打开目录、清理历史日志（确认后只删归档）、导出本地诊断包。
-use super::{SettingsView, card, col, heading, row};
-use gpui_kit::*;
+use super::{ButtonKind, SettingsView, button, card, col, heading, row, switch};
+use gpui_kit::{
+    component::{input::Input, Icon, Sizable},
+    *,
+};
 use snap_core::diagnostics::{
-    logs::{self, Entry, Level, Query},
+    logs::{self, Entry, Level, Module, Query},
     package,
 };
 use std::path::PathBuf;
 
-/// 页面上最多显示的条数（扫描仍按 core 上限 500 条、2 MiB）。
-const SHOWN: usize = 200;
 
 /// 一次读取的结果。
 pub(super) struct LogsView {
-    total_bytes: u64,
     archives: usize,
-    errors: usize,
     entries: Vec<Entry>,
     omitted: usize,
     truncated: bool,
+    scanned_bytes: u64,
 }
 
 fn directory() -> Result<PathBuf, String> {
     snap_core::paths::log_dir().ok_or_else(|| "无法定位应用日志目录。".to_owned())
 }
 
-fn snapshot() -> Result<(Vec<logs::LogFile>, logs::Recent), String> {
+fn snapshot(level: Option<Level>, module: Option<Module>) -> Result<(Vec<logs::LogFile>, logs::Recent), String> {
     log::logger().flush();
     let root = directory()?;
     let files = logs::files(&root, crate::logging::BASE)?;
-    let recent = logs::recent(
-        &files,
-        &Query {
-            limit: 500,
-            level: None,
-            module: None,
-        },
-        &[],
-    )?;
+    let recent = logs::recent(&files, &Query { limit: 500, level, module }, &[])?;
     Ok((files, recent))
 }
 
-fn read() -> Result<LogsView, String> {
-    let (files, recent) = snapshot()?;
+fn read(level: Option<Level>, module: Option<Module>) -> Result<LogsView, String> {
+    let (files, recent) = snapshot(level, module)?;
     Ok(LogsView {
-        total_bytes: files
-            .iter()
-            .fold(0u64, |total, f| total.saturating_add(f.size)),
         archives: files.iter().filter(|f| !f.active).count(),
-        errors: recent
-            .entries
-            .iter()
-            .filter(|e| e.level == Level::Error)
-            .count(),
         omitted: recent.omitted_lines,
         truncated: recent.truncated,
+        scanned_bytes: recent.scanned_bytes,
         entries: recent.entries,
     })
 }
 
-fn size_label(bytes: u64) -> String {
-    match bytes {
-        b if b >= 1024 * 1024 => format!("{:.1} MiB", b as f64 / 1024.0 / 1024.0),
-        b if b >= 1024 => format!("{:.1} KiB", b as f64 / 1024.0),
-        b => format!("{b} B"),
-    }
-}
-
-/// RFC 3339 → “MM-DD HH:MM:SS”。
-fn time_label(timestamp: &str) -> String {
-    timestamp
-        .get(5..19)
-        .map(|t| t.replace('T', " "))
-        .unwrap_or_else(|| timestamp.to_owned())
-}
+/// 模块筛选（Vue `modules`）。
+const MODULES: [(Module, &str); 9] = [
+    (Module::App, "应用"),
+    (Module::Capture, "截图"),
+    (Module::Scroll, "滚动截图"),
+    (Module::Recording, "录屏"),
+    (Module::Ocr, "OCR"),
+    (Module::Translation, "翻译"),
+    (Module::Clipboard, "剪贴板"),
+    (Module::Frontend, "前端"),
+    (Module::Diagnostics, "诊断"),
+];
 
 impl SettingsView {
     /// 后台读取日志与统计。
@@ -85,8 +67,9 @@ impl SettingsView {
             return;
         }
         self.logs_loading = true;
+        let (level, module) = (self.log_filter, self.log_module);
         cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
-            let result = cx.background_executor().spawn(async { read() }).await;
+            let result = cx.background_executor().spawn(async move { read(level, module) }).await;
             let _ = this.update(cx, |view, cx| {
                 view.logs_loading = false;
                 match result {
@@ -105,6 +88,45 @@ impl SettingsView {
                 log::info!("event=diagnostics.level_changed module=diagnostics level={value:?}");
                 self.error = None;
                 self.saved = true;
+            }
+            Err(error) => self.error = Some(error),
+        }
+        cx.notify();
+    }
+
+    /// 自动刷新：开启后每 2 秒重读一次，离开日志页或关闭开关即停止。
+    fn set_log_live(&mut self, live: bool, cx: &mut Context<Self>) {
+        self.log_live = live;
+        cx.notify();
+        if !live {
+            return;
+        }
+        cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| loop {
+            cx.background_executor().timer(std::time::Duration::from_secs(2)).await;
+            let keep = this
+                .update(cx, |view, cx| {
+                    if !view.log_live || view.page != super::Page::Logs {
+                        view.log_live = false;
+                        return false;
+                    }
+                    view.load_logs(cx);
+                    true
+                })
+                .unwrap_or(false);
+            if !keep {
+                break;
+            }
+        })
+        .detach();
+    }
+
+    /// 复制日志目录路径。
+    fn copy_log_path(&mut self, cx: &mut Context<Self>) {
+        match directory() {
+            Ok(path) => {
+                cx.write_to_clipboard(ClipboardItem::new_string(path.display().to_string()));
+                self.error = None;
+                self.notice = Some("目录路径已复制。".into());
             }
             Err(error) => self.error = Some(error),
         }
@@ -179,7 +201,7 @@ impl SettingsView {
                 .background_executor()
                 .spawn(async move {
                     package::validate_destination(&destination)?;
-                    let (_, recent) = snapshot()?;
+                    let (_, recent) = snapshot(None, None)?;
                     let metadata = serde_json::json!({
                         "schemaVersion": 1,
                         "app": "Snap Desk", "shell": "gpui", "appVersion": env!("CARGO_PKG_VERSION"),
@@ -209,258 +231,222 @@ impl SettingsView {
         .detach();
     }
 
-    pub(super) fn logs_page(
-        &self,
-        t: &dyn Fn(&str) -> String,
-        cx: &mut Context<Self>,
-    ) -> Vec<AnyElement> {
+    pub(super) fn logs_page(&self, t: &dyn Fn(&str) -> String, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        // 还原 Vue `DiagnosticsSettings.vue`：记录（状态与级别下拉）、最近日志（筛选、搜索、列表、统计）、文件。
         let current = crate::logging::level();
-        let mut levels = div()
-            .flex()
-            .p(px(2.0))
-            .gap(px(2.0))
-            .rounded(px(6.0))
-            .bg(rgb(col::page_bg()));
-        for (index, (value, label)) in [
-            (Level::Error, "错误"),
-            (Level::Warn, "警告"),
-            (Level::Info, "信息"),
-            (Level::Debug, "调试"),
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            let selected = value == current;
-            levels = levels.child(
-                div()
-                    .id(("log-level", index))
-                    .h(px(26.0))
-                    .px(px(10.0))
-                    .flex()
-                    .items_center()
-                    .rounded(px(5.0))
-                    .text_xs()
-                    .cursor_pointer()
-                    .text_color(rgb(if selected { col::text() } else { col::muted() }))
-                    .bg(rgb(if selected {
-                        col::surface()
-                    } else {
-                        col::page_bg()
-                    }))
-                    .child(t(label))
-                    .on_click(cx.listener(move |view, _: &ClickEvent, _, cx| {
-                        if !selected {
-                            view.set_log_level(value, cx);
-                        }
-                    })),
-            );
-        }
-        let level_hint = if crate::logging::fixed_by_environment() {
-            Some(t(
-                "当前由环境变量 SNAP_DESK_LOG 决定，修改将在下次启动时生效。",
-            ))
+        let ready = directory().is_ok();
+        let status = if ready {
+            div()
+                .flex()
+                .items_center()
+                .gap(px(4.0))
+                .text_xs()
+                .text_color(rgb(col::success()))
+                .child(Icon::default().data(super::icons::CHECK).size(px(14.0)).text_color(rgb(col::success())))
+                .child(t("已就绪"))
         } else {
-            Some(t("调试级别会记录更多细节，排错后请调回信息。"))
+            div().text_xs().text_color(rgb(col::muted())).child(t("日志不可用"))
         };
-        let summary = match &self.logs {
-            Some(logs) => format!(
-                "{} · {} {} · {} {}",
-                size_label(logs.total_bytes),
-                logs.archives,
-                t("个历史日志"),
-                logs.errors,
-                t("条近期错误")
-            ),
-            None if self.logs_loading => t("正在读取…"),
-            None => String::new(),
+        let level_select = self.select_with(
+            "log-level",
+            current,
+            [Level::Debug, Level::Info, Level::Warn, Level::Error]
+                .into_iter()
+                .map(|l| (l, format!("{l:?}").to_uppercase()))
+                .collect(),
+            cx,
+            |view, value, cx| view.set_log_level(value, cx),
+        );
+        let level_hint = if crate::logging::fixed_by_environment() {
+            Some(t("当前由环境变量 SNAP_DESK_LOG 决定，修改将在下次启动时生效。"))
+        } else {
+            (current == Level::Debug).then(|| t("会一直记录调试信息，问题解决后建议改回 INFO"))
         };
-        let button = |id: &'static str, label: String| super::button(id, label, super::ButtonKind::Outline, true);
+
+        // 最近日志：标题右侧刷新与自动刷新。
+        let live = self.log_live;
+        let busy = self.logs_loading;
+        let refresh = div()
+            .id("logs-refresh")
+            .text_xs()
+            .font_weight(FontWeight::NORMAL)
+            .text_color(rgb(col::accent_fg()))
+            .cursor_pointer()
+            .child(t(if busy { "处理中…" } else { "刷新" }))
+            .on_click(cx.listener(|view, _: &ClickEvent, _, cx| view.load_logs(cx)));
         let actions = div()
             .flex()
-            .flex_wrap()
-            .gap(px(6.0))
-            .child(self.open_button(
-                "logs-open",
-                t("打开日志目录"),
-                snap_core::paths::log_dir(),
-                cx,
-            ))
+            .items_center()
+            .gap(px(12.0))
+            .child(refresh)
             .child(
-                button("logs-clear", t("清理历史日志"))
-                    .on_click(cx.listener(|view, _: &ClickEvent, _, cx| view.clear_archives(cx))),
-            )
-            .child(
-                button("logs-export", t("导出本地诊断包…")).on_click(
-                    cx.listener(|view, _: &ClickEvent, _, cx| view.export_diagnostics(cx)),
-                ),
-            );
-        // 筛选：全部 / 错误 / 警告。
-        let mut filters = div().flex().gap(px(4.0));
-        for (index, (value, label)) in [
-            (None, "全部"),
-            (Some(Level::Error), "错误"),
-            (Some(Level::Warn), "警告"),
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            let selected = self.log_filter == value;
-            filters = filters.child(
                 div()
-                    .id(("log-filter", index))
-                    .h(px(24.0))
-                    .px(px(8.0))
                     .flex()
                     .items_center()
-                    .rounded(px(5.0))
+                    .gap(px(6.0))
                     .text_xs()
-                    .cursor_pointer()
-                    .text_color(rgb(if selected {
-                        col::accent()
-                    } else {
-                        col::muted()
-                    }))
-                    .bg(rgb(if selected {
-                        col::accent_soft()
-                    } else {
-                        col::surface()
-                    }))
-                    .child(t(label))
-                    .on_click(cx.listener(move |view, _: &ClickEvent, _, cx| {
-                        view.log_filter = value;
-                        cx.notify();
-                    })),
+                    .font_weight(FontWeight::NORMAL)
+                    .text_color(rgb(col::muted()))
+                    .child(t("自动刷新"))
+                    .child(switch("logs-live", live, true).on_click(cx.listener(move |view, _: &ClickEvent, _, cx| view.set_log_live(!live, cx)))),
             );
-        }
-        let mut list = div().flex().flex_col();
-        let mut shown = 0;
+        let level_filter = self.select_with(
+            "log-filter-level",
+            self.log_filter,
+            std::iter::once((None, t("全部级别")))
+                .chain([Level::Debug, Level::Info, Level::Warn, Level::Error].into_iter().map(|l| (Some(l), format!("{l:?}").to_uppercase())))
+                .collect(),
+            cx,
+            |view, value, cx| {
+                view.log_filter = value;
+                view.load_logs(cx);
+                cx.notify();
+            },
+        );
+        let module_filter = self.select_with(
+            "log-filter-module",
+            self.log_module,
+            std::iter::once((None, t("全部模块")))
+                .chain(MODULES.iter().map(|(m, label)| (Some(*m), t(label))))
+                .collect(),
+            cx,
+            |view, value, cx| {
+                view.log_module = value;
+                view.load_logs(cx);
+                cx.notify();
+            },
+        );
+        let filters = div()
+            .flex()
+            .items_center()
+            .gap(px(8.0))
+            .px(px(10.0))
+            .py(px(8.0))
+            .border_b_1()
+            .border_color(rgb(col::sep()))
+            .child(level_filter)
+            .child(module_filter)
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(120.0))
+                    .min_h(px(28.0))
+                    .rounded(px(6.0))
+                    .border_1()
+                    .border_color(rgb(col::line()))
+                    .bg(rgb(col::surface()))
+                    .text_xs()
+                    .child(Input::new(&self.log_search).appearance(false).small()),
+            );
+        let query = self.log_search.read(cx).value().to_lowercase();
+        let mut list = div()
+            .id("logs-list")
+            .flex()
+            .flex_col()
+            .min_h(px(160.0))
+            .max_h(px(360.0))
+            .overflow_y_scroll()
+            .text_xs()
+            .font_family("Consolas");
+        let mut shown = 0usize;
         if let Some(logs) = &self.logs {
-            for entry in logs
-                .entries
-                .iter()
-                .filter(|e| self.log_filter.is_none_or(|l| l == e.level))
-                .take(SHOWN)
-            {
-                shown += 1;
-                let (color, label) = match entry.level {
-                    Level::Error => (col::danger(), "ERROR"),
-                    Level::Warn => (0xb45309, "WARN"),
-                    Level::Info => (col::muted(), "INFO"),
-                    Level::Debug => (0xa1a1aa, "DEBUG"),
+            for entry in logs.entries.iter().filter(|e| query.is_empty() || e.message.to_lowercase().contains(&query)) {
+                let level_color = match entry.level {
+                    Level::Error => col::danger(),
+                    Level::Warn => if crate::theme::dark() { 0xd29922 } else { 0x9a6700 },
+                    Level::Debug => col::muted(),
+                    _ => col::text(),
                 };
+                let first = shown == 0;
+                shown += 1;
                 list = list.child(
                     div()
                         .flex()
                         .gap(px(8.0))
                         .px(px(12.0))
-                        .py(px(5.0))
-                        .border_b_1()
-                        .border_color(rgb(col::border()))
-                        .text_xs()
-                        .child(
-                            div()
-                                .flex_none()
-                                .w(px(104.0))
-                                .text_color(rgb(col::muted()))
-                                .child(time_label(&entry.timestamp)),
-                        )
-                        .child(
-                            div()
-                                .flex_none()
-                                .w(px(44.0))
-                                .text_color(rgb(color))
-                                .child(label),
-                        )
-                        .child(
-                            div()
-                                .flex_none()
-                                .w(px(76.0))
-                                .text_color(rgb(col::muted()))
-                                .child(format!("{:?}", entry.module).to_lowercase()),
-                        )
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .overflow_hidden()
-                                .text_ellipsis()
-                                .whitespace_nowrap()
-                                .child(entry.message.clone()),
-                        ),
-                );
-            }
-            if shown == 0 {
-                list = list.child(
-                    div()
-                        .px(px(12.0))
-                        .py(px(16.0))
-                        .text_xs()
-                        .text_color(rgb(col::muted()))
-                        .child(t("没有可显示的日志。")),
+                        .py(px(4.0))
+                        .when_first(first)
+                        .child(div().w(px(58.0)).flex_none().text_color(rgb(col::muted())).child(entry.timestamp.get(11..19).unwrap_or(&entry.timestamp).to_owned()))
+                        .child(div().w(px(46.0)).flex_none().font_weight(FontWeight::SEMIBOLD).text_color(rgb(level_color)).child(format!("{:?}", entry.level).to_uppercase()))
+                        .child(div().w(px(84.0)).flex_none().text_color(rgb(col::muted())).child(format!("{:?}", entry.module).to_lowercase()))
+                        .child(div().flex_1().min_w_0().truncate().child(entry.message.clone())),
                 );
             }
         }
-        let footnote = self.logs.as_ref().map(|logs| {
+        if shown == 0 {
+            let empty = if busy {
+                t("正在读取…")
+            } else if self.logs.is_some() {
+                t("当前条件下没有日志。")
+            } else {
+                t("尚未读取日志。")
+            };
+            list = list.child(div().p(px(12.0)).font_family(".SystemUIFont").text_color(rgb(col::muted())).child(empty));
+        }
+        let footer = self.logs.as_ref().map(|logs| {
             let mut text = format!(
-                "{} {} {}",
-                t("已省略"),
+                "{} {shown} / {} {} {} {} {} {}",
+                t("显示"),
+                logs.entries.len(),
+                t("条 · 扫描"),
+                logs.scanned_bytes / 1024,
+                t("KB · 省略"),
                 logs.omitted,
-                t("条未在白名单中的记录")
+                t("条非白名单记录"),
             );
             if logs.truncated {
-                text.push_str(&format!(" · {}", t("只读取了最近的部分")));
+                text.push_str(&t(" · 已达读取或条数上限，非完整历史"));
             }
-            text
+            div().px(px(12.0)).py(px(6.0)).border_t_1().border_color(rgb(col::sep())).text_size(px(11.0)).text_color(rgb(col::muted())).child(text)
         });
+        let viewer = div()
+            .flex()
+            .flex_col()
+            .rounded(px(8.0))
+            .border_1()
+            .border_color(rgb(col::border()))
+            .bg(rgb(col::surface()))
+            .overflow_hidden()
+            .child(filters)
+            .child(list)
+            .children(footer);
+        let archives = self.logs.as_ref().is_some_and(|l| l.archives > 0);
         vec![
-            // 分组同 Vue `DiagnosticsSettings.vue`：记录、最近日志、文件。
             heading(t("记录")).into_any_element(),
-            card(vec![row(t("记录级别"), level_hint, levels)]).into_any_element(),
-            heading(t("最近日志")).into_any_element(),
-            div()
-                .flex()
-                .items_center()
-                .justify_between()
-                .child(filters)
-                .child(
-                    super::button("logs-refresh", t("刷新"), super::ButtonKind::Ghost, true)
-                        .on_click(cx.listener(|view, _: &ClickEvent, _, cx| view.load_logs(cx))),
-                )
-                .into_any_element(),
-            div()
-                .mt(px(6.0))
-                .rounded(px(8.0))
-                .bg(rgb(col::surface()))
-                .border_1()
-                .border_color(rgb(col::border()))
-                .overflow_hidden()
-                .child(list)
-                .into_any_element(),
-            div()
-                .mt(px(8.0))
-                .text_xs()
-                .text_color(rgb(col::muted()))
-                .children(footnote)
-                .into_any_element(),
+            card(vec![row(t("记录级别"), level_hint, div().flex().items_center().gap(px(12.0)).child(status).child(level_select))]).into_any_element(),
+            heading(t("最近日志")).child(actions).into_any_element(),
+            viewer.into_any_element(),
             heading(t("文件")).into_any_element(),
-            card(vec![row(t("日志文件"), Some(summary), actions)]).into_any_element(),
+            card(vec![
+                row(
+                    t("日志目录"),
+                    None,
+                    div()
+                        .flex()
+                        .gap(px(8.0))
+                        .child(self.open_button("logs-open", t("打开"), snap_core::paths::log_dir(), cx))
+                        .child(button("logs-copy", t("复制路径"), ButtonKind::Outline, ready).on_click(cx.listener(|view, _: &ClickEvent, _, cx| view.copy_log_path(cx)))),
+                ),
+                row(
+                    t("诊断包"),
+                    None,
+                    button("logs-export", t("导出…"), ButtonKind::Outline, ready)
+                        .on_click(cx.listener(|view, _: &ClickEvent, _, cx| view.export_diagnostics(cx))),
+                ),
+                row(t("历史归档"), None, {
+                    let clear = button("logs-clear", t("清理"), ButtonKind::Outline, archives);
+                    if archives { clear.on_click(cx.listener(|view, _: &ClickEvent, _, cx| view.clear_archives(cx))) } else { clear }
+                }),
+            ])
+            .into_any_element(),
         ]
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{size_label, time_label};
-
-    #[test]
-    fn labels_are_compact() {
-        assert_eq!(size_label(512), "512 B");
-        assert_eq!(size_label(2048), "2.0 KiB");
-        assert_eq!(size_label(3 * 1024 * 1024), "3.0 MiB");
-        assert_eq!(
-            time_label("2026-11-21T10:05:07.123+08:00"),
-            "11-21 10:05:07"
-        );
-        assert_eq!(time_label("bad"), "bad");
+/// 列表首行不画分隔线（Vue `.diagnostics-entry:first-of-type`）。
+trait FirstRow: Styled + Sized {
+    fn when_first(self, first: bool) -> Self {
+        if first { self } else { self.border_t_1().border_color(rgb(col::sep())) }
     }
 }
+impl<T: Styled> FirstRow for T {}

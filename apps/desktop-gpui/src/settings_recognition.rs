@@ -23,6 +23,8 @@ use std::collections::HashMap;
 
 #[path = "settings_keys.rs"]
 mod keys;
+#[path = "settings_services.rs"]
+mod catalog;
 
 /// 新增服务的预设（与 Vue `servicePresets` 一致）。
 struct Preset {
@@ -140,13 +142,6 @@ fn service_kind(service: &RecognitionService) -> &'static str {
         _ if service.vision => "AI 视觉 / 翻译",
         _ => "AI 翻译",
     }
-}
-
-fn host(endpoint: &str) -> String {
-    url::Url::parse(endpoint)
-        .ok()
-        .and_then(|u| u.host_str().map(str::to_owned))
-        .unwrap_or_else(|| endpoint.to_owned())
 }
 
 /// 新服务标识：时间 + 序号，只含字母数字与连字符。
@@ -525,88 +520,6 @@ impl SettingsView {
         if local_selected {
             translation_rows.extend(self.local_rows(t, cx));
         }
-        // ---- 服务管理 ----
-        let mut list = div().flex().flex_col();
-        for (index, service) in s.recognition_services.iter().enumerate() {
-            let editing = self
-                .service_editor
-                .as_ref()
-                .is_some_and(|e| e.existing.as_deref() == Some(service.id.as_str()));
-            let item = service.clone();
-            list = list.child(
-                div()
-                    .id(("service", index))
-                    .px(px(12.0))
-                    .py(px(8.0))
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .gap(px(8.0))
-                    .border_b_1()
-                    .border_color(rgb(col::border()))
-                    .bg(rgb(if editing {
-                        col::accent_soft()
-                    } else {
-                        col::surface()
-                    }))
-                    .cursor_pointer()
-                    .hover(|s| s.bg(rgb(col::page_bg())))
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .min_w_0()
-                            .child(div().text_sm().child(service.name.clone()))
-                            .child(div().text_xs().text_color(rgb(col::muted())).child(format!(
-                                "{} · {} · {}",
-                                t(service_kind(service)),
-                                host(&service.endpoint),
-                                key_hint(service)
-                            ))),
-                    )
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(rgb(col::accent()))
-                            .child(t("编辑")),
-                    )
-                    .on_click(cx.listener(move |view, _: &ClickEvent, window, cx| {
-                        view.edit_service(None, Some(&item), window, cx)
-                    })),
-            );
-        }
-        if s.recognition_services.is_empty() {
-            list = list.child(
-                div()
-                    .px(px(12.0))
-                    .py(px(14.0))
-                    .text_xs()
-                    .text_color(rgb(col::muted()))
-                    .child(t("尚未添加服务。")),
-            );
-        }
-        let mut presets = div().flex().flex_wrap().gap(px(6.0));
-        for (index, preset) in PRESETS.iter().enumerate() {
-            presets = presets.child(
-                div()
-                    .id(("preset", index))
-                    .h(px(28.0))
-                    .px(px(10.0))
-                    .flex()
-                    .items_center()
-                    .rounded(px(6.0))
-                    .border_1()
-                    .border_color(rgb(col::border()))
-                    .bg(rgb(col::surface()))
-                    .text_xs()
-                    .cursor_pointer()
-                    .hover(|s| s.bg(rgb(col::page_bg())))
-                    .child(format!("+ {}", t(preset.name)))
-                    .on_click(cx.listener(move |view, _: &ClickEvent, window, cx| {
-                        view.edit_service(Some(&PRESETS[index]), None, window, cx)
-                    })),
-            );
-        }
         // 页签（Vue `page-tabs`）：文字识别 / 翻译 / 服务管理，居中的分段控件。
         let tab = self.recognition_tab;
         let mut tabs = div()
@@ -681,18 +594,7 @@ impl SettingsView {
                 elements.push(heading(t("翻译设置")).into_any_element());
                 elements.push(card(translation_rows).into_any_element());
             }
-            _ => {
-                elements.push(heading(t("在线服务")).into_any_element());
-                elements.push(boxed(list).into_any_element());
-                elements.push(div().mt(px(8.0)).child(presets).into_any_element());
-                if let Some(editor) = &self.service_editor {
-                    elements.push(self.service_editor_card(editor, t, cx).into_any_element());
-                }
-                elements.push(
-                    super::note(t("在线服务会上传图片或文字；密钥只保存在系统凭据库。"))
-                        .into_any_element(),
-                );
-            }
+            _ => elements.extend(self.services_tab(s, t, cx)),
         }
         elements
     }

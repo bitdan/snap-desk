@@ -325,6 +325,10 @@ struct SettingsView {
     /// 识别与翻译页：后台读取的语言与密钥状态、正在编辑的服务。
     recognition: recognition_page::RecognitionState,
     service_editor: Option<recognition_page::ServiceEditor>,
+    /// 服务管理页：展开管理区的本地引擎（0 PaddleOCR、1 系统 OCR、2 WeChat OCR、3 CTranslate2）。
+    managing_local: Option<usize>,
+    /// 服务管理页：“添加服务”预设面板是否展开。
+    service_picker: bool,
     /// 资源状态、下载中标记与进度（识别页、通用页共用）。
     resources: Option<snap_core::resources::Status>,
     resource_busy: bool,
@@ -353,6 +357,10 @@ struct SettingsView {
     logs: Option<logs_page::LogsView>,
     logs_loading: bool,
     log_filter: Option<snap_core::diagnostics::logs::Level>,
+    /// 日志页：模块筛选、搜索框与自动刷新。
+    log_module: Option<snap_core::diagnostics::logs::Module>,
+    log_search: Entity<InputState>,
+    log_live: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -378,7 +386,16 @@ impl SettingsView {
         );
         let excluded = input(settings.clipboard.excluded_apps.join(", "), window, cx);
         let update_proxy = input(settings.update_network.proxy.clone(), window, cx);
+        let log_search = {
+            let placeholder = snap_core::i18n::for_language(&settings.appearance.language, "搜索事件名、错误码").to_owned();
+            cx.new(|cx| InputState::new(window, cx).placeholder(placeholder))
+        };
         let mut subscriptions = Vec::new();
+        subscriptions.push(cx.subscribe(&log_search, |_: &mut Self, _, event: &InputEvent, cx| {
+            if matches!(event, InputEvent::Change) {
+                cx.notify();
+            }
+        }));
         for (state, field) in [
             (&capture_prefix, Field::CapturePrefix),
             (&recording_prefix, Field::RecordingPrefix),
@@ -413,6 +430,8 @@ impl SettingsView {
             update: None,
             recognition: Default::default(),
             service_editor: None,
+            managing_local: None,
+            service_picker: false,
             resources: None,
             resource_busy: false,
             resource_progress: Default::default(),
@@ -434,6 +453,9 @@ impl SettingsView {
             logs: None,
             logs_loading: false,
             log_filter: None,
+            log_module: None,
+            log_search,
+            log_live: false,
             _subscriptions: subscriptions,
         }
         .with_autostart(cx)
@@ -1205,6 +1227,21 @@ impl SettingsView {
         cx: &mut Context<Self>,
         change: impl Fn(&mut Settings, T) + Clone + 'static,
     ) -> Div {
+        self.select_with(id, current, options, cx, move |view, value, cx| {
+            let change = change.clone();
+            view.change(cx, move |s| change(s, value));
+        })
+    }
+
+    /// 下拉选择本体：选中新值时调用 `pick`（可修改视图状态而非设置）。
+    fn select_with<T: Copy + PartialEq + 'static>(
+        &self,
+        id: &'static str,
+        current: T,
+        options: Vec<(T, String)>,
+        cx: &mut Context<Self>,
+        pick: impl Fn(&mut Self, T, &mut Context<Self>) + Clone + 'static,
+    ) -> Div {
         let open = self.open_select == Some(id);
         let label = options
             .iter()
@@ -1261,7 +1298,7 @@ impl SettingsView {
                 .occlude();
             for (index, (value, label)) in options.into_iter().enumerate() {
                 let selected = value == current;
-                let change = change.clone();
+                let pick = pick.clone();
                 let hover = col::hover();
                 let mut item = div()
                     .id((id, index))
@@ -1292,7 +1329,7 @@ impl SettingsView {
                     move |view, _: &ClickEvent, _, cx| {
                         view.open_select = None;
                         if !selected {
-                            view.change(cx, |s| change(s, value));
+                            pick(view, value, cx);
                         } else {
                             cx.notify();
                         }
