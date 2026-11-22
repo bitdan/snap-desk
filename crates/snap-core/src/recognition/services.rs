@@ -47,7 +47,7 @@ impl RecognitionService {
             return Err("模型名称无效。".into());
         }
         let mut keys = std::collections::HashSet::new();
-        if self.keys.len() > 16
+        if self.keys.len() > MAX_KEYS
             || !self.keys.iter().all(|key| {
                 !key.is_empty()
                     && key.len() <= 40
@@ -155,4 +155,153 @@ pub fn key_ids(settings: &Settings, service_id: &str) -> Vec<String> {
         return default_keys();
     }
     find(settings, service_id).map(|service| service.keys.clone()).unwrap_or_default()
+}
+
+/// 每个服务最多保存的密钥数（与 Vue `maxServiceKeys` 一致）。
+pub const MAX_KEYS: usize = 16;
+
+/// 只显示首尾少量字符，界面可区分多个密钥而不暴露完整内容。
+pub fn mask(secret: &str) -> String {
+    let chars: Vec<char> = secret.chars().collect();
+    if chars.len() <= 10 {
+        return "••••".into();
+    }
+    let head: String = chars[..4].iter().collect();
+    let tail: String = chars[chars.len() - 4..].iter().collect();
+    format!("{head}…{tail}")
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceKeyInfo {
+    pub id: String,
+    /// None 表示配置里有此标识但系统凭据库中没有对应密钥（例如修改了地址）。
+    pub hint: Option<String>,
+}
+
+/// 服务各密钥的掩码提示（读取系统凭据库）。
+pub fn key_infos(service: &RecognitionService) -> Result<Vec<ServiceKeyInfo>, String> {
+    service
+        .keys
+        .iter()
+        .map(|key| {
+            let hint = super::ai_credentials::read(&secret_key(&service.id, &service.endpoint, key))?
+                .map(|value| mask(&value));
+            Ok(ServiceKeyInfo { id: key.clone(), hint })
+        })
+        .collect()
+}
+
+/// 新密钥标识：`k-` 加 8 位十六进制，满足 [`RecognitionService::validate`] 的字符与长度限制。
+pub fn new_key_id(existing: &[String]) -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    loop {
+        let seed = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos() as u64)
+            ^ NEXT.fetch_add(0x9e37_79b9_7f4a_7c15, Ordering::Relaxed);
+        let id = format!("k-{:08x}", (seed ^ (seed >> 29)) as u32);
+        if !existing.contains(&id) {
+            return id;
+        }
+    }
+}
+
+/// 新密钥的格式检查（长度与控制字符）。
+pub fn validate_secret(secret: &str) -> Result<(), String> {
+    if secret.chars().count() > 2048 || secret.chars().any(char::is_control) {
+        return Err("密钥过长或含控制字符。".into());
+    }
+    Ok(())
+}
+
+/// 服务管理中的连通性测试：翻译服务发送 "Hello"，仅 OCR 的服务上传一张空白小图；只验证地址、认证和额度可用。
+pub enum ServiceTest {
+    Translate {
+        config: super::translation::AiSettings,
+        request: super::providers::TranslationRequest,
+        keys: Vec<String>,
+    },
+    /// 阻塞请求，外壳在后台线程执行 [`ServiceTest::run_ocr`]。
+    Ocr(RecognitionService),
+}
+
+impl ServiceTest {
+    /// 指定 `key` 时只用该密钥测试，不做回退，便于逐个确认哪个密钥可用。
+    pub fn new(
+        mut service: RecognitionService,
+        ai: super::translation::AiSettings,
+        key: Option<String>,
+    ) -> Result<Self, String> {
+        service.validate()?;
+        if let Some(key) = key {
+            if !service.keys.contains(&key) {
+                return Err("密钥不存在。".into());
+            }
+            service.keys = vec![key];
+        }
+        if !service.supports_translation() {
+            return Ok(Self::Ocr(service));
+        }
+        let mut config = ai;
+        config.service_id = service.id.clone();
+        config.provider = if service.protocol == "deepl" { "deepl" } else { "online-llm" }.into();
+        config.endpoint = service.endpoint.clone();
+        config.model = service.model.clone();
+        config.target_language = "zh-CN".into();
+        Ok(Self::Translate {
+            config,
+            request: super::providers::TranslationRequest {
+                texts: vec!["Hello".into()],
+                source_language: Some("en".into()),
+                target_language: "zh-CN".into(),
+            },
+            keys: service.keys,
+        })
+    }
+
+    pub fn run_ocr(service: &RecognitionService) -> Result<(), String> {
+        let image = image::RgbaImage::from_pixel(64, 32, image::Rgba([255, 255, 255, 255]));
+        super::online_ocr::recognize(&image, service).map(|_| ())
+    }
+
+    /// 翻译测试异步执行，OCR 测试在当前线程阻塞执行（供已在后台线程的外壳使用）。
+    pub async fn run(self) -> Result<(), String> {
+        match self {
+            Self::Translate { config, request, keys } => {
+                super::providers::translate(&config, &request, &keys).await.map(|_| ())
+            }
+            Self::Ocr(service) => Self::run_ocr(&service),
+        }
+    }
+}
+
+#[cfg(test)]
+mod key_tests {
+    use super::*;
+
+    #[test]
+    fn masks_and_new_ids_fit_validation() {
+        assert_eq!(mask("short"), "••••");
+        assert_eq!(mask("sk-abcdefghijkl"), "sk-a…ijkl");
+        let mut keys = vec![DEFAULT_KEY.to_owned()];
+        for _ in 0..MAX_KEYS - 1 {
+            let id = new_key_id(&keys);
+            assert!(!keys.contains(&id));
+            keys.push(id);
+        }
+        let service = RecognitionService {
+            id: "svc".into(),
+            name: "Test".into(),
+            protocol: "deepl".into(),
+            endpoint: "https://api-free.deepl.com/v2/translate".into(),
+            model: String::new(),
+            vision: false,
+            keys,
+        };
+        service.validate().unwrap();
+        assert!(validate_secret("a\nb").is_err());
+        assert!(validate_secret("sk-ok").is_ok());
+    }
 }
