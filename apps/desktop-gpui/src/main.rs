@@ -15,7 +15,6 @@ mod countdown;
 mod logging;
 mod magnifier;
 mod native;
-mod pin_manager;
 mod pins;
 mod recognition;
 mod live_annotate;

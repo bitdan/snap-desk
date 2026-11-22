@@ -10,7 +10,7 @@ use snap_core::settings::{self, Settings, Shortcut, ShortcutAction};
 use std::{collections::HashMap, path::PathBuf};
 use tray_icon::{
     MouseButton as TrayButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent,
-    menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem},
+    menu::{CheckMenuItem, Menu, MenuEvent, MenuItem},
 };
 
 /// 外部线程送往主线程的事件。
@@ -32,9 +32,6 @@ const ACTIONS: [(&str, &str, ShortcutAction); 5] = [
     ("history", "剪贴板", ShortcutAction::History),
     ("translation", "翻译", ShortcutAction::Translate),
 ];
-const PIN_FILE_ID: &str = "pin-file";
-const PIN_MANAGER_ID: &str = "pin-manager";
-const PIN_CLOSE_ALL_ID: &str = "pin-close-all";
 const SHORTCUTS_ID: &str = "shortcuts";
 const SETTINGS_ID: &str = "settings";
 const QUIT_ID: &str = "quit";
@@ -103,13 +100,10 @@ pub fn start(
         settings.shortcuts_enabled,
         None,
     );
+    // 与 Tauri 版托盘菜单一致：五个动作、打开主界面（GPUI 版为设置窗口）、全局快捷键开关、退出。
     menu.append_items(&[
-        &MenuItem::with_id(PIN_FILE_ID, text("打开图片贴图"), true, None),
-        &MenuItem::with_id(PIN_MANAGER_ID, text("贴图管理"), true, None),
-        &MenuItem::with_id(PIN_CLOSE_ALL_ID, text("关闭全部贴图"), true, None),
-        &PredefinedMenuItem::separator(),
+        &MenuItem::with_id(SETTINGS_ID, text("打开 Snap Desk"), true, None),
         &shortcuts_item,
-        &MenuItem::with_id(SETTINGS_ID, text("设置…"), true, None),
         &MenuItem::with_id(QUIT_ID, text("退出"), true, None),
     ])
     .map_err(|e| e.to_string())?;
@@ -291,14 +285,6 @@ fn handle(cx: &mut App, event: ShellEvent) {
             }
             SHORTCUTS_ID => cx.update_global::<Shell, _>(|shell, _| shell.toggle_shortcuts()),
             SETTINGS_ID => crate::settings_window::open(cx),
-            PIN_MANAGER_ID => crate::pin_manager::open(cx),
-            PIN_CLOSE_ALL_ID => {
-                crate::pins::close_all(cx);
-            }
-            PIN_FILE_ID => {
-                log::info!("event=gpui.action action=pin_file source=menu");
-                crate::pins::open_file(cx);
-            }
             id => {
                 if let Some((_, _, action)) = ACTIONS.iter().find(|(item, _, _)| *item == id) {
                     run_action(cx, *action, "menu");

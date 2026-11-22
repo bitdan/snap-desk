@@ -1101,7 +1101,7 @@ impl SettingsView {
         )
     }
 
-    /// 分段控件（`.segmented-control`）：细线框，选中项淡色强调底。
+    /// 分段控件（`.segmented-control`）：细线框，选中项淡色强调底。修改写入设置。
     fn segmented<T: Copy + PartialEq + 'static>(
         &self,
         id: &'static str,
@@ -1109,6 +1109,21 @@ impl SettingsView {
         options: Vec<(T, String)>,
         cx: &mut Context<Self>,
         change: impl Fn(&mut Settings, T) + Clone + 'static,
+    ) -> Div {
+        self.segmented_with(id, current, options, cx, move |view, value, cx| {
+            let change = change.clone();
+            view.change(cx, move |s| change(s, value));
+        })
+    }
+
+    /// 分段控件本体：选中新值时调用 `pick`。
+    fn segmented_with<T: Copy + PartialEq + 'static>(
+        &self,
+        id: &'static str,
+        current: T,
+        options: Vec<(T, String)>,
+        cx: &mut Context<Self>,
+        pick: impl Fn(&mut Self, T, &mut Context<Self>) + Clone + 'static,
     ) -> Div {
         let mut group = div()
             .flex()
@@ -1121,7 +1136,7 @@ impl SettingsView {
             .bg(rgb(col::surface()));
         for (index, (value, label)) in options.into_iter().enumerate() {
             let selected = value == current;
-            let change = change.clone();
+            let pick = pick.clone();
             let text = col::text();
             let mut item = div()
                 .id((id, index))
@@ -1134,21 +1149,51 @@ impl SettingsView {
                 .cursor_pointer()
                 .child(label);
             item = if selected {
-                item.bg(rgb(col::accent_soft()))
-                    .text_color(rgb(col::accent_fg()))
+                item.bg(rgb(col::accent_soft())).text_color(rgb(col::accent_fg()))
             } else {
-                item.text_color(rgb(col::muted()))
-                    .hover(move |s| s.text_color(rgb(text)))
+                item.text_color(rgb(col::muted())).hover(move |s| s.text_color(rgb(text)))
             };
-            group = group.child(
-                item.on_click(cx.listener(move |view, _: &ClickEvent, _, cx| {
-                    if !selected {
-                        view.change(cx, |s| change(s, value));
-                    }
-                })),
-            );
+            group = group.child(item.on_click(cx.listener(move |view, _: &ClickEvent, _, cx| {
+                if !selected {
+                    pick(view, value, cx);
+                }
+            })));
         }
         group
+    }
+
+    /// 修改录制偏好（与录屏框选选项行共用 recording-preferences.json）。
+    fn change_recording(&mut self, cx: &mut Context<Self>, change: impl FnOnce(&mut snap_core::recording::preferences::Preferences)) {
+        let mut preferences = crate::recording::preferences();
+        change(&mut preferences);
+        crate::recording::save_preferences(&preferences);
+        self.error = None;
+        self.saved = true;
+        cx.notify();
+    }
+
+    fn rec_segmented<T: Copy + PartialEq + 'static>(
+        &self,
+        id: &'static str,
+        current: T,
+        options: Vec<(T, String)>,
+        cx: &mut Context<Self>,
+        change: impl Fn(&mut snap_core::recording::preferences::Preferences, T) + Clone + 'static,
+    ) -> Div {
+        self.segmented_with(id, current, options, cx, move |view, value, cx| {
+            let change = change.clone();
+            view.change_recording(cx, move |p| change(p, value));
+        })
+    }
+
+    fn rec_toggle(
+        &self,
+        id: &'static str,
+        on: bool,
+        cx: &mut Context<Self>,
+        change: impl Fn(&mut snap_core::recording::preferences::Preferences, bool) + 'static,
+    ) -> Stateful<Div> {
+        switch(id, on, false).on_click(cx.listener(move |view, _: &ClickEvent, _, cx| view.change_recording(cx, |p| change(p, !on))))
     }
 
     /// 下拉选择（Vue `SelectControl`）：细线框触发器 + 浮层列表，选中项强调色。
@@ -1639,52 +1684,145 @@ impl SettingsView {
         t: &dyn Fn(&str) -> String,
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
+        use snap_core::recording::config::{EncodingPreference, KeyPosition, OutputFormat, RecordingQuality};
         let e = &s.recording_export;
+        let p = crate::recording::preferences();
+        let mp4 = p.format == OutputFormat::Mp4;
+        // 视频与导出、录制行为（Vue `RecordingPreferences.vue`）。
+        let mut video = vec![
+            row(
+                t("保存格式"),
+                None,
+                self.rec_segmented("rec-format", p.format, vec![(OutputFormat::Mp4, "MP4".into()), (OutputFormat::Gif, "GIF".into())], cx, |p, v| p.format = v),
+            ),
+            row(
+                t("帧率"),
+                None,
+                if mp4 {
+                    self.rec_segmented("rec-fps", p.mp4_fps, vec![(30, "30 FPS".into()), (60, "60 FPS".into())], cx, |p, v| p.mp4_fps = v)
+                } else {
+                    self.rec_segmented("rec-fps", p.gif_fps, vec![(10, "10 FPS".into()), (20, "20 FPS".into())], cx, |p, v| p.gif_fps = v)
+                },
+            ),
+        ];
+        if mp4 {
+            video.push(row(
+                t("画质"),
+                None,
+                self.rec_segmented(
+                    "rec-quality",
+                    p.quality,
+                    vec![(RecordingQuality::Economy, t("节省空间")), (RecordingQuality::Balanced, t("均衡")), (RecordingQuality::High, t("高清"))],
+                    cx,
+                    |p, v| {
+                        p.quality = v;
+                        p.mbps = None;
+                    },
+                ),
+            ));
+            video.push(row(
+                t("编码方式"),
+                None,
+                self.rec_segmented(
+                    "rec-encoding",
+                    p.encoding,
+                    vec![(EncodingPreference::Auto, t("自动编码")), (EncodingPreference::Software, t("软件兼容"))],
+                    cx,
+                    |p, v| p.encoding = v,
+                ),
+            ));
+        }
+        let behavior = vec![
+            row(
+                t("倒计时"),
+                None,
+                self.rec_segmented("rec-countdown", p.countdown, vec![(0, t("无延时")), (3, t("{0} 秒").replace("{0}", "3")), (5, t("{0} 秒").replace("{0}", "5"))], cx, |p, v| p.countdown = v),
+            ),
+            row(t("录制光标"), None, self.rec_toggle("rec-cursor", p.capture_cursor, cx, |p, v| p.capture_cursor = v)),
+        ];
+        // 键鼠特效（Vue `RecordingInputSettings.vue` 的设置行形态）。
+        let fx = &p.effects;
+        let mut effects = Vec::new();
+        for (index, (label, on)) in [("点击光圈", fx.clicks), ("鼠标移动尾迹", fx.movement), ("按住拖动轨迹", fx.drag), ("滚轮方向提示", fx.wheel)].into_iter().enumerate() {
+            let id: &'static str = ["fx-clicks", "fx-movement", "fx-drag", "fx-wheel"][index];
+            effects.push(row(
+                t(label),
+                None,
+                self.rec_toggle(id, on, cx, move |p, v| match index {
+                    0 => p.effects.clicks = v,
+                    1 => p.effects.movement = v,
+                    2 => p.effects.drag = v,
+                    _ => p.effects.wheel = v,
+                }),
+            ));
+        }
+        effects.push(row(t("按键提示"), Some(t("不记录普通文字输入")), self.rec_toggle("fx-keyboard", fx.keyboard, cx, |p, v| p.effects.keyboard = v)));
+        if fx.keyboard {
+            effects.push(row(
+                t("按键位置"),
+                None,
+                self.rec_segmented(
+                    "fx-position",
+                    fx.position,
+                    vec![(KeyPosition::TopLeft, t("左上角")), (KeyPosition::BottomLeft, t("左下角")), (KeyPosition::BottomRight, t("右下角"))],
+                    cx,
+                    |p, v| p.effects.position = v,
+                ),
+            ));
+        }
+        if fx.keyboard || fx.clicks || fx.movement || fx.drag || fx.wheel {
+            effects.push(row(
+                t("效果尺寸"),
+                None,
+                self.rec_segmented("fx-size", fx.size, [16, 24, 32, 48, 64].into_iter().map(|v| (v, format!("{v} px"))).collect(), cx, |p, v| p.effects.size = v),
+            ));
+            effects.push(row(
+                t("持续时间"),
+                None,
+                self.rec_segmented("fx-duration", fx.duration_ms, [400, 800, 1200, 2000].into_iter().map(|v| (v, format!("{v} ms"))).collect(), cx, |p, v| p.effects.duration_ms = v),
+            ));
+        }
+        let reset = div()
+            .id("fx-reset")
+            .text_xs()
+            .font_weight(FontWeight::NORMAL)
+            .text_color(rgb(col::accent_fg()))
+            .cursor_pointer()
+            .child(t("恢复默认"))
+            .on_click(cx.listener(|view, _: &ClickEvent, _, cx| view.change_recording(cx, |p| p.effects = Default::default())));
         vec![
             hero(
                 icons::VIDEO,
                 t("录屏"),
                 None,
                 s.shortcuts_enabled.then(|| s.shortcuts.record.clone()),
-                vec![
-                    button("hero-record", t("选择录制范围"), ButtonKind::Primary, true)
-                        .on_click(|_, _, cx| {
-                            crate::shell::run_action(cx, ShortcutAction::Record, "settings")
-                        })
-                        .into_any_element(),
-                ],
+                vec![button("hero-record", t("选择录制范围"), ButtonKind::Primary, true)
+                    .on_click(|_, _, cx| crate::shell::run_action(cx, ShortcutAction::Record, "settings"))
+                    .into_any_element()],
             )
             .into_any_element(),
-            heading(t("录屏文件")).into_any_element(),
+            heading(t("视频与导出")).into_any_element(),
+            card(video).into_any_element(),
+            heading(t("录制行为")).into_any_element(),
+            card(behavior).into_any_element(),
+            heading(t("键鼠特效")).child(reset).into_any_element(),
+            card(effects).into_any_element(),
+            heading(t("文件")).into_any_element(),
             card(vec![
-                row(
-                    t("文件名前缀"),
-                    None,
-                    self.text_input(&self.recording_prefix, 180.0),
-                ),
+                row(t("文件名前缀"), None, self.text_input(&self.recording_prefix, 180.0)),
                 row(
                     t("文件名包含视频尺寸"),
                     None,
-                    self.toggle("rec-dimensions", e.include_dimensions, cx, |s, v| {
-                        s.recording_export.include_dimensions = v
-                    }),
+                    self.toggle("rec-dimensions", e.include_dimensions, cx, |s, v| s.recording_export.include_dimensions = v),
                 ),
                 row(
                     t("记住上次保存目录"),
                     None,
-                    self.toggle("rec-remember", e.remember_directory, cx, |s, v| {
-                        s.recording_export.remember_directory = v
-                    }),
+                    self.toggle("rec-remember", e.remember_directory, cx, |s, v| s.recording_export.remember_directory = v),
                 ),
                 self.folder_row(Folder::Recordings, s, t, cx),
             ])
             .into_any_element(),
-            div()
-                .mt(px(10.0))
-                .text_xs()
-                .text_color(rgb(col::muted()))
-                .child(t("格式、帧率、倒计时与声音在录屏框选时的选项行中设置。"))
-                .into_any_element(),
         ]
     }
 
@@ -1786,29 +1924,119 @@ impl SettingsView {
         t: &dyn Fn(&str) -> String,
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
+        use snap_core::shelf::ShelfCategory;
         let c = &s.clipboard;
-        let meta = crate::clipboard::service(cx).map(|service| {
-            let status = service.status();
-            format!(
-                "{} {} {:.1} MiB",
-                status.count,
-                t("条 ·"),
-                status.byte_size as f64 / 1_048_576.0
-            )
+        let status = crate::clipboard::service(cx).map(|service| service.status());
+        let meta = status.as_ref().map(|status| {
+            format!("{} {} {:.1} MiB", status.count, t("条 ·"), status.byte_size as f64 / 1_048_576.0)
         });
-        vec![
+        // 记录状态（Vue：正在记录 / 已暂停 / 当前平台不支持）。
+        let recording_status = match &status {
+            Some(st) if st.supported && st.enabled => div()
+                .flex()
+                .items_center()
+                .gap(px(4.0))
+                .text_xs()
+                .text_color(rgb(col::success()))
+                .child(Icon::default().data(icons::CHECK).size(px(14.0)).text_color(rgb(col::success())))
+                .child(t("正在记录")),
+            Some(st) if !st.supported => div().text_xs().text_color(rgb(col::muted())).child(t("当前平台不支持")),
+            Some(_) => div().text_xs().text_color(rgb(col::muted())).child(t("已暂停")),
+            None => div().text_xs().text_color(rgb(col::muted())).child(t("状态未读取")),
+        };
+        // 顶部暂存架（Vue `ShelfSettings.vue`）。
+        let shelf = crate::shelf::settings(cx);
+        let mut shelf_rows = Vec::new();
+        if let Some(shelf) = shelf {
+            let enabled = shelf.enabled;
+            let hover = shelf.top_hover;
+            let toggle_enabled = shelf.clone();
+            let toggle_hover = shelf.clone();
+            shelf_rows.push(row(
+                t("开启顶部暂存架"),
+                None,
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(12.0))
+                    .child(button("shelf-open", t("展开暂存架"), ButtonKind::Outline, enabled).on_click(|_, _, cx| crate::shelf::open(cx)))
+                    .child(switch("shelf-enabled", enabled, false).on_click(cx.listener(move |view, _: &ClickEvent, _, cx| {
+                        let mut next = toggle_enabled.clone();
+                        next.enabled = !enabled;
+                        let result = crate::shelf::set_settings(cx, next);
+                        view.report(result, cx);
+                    }))),
+            ));
+            let mut hover_switch = switch("shelf-hover", hover, false);
+            hover_switch = if enabled {
+                hover_switch.on_click(cx.listener(move |view, _: &ClickEvent, _, cx| {
+                    let mut next = toggle_hover.clone();
+                    next.top_hover = !hover;
+                    let result = crate::shelf::set_settings(cx, next);
+                    view.report(result, cx);
+                }))
+            } else {
+                hover_switch.opacity(0.45)
+            };
+            shelf_rows.push(row(t("鼠标停留屏幕顶部中央时展开"), None, hover_switch));
+            const CATEGORIES: [(ShelfCategory, &str); 7] = [
+                (ShelfCategory::Text, "文本"),
+                (ShelfCategory::Image, "图片"),
+                (ShelfCategory::File, "文件"),
+                (ShelfCategory::Link, "链接"),
+                (ShelfCategory::Path, "文件路径"),
+                (ShelfCategory::Color, "颜色"),
+                (ShelfCategory::Favorites, "收藏"),
+            ];
+            let mut options = div().flex().flex_wrap().justify_end().gap(px(10.0)).max_w(px(420.0));
+            for (index, (category, label)) in CATEGORIES.into_iter().enumerate() {
+                let checked = shelf.categories.contains(&category);
+                let current = shelf.clone();
+                let (border, fill) = if checked { (col::success(), col::notice()) } else { (col::line(), col::surface()) };
+                options = options.child(
+                    div()
+                        .id(("shelf-category", index))
+                        .flex()
+                        .items_center()
+                        .gap(px(6.0))
+                        .text_xs()
+                        .cursor_pointer()
+                        .child(
+                            div()
+                                .size(px(14.0))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .rounded(px(3.0))
+                                .border_1()
+                                .border_color(rgb(border))
+                                .bg(rgb(fill))
+                                .children(checked.then(|| Icon::default().data(icons::CHECK).size(px(10.0)).text_color(rgb(col::success())))),
+                        )
+                        .child(t(label))
+                        .on_click(cx.listener(move |view, _: &ClickEvent, _, cx| {
+                            let mut next = current.clone();
+                            if checked {
+                                next.categories.retain(|c| *c != category);
+                            } else {
+                                next.categories.push(category);
+                            }
+                            let result = crate::shelf::set_settings(cx, next);
+                            view.report(result, cx);
+                        })),
+                );
+            }
+            shelf_rows.push(row(t("放置类别"), None, options));
+        }
+        let mut elements = vec![
             hero(
                 icons::CLIPBOARD,
                 t("剪贴板历史"),
                 meta,
                 s.shortcuts_enabled.then(|| s.shortcuts.history.clone()),
-                vec![
-                    button("hero-clipboard", t("打开剪贴板"), ButtonKind::Primary, true)
-                        .on_click(|_, _, cx| {
-                            crate::shell::run_action(cx, ShortcutAction::History, "settings")
-                        })
-                        .into_any_element(),
-                ],
+                vec![button("hero-clipboard", t("打开剪贴板"), ButtonKind::Primary, true)
+                    .on_click(|_, _, cx| crate::shell::run_action(cx, ShortcutAction::History, "settings"))
+                    .into_any_element()],
             )
             .into_any_element(),
             heading(t("记录")).into_any_element(),
@@ -1816,90 +2044,45 @@ impl SettingsView {
                 row(
                     t("记录剪贴板历史"),
                     None,
-                    self.toggle("clip-enabled", c.enabled, cx, |s, v| {
-                        s.clipboard.enabled = v
-                    }),
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(12.0))
+                        .child(recording_status)
+                        .child(self.toggle("clip-enabled", c.enabled, cx, |s, v| s.clipboard.enabled = v)),
                 ),
-                row(
-                    t("唤出后直接粘贴"),
-                    Some(t("回车或双击后把内容粘贴到唤出前的窗口")),
-                    self.toggle("clip-paste", c.paste_on_activate, cx, |s, v| {
-                        s.clipboard.paste_on_activate = v
-                    }),
-                ),
-                row(
-                    t("记录文字"),
-                    None,
-                    self.toggle("clip-text", c.save_copied_text, cx, |s, v| {
-                        s.clipboard.save_copied_text = v
-                    }),
-                ),
-                row(
-                    t("记录图片"),
-                    None,
-                    self.toggle("clip-images", c.save_copied_images, cx, |s, v| {
-                        s.clipboard.save_copied_images = v
-                    }),
-                ),
-                row(
-                    t("记录文件"),
-                    None,
-                    self.toggle("clip-files", c.save_copied_files, cx, |s, v| {
-                        s.clipboard.save_copied_files = v
-                    }),
-                ),
+                row(t("记录文本"), None, self.toggle("clip-text", c.save_copied_text, cx, |s, v| s.clipboard.save_copied_text = v)),
+                row(t("记录图片"), None, self.toggle("clip-images", c.save_copied_images, cx, |s, v| s.clipboard.save_copied_images = v)),
+                row(t("记录文件"), None, self.toggle("clip-files", c.save_copied_files, cx, |s, v| s.clipboard.save_copied_files = v)),
             ])
             .into_any_element(),
-            heading(t("保留与清理")).into_any_element(),
+            heading(t("自动清理")).into_any_element(),
+            card(vec![
+                row(t("最多条目"), None, self.stepper("clip-items", c.max_items, (100, 5000, 100), "", cx, |s, v| s.clipboard.max_items = v)),
+                row(t("容量上限（MiB）"), None, self.stepper("clip-storage", c.max_storage_mb, (50, 2048, 50), "", cx, |s, v| s.clipboard.max_storage_mb = v)),
+                row(t("保留天数（0 为不限）"), None, self.stepper("clip-days", c.retain_days, (0, 3650, 1), "", cx, |s, v| s.clipboard.retain_days = v)),
+            ])
+            .into_any_element(),
+            heading(t("使用")).into_any_element(),
             card(vec![
                 row(
-                    t("最多保留条数"),
+                    t("回车或双击后直接粘贴到原窗口"),
                     None,
-                    self.stepper(
-                        "clip-items",
-                        c.max_items,
-                        (100, 5000, 100),
-                        "",
-                        cx,
-                        |s, v| s.clipboard.max_items = v,
-                    ),
+                    self.toggle("clip-paste", c.paste_on_activate, cx, |s, v| s.clipboard.paste_on_activate = v),
                 ),
                 row(
-                    t("存储上限"),
-                    None,
-                    self.stepper(
-                        "clip-storage",
-                        c.max_storage_mb,
-                        (50, 2048, 50),
-                        " MiB",
-                        cx,
-                        |s, v| s.clipboard.max_storage_mb = v,
-                    ),
-                ),
-                row(
-                    t("保留天数"),
-                    None,
-                    self.segmented(
-                        "clip-days",
-                        c.retain_days,
-                        vec![
-                            (0, t("永久")),
-                            (7, t("7 天")),
-                            (30, t("30 天")),
-                            (90, t("90 天")),
-                        ],
-                        cx,
-                        |s, v| s.clipboard.retain_days = v,
-                    ),
-                ),
-                row(
-                    t("排除应用"),
-                    Some(t("不记录这些程序复制的内容，填写程序文件名，用逗号分隔")),
+                    t("不记录这些程序复制的内容"),
+                    Some(t("填写程序文件名，用逗号分隔")),
                     self.text_input(&self.excluded, 240.0),
                 ),
             ])
             .into_any_element(),
-        ]
+        ];
+        if !shelf_rows.is_empty() {
+            elements.push(heading(t("顶部暂存架")).into_any_element());
+            elements.push(card(shelf_rows).into_any_element());
+        }
+        elements
     }
 
     fn general_page(

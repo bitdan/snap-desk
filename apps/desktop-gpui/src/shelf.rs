@@ -165,6 +165,30 @@ fn snapshot(cx: &App) -> Result<(Snapshot, Service), String> {
     Ok((shelf::snapshot(&prefs, &service)?, service))
 }
 
+/// 设置窗口用：当前暂存架设置（shelf.json）；读取失败时为 None。
+pub fn settings(cx: &App) -> Option<shelf::ShelfSettings> {
+    cx.try_global::<ShelfState>()?.prefs.as_ref().ok().map(|p| p.settings.clone())
+}
+
+/// 设置窗口修改暂存架设置；关闭时收起展开中的暂存架。
+pub fn set_settings(cx: &mut App, settings: shelf::ShelfSettings) -> Result<(), String> {
+    settings.validate()?;
+    let enabled = settings.enabled;
+    update(cx, move |prefs| {
+        prefs.settings = settings;
+        Ok(())
+    })?;
+    if !enabled {
+        hide(cx);
+    }
+    Ok(())
+}
+
+/// 设置窗口“展开暂存架”。
+pub fn open(cx: &mut App) {
+    show(cx, 1500);
+}
+
 /// 剪贴板历史右键菜单用：条目是否正显示在暂存架上；暂存架未开启或不可用时为 None（不显示联动入口）。
 pub fn shows(cx: &App, id: i64) -> Option<bool> {
     let (snapshot, _) = snapshot(cx).ok()?;

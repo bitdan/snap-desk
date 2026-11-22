@@ -274,30 +274,11 @@ impl SettingsView {
             None if self.logs_loading => t("正在读取…"),
             None => String::new(),
         };
-        let button = |id: &'static str, label: String| {
-            div()
-                .id(id)
-                .h(px(28.0))
-                .px(px(10.0))
-                .flex()
-                .items_center()
-                .rounded(px(6.0))
-                .border_1()
-                .border_color(rgb(col::border()))
-                .bg(rgb(col::surface()))
-                .text_xs()
-                .cursor_pointer()
-                .hover(|s| s.bg(rgb(col::page_bg())))
-                .child(label)
-        };
+        let button = |id: &'static str, label: String| super::button(id, label, super::ButtonKind::Outline, true);
         let actions = div()
             .flex()
             .flex_wrap()
             .gap(px(6.0))
-            .child(
-                button("logs-refresh", t("刷新"))
-                    .on_click(cx.listener(|view, _: &ClickEvent, _, cx| view.load_logs(cx))),
-            )
             .child(self.open_button(
                 "logs-open",
                 t("打开日志目录"),
@@ -432,16 +413,19 @@ impl SettingsView {
             text
         });
         vec![
-            heading(t("日志级别")).into_any_element(),
+            // 分组同 Vue `DiagnosticsSettings.vue`：记录、最近日志、文件。
+            heading(t("记录")).into_any_element(),
             card(vec![row(t("记录级别"), level_hint, levels)]).into_any_element(),
-            heading(t("近期日志")).into_any_element(),
-            card(vec![row(t("日志文件"), Some(summary), actions)]).into_any_element(),
+            heading(t("最近日志")).into_any_element(),
             div()
-                .mt(px(10.0))
                 .flex()
                 .items_center()
                 .justify_between()
                 .child(filters)
+                .child(
+                    super::button("logs-refresh", t("刷新"), super::ButtonKind::Ghost, true)
+                        .on_click(cx.listener(|view, _: &ClickEvent, _, cx| view.load_logs(cx))),
+                )
                 .into_any_element(),
             div()
                 .mt(px(6.0))
@@ -458,6 +442,8 @@ impl SettingsView {
                 .text_color(rgb(col::muted()))
                 .children(footnote)
                 .into_any_element(),
+            heading(t("文件")).into_any_element(),
+            card(vec![row(t("日志文件"), Some(summary), actions)]).into_any_element(),
         ]
     }
 }

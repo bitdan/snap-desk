@@ -291,61 +291,6 @@ impl SettingsView {
         cx.notify();
     }
 
-    fn option(
-        &self,
-        id: (&'static str, usize),
-        label: String,
-        hint: Option<String>,
-        selected: bool,
-        enabled: bool,
-    ) -> Stateful<Div> {
-        let option = div()
-            .id(id)
-            .px(px(12.0))
-            .py(px(8.0))
-            .flex()
-            .items_center()
-            .justify_between()
-            .gap(px(8.0))
-            .border_b_1()
-            .border_color(rgb(col::border()))
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .min_w_0()
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(rgb(if enabled { col::text() } else { col::muted() }))
-                            .child(label),
-                    )
-                    .children(hint.map(|h| div().text_xs().text_color(rgb(col::muted())).child(h))),
-            )
-            .child(
-                div()
-                    .size(px(16.0))
-                    .flex_none()
-                    .rounded_full()
-                    .border_2()
-                    .border_color(rgb(if selected {
-                        col::accent()
-                    } else {
-                        col::border()
-                    }))
-                    .bg(rgb(if selected {
-                        col::accent()
-                    } else {
-                        col::surface()
-                    })),
-            );
-        if enabled {
-            option.cursor_pointer().hover(|s| s.bg(rgb(col::page_bg())))
-        } else {
-            option.opacity(0.6)
-        }
-    }
-
     pub(super) fn recognition_page(
         &self,
         s: &Settings,
@@ -362,76 +307,48 @@ impl SettingsView {
                 None => t("凭据状态未读取"),
             }
         };
-        // ---- 文字识别 ----
-        let mut engines = div().flex().flex_col();
-        let system_label = if cfg!(target_os = "macos") {
-            "macOS 系统 OCR"
-        } else {
-            "Windows 系统 OCR"
-        };
-        let fixed: [(&'static str, &'static str, Option<String>, bool); 3] = [
-            (
-                "local-ppocr",
-                "本地 PP-OCR",
-                Some(t("离线识别，需先下载识别资源")),
-                true,
-            ),
-            (
-                "windows-media",
-                system_label,
-                Some(t("使用系统自带的识别语言包")),
-                cfg!(any(windows, target_os = "macos")),
-            ),
-            (
-                "wechat-ocr",
-                "WeChat OCR（实验性）",
-                Some(t("实验性 · 离线")),
-                cfg!(all(windows, target_arch = "x86_64")),
-            ),
-        ];
-        for (index, (provider, label, hint, enabled)) in fixed.into_iter().enumerate() {
-            let selected = s.ocr.provider == provider;
-            let mut option = self.option(("ocr-engine", index), t(label), hint, selected, enabled);
-            if enabled && !selected {
-                option = option.on_click(cx.listener(move |view, _: &ClickEvent, _, cx| {
-                    view.change(cx, |s| {
-                        s.ocr.provider = provider.into();
-                        s.ocr.service_id.clear();
-                    })
-                }));
-            }
-            engines = engines.child(option);
+        // ---- 文字识别：OCR 引擎下拉（Vue `ProviderMenu`）----
+        let system_label = if cfg!(target_os = "macos") { "macOS 系统 OCR" } else { "Windows 系统 OCR" };
+        // (provider, service_id, 名称, 说明)；不支持的引擎不列出。
+        let mut choices: Vec<(String, String, String, String)> = vec![(
+            "local-ppocr".into(),
+            String::new(),
+            t("本地 PP-OCR"),
+            t("离线识别，需先下载识别资源"),
+        )];
+        if cfg!(any(windows, target_os = "macos")) {
+            choices.push(("windows-media".into(), String::new(), t(system_label), t("使用系统自带的识别语言包")));
         }
-        for (index, service) in s
-            .recognition_services
-            .iter()
-            .filter(|x| x.supports_ocr())
-            .enumerate()
-        {
-            let selected = s.ocr.provider == "service" && s.ocr.service_id == service.id;
-            let id = service.id.clone();
-            let mut option = self.option(
-                ("ocr-service", index),
+        if cfg!(all(windows, target_arch = "x86_64")) {
+            choices.push(("wechat-ocr".into(), String::new(), t("WeChat OCR（实验性）"), t("实验性 · 离线")));
+        }
+        for service in s.recognition_services.iter().filter(|x| x.supports_ocr()) {
+            choices.push((
+                "service".into(),
+                service.id.clone(),
                 service.name.clone(),
-                Some(format!(
-                    "{} · {}",
-                    t(service_kind(service)),
-                    key_hint(service)
-                )),
-                selected,
-                true,
-            );
-            if !selected {
-                option = option.on_click(cx.listener(move |view, _: &ClickEvent, _, cx| {
-                    let id = id.clone();
-                    view.change(cx, move |s| {
-                        s.ocr.provider = "service".into();
-                        s.ocr.service_id = id;
-                    })
-                }));
-            }
-            engines = engines.child(option);
+                format!("{} · {}", t(service_kind(service)), key_hint(service)),
+            ));
         }
+        let current = choices
+            .iter()
+            .position(|(provider, id, _, _)| *provider == s.ocr.provider && (provider != "service" || *id == s.ocr.service_id))
+            .unwrap_or(0);
+        let engine_hint = choices.get(current).map(|c| c.3.clone());
+        let picked = choices.clone();
+        let select = self.select(
+            "ocr-engine",
+            current,
+            choices.iter().enumerate().map(|(index, c)| (index, c.2.clone())).collect(),
+            cx,
+            move |s, index| {
+                if let Some((provider, id, _, _)) = picked.get(index) {
+                    s.ocr.provider = provider.clone();
+                    s.ocr.service_id = id.clone();
+                }
+            },
+        );
+        let engines = div().pl(px(12.0)).child(row(t("OCR 引擎"), engine_hint, select).border_b_0());
         let mut ocr_rows: Vec<Div> = Vec::new();
         if s.ocr.provider == "local-ppocr" {
             ocr_rows.push(self.ocr_resource_row(t, cx));
@@ -514,72 +431,56 @@ impl SettingsView {
                 s.ocr.merge_lines = v
             }),
         ));
-        // ---- 翻译 ----
-        let mut translators = div().flex().flex_col();
-        let local_selected = s.ai.provider == "local-ctranslate2";
+        // ---- 翻译：翻译引擎下拉 ----
         let local_supported = snap_core::recognition::local_runtime::supported();
-        let mut local = self.option(
-            ("tr-local", 0),
-            t("本地翻译"),
-            Some(t(if local_supported {
-                "离线翻译，文字不上传（仅中英互译）"
-            } else {
-                "翻译引擎下载和导入目前仅支持 Windows x64。"
-            })),
-            local_selected,
-            local_supported,
-        );
-        if local_supported && !local_selected {
-            local = local.on_click(cx.listener(|view, _: &ClickEvent, _, cx| {
-                view.change(cx, |s| {
+        let local_selected = s.ai.provider == "local-ctranslate2";
+        // (服务标识；空为本地翻译, 名称, 说明, 服务)
+        let mut engines_tr: Vec<(String, String, String, Option<RecognitionService>)> = Vec::new();
+        if local_supported || local_selected {
+            engines_tr.push((
+                String::new(),
+                t("本地翻译"),
+                t(if local_supported { "离线翻译，文字不上传（仅中英互译）" } else { "翻译引擎下载和导入目前仅支持 Windows x64。" }),
+                None,
+            ));
+        }
+        for service in s.recognition_services.iter().filter(|x| x.supports_translation()) {
+            engines_tr.push((
+                service.id.clone(),
+                service.name.clone(),
+                format!("{} · {}", t(service_kind(service)), key_hint(service)),
+                Some(service.clone()),
+            ));
+        }
+        let current_tr = engines_tr
+            .iter()
+            .position(|(id, _, _, service)| if local_selected { service.is_none() } else { service.is_some() && *id == s.ai.service_id })
+            .unwrap_or(0);
+        let translator_hint = engines_tr.get(current_tr).map(|e| e.2.clone());
+        let picked_tr = engines_tr.clone();
+        let translator_select = self.select(
+            "tr-engine",
+            current_tr,
+            engines_tr.iter().enumerate().map(|(index, e)| (index, e.1.clone())).collect(),
+            cx,
+            move |s, index| match picked_tr.get(index).and_then(|e| e.3.clone()) {
+                Some(chosen) => {
+                    s.ai.service_id = chosen.id.clone();
+                    s.ai.provider = if chosen.protocol == "deepl" { "deepl" } else { "online-llm" }.into();
+                    s.ai.endpoint = chosen.endpoint.clone();
+                    s.ai.model = chosen.model.clone();
+                }
+                None => {
                     s.ai.provider = "local-ctranslate2".into();
                     s.ai.service_id.clear();
                     // 本地语言包只支持中英互译。
                     if !["zh-CN", "en"].contains(&s.ai.target_language.as_str()) {
                         s.ai.target_language = "zh-CN".into();
                     }
-                });
-                view.load_local(cx);
-            }));
-        }
-        translators = translators.child(local);
-        for (index, service) in s
-            .recognition_services
-            .iter()
-            .filter(|x| x.supports_translation())
-            .enumerate()
-        {
-            let selected = s.ai.service_id == service.id && s.ai.provider != "local-ctranslate2";
-            let chosen = service.clone();
-            let mut option = self.option(
-                ("tr-service", index),
-                service.name.clone(),
-                Some(format!(
-                    "{} · {}",
-                    t(service_kind(service)),
-                    key_hint(service)
-                )),
-                selected,
-                true,
-            );
-            if !selected {
-                option = option.on_click(cx.listener(move |view, _: &ClickEvent, _, cx| {
-                    let chosen = chosen.clone();
-                    view.change(cx, move |s| {
-                        s.ai.service_id = chosen.id.clone();
-                        s.ai.provider = if chosen.protocol == "deepl" {
-                            "deepl"
-                        } else {
-                            "online-llm"
-                        }
-                        .into();
-                        s.ai.endpoint = chosen.endpoint.clone();
-                        s.ai.model = chosen.model.clone();
-                    })
-                }));
-            }
-            translators = translators.child(option);
-        }
+                }
+            },
+        );
+        let translators = div().pl(px(12.0)).child(row(t("翻译引擎"), translator_hint, translator_select).border_b_0());
         let targets = self.segmented(
             "tr-target",
             TARGETS

@@ -93,6 +93,9 @@ pub struct Session {
     window_targets: Vec<crate::recording::WindowTarget>,
     /// 本次录屏选择录制整个窗口（不保存为偏好，与 Tauri 版来源选择一致）。
     record_window: bool,
+    /// 工具栏被拖动后的偏移（逻辑像素，Vue 的“拖动工具栏；双击恢复位置”），与拖动起点。
+    toolbar_offset: (f32, f32),
+    toolbar_drag: Option<(Point<Pixels>, (f32, f32))>,
 }
 
 impl Session {
@@ -400,6 +403,8 @@ fn begin(cx: &mut App, settings: &Settings, delay: Duration, purpose: Option<Rec
                         record: crate::recording::preferences(),
                         window_targets: grabbed.windows,
                         record_window: false,
+                        toolbar_offset: (0.0, 0.0),
+                        toolbar_drag: None,
                     });
                     session.update(cx, |s, _| {
                         s.layout_key = recent::layout_key(&s.displays);
@@ -1264,6 +1269,23 @@ impl Overlay {
     }
 
     fn motion(&mut self, event: &MouseMoveEvent, window: &mut Window, cx: &mut Context<Self>) {
+        // 拖动工具栏把手：只移动工具栏，不影响选区与标注。
+        let dragging_toolbar = self.session.update(cx, |s, cx| {
+            let Some((start, origin)) = s.toolbar_drag else {
+                return false;
+            };
+            if event.pressed_button != Some(MouseButton::Left) {
+                s.toolbar_drag = None;
+                return false;
+            }
+            let delta = event.position - start;
+            s.toolbar_offset = (origin.0 + f32::from(delta.x), origin.1 + f32::from(delta.y));
+            cx.notify();
+            true
+        });
+        if dragging_toolbar {
+            return;
+        }
         let p = self.to_image(event.position, cx);
         let point = self.to_point(event.position, cx);
         let index = self.index;
@@ -1328,6 +1350,9 @@ impl Overlay {
     }
 
     fn release(&mut self, _event: &MouseUpEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if self.session.update(cx, |s, _| s.toolbar_drag.take().is_some()) {
+            return;
+        }
         let (after, job) = self.session.update(cx, |s, cx| {
             if s.drag.is_none() && s.editor.draft.is_some() {
                 let job = s.editor.finish(false);
@@ -1948,7 +1973,23 @@ impl Render for Overlay {
             text: &text,
         };
         let host = annotate::Host { view: &view, window, dispatch: Self::action };
+        let grip = annotate::icon_button("capture-grip", annotate::icons::GRIP, s.text("拖动工具栏；双击恢复位置"), false, false)
+            .w(px(20.0))
+            .cursor_grab()
+            .on_mouse_down(MouseButton::Left, window.listener_for(&view, |this: &mut Self, event: &MouseDownEvent, _, cx| {
+                cx.stop_propagation();
+                this.session.update(cx, |s, _| {
+                    if event.click_count >= 2 {
+                        s.toolbar_offset = (0.0, 0.0);
+                        s.toolbar_drag = None;
+                    } else {
+                        s.toolbar_drag = Some((event.position, s.toolbar_offset));
+                    }
+                });
+                cx.notify();
+            }));
         let leading = vec![
+            grip.into_any_element(),
             annotate::icon_button("capture-select", annotate::icons::MOVE, s.text("调整选区"), !s.annotating, false)
                 .on_click(window.listener_for(&view, Self::select_mode))
                 .into_any_element(),
@@ -2005,7 +2046,7 @@ impl Render for Overlay {
         let mut toolbar = div()
             .id("capture-toolbar")
             .absolute()
-            .top(top)
+            .top(top + px(s.toolbar_offset.1))
             .flex()
             .flex_col()
             .items_end()
@@ -2018,10 +2059,11 @@ impl Render for Overlay {
             .child(tools)
             .children(options)
             .children(error.map(annotate::error_row));
+        let dx = px(s.toolbar_offset.0);
         toolbar = if right >= px(min_width) {
-            toolbar.right((viewport.width - right).max(px(4.0)))
+            toolbar.right((viewport.width - right).max(px(4.0)) - dx)
         } else {
-            toolbar.left(px(4.0)).items_start()
+            toolbar.left(px(4.0) + dx).items_start()
         };
         root.child(toolbar).children(loupe)
     }

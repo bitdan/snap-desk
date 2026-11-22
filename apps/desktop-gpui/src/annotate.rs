@@ -208,6 +208,7 @@ pub mod icons {
     icon!(CHEVRON_UP, "chevron-up");
     icon!(MONITOR, "monitor");
     icon!(RESELECT, "rotate-ccw");
+    icon!(GRIP, "grip-vertical");
 }
 
 /// 当前样式；选中图形时同步为该图形的样式。
