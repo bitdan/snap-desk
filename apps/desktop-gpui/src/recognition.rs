@@ -220,6 +220,8 @@ struct Panel {
     /// 识别结果首次就绪时填入草稿（需要窗口，留到下次渲染执行）。
     fill: Option<String>,
     fill_translation: Option<String>,
+    /// 窗口置顶（对照 Vue 翻译窗口的置顶按钮）；新窗口为普通层级。
+    pinned: bool,
 }
 
 impl Panel {
@@ -259,6 +261,7 @@ impl Panel {
             focus: cx.focus_handle(),
             fill: None,
             fill_translation: None,
+            pinned: false,
         }
     }
 
@@ -640,6 +643,21 @@ impl Render for Panel {
         if let Some(value) = self.fill_translation.take() {
             self.translated.update(cx, |state, cx| state.set_value(value, window, cx));
         }
+        let pinned = self.pinned;
+        let pin = annotate::icon_button(
+            "recognition-pin",
+            if pinned { annotate::icons::PIN_OFF } else { annotate::icons::PIN },
+            self.t(if pinned { "取消置顶" } else { "置顶窗口" }),
+            pinned,
+            false,
+        )
+        .on_click(cx.listener(move |p, _: &ClickEvent, window, cx| {
+            match crate::native::set_topmost(window, !pinned) {
+                Ok(()) => p.pinned = !pinned,
+                Err(error) => p.error = Some(snap_core::i18n::for_language(&p.settings.appearance.language, &error).to_owned()),
+            }
+            cx.notify();
+        }));
         let tabs = match self.mode {
             Mode::Qr => div(),
             _ if self.image.is_none() => div(),
@@ -697,7 +715,7 @@ impl Render for Panel {
                     .flex_col()
                     .gap(px(8.0))
                     .min_w(px(0.0))
-                    .child(tabs)
+                    .child(div().flex().items_center().child(tabs).child(div().flex_1()).child(pin))
                     .child(body)
                     .children(status),
             )
