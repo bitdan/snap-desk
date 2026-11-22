@@ -706,6 +706,7 @@ impl Controls {
             .text_xs()
             .text_color(rgb(if primary { 0xffffff } else { 0x27272a }))
             .bg(rgb(if primary { ACCENT } else { 0xf4f4f5 }))
+            .children(primary.then(|| crate::annotate::icon(crate::annotate::icons::SAVE, 0xffffff).size(px(15.0))))
             .child(label);
         if enabled {
             button.cursor_pointer().hover(|s| s.opacity(0.85))
@@ -721,9 +722,9 @@ impl Render for Controls {
             .size_full()
             .flex()
             .items_center()
-            .gap(px(8.0))
-            .px(px(10.0))
-            .rounded(px(8.0))
+            .gap(px(7.0))
+            .px(px(8.0))
+            .py(px(5.0))
             .bg(rgb(0xfafafa))
             .border_1()
             .border_color(rgb(0xd4d4d8))
@@ -822,12 +823,36 @@ impl Render for Controls {
         // 禁用状态下 act 自身也会拒绝（忙碌、已在保存），点击回调始终绑定。
         .child(
             self.button("scroll-finish", finish_label, true, can_finish)
+                .px(px(9.0))
                 .on_click(cx.listener(|v, _: &ClickEvent, _, cx| v.act(false, cx))),
         )
-        .child(
-            self.button("scroll-cancel", self.t("取消"), false, can_cancel)
-                .on_click(cx.listener(|v, _: &ClickEvent, _, cx| v.act(true, cx))),
-        )
+        .child({
+            // 取消：只有图标，恢复或失败时带文字；悬停为浅红（Vue `.cancel`）。
+            let labelled = recovering || failed;
+            let mut cancel = div()
+                .id("scroll-cancel")
+                .h(px(30.0))
+                .px(px(5.0))
+                .flex()
+                .flex_none()
+                .items_center()
+                .gap(px(5.0))
+                .rounded(px(5.0))
+                .text_xs()
+                .text_color(rgb(0x27272a))
+                .child(crate::annotate::icon(crate::annotate::icons::CLOSE, 0x27272a).size(px(17.0)))
+                .children(labelled.then(|| self.t("取消")))
+                .tooltip({
+                    let tip = self.t("取消（Esc，不保存）");
+                    move |_, cx| cx.new(|_| crate::annotate::Tooltip(tip.clone().into())).into()
+                });
+            cancel = if can_cancel {
+                cancel.cursor_pointer().hover(|s| s.bg(rgb(0xfee2e2)).text_color(rgb(0xb91c1c)))
+            } else {
+                cancel.opacity(0.5)
+            };
+            cancel.on_click(cx.listener(|v, _: &ClickEvent, _, cx| v.act(true, cx)))
+        })
     }
 }
 

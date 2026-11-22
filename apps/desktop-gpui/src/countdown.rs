@@ -49,11 +49,12 @@ impl Render for View {
             .items_center()
             .justify_center()
             .gap(px(6.0))
-            .rounded(px(16.0))
-            .bg(rgba(0x18181be0))
-            .text_color(rgb(0xf4f4f5))
-            .child(div().text_size(px(56.0)).font_weight(FontWeight::BOLD).child(self.remaining.to_string()))
-            .child(div().text_xs().text_color(rgb(0xa1a1aa)).child(self.hint.clone()))
+            // 与截图浮层提示（Vue `.capture-tip`）同一套深色圆角框。
+            .rounded(px(10.0))
+            .bg(rgba(0x242330ed))
+            .text_color(rgb(0xffffff))
+            .child(div().text_size(px(56.0)).font_weight(FontWeight::SEMIBOLD).child(self.remaining.to_string()))
+            .child(div().px(px(12.0)).text_xs().text_color(rgb(0xb7b4c8)).child(self.hint.clone()))
     }
 }
 

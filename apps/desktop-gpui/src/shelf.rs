@@ -289,18 +289,54 @@ fn update(
 }
 
 /// 暂存架卡片上的小图标按钮（浅色背景上用深色图标）。
-fn icon_pill(id: impl Into<ElementId>, data: &'static [u8], tooltip: String) -> Stateful<Div> {
+/// 暂存架图标（Lucide）。
+mod icons {
+    macro_rules! icon {
+        ($name:ident, $file:literal) => {
+            pub const $name: &[u8] = include_bytes!(concat!("../assets/icons/", $file, ".svg"));
+        };
+    }
+    icon!(PANEL, "panels-top-left");
+    icon!(LEFT, "chevron-left");
+    icon!(RIGHT, "chevron-right");
+    icon!(TYPE, "type");
+    icon!(FILE, "file");
+}
+
+/// 卡片操作条里的圆形按钮（Vue `.shelf-card-actions button`，27×25）。
+fn icon_pill(id: impl Into<ElementId>, data: &'static [u8], tooltip: String, pressed: bool) -> Stateful<Div> {
     div()
         .id(id)
-        .size(px(24.0))
+        .w(px(27.0))
+        .h(px(25.0))
         .flex()
         .items_center()
         .justify_center()
-        .rounded(px(12.0))
+        .rounded_full()
         .cursor_pointer()
+        .bg(rgba(if pressed { 0xe8efffff } else { 0x00000000 }))
         .hover(|s| s.bg(rgb(0xe2e8f0)))
-        .child(annotate::icon(data, 0x334155))
+        .child(annotate::icon(data, if pressed { 0x2563eb } else { 0x475569 }).size(px(14.0)))
         .tooltip(move |_, cx| cx.new(|_| annotate::Tooltip(tooltip.clone().into())).into())
+}
+
+/// 右上角与翻页的圆形按钮（26×26）。
+fn round_icon(id: impl Into<ElementId>, data: &'static [u8], tooltip: String, enabled: bool) -> Stateful<Div> {
+    let button = div()
+        .id(id)
+        .size(px(26.0))
+        .flex()
+        .flex_none()
+        .items_center()
+        .justify_center()
+        .rounded_full()
+        .child(annotate::icon(data, 0x334155).size(px(13.0)))
+        .tooltip(move |_, cx| cx.new(|_| annotate::Tooltip(tooltip.clone().into())).into());
+    if enabled {
+        button.cursor_pointer().hover(|s| s.bg(rgb(0xe2e8f0)))
+    } else {
+        button.opacity(0.3)
+    }
 }
 
 /// 照片尺寸：最长边适配 144×108（与 `shelf-layout.ts` 一致）。
@@ -535,157 +571,164 @@ impl ShelfView {
         None
     }
 
-    fn round_button(&self, id: impl Into<ElementId>, label: String) -> Stateful<Div> {
-        div()
-            .id(id)
-            .px(px(7.0))
-            .py(px(2.0))
-            .rounded(px(10.0))
-            .text_xs()
-            .cursor_pointer()
-            .bg(rgb(0xf8fafc))
-            .text_color(rgb(0x334155))
-            .border_1()
-            .border_color(rgb(0xe2e8f0))
-            .hover(|s| s.bg(rgb(0xe2e8f0)))
-            .child(label)
-    }
-
     fn card(&mut self, item: &Item, left: f32, top: f32, cx: &mut Context<Self>) -> AnyElement {
         let id = item.id;
         let kept = self.snapshot.kept_ids.contains(&id);
         let language = self.language.clone();
-        let text =
-            move |key: &'static str| snap_core::i18n::for_language(&language, key).to_owned();
+        let text = move |key: &'static str| snap_core::i18n::for_language(&language, key).to_owned();
+        // 内容尺寸：图片按比例适配 144×108，文字便签 144×100（Vue `shelf-layout.ts`）。
+        let (w, h) = match item.kind {
+            Kind::Image => photo_size(item.width, item.height),
+            _ => (144.0, 100.0),
+        };
         let content: AnyElement = match item.kind {
-            Kind::Image => {
-                let (w, h) = photo_size(item.width, item.height);
-                match self.thumbnail(id, cx) {
-                    Some(thumb) => img(thumb)
-                        .w(px(w))
-                        .h(px(h))
-                        .object_fit(ObjectFit::Contain)
-                        .into_any_element(),
-                    None => div()
-                        .w(px(w))
-                        .h(px(h))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .text_xs()
-                        .text_color(rgb(0x64748b))
-                        .child(text("正在加载…"))
-                        .into_any_element(),
-                }
-            }
-            _ => div()
-                .w(px(144.0))
-                .h(px(100.0))
-                .p(px(6.0))
-                .rounded(px(8.0))
-                .bg(rgb(0xfff8da))
-                .text_xs()
-                .text_color(rgb(0x475569))
+            Kind::Image => match self.thumbnail(id, cx) {
+                Some(thumb) => img(thumb).size_full().rounded(px(9.0)).object_fit(ObjectFit::Contain).into_any_element(),
+                None => div()
+                    .size_full()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .text_xs()
+                    .text_color(rgb(0x475569))
+                    .child(text("正在加载…"))
+                    .into_any_element(),
+            },
+            kind => div()
+                .size_full()
+                .pt(px(12.0))
+                .px(px(10.0))
+                .pb(px(8.0))
+                .rounded(px(9.0))
+                .bg(rgb(if kind == Kind::File { 0xedf2fa } else { 0xfff8da }))
                 .overflow_hidden()
-                .child(format!(
-                    "{}{}",
-                    if item.kind == Kind::File { "📄 " } else { "" },
-                    item.preview.chars().take(160).collect::<String>()
-                ))
+                .text_xs()
+                .line_height(relative(1.5))
+                .text_color(rgb(0x475569))
+                .child(annotate::icon(if kind == Kind::File { icons::FILE } else { icons::TYPE }, 0x8b7e58).size(px(16.0)))
+                .child(div().mt(px(5.0)).line_clamp(3).child(item.preview.chars().take(300).collect::<String>()))
                 .into_any_element(),
         };
-        div()
+        let group = SharedString::from(format!("shelf-card-{id}"));
+        let frame_height = h + 10.0;
+        // 金属夹子：固定项为深色（Vue `.shelf-clip`）。
+        let (clip_from, clip_to, clip_border) = if kept {
+            (0x414a55, 0x89939f, 0xafb8c1)
+        } else {
+            (0x9d9fa2, 0xf3f4f5, 0xffffffa6)
+        };
+        let clip = div()
             .absolute()
-            .left(px(left))
-            .top(px(top))
-            .w(px(156.0))
+            .top_0()
+            .left(px(78.0 - 4.0))
+            .w(px(8.0))
+            .h(px(25.0))
+            .rounded(px(3.0))
+            .border_1()
+            .border_color(if kept { rgb(clip_border).into() } else { rgba(clip_border) })
+            .bg(linear_gradient(90.0, linear_color_stop(rgb(clip_from), 0.0), linear_color_stop(rgb(clip_to), 0.5)))
+            .shadow_sm()
+            .child(div().absolute().left(px(1.0)).right(px(1.0)).top(px(8.0)).h(px(1.0)).bg(rgba(0x5c606675)));
+        let remove = icon_pill(("shelf-remove", id as u64), annotate::icons::CLOSE, text("从架子移除，保留历史"), false)
+            .absolute()
+            .top(px(-7.0))
+            .left(px(-7.0))
+            .size(px(24.0))
+            .border_1()
+            .border_color(rgb(0xffffff))
+            .bg(rgba(0xf8fafcf2))
+            .shadow_sm()
+            .invisible()
+            .group_hover(group.clone(), |s| s.visible())
+            .on_click(cx.listener(move |view, _: &ClickEvent, _, cx| view.remove(id, cx)));
+        let actions = div()
+            .absolute()
+            .left_0()
+            .right_0()
+            .top(px(frame_height + 7.0))
             .flex()
-            .flex_col()
-            .items_center()
-            // 夹子：固定项为深色。
+            .justify_center()
+            .invisible()
+            .group_hover(group.clone(), |s| s.visible())
             .child(
                 div()
-                    .w(px(8.0))
-                    .h(px(22.0))
-                    .rounded(px(3.0))
-                    .bg(rgb(if kept { 0x5d6875 } else { 0xc9cbce }))
-                    .border_1()
-                    .border_color(rgb(0xffffff)),
-            )
-            .child(
-                div()
-                    .id(("shelf-card", id as u64))
-                    .mt(px(-6.0))
-                    .p(px(4.0))
-                    .rounded(px(12.0))
-                    .bg(rgb(0xfdfdfd))
-                    .border_1()
-                    .border_color(rgb(0xe5e7eb))
-                    .shadow_md()
-                    .cursor_pointer()
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(move |view, event: &MouseDownEvent, _, _| {
-                            view.press = Some((id, event.position))
-                        }),
-                    )
-                    .on_mouse_up(
-                        MouseButton::Left,
-                        cx.listener(|view, _: &MouseUpEvent, _, _| view.press = None),
-                    )
-                    .on_mouse_move(cx.listener(|view, event: &MouseMoveEvent, _, cx| {
-                        let Some((id, origin)) = view.press else {
-                            return;
-                        };
-                        if event.pressed_button != Some(MouseButton::Left) {
-                            view.press = None;
-                        } else if (event.position - origin).x.abs()
-                            + (event.position - origin).y.abs()
-                            > px(6.0)
-                        {
-                            view.press = None;
-                            view.drag(id, cx);
-                        }
-                    }))
-                    .on_click(cx.listener(move |view, _: &ClickEvent, window, cx| {
-                        if !view.busy {
-                            view.copy(id, window, cx);
-                        }
-                    }))
-                    .child(content),
-            )
-            .child(
-                // 图标按钮条（复制 / 固定 / 取下为贴图 / 从架上移除），悬停显示说明。
-                div()
-                    .mt(px(4.0))
-                    .px(px(3.0))
-                    .py(px(2.0))
+                    .p(px(3.0))
                     .flex()
                     .gap(px(2.0))
-                    .rounded(px(14.0))
-                    .bg(rgb(0xf8fafc))
+                    .rounded(px(18.0))
                     .border_1()
-                    .border_color(rgb(0xe2e8f0))
-                    .shadow_sm()
-                    .child(icon_pill(("shelf-copy", id as u64), annotate::icons::COPY, text("复制")).on_click(
-                        cx.listener(move |view, _: &ClickEvent, window, cx| view.copy(id, window, cx)),
-                    ))
+                    .border_color(rgba(0xffffffcf))
+                    .bg(rgba(0xfafafaf2))
+                    .shadow_md()
+                    .child(
+                        icon_pill(("shelf-copy", id as u64), annotate::icons::COPY, text("复制"), false)
+                            .on_click(cx.listener(move |view, _: &ClickEvent, window, cx| view.copy(id, window, cx))),
+                    )
                     .child(
                         icon_pill(
                             ("shelf-keep", id as u64),
                             if kept { annotate::icons::PIN_OFF } else { annotate::icons::PIN },
                             text(if kept { "取消固定" } else { "固定在架上" }),
+                            kept,
                         )
                         .on_click(cx.listener(move |view, _: &ClickEvent, _, cx| view.keep(id, cx))),
                     )
-                    .child(icon_pill(("shelf-pin", id as u64), annotate::icons::SQUARE, text("取下为贴图")).on_click(
-                        cx.listener(move |view, _: &ClickEvent, _, cx| view.pin(id, cx)),
-                    ))
                     .child(
-                        icon_pill(("shelf-remove", id as u64), annotate::icons::CLOSE, text("从架子移除，保留历史"))
-                            .on_click(cx.listener(move |view, _: &ClickEvent, _, cx| view.remove(id, cx))),
+                        icon_pill(("shelf-pin", id as u64), icons::PANEL, text("取下为贴图"), false)
+                            .on_click(cx.listener(move |view, _: &ClickEvent, _, cx| view.pin(id, cx))),
                     ),
-            )
+            );
+        let frame = div()
+            .id(("shelf-card", id as u64))
+            .relative()
+            .p(px(4.0))
+            .rounded(px(13.0))
+            .border_1()
+            .border_color(rgba(0xffffffce))
+            .bg(linear_gradient(145.0, linear_color_stop(rgba(0xffffffe0), 0.0), linear_color_stop(rgba(0xf4f4f5c0), 1.0)))
+            .shadow_md()
+            .cursor_pointer()
+            .on_mouse_down(MouseButton::Left, cx.listener(move |view, event: &MouseDownEvent, _, _| {
+                view.press = Some((id, event.position))
+            }))
+            .on_mouse_up(MouseButton::Left, cx.listener(|view, _: &MouseUpEvent, _, _| view.press = None))
+            .on_mouse_move(cx.listener(|view, event: &MouseMoveEvent, _, cx| {
+                let Some((id, origin)) = view.press else {
+                    return;
+                };
+                if event.pressed_button != Some(MouseButton::Left) {
+                    view.press = None;
+                } else if (event.position - origin).x.abs() + (event.position - origin).y.abs() > px(6.0) {
+                    view.press = None;
+                    view.drag(id, cx);
+                }
+            }))
+            .on_click(cx.listener(move |view, _: &ClickEvent, window, cx| {
+                if !view.busy {
+                    view.copy(id, window, cx);
+                }
+            }))
+            .tooltip({
+                let tip = text("单击复制，拖动分享");
+                move |_, cx| cx.new(|_| annotate::Tooltip(tip.clone().into())).into()
+            })
+            .child(div().w(px(w)).h(px(h)).child(content))
+            .child(remove);
+        div()
+            .id(("shelf-item", id as u64))
+            .group(group)
+            .absolute()
+            .left(px(left))
+            .top(px(top))
+            .w(px(156.0))
+            .h(px(18.0 + frame_height + 48.0))
+            .flex()
+            .flex_col()
+            .items_center()
+            .pt(px(18.0))
+            .child(frame)
+            .child(clip)
+            .child(actions)
             .into_any_element()
     }
 }
@@ -726,52 +769,61 @@ impl Render for ShelfView {
         let language = self.language.clone();
         let text =
             move |key: &'static str| snap_core::i18n::for_language(&language, key).to_owned();
-        let mut controls = div()
-            .absolute()
-            .top(px(4.0))
-            .right(px(8.0))
-            .flex()
-            .gap(px(4.0));
+        // 右上角：撤销移除、收起（悬停时显示，Vue `.shelf-controls`）。
+        let control = |button: Stateful<Div>| {
+            button.bg(rgba(0xf8fafce8)).border_1().border_color(rgba(0xffffffc7)).shadow_sm()
+        };
+        let mut controls = div().absolute().top(px(5.0)).right(px(8.0)).flex().gap(px(5.0));
+        if !self.hovered {
+            controls = controls.invisible();
+        }
         if self.removed.is_some() {
             controls = controls.child(
-                self.round_button("shelf-undo", text("撤销移除"))
+                control(round_icon("shelf-undo", annotate::icons::UNDO, text("撤销移除"), true))
                     .on_click(cx.listener(|view, _: &ClickEvent, _, cx| view.undo(cx))),
             );
         }
         controls = controls.child(
-            self.round_button("shelf-close", text("收起"))
+            control(round_icon("shelf-close", annotate::icons::CLOSE, text("收起"), true))
                 .on_click(cx.listener(|_, _: &ClickEvent, _, cx| hide(cx))),
         );
         let pages = self.pages();
+        let page = self.page;
         let pager = (pages > 1).then(|| {
-            div()
-                .absolute()
-                .bottom(px(8.0))
-                .left(px(width / 2.0 - 50.0))
-                .w(px(100.0))
-                .py(px(2.0))
-                .rounded(px(14.0))
-                .bg(rgb(0xfafafa))
-                .border_1()
-                .border_color(rgb(0xe2e8f0))
-                .flex()
-                .items_center()
-                .justify_center()
-                .gap(px(4.0))
-                .child(
-                    self.round_button("shelf-prev", "‹".into())
-                        .on_click(cx.listener(|view, _: &ClickEvent, _, cx| view.turn(-1, cx))),
-                )
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(rgb(0x334155))
-                        .child(format!("{} / {pages}", self.page + 1)),
-                )
-                .child(
-                    self.round_button("shelf-next", "›".into())
-                        .on_click(cx.listener(|view, _: &ClickEvent, _, cx| view.turn(1, cx))),
-                )
+            let mut prev = round_icon("shelf-prev", icons::LEFT, text("上一组"), page > 0);
+            if page > 0 {
+                prev = prev.on_click(cx.listener(|view, _: &ClickEvent, _, cx| view.turn(-1, cx)));
+            }
+            let last = page + 1 >= pages;
+            let mut next = round_icon("shelf-next", icons::RIGHT, text("下一组"), !last);
+            if !last {
+                next = next.on_click(cx.listener(|view, _: &ClickEvent, _, cx| view.turn(1, cx)));
+            }
+            div().absolute().bottom(px(9.0)).left_0().right_0().flex().justify_center().child(
+                div()
+                    .px(px(4.0))
+                    .py(px(2.0))
+                    .flex()
+                    .items_center()
+                    .gap(px(3.0))
+                    .rounded(px(18.0))
+                    .border_1()
+                    .border_color(rgba(0xffffffb8))
+                    .bg(rgba(0xfafafae8))
+                    .shadow_sm()
+                    .opacity(if self.hovered { 1.0 } else { 0.65 })
+                    .child(prev)
+                    .child(
+                        div()
+                            .min_w(px(34.0))
+                            .flex()
+                            .justify_center()
+                            .text_size(px(11.0))
+                            .text_color(rgb(0x334155))
+                            .child(format!("{} / {pages}", page + 1)),
+                    )
+                    .child(next),
+            )
         });
         let feedback = match (&self.error, &self.message) {
             (Some(error), _) => Some((error.clone(), 0xb42318)),
@@ -779,20 +831,31 @@ impl Render for ShelfView {
             _ => None,
         };
         let empty = visible.is_empty().then(|| {
-            div()
-                .absolute()
-                .top(px(64.0))
-                .left(px(width / 2.0 - 80.0))
-                .w(px(160.0))
-                .py(px(8.0))
-                .rounded(px(16.0))
-                .bg(rgb(0xfafafa))
-                .text_xs()
-                .text_color(rgb(0x334155))
-                .flex()
-                .justify_center()
-                .child(text("暂无匹配内容"))
+            div().absolute().top(px(64.0)).left_0().right_0().flex().justify_center().child(
+                div()
+                    .px(px(14.0))
+                    .py(px(9.0))
+                    .rounded(px(18.0))
+                    .border_1()
+                    .border_color(rgba(0xffffffb8))
+                    .bg(rgba(0xfafafaf2))
+                    .shadow_sm()
+                    .text_xs()
+                    .text_color(rgb(0x334155))
+                    .child(text("暂无匹配内容")),
+            )
         });
+        // 下垂的绳子：沿 `rope_y` 的抛物线用短线段拼出（Vue 为 SVG 贝塞尔曲线：阴影、主体与高光三层）。
+        let mut rope = div().absolute().top_0().left_0().size_full();
+        let step = 4.0;
+        let mut x = 0.0;
+        while x < width {
+            let y = rope_y(x + step / 2.0, width);
+            rope = rope
+                .child(div().absolute().left(px(x)).top(px(y + 1.0)).w(px(step)).h(px(2.0)).bg(rgba(0x00000018)))
+                .child(div().absolute().left(px(x)).top(px(y)).w(px(step)).h(px(1.0)).bg(rgb(0x888b8e)));
+            x += step;
+        }
         div()
             .id("shelf")
             .size_full()
@@ -814,38 +877,26 @@ impl Render for ShelfView {
                     view.turn(if value > px(0.0) { -1 } else { 1 }, cx);
                 }
             }))
-            // 绳子：一条细灰线（Vue 版为下垂的贝塞尔曲线）。
-            .child(
-                div()
-                    .absolute()
-                    .top(px(12.0))
-                    .left_0()
-                    .w_full()
-                    .h(px(1.0))
-                    .bg(rgb(0x888b8e)),
-            )
+            .child(rope)
             .child(cards)
             .children(empty)
             .child(controls)
             .children(pager)
             .children(feedback.map(|(message, color)| {
-                div()
-                    .absolute()
-                    .bottom(px(40.0))
-                    .left(px(16.0))
-                    .right(px(16.0))
-                    .flex()
-                    .justify_center()
-                    .child(
-                        div()
-                            .px(px(10.0))
-                            .py(px(4.0))
-                            .rounded(px(10.0))
-                            .bg(rgb(0xfafafa))
-                            .text_xs()
-                            .text_color(rgb(color))
-                            .child(message),
-                    )
+                // 成功提示在顶部，错误在底部（Vue `.shelf-feedback` / `.shelf-error`）。
+                let bubble = div()
+                    .px(px(11.0))
+                    .py(px(5.0))
+                    .rounded(px(12.0))
+                    .border_1()
+                    .border_color(rgba(0xffffffc7))
+                    .bg(rgba(0xfafafaf5))
+                    .shadow_sm()
+                    .text_xs()
+                    .text_color(rgb(color))
+                    .child(message);
+                let row = div().absolute().left(px(16.0)).right(px(16.0)).flex().justify_center().child(bubble);
+                if color == 0x24834b { row.top(px(3.0)) } else { row.bottom(px(48.0)) }
             }))
             .text_color(rgb(annotate::text()))
     }

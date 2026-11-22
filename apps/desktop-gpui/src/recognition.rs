@@ -11,9 +11,10 @@
 //! 文字翻译窗口（对照 Vue 版 `TranslationWindow.vue`）复用同一面板、不带图片：“翻译”快捷键先在前台应用
 //! 复制选中文字（core `recognition::selected_text`；X11 读 PRIMARY 选区），取到时自动翻译，否则打开空白窗口
 //! 手动输入；窗口内可“截图翻译”。
-use crate::annotate;
+#[path = "recognition_ui.rs"]
+mod ui;
 use gpui_kit::{
-    component::input::{Textarea, TextareaState},
+    component::input::TextareaState,
     *,
 };
 use image::RgbaImage;
@@ -194,6 +195,8 @@ struct Panel {
     fill_translation: Option<String>,
     /// 窗口置顶（对照 Vue 翻译窗口的置顶按钮）；新窗口为普通层级。
     pinned: bool,
+    /// 显示左侧原图（Vue “显示/隐藏原图”）。
+    show_image: bool,
 }
 
 impl Panel {
@@ -234,6 +237,7 @@ impl Panel {
             fill: None,
             fill_translation: None,
             pinned: false,
+            show_image: true,
         }
     }
 
@@ -416,281 +420,6 @@ impl Panel {
                 window.remove_window();
             }
         }
-    }
-
-    fn button(&self, id: &'static str, label: String, primary: bool, enabled: bool) -> Stateful<Div> {
-        let mut b = div()
-            .id(id)
-            .h(px(28.0))
-            .px(px(10.0))
-            .flex()
-            .flex_none()
-            .items_center()
-            .rounded(px(6.0))
-            .text_sm()
-            .border_1()
-            .border_color(rgb(annotate::border()))
-            .text_color(rgb(if enabled { annotate::text() } else { 0x5b6470 }))
-            .bg(rgb(if primary && enabled { 0x2563eb } else { annotate::surface() }))
-            .child(label);
-        if enabled {
-            b = b.cursor_pointer().hover(|s| s.opacity(0.9));
-        }
-        b
-    }
-
-    fn tab(&self, id: &'static str, label: String, active: bool) -> Stateful<Div> {
-        div()
-            .id(id)
-            .px(px(10.0))
-            .py(px(4.0))
-            .rounded(px(6.0))
-            .cursor_pointer()
-            .text_sm()
-            .text_color(rgb(if active { annotate::active_fg() } else { annotate::muted() }))
-            .bg(rgb(if active { annotate::active_bg() } else { annotate::surface() }))
-            .child(label)
-    }
-
-    fn ocr_view(&self, cx: &mut Context<Self>) -> Div {
-        let idle = self.busy.is_none();
-        let has = self.ocr.is_some();
-        div()
-            .flex_1()
-            .flex()
-            .flex_col()
-            .gap(px(8.0))
-            .min_h(px(0.0))
-            .child(div().flex_1().min_h(px(0.0)).child(Textarea::new(&self.draft).h_full()))
-            .child(
-                div()
-                    .flex()
-                    .flex_wrap()
-                    .gap(px(6.0))
-                    .child(self.button("ocr-copy", self.t("复制"), true, has).on_click(cx.listener(|p, _: &ClickEvent, _, cx| {
-                        let value = p.draft.read(cx).value().to_string();
-                        p.copy(value, "已复制识别文字", cx);
-                    })))
-                    .child(self.button("ocr-merge", self.t("合并换行"), false, has).on_click(cx.listener(|p, _: &ClickEvent, _, cx| {
-                        let value = recognition::ocr::merge_lines(&p.draft.read(cx).value());
-                        p.fill = Some(value);
-                        cx.notify();
-                    })))
-                    .child(self.button("ocr-restore", self.t("还原识别结果"), false, has).on_click(cx.listener(|p, _: &ClickEvent, _, cx| {
-                        p.fill = p.ocr.as_ref().map(|r| r.full_text.clone());
-                        cx.notify();
-                    })))
-                    .child(self.button("ocr-retry", self.t("重新识别"), false, idle).on_click(cx.listener(|p, _: &ClickEvent, _, cx| p.recognize(cx))))
-                    .child(self.button("ocr-translate", self.t("翻译"), false, has && idle).on_click(cx.listener(|p, _: &ClickEvent, _, cx| {
-                        p.mode = Mode::Translate;
-                        cx.notify();
-                    }))),
-            )
-    }
-
-    fn translate_view(&self, cx: &mut Context<Self>) -> Div {
-        let idle = self.busy.is_none();
-        // 文字翻译窗口没有识别步骤，原文由用户输入或划词带入。
-        let has = self.ocr.is_some() || self.image.is_none();
-        let mut targets = div().flex().flex_wrap().items_center().gap(px(4.0)).child(
-            div().text_xs().text_color(rgb(annotate::muted())).child(self.t("译为")),
-        );
-        for (index, (code, name)) in TARGETS.into_iter().enumerate() {
-            let active = self.target == code;
-            targets = targets.child(
-                div()
-                    .id(("translate-target", index))
-                    .px(px(8.0))
-                    .py(px(2.0))
-                    .rounded(px(5.0))
-                    .cursor_pointer()
-                    .text_xs()
-                    .text_color(rgb(if active { annotate::active_fg() } else { annotate::text() }))
-                    .bg(rgb(if active { annotate::active_bg() } else { annotate::surface() }))
-                    .child(self.t(name))
-                    .on_click(cx.listener(move |p, _: &ClickEvent, _, cx| {
-                        p.target = code.into();
-                        cx.notify();
-                    })),
-            );
-        }
-        let service = recognition::services::translation_config(&self.settings)
-            .ok()
-            .and_then(|ai| url::Url::parse(&ai.endpoint).ok()?.host_str().map(str::to_owned))
-            .unwrap_or_default();
-        div()
-            .flex_1()
-            .flex()
-            .flex_col()
-            .gap(px(8.0))
-            .min_h(px(0.0))
-            .child(div().text_xs().text_color(rgb(annotate::muted())).child(self.t("原文（可编辑）")))
-            .child(div().flex_1().min_h(px(0.0)).child(Textarea::new(&self.draft).h_full()))
-            .child(targets)
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(rgb(annotate::muted()))
-                    .child(format!("{} {service}", self.t("只发送上方文字，不上传图片。翻译服务："))),
-            )
-            .child(
-                div()
-                    .flex()
-                    .gap(px(6.0))
-                    .child(self.button("translate-send", self.t("发送翻译"), true, has && idle).on_click(cx.listener(|p, _: &ClickEvent, _, cx| p.translate(cx))))
-                    .child(self.button("translate-copy", self.t("复制译文"), false, idle).on_click(cx.listener(|p, _: &ClickEvent, _, cx| {
-                        let value = p.translated.read(cx).value().to_string();
-                        p.copy(value, "已复制译文", cx);
-                    })))
-                    .children(self.image.is_none().then(|| {
-                        self.button("translate-capture", self.t("截图翻译"), false, idle).on_click(cx.listener(|_, _: &ClickEvent, window, cx| {
-                            // 框选完成后在新的图片翻译窗口中显示结果；本窗口保留。
-                            let mut settings = crate::shell::settings(cx);
-                            settings.delay_seconds = 0;
-                            crate::capture::start(cx, &settings, Duration::from_millis(150), Some(Mode::Translate));
-                            window.minimize_window();
-                        }))
-                    })),
-            )
-            .child(div().text_xs().text_color(rgb(annotate::muted())).child(self.t("译文")))
-            .child(div().flex_1().min_h(px(0.0)).child(Textarea::new(&self.translated).h_full()))
-    }
-
-    fn qr_view(&self, cx: &mut Context<Self>) -> Div {
-        let mut list = div().flex_1().flex().flex_col().gap(px(8.0));
-        for (index, item) in self.qr.iter().flatten().enumerate() {
-            let mut row = div()
-                .p(px(8.0))
-                .flex()
-                .flex_col()
-                .gap(px(6.0))
-                .rounded(px(8.0))
-                .border_1()
-                .border_color(rgb(annotate::border()))
-                .child(div().text_sm().text_color(rgb(annotate::text())).child(item.text.clone()));
-            let mut actions = div().flex().gap(px(6.0)).child(
-                self.button("qr-copy", self.t("复制"), false, true)
-                    .id(("qr-copy", index))
-                    .on_click(cx.listener(move |p, _: &ClickEvent, _, cx| {
-                        if let Some(text) = p.qr.as_ref().and_then(|items| items.get(index)).map(|i| i.text.clone()) {
-                            p.copy(text, "已复制", cx);
-                        }
-                    })),
-            );
-            if item.url.is_some() {
-                if self.pending_link == Some(index) {
-                    actions = actions
-                        .child(div().text_xs().text_color(rgb(crate::theme::c().warn_text)).child(self.t("确认在浏览器中打开此链接？")))
-                        .child(self.button("qr-open-confirm", self.t("打开"), true, true).id(("qr-open-confirm", index)).on_click(cx.listener(move |p, _: &ClickEvent, _, cx| {
-                            if let Some(url) = p.qr.as_ref().and_then(|items| items.get(index)).and_then(|i| i.url.clone()) {
-                                cx.open_url(&url);
-                                p.message = Some(p.t("已请求浏览器打开链接"));
-                            }
-                            p.pending_link = None;
-                            cx.notify();
-                        })))
-                        .child(self.button("qr-open-cancel", self.t("取消"), false, true).id(("qr-open-cancel", index)).on_click(cx.listener(|p, _: &ClickEvent, _, cx| {
-                            p.pending_link = None;
-                            cx.notify();
-                        })));
-                } else {
-                    actions = actions.child(self.button("qr-open", self.t("打开链接"), false, true).id(("qr-open", index)).on_click(cx.listener(move |p, _: &ClickEvent, _, cx| {
-                        p.pending_link = Some(index);
-                        cx.notify();
-                    })));
-                }
-            }
-            row = row.child(actions);
-            list = list.child(row);
-        }
-        list
-    }
-}
-
-impl Render for Panel {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if let Some(value) = self.fill.take() {
-            self.draft.update(cx, |state, cx| state.set_value(value, window, cx));
-        }
-        if let Some(value) = self.fill_translation.take() {
-            self.translated.update(cx, |state, cx| state.set_value(value, window, cx));
-        }
-        let pinned = self.pinned;
-        let pin = annotate::icon_button(
-            "recognition-pin",
-            if pinned { annotate::icons::PIN_OFF } else { annotate::icons::PIN },
-            self.t(if pinned { "取消置顶" } else { "置顶窗口" }),
-            pinned,
-            false,
-        )
-        .on_click(cx.listener(move |p, _: &ClickEvent, window, cx| {
-            match crate::native::set_topmost(window, !pinned) {
-                Ok(()) => p.pinned = !pinned,
-                Err(error) => p.error = Some(snap_core::i18n::for_language(&p.settings.appearance.language, &error).to_owned()),
-            }
-            cx.notify();
-        }));
-        let tabs = match self.mode {
-            Mode::Qr => div(),
-            _ if self.image.is_none() => div(),
-            _ => div()
-                .flex()
-                .gap(px(4.0))
-                .child(self.tab("tab-ocr", self.t("文字"), self.mode == Mode::Ocr).on_click(cx.listener(|p, _: &ClickEvent, _, cx| {
-                    p.mode = Mode::Ocr;
-                    cx.notify();
-                })))
-                .child(self.tab("tab-translate", self.t("翻译"), self.mode == Mode::Translate).on_click(cx.listener(|p, _: &ClickEvent, _, cx| {
-                    p.mode = Mode::Translate;
-                    cx.notify();
-                }))),
-        };
-        let body = match self.mode {
-            Mode::Ocr => self.ocr_view(cx),
-            Mode::Translate => self.translate_view(cx),
-            Mode::Qr => self.qr_view(cx),
-        };
-        let status = if let Some(busy) = self.busy {
-            Some(div().text_xs().text_color(rgb(annotate::muted())).child(self.t(busy)))
-        } else if let Some(error) = self.error.clone() {
-            Some(div().text_xs().text_color(rgb(crate::theme::c().error_text)).child(error))
-        } else {
-            self.message.clone().map(|m| div().text_xs().text_color(rgb(crate::theme::c().ok_text)).child(m))
-        };
-        div()
-            .id("recognition")
-            .track_focus(&self.focus)
-            .on_key_down(cx.listener(Self::key))
-            .size_full()
-            .flex()
-            .gap(px(12.0))
-            .p(px(12.0))
-            .bg(rgb(crate::theme::c().panel))
-            .text_color(rgb(annotate::text()))
-            .children(self.preview.clone().map(|preview| {
-                div()
-                    .w(relative(0.42))
-                    .h_full()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded(px(8.0))
-                    .bg(rgb(crate::theme::c().window_bg))
-                    .overflow_hidden()
-                    .child(img(preview).size_full().object_fit(ObjectFit::Contain))
-            }))
-            .child(
-                div()
-                    .flex_1()
-                    .h_full()
-                    .flex()
-                    .flex_col()
-                    .gap(px(8.0))
-                    .min_w(px(0.0))
-                    .child(div().flex().items_center().child(tabs).child(div().flex_1()).child(pin))
-                    .child(body)
-                    .children(status),
-            )
     }
 }
 

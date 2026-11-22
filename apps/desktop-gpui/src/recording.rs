@@ -620,8 +620,9 @@ pub fn protect(window: &Window) {
     }
 }
 
-const BAR_WIDTH: f32 = 540.0;
-const BAR_HEIGHT: f32 = 44.0;
+/// 与 Tauri 版录屏控制条窗口一致（480×48）。
+const BAR_WIDTH: f32 = 480.0;
+const BAR_HEIGHT: f32 = 48.0;
 
 /// 控制条放在选区下方；放不下时放在上方，再不行放在选区内底部。
 fn bar_bounds(screen: Bounds<Pixels>, region: Bounds<Pixels>) -> Bounds<Pixels> {
@@ -793,34 +794,6 @@ impl Controls {
             self.notice = Some(error);
         }
     }
-
-    fn button(
-        &self,
-        id: &'static str,
-        icon: &'static [u8],
-        label: String,
-        primary: bool,
-    ) -> Stateful<Div> {
-        div()
-            .id(id)
-            .h(px(28.0))
-            .px(px(10.0))
-            .flex()
-            .items_center()
-            .gap(px(6.0))
-            .rounded(px(6.0))
-            .text_xs()
-            .cursor_pointer()
-            .text_color(rgb(crate::annotate::text()))
-            .bg(rgb(if primary {
-                0x2563eb
-            } else {
-                crate::annotate::hover()
-            }))
-            .hover(|s| s.opacity(0.85))
-            .child(crate::annotate::icon(icon, crate::annotate::text()))
-            .child(label)
-    }
 }
 
 /// 时长显示为 分:秒（超过 1 小时为 时:分:秒）。
@@ -836,190 +809,184 @@ fn clock(seconds: f64) -> String {
 
 impl Render for Controls {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let phase = self.view.as_ref().map(|v| v.phase);
-        let seconds = self.view.as_ref().map_or(0.0, |v| v.seconds);
-        let message = self.notice.clone().unwrap_or_else(|| self.status());
-        let path = self
-            .view
-            .as_ref()
-            .and_then(|v| v.path.clone())
-            .map(PathBuf::from);
-        let dot = match phase {
-            Some(Phase::Recording) => RED,
-            Some(Phase::Countdown) | Some(Phase::Paused) | Some(Phase::Ready) => 0xf59e0b,
-            Some(Phase::Completed) => 0x22c55e,
-            _ => crate::annotate::muted(),
-        };
-        let mut buttons = div().flex().items_center().gap(px(6.0));
-        match phase {
-            Some(Phase::Ready) => {
-                buttons =
-                    buttons.child(
-                        self.button(
-                            "rec-start",
-                            crate::annotate::icons::PLAY,
-                            self.t("开始录制"),
-                            true,
-                        )
-                        .on_click(cx.listener(
-                            |v, _: &ClickEvent, w, cx| v.act(RecordingAction::Start, w, cx),
-                        )),
-                    );
-            }
-            Some(Phase::Recording) | Some(Phase::Paused) | Some(Phase::Countdown) => {
-                if phase == Some(Phase::Paused) {
-                    buttons = buttons.child(
-                        self.button(
-                            "rec-resume",
-                            crate::annotate::icons::PLAY,
-                            self.t("继续"),
-                            false,
-                        )
-                        .on_click(cx.listener(
-                            |v, _: &ClickEvent, w, cx| v.act(RecordingAction::Resume, w, cx),
-                        )),
-                    );
-                } else if phase == Some(Phase::Recording) {
-                    buttons = buttons.child(
-                        self.button(
-                            "rec-pause",
-                            crate::annotate::icons::PAUSE,
-                            self.t("暂停"),
-                            false,
-                        )
-                        .on_click(cx.listener(
-                            |v, _: &ClickEvent, w, cx| v.act(RecordingAction::Pause, w, cx),
-                        )),
-                    );
-                }
-                if self.annotations && phase != Some(Phase::Countdown) {
-                    buttons = buttons.child(
-                        self.button(
-                            "rec-annotate",
-                            crate::annotate::icons::PENCIL,
-                            self.t("标注"),
-                            false,
-                        )
-                        .on_click(|_, _, cx| toggle_annotations(cx)),
-                    );
-                }
-                buttons = buttons
-                    .child(
-                        self.button(
-                            "rec-stop",
-                            crate::annotate::icons::SQUARE,
-                            self.t("停止并保存"),
-                            true,
-                        )
-                        .on_click(cx.listener(
-                            |v, _: &ClickEvent, w, cx| v.act(RecordingAction::Stop, w, cx),
-                        )),
-                    )
-                    .child(
-                        self.button(
-                            "rec-cancel",
-                            crate::annotate::icons::CLOSE,
-                            self.t("取消"),
-                            false,
-                        )
-                        .on_click(cx.listener(
-                            |v, _: &ClickEvent, w, cx| v.act(RecordingAction::Cancel, w, cx),
-                        )),
-                    );
-            }
-            Some(Phase::Encoding) | None => {}
-            Some(_) => {
-                if let Some(path) = path.clone() {
-                    let copy_path = path.clone();
-                    buttons = buttons
-                        .child(
-                            self.button(
-                                "rec-folder",
-                                crate::annotate::icons::FOLDER_OPEN,
-                                self.t("打开文件夹"),
-                                false,
-                            )
-                            .on_click(cx.listener(
-                                move |v, _: &ClickEvent, _, cx| {
-                                    v.open_directory(&path);
-                                    cx.notify();
-                                },
-                            )),
-                        )
-                        .child(
-                            self.button(
-                                "rec-copy",
-                                crate::annotate::icons::COPY,
-                                self.t("复制路径"),
-                                false,
-                            )
-                            .on_click(cx.listener(
-                                move |v, _: &ClickEvent, _, cx| {
-                                    cx.write_to_clipboard(ClipboardItem::new_string(
-                                        copy_path.to_string_lossy().into_owned(),
-                                    ));
-                                    v.notice = Some(v.t("已复制路径"));
-                                    cx.notify();
-                                },
-                            )),
-                        );
-                }
-                buttons =
-                    buttons.child(
-                        self.button(
-                            "rec-close",
-                            crate::annotate::icons::CLOSE,
-                            self.t("关闭"),
-                            false,
-                        )
-                        .on_click(cx.listener(
-                            |v, _: &ClickEvent, w, cx| v.act(RecordingAction::Cancel, w, cx),
-                        )),
-                    );
-            }
-        }
-        let show_clock = matches!(
-            phase,
-            Some(Phase::Recording | Phase::Paused | Phase::Encoding | Phase::Completed)
-        );
-        // 成功后提示文字显示文件名，完整路径只在复制时使用。
-        let message = match (phase, &path) {
+        // 还原 Vue `RecordingControls.vue`：红点、时长、状态、分隔线、帧率，右侧图标按钮；与截图工具栏同款胶囊。
+        use crate::annotate::{border, hover, icon, icons, muted, surface, text};
+        let view = self.view.clone();
+        let phase = view.as_ref().map(|v| v.phase);
+        let seconds = view.as_ref().map_or(0.0, |v| v.seconds);
+        let path = view.as_ref().and_then(|v| v.path.clone()).map(PathBuf::from);
+        let live = matches!(phase, Some(Phase::Ready | Phase::Countdown | Phase::Recording | Phase::Paused));
+        let recording = phase == Some(Phase::Recording);
+        let status = match (phase, &path) {
             (Some(Phase::Completed), Some(path)) if self.notice.is_none() => path
                 .file_name()
                 .map(|name| name.to_string_lossy().into_owned())
-                .unwrap_or(message),
-            _ => message,
+                .unwrap_or_else(|| self.status()),
+            _ => self.notice.clone().unwrap_or_else(|| self.status()),
         };
+        let tool = |id: &'static str, data: &'static [u8], tip: String, color: u32, enabled: bool| {
+            let button = div()
+                .id(id)
+                .h(px(30.0))
+                .min_w(px(30.0))
+                .px(px(6.0))
+                .flex()
+                .flex_none()
+                .items_center()
+                .justify_center()
+                .gap(px(4.0))
+                .rounded(px(6.0))
+                .child(icon(data, color).size(px(17.0)))
+                .tooltip(move |_, cx| cx.new(|_| crate::annotate::Tooltip(tip.clone().into())).into());
+            if enabled {
+                button.cursor_pointer().hover(|s| s.bg(rgb(hover())))
+            } else {
+                button.opacity(0.4)
+            }
+        };
+        let mut buttons = div().flex().flex_none().items_center().gap(px(2.0));
+        match phase {
+            Some(Phase::Ready) => {
+                buttons = buttons.child(
+                    div()
+                        .id("rec-start")
+                        .h(px(30.0))
+                        .px(px(12.0))
+                        .flex()
+                        .items_center()
+                        .gap(px(4.0))
+                        .rounded(px(6.0))
+                        .bg(rgb(0x2563eb))
+                        .text_color(rgb(0xffffff))
+                        .cursor_pointer()
+                        .hover(|s| s.bg(rgb(0x1d4ed8)))
+                        .child(icon(icons::PLAY, 0xffffff).size(px(15.0)))
+                        .child(self.t("开始"))
+                        .on_click(cx.listener(|v, _: &ClickEvent, w, cx| v.act(RecordingAction::Start, w, cx))),
+                );
+            }
+            Some(Phase::Countdown) => {
+                buttons = buttons.child(
+                    div()
+                        .h(px(30.0))
+                        .px(px(6.0))
+                        .flex()
+                        .items_center()
+                        .gap(px(4.0))
+                        .opacity(0.4)
+                        .child(icon(icons::PLAY, text()).size(px(15.0)))
+                        .child(self.t("等待开始")),
+                );
+            }
+            Some(Phase::Paused) => {
+                buttons = buttons.child(
+                    tool("rec-resume", icons::PLAY, self.t("继续录制"), text(), true)
+                        .on_click(cx.listener(|v, _: &ClickEvent, w, cx| v.act(RecordingAction::Resume, w, cx))),
+                );
+            }
+            Some(Phase::Recording) => {
+                buttons = buttons.child(
+                    tool("rec-pause", icons::PAUSE, self.t("暂停录制"), text(), true)
+                        .on_click(cx.listener(|v, _: &ClickEvent, w, cx| v.act(RecordingAction::Pause, w, cx))),
+                );
+            }
+            _ => {}
+        }
+        if live {
+            let stoppable = matches!(phase, Some(Phase::Recording | Phase::Paused));
+            let mut stop = tool("rec-stop", icons::SQUARE, self.t("结束录制并保存"), 0xe5484d, stoppable);
+            if stoppable {
+                stop = stop.on_click(cx.listener(|v, _: &ClickEvent, w, cx| v.act(RecordingAction::Stop, w, cx)));
+            }
+            buttons = buttons
+                .child(stop)
+                .child(
+                    tool("rec-cancel", icons::CLOSE, self.t("取消并丢弃本次录屏"), text(), true)
+                        .on_click(cx.listener(|v, _: &ClickEvent, w, cx| v.act(RecordingAction::Cancel, w, cx))),
+                );
+            if self.annotations {
+                buttons = buttons.child(
+                    tool("rec-annotate", icons::PENCIL, self.t("录制中标注"), text(), true)
+                        .on_click(|_, _, cx| toggle_annotations(cx)),
+                );
+            }
+        } else if phase.is_some() && phase != Some(Phase::Encoding) {
+            // 结束后的结果：打开文件夹、复制路径、关闭。
+            if let Some(path) = path.clone() {
+                let copy_path = path.clone();
+                buttons = buttons
+                    .child(
+                        tool("rec-folder", icons::FOLDER_OPEN, self.t("打开文件夹"), text(), true).on_click(cx.listener(
+                            move |v, _: &ClickEvent, _, cx| {
+                                v.open_directory(&path);
+                                cx.notify();
+                            },
+                        )),
+                    )
+                    .child(
+                        tool("rec-copy", icons::COPY, self.t("复制路径"), text(), true).on_click(cx.listener(
+                            move |v, _: &ClickEvent, _, cx| {
+                                cx.write_to_clipboard(ClipboardItem::new_string(copy_path.to_string_lossy().into_owned()));
+                                v.notice = Some(v.t("已复制路径"));
+                                cx.notify();
+                            },
+                        )),
+                    );
+            }
+            buttons = buttons.child(
+                tool("rec-close", icons::CLOSE, self.t("关闭"), text(), true)
+                    .on_click(cx.listener(|v, _: &ClickEvent, w, cx| v.act(RecordingAction::Cancel, w, cx))),
+            );
+        }
+        let fps = view.as_ref().filter(|_| phase != Some(Phase::Countdown) && live).map(|v| {
+            let dropped = v.dropped_frames > 0;
+            let mut label = format!("{} FPS", v.target_fps);
+            if dropped {
+                label = format!("{label} · {}", self.t("丢帧 {0}").replace("{0}", &v.dropped_frames.to_string()));
+            }
+            div()
+                .text_size(px(11.0))
+                .whitespace_nowrap()
+                .text_color(rgb(if dropped { 0xb45309 } else { muted() }))
+                .child(label)
+        });
+        let dot = div()
+            .flex_none()
+            .size(px(10.0))
+            .mr(px(6.0))
+            .rounded_full()
+            .bg(rgb(if recording { 0xe5484d } else if phase == Some(Phase::Completed) { 0x22c55e } else { 0xa1a1aa }));
+        let dot = if recording { dot.border_3().border_color(rgba(0xe5484d33)).size(px(16.0)).mx(px(-3.0)) } else { dot };
         div()
             .size_full()
             .flex()
             .items_center()
-            .gap(px(10.0))
-            .px(px(12.0))
+            .gap(px(2.0))
+            .pl(px(12.0))
+            .pr(px(6.0))
             .rounded(px(10.0))
-            .bg(rgb(crate::annotate::surface()))
+            .overflow_hidden()
+            .bg(rgb(surface()))
             .border_1()
-            .border_color(rgb(crate::annotate::border()))
-            .text_color(rgb(crate::annotate::text()))
-            .child(div().size(px(10.0)).rounded_full().bg(rgb(dot)))
-            .children(show_clock.then(|| {
-                div()
-                    .text_sm()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .min_w(px(44.0))
-                    .child(clock(seconds))
+            .border_color(rgb(border()))
+            .text_xs()
+            .text_color(rgb(text()))
+            .child(dot)
+            .children((phase != Some(Phase::Ready)).then(|| {
+                div().mr(px(6.0)).text_size(px(14.0)).whitespace_nowrap().child(clock(seconds))
             }))
             .child(
                 div()
-                    .flex_1()
-                    .min_w_0()
+                    .min_w(px(42.0))
                     .overflow_hidden()
                     .text_ellipsis()
                     .whitespace_nowrap()
-                    .text_xs()
-                    .text_color(rgb(crate::annotate::muted()))
-                    .child(message),
+                    .text_color(rgb(muted()))
+                    .child(status),
             )
+            .child(div().flex_none().w(px(1.0)).h(px(18.0)).mx(px(6.0)).bg(rgb(border())))
+            .children(fps)
+            .child(div().flex_1())
             .child(buttons)
     }
 }
