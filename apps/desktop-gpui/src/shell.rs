@@ -258,6 +258,18 @@ fn handle(cx: &mut App, event: ShellEvent) {
             }
             let action = cx.global::<Shell>().bindings.get(&event.id).copied();
             if let Some(action) = action {
+                // 快捷键兼容测试中只记录按键，不执行动作；截图、录屏、滚动截图进行中立即让出热键。
+                let busy = crate::capture::active(cx) || crate::recording::active(cx) || crate::scroll::active(cx);
+                if !busy {
+                    let value = cx.global::<Shell>().settings.shortcuts.entries().into_iter()
+                        .find(|(a, _, _)| *a == action)
+                        .map(|(_, _, value)| value.to_owned());
+                    if let Some(value) = value {
+                        if crate::settings_window::probe::receive(value) {
+                            return;
+                        }
+                    }
+                }
                 run_action(cx, action, "hotkey");
             }
         }
@@ -497,6 +509,29 @@ pub fn suspend_shortcuts(cx: &mut App, suspend: bool) {
     });
 }
 
+/// 快捷键兼容测试的注册快照：已注册的按键（设置中的写法）与被占用的按键。
+pub fn probe_registration(cx: &App) -> snap_core::settings::shortcut_probe::Registration {
+    let shell = cx.global::<Shell>();
+    let mut registered = Vec::new();
+    let mut occupied = Vec::new();
+    for (_, _, value) in shell.settings.shortcuts.entries() {
+        let Some(key) = settings::parse_shortcut(value).ok().flatten() else {
+            continue;
+        };
+        if shell.registered.contains(&key) {
+            registered.push(value.to_owned());
+        } else if shell.settings.shortcuts_enabled && !shell.suspended {
+            occupied.push(value.to_owned());
+        }
+    }
+    snap_core::settings::shortcut_probe::Registration {
+        enabled: shell.settings.shortcuts_enabled,
+        editing: shell.suspended,
+        error: (!occupied.is_empty()).then(|| occupied.join("、")),
+        registered,
+    }
+}
+
 /// 被系统或其他程序占用、暂未生效的动作（设置界面标注“已被占用”）。
 pub fn unavailable_shortcuts(cx: &App) -> Vec<ShortcutAction> {
     let shell = cx.global::<Shell>();
@@ -522,6 +557,8 @@ pub fn settings(cx: &App) -> Settings {
 
 /// 托盘、快捷键与命令行共用的动作入口。
 pub fn run_action(cx: &mut App, action: ShortcutAction, source: &str) {
+    // 托盘或菜单发起的动作结束进行中的快捷键测试（测试中的热键已在上面被记录并拦下）。
+    crate::settings_window::probe::interrupt();
     match action {
         ShortcutAction::Capture => {
             // 滚动截图采集中按截图键：结束采集并输出（与 Tauri 版一致）。

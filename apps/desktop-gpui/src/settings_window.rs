@@ -114,6 +114,8 @@ pub fn open(cx: &mut App) {
 
 #[path = "settings_about.rs"]
 mod about_page;
+#[path = "settings_probe.rs"]
+pub(crate) mod probe;
 #[path = "settings_local.rs"]
 mod local_page;
 #[path = "settings_logs.rs"]
@@ -219,6 +221,8 @@ struct SettingsView {
     resource_progress: resources_page::Progress,
     /// 本地翻译引擎与语言包状态。
     local: Option<Result<snap_core::recognition::local_models::LocalStatus, String>>,
+    /// 快捷键兼容测试。
+    probe: probe::Probe,
     /// 每次文本修改加一；防抖任务只保存最新一次。
     generation: u64,
     capture: Option<Capture>,
@@ -294,6 +298,7 @@ impl SettingsView {
             resource_busy: false,
             resource_progress: Default::default(),
             local: None,
+            probe: Default::default(),
             generation: 0,
             capture: None,
             error: None,
@@ -1711,6 +1716,8 @@ impl SettingsView {
                 .text_color(rgb(col::muted()))
                 .child(t("点击按键框后按下组合键；Esc 取消，Backspace 禁用。"))
                 .into_any_element(),
+            div().mt(px(18.0)).child(heading(t("排查"))).into_any_element(),
+            card(self.probe_rows(t, cx)).into_any_element(),
         ]
     }
 }
