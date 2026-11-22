@@ -18,7 +18,7 @@ static FONT_STATUS: status_cache::StatusCache<bool> = status_cache::StatusCache:
 
 /// 资源清单、类别与摘要校验在 core，GPUI 版与本外壳共用。
 pub use snap_core::resources::ResourceKind;
-pub(crate) use snap_core::resources::{verified, Asset};
+pub(crate) use snap_core::resources::Asset;
 use snap_core::resources::{manifest, read_font, FONT_FILE};
 
 /// 设置页展示的实际可用状态，不把“文件存在”直接当作“资源已就绪”。
@@ -147,7 +147,7 @@ pub async fn download_resources(
     .map_err(|e| e.to_string())?
 }
 
-fn emit_progress(app: &AppHandle, name: &str, received: u64, total: u64) {
+pub(crate) fn emit_progress(app: &AppHandle, name: &str, received: u64, total: u64) {
     let _ = app.emit_to(
         "main",
         "resource-download-progress",
@@ -159,17 +159,6 @@ fn emit_progress(app: &AppHandle, name: &str, received: u64, total: u64) {
     );
 }
 
-/// 下载到临时文件，大小和摘要通过后才返回（core）；进度发给主窗口。
-pub(crate) fn download_file(
-    app: &AppHandle,
-    client: &reqwest::blocking::Client,
-    dir: &Path,
-    asset: &Asset,
-) -> Result<tempfile::NamedTempFile, String> {
-    snap_core::resources::download_file(client, dir, asset, &mut |received, total| {
-        emit_progress(app, &asset.name, received, total)
-    })
-}
 
 /// 由系统对话框授权读取文件，并复制到应用目录；原文件移走后仍可导出。
 #[tauri::command]

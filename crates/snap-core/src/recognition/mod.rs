@@ -1,7 +1,10 @@
 //! 识别与翻译：配置模型（服务目录、翻译与 OCR 设置及地址白名单）、OCR 引擎（本地 PP-OCR、
 //! Windows OCR / Apple Vision、在线 OCR 与 PaddleOCR 服务）、二维码、在线翻译与系统凭据库。
-//! 微信 OCR 与本地 CTranslate2 翻译仍在 `src-tauri/src/recognition`（依赖其窗口/资源生命周期）。
+//! 本地 CTranslate2 翻译（引擎安装、语言包、worker 进程桥）在 local_*；微信 OCR 仍在 `src-tauri/src/recognition`。
 pub mod ai_credentials;
+pub mod local_models;
+pub mod local_runtime;
+pub mod local_worker;
 pub mod ocr;
 pub mod ocr_config;
 #[cfg(windows)]
