@@ -5,15 +5,15 @@
 //! - “测试”使用已保存的连接与密钥；有未保存的修改时先保存（不关闭编辑），再测试。
 //!
 //! 密钥只写系统凭据库（core `ai_credentials`），配置里只保存标识。
-use super::super::{col, row, SettingsView};
-use super::{new_id, ServiceEditor};
+use super::super::{SettingsView, col, row};
+use super::{ServiceEditor, new_id};
 use gpui_kit::{
     component::input::{Input, InputState},
     *,
 };
 use snap_core::recognition::{
     ai_credentials,
-    services::{self, RecognitionService, ServiceKeyInfo, ServiceTest, MAX_KEYS},
+    services::{self, MAX_KEYS, RecognitionService, ServiceKeyInfo, ServiceTest},
 };
 use std::collections::HashMap;
 

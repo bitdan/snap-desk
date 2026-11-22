@@ -3,12 +3,12 @@
 //! 测试与平台探测在 core（`snap_core::settings::shortcut_probe`）。测试期间外壳的热键回调先交给
 //! [`receive`]，返回 true 时不执行动作；托盘或菜单发起的动作调用 [`interrupt`] 结束测试。
 //! macOS 输入法标识需在主线程读取，GPUI 版暂报告为未知。
-use super::{col, row, SettingsView};
+use super::{SettingsView, col, row};
 use gpui_kit::*;
 use snap_core::settings::shortcut_probe::{self, ProbeReport, ProbeState};
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
     LazyLock,
+    atomic::{AtomicBool, Ordering},
 };
 
 static STATE: LazyLock<ProbeState> = LazyLock::new(ProbeState::default);

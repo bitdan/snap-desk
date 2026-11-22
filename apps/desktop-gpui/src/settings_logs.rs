@@ -3,7 +3,7 @@
 //! 读取 GPUI 版日志文件（`snap-desk-gpui.log` 与轮转的 `.log.old`）的有限尾部，经 core 白名单清洗后显示：
 //! GPUI 外壳事件只显示事件名，core 事件按审计字段显示，其余行计入“已省略”。可修改日志级别（立即生效，
 //! 与 Tauri 版共用本机偏好）、按级别筛选、刷新、打开目录、清理历史日志（确认后只删归档）、导出本地诊断包。
-use super::{card, col, heading, row, SettingsView};
+use super::{SettingsView, card, col, heading, row};
 use gpui_kit::*;
 use snap_core::diagnostics::{
     logs::{self, Entry, Level, Query},

@@ -11,7 +11,10 @@
 //! 通用页：开机自启（core `autostart`，与 Tauri 版共用登录项）、配置导出/导入（core `settings::backup`，
 //! 导入事务见 `shell::import_backup`）。
 use gpui_kit::{
-    component::input::{Input, InputEvent, InputState},
+    component::{
+        Icon, Sizable,
+        input::{Input, InputEvent, InputState},
+    },
     *,
 };
 use snap_core::{
@@ -23,45 +26,94 @@ use std::{
     time::Duration,
 };
 
-/// 设置窗口配色，随主题变化（见 `theme.rs`）。
+/// 设置窗口配色（Vue `.app-shell` 的 `--desk-*` 变量，见 `theme::desk`），随主题变化。
 mod col {
-    pub fn surface() -> u32 {
-        crate::theme::c().surface
+    fn d() -> &'static crate::theme::DeskPalette {
+        crate::theme::desk()
     }
+    /// 卡片、输入框底色。
+    pub fn surface() -> u32 {
+        d().surface
+    }
+    /// 内容区底色。
     pub fn page_bg() -> u32 {
-        crate::theme::c().page
+        d().bg
     }
     pub fn border() -> u32 {
-        crate::theme::c().border
+        d().border
+    }
+    /// 控件细线框。
+    pub fn line() -> u32 {
+        d().line
+    }
+    /// 卡片内行分隔线。
+    pub fn sep() -> u32 {
+        d().sep
     }
     pub fn text() -> u32 {
-        crate::theme::c().text
+        d().text
     }
     pub fn muted() -> u32 {
-        crate::theme::c().muted
+        d().muted
     }
     pub fn accent() -> u32 {
-        crate::theme::c().accent
+        d().accent
+    }
+    /// 强调色文字（深色主题下更亮）。
+    pub fn accent_fg() -> u32 {
+        d().accent_fg
     }
     pub fn danger() -> u32 {
-        crate::theme::c().danger
+        d().danger
     }
     pub fn accent_soft() -> u32 {
-        crate::theme::c().accent_soft
+        d().soft
     }
     pub fn nav() -> u32 {
-        crate::theme::c().nav
+        d().nav
     }
     pub fn toggle_off() -> u32 {
-        crate::theme::c().toggle_off
+        d().line
     }
     pub fn hover() -> u32 {
-        crate::theme::c().hover
+        d().hover
+    }
+    pub fn hover_nav() -> u32 {
+        d().hover_nav
     }
     pub fn success() -> u32 {
-        crate::theme::c().success
+        d().success
+    }
+    pub fn notice() -> u32 {
+        d().notice
+    }
+    pub fn notice_error() -> u32 {
+        d().notice_error
     }
 }
+/// 设置窗口用到的 Lucide 图标（ISC，见 assets/icons/LICENSE-LUCIDE）。
+mod icons {
+    macro_rules! icon {
+        ($name:ident, $file:literal) => {
+            pub const $name: &[u8] = include_bytes!(concat!("../assets/icons/", $file, ".svg"));
+        };
+    }
+    icon!(SCAN, "scan");
+    icon!(SEARCH, "search");
+    icon!(CAMERA, "camera");
+    icon!(VIDEO, "video");
+    icon!(PIN, "pin");
+    icon!(CLIPBOARD, "clipboard-list");
+    icon!(SETTINGS, "settings");
+    icon!(KEYBOARD, "keyboard");
+    icon!(LANGUAGES, "languages");
+    icon!(LOGS, "file-text");
+    icon!(INFO, "info");
+    icon!(CHEVRON, "chevron-down");
+    icon!(CHECK, "check");
+    icon!(X, "x");
+}
+
 /// 文本框停顿多久后保存。
 const DEBOUNCE: Duration = Duration::from_millis(500);
 /// 与截图标注色板一致的贴图边框预设。
@@ -87,7 +139,8 @@ pub fn open(cx: &mut App) {
     }
     let settings = crate::shell::settings(cx);
     let title = snap_core::i18n::for_language(&settings.appearance.language, "设置").to_owned();
-    let size = size(px(760.0), px(580.0));
+    // 与 Tauri 主窗口一致：820×580，最小 680×500。
+    let size = size(px(820.0), px(580.0));
     let options = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(Bounds::centered(None, size, cx))),
         titlebar: Some(TitlebarOptions {
@@ -98,7 +151,7 @@ pub fn open(cx: &mut App) {
         show: true,
         kind: WindowKind::Normal,
         is_resizable: true,
-        window_min_size: Some(gpui_kit::size(px(600.0), px(420.0))),
+        window_min_size: Some(gpui_kit::size(px(680.0), px(500.0))),
         ..Default::default()
     };
     match cx.open_window(options, |window, cx| {
@@ -114,12 +167,12 @@ pub fn open(cx: &mut App) {
 
 #[path = "settings_about.rs"]
 mod about_page;
-#[path = "settings_probe.rs"]
-pub(crate) mod probe;
 #[path = "settings_local.rs"]
 mod local_page;
 #[path = "settings_logs.rs"]
 mod logs_page;
+#[path = "settings_probe.rs"]
+pub(crate) mod probe;
 #[path = "settings_recognition.rs"]
 mod recognition_page;
 #[path = "settings_resources.rs"]
@@ -138,7 +191,58 @@ enum Page {
     About,
 }
 
+/// 导航分组（Vue `groups`）：名称与页面；关键词让搜索也能命中页面内的设置项。
+const GROUPS: [(&str, &[Page]); 3] = [
+    (
+        "工具",
+        &[Page::Capture, Page::Recording, Page::Pins, Page::Clipboard],
+    ),
+    ("设置", &[Page::General, Page::Shortcuts, Page::Recognition]),
+    ("支持", &[Page::Logs, Page::About]),
+];
+
 impl Page {
+    fn icon(self) -> &'static [u8] {
+        match self {
+            Page::Capture => icons::CAMERA,
+            Page::Recording => icons::VIDEO,
+            Page::Pins => icons::PIN,
+            Page::Clipboard => icons::CLIPBOARD,
+            Page::General => icons::SETTINGS,
+            Page::Shortcuts => icons::KEYBOARD,
+            Page::Recognition => icons::LANGUAGES,
+            Page::Logs => icons::LOGS,
+            Page::About => icons::INFO,
+        }
+    }
+
+    fn keywords(self) -> &'static str {
+        match self {
+            Page::Capture => "区域 延时 光标 吸附 保存 格式 文件名 capture screenshot delay format",
+            Page::Recording => "mp4 gif 帧率 画质 码率 编码 倒计时 键鼠 特效 record video fps",
+            Page::Pins => "阴影 边框 圆角 外观 pin shadow border",
+            Page::Clipboard => "历史 记录 清理 粘贴 排除 暂存架 clipboard history shelf",
+            Page::General => {
+                "外观 主题 深色 语言 开机 自启 字体 目录 导入 导出 配置 备份 theme language startup font directory import export"
+            }
+            Page::Shortcuts => "按键 冲突 检测 shortcut hotkey",
+            Page::Recognition => {
+                "ocr 文字识别 翻译 服务 模型 语言包 密钥 deepl openai deepseek groq paddle translate service"
+            }
+            Page::Logs => "记录级别 诊断 排错 logs diagnostics",
+            Page::About => "版本 更新 测试版 引导 帮助 许可 about help update version",
+        }
+    }
+
+    /// 搜索：名称（含译文）或关键词包含查询（不区分大小写）。
+    fn matches(self, query: &str, label: &str) -> bool {
+        let query = query.trim().to_lowercase();
+        query.is_empty()
+            || self.label().to_lowercase().contains(&query)
+            || label.to_lowercase().contains(&query)
+            || self.keywords().to_lowercase().contains(&query)
+    }
+
     const ALL: [Page; 9] = [
         Page::Capture,
         Page::Recording,
@@ -160,7 +264,7 @@ impl Page {
             Page::Shortcuts => "快捷键",
             Page::Recognition => "识别与翻译",
             Page::Logs => "日志",
-            Page::About => "关于与更新",
+            Page::About => "关于与帮助",
         }
     }
 }
@@ -205,6 +309,12 @@ struct Capture {
 
 struct SettingsView {
     page: Page,
+    /// 侧栏搜索框与当前打开的下拉选择。
+    nav_search: Entity<InputState>,
+    open_select: Option<&'static str>,
+    /// 识别与翻译页的页签（0 文字识别、1 翻译、2 服务管理）。
+    recognition_tab: usize,
+    _nav_search: Subscription,
     focus: FocusHandle,
     capture_prefix: Entity<InputState>,
     recording_prefix: Entity<InputState>,
@@ -248,6 +358,15 @@ struct SettingsView {
 
 impl SettingsView {
     fn new(settings: &Settings, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let search_placeholder =
+            snap_core::i18n::for_language(&settings.appearance.language, "搜索").to_owned();
+        let nav_search = cx.new(|cx| InputState::new(window, cx).placeholder(search_placeholder));
+        let search_changed =
+            cx.subscribe(&nav_search, |_: &mut Self, _, event: &InputEvent, cx| {
+                if matches!(event, InputEvent::Change) {
+                    cx.notify();
+                }
+            });
         let input = |value: String, window: &mut Window, cx: &mut Context<Self>| {
             cx.new(|cx| InputState::new(window, cx).default_value(value))
         };
@@ -299,6 +418,10 @@ impl SettingsView {
             resource_progress: Default::default(),
             local: None,
             probe: Default::default(),
+            nav_search,
+            open_select: None,
+            recognition_tab: 0,
+            _nav_search: search_changed,
             generation: 0,
             capture: None,
             error: None,
@@ -743,50 +866,229 @@ fn shortcut_label(value: &str) -> String {
 
 // ---- 控件 ----
 
+/// 设置行（`.setting-row`）：左侧标签与一行说明，右侧控件；最小高 44，行间细分隔线（最后一行由卡片裁掉）。
 fn row(label: String, hint: Option<String>, control: impl IntoElement) -> Div {
     div()
         .flex()
         .items_center()
         .justify_between()
         .gap(px(16.0))
-        .px(px(14.0))
-        .py(px(10.0))
+        .min_h(px(44.0))
+        .py(px(7.0))
+        .pr(px(12.0))
         .border_b_1()
-        .border_color(rgb(col::border()))
+        .border_color(rgb(col::sep()))
+        .text_size(px(13.0))
         .child(
             div()
                 .flex()
                 .flex_col()
+                .justify_center()
+                .gap(px(2.0))
+                .flex_1()
                 .min_w_0()
-                .child(div().text_sm().child(label))
-                .children(hint.map(|h| div().text_xs().text_color(rgb(col::muted())).child(h))),
+                .child(div().child(label))
+                .children(hint.map(|h| {
+                    div()
+                        .text_size(px(11.0))
+                        .line_height(relative(1.5))
+                        .text_color(rgb(col::muted()))
+                        .child(h)
+                })),
         )
-        .child(div().flex_none().child(control))
+        .child(
+            div()
+                .flex()
+                .flex_none()
+                .items_center()
+                .justify_end()
+                .gap(px(8.0))
+                .child(control),
+        )
 }
 
+/// 分组卡片（`.settings-card`）：左内边距 12，1px 边框，8 像素圆角；最后一行不画分隔线。
 fn card(rows: Vec<Div>) -> Div {
+    let count = rows.len();
     div()
         .flex()
         .flex_col()
+        .pl(px(12.0))
         .rounded(px(8.0))
         .bg(rgb(col::surface()))
         .border_1()
         .border_color(rgb(col::border()))
         .overflow_hidden()
-        .children(rows)
+        .children(rows.into_iter().enumerate().map(move |(index, row)| {
+            if index + 1 == count {
+                row.border_b_0()
+            } else {
+                row
+            }
+        }))
 }
 
+/// 分组标题（`.section-heading`）：12 像素灰色粗体。
 fn heading(text: String) -> Div {
     div()
-        .mt(px(18.0))
-        .mb(px(8.0))
+        .flex()
+        .items_baseline()
+        .justify_between()
+        .gap(px(8.0))
+        .mt(px(20.0))
+        .mx(px(4.0))
+        .mb(px(6.0))
         .text_xs()
         .font_weight(FontWeight::SEMIBOLD)
         .text_color(rgb(col::muted()))
         .child(text)
 }
 
+/// 分组下的说明文字（`.section-note`）。
+fn note(text: String) -> Div {
+    div()
+        .mt(px(6.0))
+        .mx(px(4.0))
+        .text_size(px(11.0))
+        .line_height(relative(1.5))
+        .text_color(rgb(col::muted()))
+        .child(text)
+}
+
+/// 按钮样式（Vue `Button`：default / outline / ghost / destructive，28 像素高）。
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ButtonKind {
+    Primary,
+    Outline,
+    Ghost,
+}
+
+fn button(
+    id: impl Into<ElementId>,
+    label: String,
+    kind: ButtonKind,
+    enabled: bool,
+) -> Stateful<Div> {
+    let base = div()
+        .id(id)
+        .h(px(28.0))
+        .px(px(12.0))
+        .flex()
+        .flex_none()
+        .items_center()
+        .justify_center()
+        .gap(px(6.0))
+        .rounded(px(6.0))
+        .text_size(px(13.0))
+        .child(label);
+    let base = match kind {
+        ButtonKind::Primary => base
+            .bg(rgb(col::accent()))
+            .text_color(rgb(0xffffff))
+            .font_weight(FontWeight::MEDIUM),
+        ButtonKind::Outline => base
+            .border_1()
+            .border_color(rgb(col::line()))
+            .bg(rgb(col::surface()))
+            .text_color(rgb(col::text())),
+        ButtonKind::Ghost => base.text_color(rgb(col::muted())),
+    };
+    if !enabled {
+        return base.opacity(0.45);
+    }
+    let hover = col::hover();
+    let text = col::text();
+    base.cursor_pointer().hover(move |s| match kind {
+        ButtonKind::Primary => s.opacity(0.9),
+        ButtonKind::Ghost => s.bg(rgb(hover)).text_color(rgb(text)),
+        _ => s.bg(rgb(hover)),
+    })
+}
+
+/// 快捷键标签（`.app-shell kbd`）。
+fn kbd(text: String) -> Div {
+    div()
+        .h(px(20.0))
+        .min_w(px(20.0))
+        .px(px(6.0))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(px(5.0))
+        .bg(rgb(col::hover()))
+        .text_size(px(11.0))
+        .font_weight(FontWeight::SEMIBOLD)
+        .text_color(rgb(col::text()))
+        .child(text)
+}
+
+/// 工具页顶部卡片（Vue `ToolHero`）：图标、名称与可选说明、快捷键与操作。
+fn hero(
+    icon: &'static [u8],
+    title: String,
+    meta: Option<String>,
+    shortcut: Option<String>,
+    actions: Vec<AnyElement>,
+) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .gap(px(14.0))
+        .mt(px(18.0))
+        .px(px(16.0))
+        .py(px(14.0))
+        .rounded(px(10.0))
+        .border_1()
+        .border_color(rgb(col::border()))
+        .bg(rgb(col::surface()))
+        .child(
+            div()
+                .size(px(40.0))
+                .flex()
+                .flex_none()
+                .items_center()
+                .justify_center()
+                .rounded(px(8.0))
+                .bg(rgb(col::accent_soft()))
+                .child(
+                    Icon::default()
+                        .data(icon)
+                        .size(px(22.0))
+                        .text_color(rgb(col::accent_fg())),
+                ),
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .flex()
+                .flex_col()
+                .gap(px(2.0))
+                .child(
+                    div()
+                        .text_size(px(14.0))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child(title),
+                )
+                .children(meta.map(|m| div().text_xs().text_color(rgb(col::muted())).child(m))),
+        )
+        .child(
+            div()
+                .flex()
+                .flex_none()
+                .items_center()
+                .gap(px(8.0))
+                .children(
+                    shortcut
+                        .filter(|s| !s.is_empty())
+                        .map(|s| kbd(shortcut_label(&s))),
+                )
+                .children(actions),
+        )
+}
+
 impl SettingsView {
+    /// 开关（`.switch-control`，34×20）。
     fn toggle(
         &self,
         id: impl Into<ElementId>,
@@ -794,24 +1096,12 @@ impl SettingsView {
         cx: &mut Context<Self>,
         change: impl Fn(&mut Settings, bool) + 'static,
     ) -> Stateful<Div> {
-        div()
-            .id(id)
-            .w(px(38.0))
-            .h(px(22.0))
-            .flex_none()
-            .rounded_full()
-            .p(px(2.0))
-            .cursor_pointer()
-            .bg(rgb(if on { col::accent() } else { col::toggle_off() }))
-            .flex()
-            .justify_start()
-            .when_on(on)
-            .child(div().size(px(18.0)).rounded_full().bg(rgb(0xffffff)))
-            .on_click(
-                cx.listener(move |view, _: &ClickEvent, _, cx| view.change(cx, |s| change(s, !on))),
-            )
+        switch(id, on, false).on_click(
+            cx.listener(move |view, _: &ClickEvent, _, cx| view.change(cx, |s| change(s, !on))),
+        )
     }
 
+    /// 分段控件（`.segmented-control`）：细线框，选中项淡色强调底。
     fn segmented<T: Copy + PartialEq + 'static>(
         &self,
         id: &'static str,
@@ -822,34 +1112,151 @@ impl SettingsView {
     ) -> Div {
         let mut group = div()
             .flex()
+            .flex_wrap()
             .p(px(2.0))
             .gap(px(2.0))
             .rounded(px(6.0))
-            .bg(rgb(col::page_bg()));
+            .border_1()
+            .border_color(rgb(col::line()))
+            .bg(rgb(col::surface()));
         for (index, (value, label)) in options.into_iter().enumerate() {
             let selected = value == current;
             let change = change.clone();
+            let text = col::text();
+            let mut item = div()
+                .id((id, index))
+                .min_h(px(22.0))
+                .px(px(11.0))
+                .flex()
+                .items_center()
+                .rounded(px(4.0))
+                .text_xs()
+                .cursor_pointer()
+                .child(label);
+            item = if selected {
+                item.bg(rgb(col::accent_soft()))
+                    .text_color(rgb(col::accent_fg()))
+            } else {
+                item.text_color(rgb(col::muted()))
+                    .hover(move |s| s.text_color(rgb(text)))
+            };
             group = group.child(
-                div()
-                    .id((id, index))
-                    .h(px(26.0))
-                    .px(px(10.0))
-                    .flex()
-                    .items_center()
-                    .rounded(px(5.0))
-                    .text_xs()
-                    .cursor_pointer()
-                    .text_color(rgb(if selected { col::text() } else { col::muted() }))
-                    .when_selected(selected)
-                    .child(label)
-                    .on_click(cx.listener(move |view, _: &ClickEvent, _, cx| {
-                        if !selected {
-                            view.change(cx, |s| change(s, value));
-                        }
-                    })),
+                item.on_click(cx.listener(move |view, _: &ClickEvent, _, cx| {
+                    if !selected {
+                        view.change(cx, |s| change(s, value));
+                    }
+                })),
             );
         }
         group
+    }
+
+    /// 下拉选择（Vue `SelectControl`）：细线框触发器 + 浮层列表，选中项强调色。
+    fn select<T: Copy + PartialEq + 'static>(
+        &self,
+        id: &'static str,
+        current: T,
+        options: Vec<(T, String)>,
+        cx: &mut Context<Self>,
+        change: impl Fn(&mut Settings, T) + Clone + 'static,
+    ) -> Div {
+        let open = self.open_select == Some(id);
+        let label = options
+            .iter()
+            .find(|(v, _)| *v == current)
+            .map(|(_, l)| l.clone())
+            .unwrap_or_default();
+        let trigger = div()
+            .id(id)
+            .min_w(px(150.0))
+            .min_h(px(28.0))
+            .px(px(9.0))
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap(px(10.0))
+            .rounded(px(6.0))
+            .border_1()
+            .border_color(rgb(if open { col::accent() } else { col::line() }))
+            .bg(rgb(col::surface()))
+            .text_size(px(13.0))
+            .cursor_pointer()
+            .hover(|s| s.border_color(rgb(col::muted())))
+            .child(div().truncate().child(label))
+            .child(
+                Icon::default()
+                    .data(icons::CHEVRON)
+                    .size(px(14.0))
+                    .text_color(rgb(col::muted())),
+            )
+            .on_click(cx.listener(move |view, _: &ClickEvent, _, cx| {
+                view.open_select = if view.open_select == Some(id) {
+                    None
+                } else {
+                    Some(id)
+                };
+                cx.notify();
+            }));
+        let mut container = div().relative().child(trigger);
+        if open {
+            let mut list = div()
+                .id((id, 1000usize))
+                .absolute()
+                .top(px(32.0))
+                .right_0()
+                .min_w(px(150.0))
+                .p(px(5.0))
+                .flex()
+                .flex_col()
+                .rounded(px(9.0))
+                .border_1()
+                .border_color(rgb(col::line()))
+                .bg(rgb(col::surface()))
+                .shadow_lg()
+                .occlude();
+            for (index, (value, label)) in options.into_iter().enumerate() {
+                let selected = value == current;
+                let change = change.clone();
+                let hover = col::hover();
+                let mut item = div()
+                    .id((id, index))
+                    .min_h(px(32.0))
+                    .px(px(10.0))
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap(px(20.0))
+                    .rounded(px(5.0))
+                    .text_size(px(13.0))
+                    .cursor_pointer()
+                    .hover(move |s| s.bg(rgb(hover)))
+                    .child(label);
+                if selected {
+                    item = item
+                        .bg(rgb(col::accent_soft()))
+                        .text_color(rgb(col::accent_fg()))
+                        .font_weight(FontWeight::MEDIUM)
+                        .child(
+                            Icon::default()
+                                .data(icons::CHECK)
+                                .size(px(14.0))
+                                .text_color(rgb(col::accent_fg())),
+                        );
+                }
+                list = list.child(item.on_click(cx.listener(
+                    move |view, _: &ClickEvent, _, cx| {
+                        view.open_select = None;
+                        if !selected {
+                            view.change(cx, |s| change(s, value));
+                        } else {
+                            cx.notify();
+                        }
+                    },
+                )));
+            }
+            container = container.child(deferred(list).with_priority(1));
+        }
+        container
     }
 
     fn stepper(
@@ -868,12 +1275,14 @@ impl SettingsView {
                       change: Box<dyn Fn(&mut Settings, u32)>| {
             div()
                 .id((id, index))
-                .size(px(26.0))
+                .size(px(28.0))
                 .flex()
                 .items_center()
                 .justify_center()
-                .rounded(px(5.0))
-                .bg(rgb(col::page_bg()))
+                .rounded(px(6.0))
+                .border_1()
+                .border_color(rgb(col::line()))
+                .bg(rgb(col::surface()))
                 .text_sm()
                 .text_color(rgb(if enabled {
                     col::text()
@@ -918,14 +1327,18 @@ impl SettingsView {
             ))
     }
 
+    /// 文本框（1px 细线框，6 像素圆角，28 像素高）。
     fn text_input(&self, state: &Entity<InputState>, width: f32) -> Div {
         div()
             .w(px(width))
+            .min_h(px(28.0))
             .rounded(px(6.0))
             .border_1()
-            .border_color(rgb(col::border()))
+            .border_color(rgb(col::line()))
             .bg(rgb(col::surface()))
-            .child(Input::new(state))
+            .text_size(px(13.0))
+            .hover(|s| s.border_color(rgb(col::muted())))
+            .child(Input::new(state).appearance(false).small())
     }
 
     /// 默认保存目录：当前位置 + 更改…/恢复默认/打开。
@@ -946,21 +1359,8 @@ impl SettingsView {
             Folder::Captures => ("截图保存目录", "保存对话框的默认位置", 0usize),
             Folder::Recordings => ("录屏保存目录", "视频输出位置，恢复默认不会移动已有视频", 1),
         };
-        let small = |id: (&'static str, usize), label: String| {
-            div()
-                .id(id)
-                .h(px(28.0))
-                .px(px(10.0))
-                .flex()
-                .items_center()
-                .rounded(px(6.0))
-                .border_1()
-                .border_color(rgb(col::border()))
-                .text_xs()
-                .cursor_pointer()
-                .hover(|s| s.bg(rgb(col::page_bg())))
-                .child(label)
-        };
+        let small =
+            |id: (&'static str, usize), label: String| button(id, label, ButtonKind::Outline, true);
         let controls = div()
             .flex()
             .gap(px(6.0))
@@ -1038,20 +1438,8 @@ impl SettingsView {
         path: Option<PathBuf>,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        div()
-            .id(id)
-            .h(px(28.0))
-            .px(px(10.0))
-            .flex()
-            .items_center()
-            .rounded(px(6.0))
-            .border_1()
-            .border_color(rgb(col::border()))
-            .text_xs()
-            .cursor_pointer()
-            .hover(|s| s.bg(rgb(col::page_bg())))
-            .child(label)
-            .on_click(cx.listener(move |view, _: &ClickEvent, _, cx| {
+        button(id, label, ButtonKind::Outline, true).on_click(cx.listener(
+            move |view, _: &ClickEvent, _, cx| {
                 let result = path
                     .clone()
                     .ok_or_else(|| "目录不可用。".to_owned())
@@ -1063,28 +1451,42 @@ impl SettingsView {
                     view.error = Some(error);
                     cx.notify();
                 }
-            }))
+            },
+        ))
     }
 }
 
-/// 让开关/分段控件的选中态写法更紧凑。
-trait States: Styled + Sized {
-    fn when_on(self, on: bool) -> Self {
-        if on {
-            self.justify_end()
-        } else {
-            self
-        }
-    }
-    fn when_selected(self, selected: bool) -> Self {
-        if selected {
-            self.bg(rgb(col::surface())).shadow_sm()
-        } else {
-            self
-        }
-    }
+/// 开关（`.switch-control`）：34×20，`small` 为顶栏的 28×16；关闭时轨道为细线色。
+fn switch(id: impl Into<ElementId>, on: bool, small: bool) -> Stateful<Div> {
+    let (w, h, knob) = if small {
+        (28.0, 16.0, 12.0)
+    } else {
+        (34.0, 20.0, 16.0)
+    };
+    let track = div()
+        .id(id)
+        .w(px(w))
+        .h(px(h))
+        .flex_none()
+        .flex()
+        .items_center()
+        .rounded(px(h / 2.0))
+        .p(px(2.0))
+        .cursor_pointer()
+        .bg(rgb(if on { col::accent() } else { col::line() }));
+    let track = if on {
+        track.justify_end()
+    } else {
+        track.justify_start()
+    };
+    track.child(
+        div()
+            .size(px(knob))
+            .rounded_full()
+            .bg(rgb(0xffffff))
+            .shadow_sm(),
+    )
 }
-impl<T: Styled> States for T {}
 
 // ---- 页面 ----
 
@@ -1152,8 +1554,21 @@ impl SettingsView {
                 |s, v| s.export.remember_directory = v,
             ),
         ));
-        export.push(self.folder_row(Folder::Captures, s, t, cx));
         vec![
+            hero(
+                icons::CAMERA,
+                t("区域截图"),
+                None,
+                s.shortcuts_enabled.then(|| s.shortcuts.capture.clone()),
+                vec![
+                    button("hero-capture", t("开始截图"), ButtonKind::Primary, true)
+                        .on_click(|_, _, cx| {
+                            crate::shell::run_action(cx, ShortcutAction::Capture, "settings")
+                        })
+                        .into_any_element(),
+                ],
+            )
+            .into_any_element(),
             heading(t("截图")).into_any_element(),
             card(vec![
                 row(
@@ -1188,8 +1603,17 @@ impl SettingsView {
                 ),
                 row(
                     t("框选完成后"),
-                    None,
-                    self.segmented(
+                    (s.screenshot_after != "none").then(|| {
+                        t("按住 {0} 框选可保留工具栏").replace(
+                            "{0}",
+                            if cfg!(target_os = "macos") {
+                                "⌘"
+                            } else {
+                                "Ctrl"
+                            },
+                        )
+                    }),
+                    self.select(
                         "after",
                         after_index(&s.screenshot_after),
                         vec![
@@ -1217,6 +1641,20 @@ impl SettingsView {
     ) -> Vec<AnyElement> {
         let e = &s.recording_export;
         vec![
+            hero(
+                icons::VIDEO,
+                t("录屏"),
+                None,
+                s.shortcuts_enabled.then(|| s.shortcuts.record.clone()),
+                vec![
+                    button("hero-record", t("选择录制范围"), ButtonKind::Primary, true)
+                        .on_click(|_, _, cx| {
+                            crate::shell::run_action(cx, ShortcutAction::Record, "settings")
+                        })
+                        .into_any_element(),
+                ],
+            )
+            .into_any_element(),
             heading(t("录屏文件")).into_any_element(),
             card(vec![
                 row(
@@ -1280,6 +1718,28 @@ impl SettingsView {
             );
         }
         vec![
+            hero(
+                icons::PIN,
+                t("剪贴板贴图"),
+                None,
+                s.shortcuts_enabled.then(|| s.shortcuts.pin.clone()),
+                vec![
+                    button(
+                        "hero-pin-file",
+                        t("打开图片贴图"),
+                        ButtonKind::Outline,
+                        true,
+                    )
+                    .on_click(|_, _, cx| crate::pins::open_file(cx))
+                    .into_any_element(),
+                    button("hero-pin", t("剪贴板贴图"), ButtonKind::Primary, true)
+                        .on_click(|_, _, cx| {
+                            crate::shell::run_action(cx, ShortcutAction::Pin, "settings")
+                        })
+                        .into_any_element(),
+                ],
+            )
+            .into_any_element(),
             heading(t("贴图外观")).into_any_element(),
             card(vec![
                 row(
@@ -1327,8 +1787,31 @@ impl SettingsView {
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
         let c = &s.clipboard;
+        let meta = crate::clipboard::service(cx).map(|service| {
+            let status = service.status();
+            format!(
+                "{} {} {:.1} MiB",
+                status.count,
+                t("条 ·"),
+                status.byte_size as f64 / 1_048_576.0
+            )
+        });
         vec![
-            heading(t("剪贴板历史")).into_any_element(),
+            hero(
+                icons::CLIPBOARD,
+                t("剪贴板历史"),
+                meta,
+                s.shortcuts_enabled.then(|| s.shortcuts.history.clone()),
+                vec![
+                    button("hero-clipboard", t("打开剪贴板"), ButtonKind::Primary, true)
+                        .on_click(|_, _, cx| {
+                            crate::shell::run_action(cx, ShortcutAction::History, "settings")
+                        })
+                        .into_any_element(),
+                ],
+            )
+            .into_any_element(),
+            heading(t("记录")).into_any_element(),
             card(vec![
                 row(
                     t("记录剪贴板历史"),
@@ -1425,46 +1908,79 @@ impl SettingsView {
         t: &dyn Fn(&str) -> String,
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
-        let language = match s.appearance.language {
-            Language::Chinese => 0,
-            Language::English => 1,
-        };
-        let directories: [(&'static str, &'static str, Option<PathBuf>); 4] = [
-            (
-                "应用日志目录",
-                "本机日志，分享前请检查内容。",
-                snap_core::paths::log_dir(),
-            ),
-            (
-                "应用配置目录",
-                "快捷键与应用设置",
-                crate::shell::settings_dir(),
-            ),
-            (
-                "应用数据目录",
-                "本地数据与恢复文件",
-                snap_core::paths::local_data_dir(),
-            ),
-            (
-                "滚动截图结果目录",
-                "滚动截图自动保存的 PNG 结果",
-                snap_core::paths::local_data_dir().map(|d| d.join("scroll-results")),
-            ),
+        // 文件与存储（与 Tauri 版 `app_directories` 顺序一致，日志目录在日志页）。
+        let mut directories = Vec::new();
+        let data = snap_core::paths::local_data_dir();
+        let fixed: [(&'static str, Option<PathBuf>); 2] = [
+            ("应用配置目录", crate::shell::settings_dir()),
+            ("应用数据目录", data.clone()),
         ];
-        let mut rows = Vec::new();
-        for (index, (name, description, path)) in directories.into_iter().enumerate() {
-            rows.push(row(
+        for (index, (name, path)) in fixed.into_iter().enumerate() {
+            directories.push(self.directory_row(("dir", index), t(name), path, None, t, cx));
+        }
+        for (index, folder) in [Folder::Captures, Folder::Recordings]
+            .into_iter()
+            .enumerate()
+        {
+            let path = folder.current(s).0;
+            let name = match folder {
+                Folder::Captures => "截图保存目录",
+                Folder::Recordings => "录屏保存目录",
+            };
+            directories.push(self.directory_row(
+                ("dir", 10 + index),
                 t(name),
-                Some(t(description)),
-                self.open_button(("dir", index), t("打开"), path, cx),
+                path,
+                Some(folder),
+                t,
+                cx,
             ));
         }
+        let clipboard = std::env::var_os("SNAP_DESK_CLIPBOARD_DIR")
+            .map(PathBuf::from)
+            .or_else(|| data.as_ref().map(|d| d.join("clipboard")));
+        for (index, (name, path)) in [
+            (
+                "滚动截图结果目录",
+                data.as_ref().map(|d| d.join("scroll-results")),
+            ),
+            ("剪贴板历史目录", clipboard),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            directories.push(self.directory_row(("dir", 20 + index), t(name), path, None, t, cx));
+        }
+        let autostart_status = match self.autostart {
+            Some(true) => div()
+                .flex()
+                .items_center()
+                .gap(px(4.0))
+                .text_xs()
+                .text_color(rgb(col::success()))
+                .child(
+                    Icon::default()
+                        .data(icons::CHECK)
+                        .size(px(14.0))
+                        .text_color(rgb(col::success())),
+                )
+                .child(t("已开启")),
+            Some(false) => div()
+                .text_xs()
+                .text_color(rgb(col::muted()))
+                .child(t("已关闭")),
+            None => div()
+                .text_xs()
+                .text_color(rgb(col::muted()))
+                .child(t("状态未读取")),
+        };
+        let include = self.include_secrets;
         vec![
-            heading(t("外观")).into_any_element(),
+            heading(t("外观与语言")).into_any_element(),
             card(vec![
                 row(
                     t("主题"),
-                    Some(t("跟随系统时随系统浅色/深色切换。")),
+                    None,
                     self.segmented(
                         "theme",
                         match s.appearance.theme {
@@ -1482,14 +1998,14 @@ impl SettingsView {
                 ),
                 row(
                     t("语言"),
-                    Some(t("新打开的窗口使用新语言。")),
-                    self.segmented(
+                    None,
+                    self.select(
                         "language",
-                        language,
-                        vec![(0, "中文".into()), (1, "English".into())],
+                        matches!(s.appearance.language, Language::English),
+                        vec![(false, t("简体中文")), (true, "English".into())],
                         cx,
-                        |s, v| {
-                            s.appearance.language = if v == 1 {
+                        |s, english| {
+                            s.appearance.language = if english {
                                 Language::English
                             } else {
                                 Language::Chinese
@@ -1502,62 +2018,141 @@ impl SettingsView {
             heading(t("启动")).into_any_element(),
             card(vec![row(
                 t("开机自启"),
-                Some(t("与 Tauri 版共用同一登录项；开启后登录时启动当前程序。")),
-                match self.autostart {
-                    Some(on) => self
-                        .plain_toggle("autostart", on, cx, |view, on, cx| {
+                None,
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(12.0))
+                    .child(autostart_status)
+                    .children(self.autostart.map(|on| {
+                        self.plain_toggle("autostart", on, cx, |view, on, cx| {
                             view.set_autostart(on, cx)
                         })
-                        .into_any_element(),
-                    None => div()
-                        .text_xs()
-                        .text_color(rgb(col::muted()))
-                        .child(t("未知"))
-                        .into_any_element(),
-                },
+                    })),
             )])
             .into_any_element(),
-            heading(t("配置")).into_any_element(),
+            heading(t("导出字体")).into_any_element(),
+            card(vec![self.font_resource_row(t, cx)]).into_any_element(),
+            heading(t("文件与存储")).into_any_element(),
+            card(directories).into_any_element(),
+            heading(t("配置备份")).into_any_element(),
             card(vec![
                 row(
-                    t("导出时包含服务密钥"),
-                    Some(t("密钥以明文写入导出文件，请妥善保管。")),
-                    self.plain_toggle(
-                        "include-secrets",
-                        self.include_secrets,
-                        cx,
-                        |view, on, cx| {
-                            view.include_secrets = on;
-                            cx.notify();
-                        },
-                    ),
-                ),
-                row(
-                    t("导入导出配置"),
-                    Some(t("包含全部设置与保存目录，不含截图、录屏与剪贴板历史。")),
+                    t("导入或导出全部设置"),
+                    None,
                     div()
                         .flex()
-                        .gap(px(6.0))
+                        .gap(px(8.0))
                         .child(
-                            self.action_button("config-export", t("导出配置…"), !self.transferring)
-                                .on_click(cx.listener(|view, _: &ClickEvent, _, cx| {
-                                    view.export_config(cx)
-                                })),
-                        )
-                        .child(
-                            self.action_button("config-import", t("导入配置…"), !self.transferring)
+                            self.action_button("config-import", t("导入配置"), !self.transferring)
                                 .on_click(cx.listener(|view, _: &ClickEvent, _, cx| {
                                     view.import_config(cx)
                                 })),
+                        )
+                        .child(
+                            self.action_button("config-export", t("导出配置"), !self.transferring)
+                                .on_click(cx.listener(|view, _: &ClickEvent, _, cx| {
+                                    view.export_config(cx)
+                                })),
                         ),
+                ),
+                row(
+                    t("导出时包含服务密钥"),
+                    Some(t("备份文件将含明文密钥，仅在自己的设备间迁移时使用。")),
+                    switch("include-secrets", include, true).on_click(cx.listener(
+                        move |view, _: &ClickEvent, _, cx| {
+                            view.include_secrets = !include;
+                            cx.notify();
+                        },
+                    )),
                 ),
             ])
             .into_any_element(),
-            heading(t("资源")).into_any_element(),
-            card(vec![self.font_resource_row(t, cx)]).into_any_element(),
-            heading(t("目录")).into_any_element(),
-            card(rows).into_any_element(),
+            note(t(if include {
+                "导出包含服务密钥；不包含历史记录和图片视频。"
+            } else {
+                "默认不包含密钥、历史记录和图片视频。"
+            }))
+            .into_any_element(),
         ]
+    }
+
+    /// 文件与存储的一行：名称、等宽小字路径；打开、复制路径，保存目录另有选择与恢复默认。
+    fn directory_row(
+        &self,
+        id: (&'static str, usize),
+        name: String,
+        path: Option<PathBuf>,
+        folder: Option<Folder>,
+        t: &dyn Fn(&str) -> String,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let text = path.as_ref().map(|p| p.display().to_string());
+        let has = path.is_some();
+        let mut actions = div()
+            .flex()
+            .flex_wrap()
+            .items_center()
+            .justify_end()
+            .gap(px(6.0))
+            .child(self.open_button((id.0, id.1 * 4), t("打开"), path.clone(), cx));
+        let mut copy = button((id.0, id.1 * 4 + 1), t("复制路径"), ButtonKind::Ghost, has);
+        if let Some(value) = text.clone() {
+            copy = copy.on_click(cx.listener(move |view, _: &ClickEvent, _, cx| {
+                cx.write_to_clipboard(ClipboardItem::new_string(value.clone()));
+                view.error = None;
+                view.notice = Some("目录路径已复制。".into());
+                cx.notify();
+            }));
+        }
+        actions = actions.child(copy);
+        if let Some(folder) = folder {
+            actions =
+                actions
+                    .child(
+                        button((id.0, id.1 * 4 + 2), t("选择"), ButtonKind::Outline, true)
+                            .on_click(cx.listener(move |view, _: &ClickEvent, _, cx| {
+                                view.choose_folder(folder, cx)
+                            })),
+                    )
+                    .child(
+                        button((id.0, id.1 * 4 + 3), t("恢复默认"), ButtonKind::Ghost, true)
+                            .on_click(cx.listener(move |view, _: &ClickEvent, _, cx| {
+                                let settings = crate::shell::settings(cx);
+                                let result = folder.configure(None, &settings);
+                                view.report(result, cx);
+                            })),
+                    );
+        }
+        div()
+            .flex()
+            .flex_wrap()
+            .items_center()
+            .justify_between()
+            .gap(px(16.0))
+            .min_h(px(44.0))
+            .py(px(7.0))
+            .pr(px(12.0))
+            .border_b_1()
+            .border_color(rgb(col::sep()))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(220.0))
+                    .flex()
+                    .flex_col()
+                    .child(name)
+                    .child(
+                        div()
+                            .mt(px(2.0))
+                            .text_size(px(11.0))
+                            .line_height(relative(1.5))
+                            .font_family("Consolas")
+                            .text_color(rgb(col::muted()))
+                            .child(text.unwrap_or_else(|| t("系统默认位置"))),
+                    ),
+            )
+            .child(actions)
     }
 
     /// 不经设置保存的本地开关（登录项、导出选项）。
@@ -1568,39 +2163,12 @@ impl SettingsView {
         cx: &mut Context<Self>,
         change: impl Fn(&mut Self, bool, &mut Context<Self>) + 'static,
     ) -> Stateful<Div> {
-        div()
-            .id(id)
-            .w(px(38.0))
-            .h(px(22.0))
-            .flex_none()
-            .rounded_full()
-            .p(px(2.0))
-            .cursor_pointer()
-            .bg(rgb(if on { col::accent() } else { col::toggle_off() }))
-            .flex()
-            .justify_start()
-            .when_on(on)
-            .child(div().size(px(18.0)).rounded_full().bg(rgb(0xffffff)))
+        switch(id, on, false)
             .on_click(cx.listener(move |view, _: &ClickEvent, _, cx| change(view, !on, cx)))
     }
 
     fn action_button(&self, id: &'static str, label: String, enabled: bool) -> Stateful<Div> {
-        let button = div()
-            .id(id)
-            .h(px(28.0))
-            .px(px(10.0))
-            .flex()
-            .items_center()
-            .rounded(px(6.0))
-            .border_1()
-            .border_color(rgb(col::border()))
-            .text_xs()
-            .child(label);
-        if enabled {
-            button.cursor_pointer().hover(|s| s.bg(rgb(col::page_bg())))
-        } else {
-            button.opacity(0.5)
-        }
+        button(id, label, ButtonKind::Outline, enabled)
     }
 
     fn shortcuts_page(
@@ -1610,90 +2178,124 @@ impl SettingsView {
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
         let unavailable = crate::shell::unavailable_shortcuts(cx);
-        let mut rows = vec![row(
-            t("启用全局快捷键"),
-            None,
-            self.toggle("shortcuts-enabled", s.shortcuts_enabled, cx, |s, v| {
-                s.shortcuts_enabled = v
-            }),
-        )];
+        let mut rows = Vec::new();
         for (index, (action, name, value)) in s.shortcuts.entries().into_iter().enumerate() {
             let capturing = self.capture.as_ref().filter(|c| c.action == action);
-            let text = match capturing {
-                Some(c) if c.preview.is_empty() => t("请按快捷键…"),
-                Some(c) => shortcut_label(&c.preview),
-                None if value.is_empty() => t("未设置"),
-                None => shortcut_label(value),
-            };
-            let label = if unavailable.contains(&action) {
-                format!("{} · {}", t(name), t("已被占用"))
-            } else {
-                t(name)
-            };
-            let field = div()
+            let editing = capturing.is_some();
+            // 按键框（Vue `ShortcutInput`）：每个键一个 kbd；录入中显示预览与帮助。
+            let mut field = div()
+                .id(("shortcut", index))
+                .min_w(px(120.0))
+                .h(px(26.0))
+                .px(px(4.0))
                 .flex()
                 .items_center()
-                .gap(px(6.0))
+                .gap(px(3.0))
+                .rounded(px(6.0))
+                .border_1()
+                .border_color(rgb(if editing { col::accent() } else { col::line() }))
+                .bg(rgb(if editing {
+                    col::accent_soft()
+                } else {
+                    col::surface()
+                }))
+                .cursor_pointer()
+                .hover(|s| s.border_color(rgb(col::muted())))
+                .on_click(cx.listener(move |view, _: &ClickEvent, window, cx| {
+                    view.begin_capture(action, window, cx)
+                }));
+            let placeholder = |text: String| {
+                div()
+                    .px(px(4.0))
+                    .text_xs()
+                    .text_color(rgb(col::muted()))
+                    .child(text)
+            };
+            field = match capturing {
+                Some(c) if c.preview.is_empty() => field.child(placeholder(t("请按快捷键…"))),
+                Some(c) => field.child(placeholder(shortcut_label(&c.preview))),
+                None if value.is_empty() => field.child(placeholder(t("未设置"))),
+                None => field.children(value.split('+').map(|key| {
+                    div()
+                        .h(px(18.0))
+                        .min_w(px(18.0))
+                        .px(px(5.0))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded(px(5.0))
+                        .bg(rgb(col::hover()))
+                        .text_size(px(11.0))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child(key.to_owned())
+                })),
+            };
+            let control = div()
+                .flex()
+                .flex_col()
+                .items_end()
                 .child(
                     div()
-                        .id(("shortcut", index))
-                        .min_w(px(150.0))
-                        .h(px(28.0))
-                        .px(px(10.0))
                         .flex()
                         .items_center()
-                        .justify_center()
-                        .rounded(px(6.0))
-                        .border_1()
-                        .border_color(rgb(if capturing.is_some() {
-                            col::accent()
-                        } else {
-                            col::border()
-                        }))
-                        .bg(rgb(if capturing.is_some() {
-                            0xeff6ff
-                        } else {
-                            col::surface()
-                        }))
-                        .text_xs()
-                        .text_color(rgb(if value.is_empty() && capturing.is_none() {
-                            col::muted()
-                        } else {
-                            col::text()
-                        }))
-                        .cursor_pointer()
-                        .child(text)
-                        .on_click(cx.listener(move |view, _: &ClickEvent, window, cx| {
-                            view.begin_capture(action, window, cx)
+                        .gap(px(8.0))
+                        .child(field)
+                        .children((!value.is_empty()).then(|| {
+                            let text = col::text();
+                            div()
+                                .id(("shortcut-clear", index))
+                                .size(px(18.0))
+                                .flex()
+                                .flex_none()
+                                .items_center()
+                                .justify_center()
+                                .rounded_full()
+                                .bg(rgb(col::hover()))
+                                .text_color(rgb(col::muted()))
+                                .cursor_pointer()
+                                .hover(move |s| s.text_color(rgb(text)))
+                                .child(Icon::default().data(icons::X).size(px(12.0)))
+                                .on_click(cx.listener(move |view, _: &ClickEvent, _, cx| {
+                                    view.change(cx, |s| set_shortcut(s, action, String::new()))
+                                }))
                         })),
                 )
-                .children((!value.is_empty()).then(|| {
+                .children(editing.then(|| {
                     div()
-                        .id(("shortcut-clear", index))
-                        .size(px(22.0))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .rounded_full()
-                        .text_xs()
+                        .mt(px(4.0))
+                        .text_size(px(11.0))
                         .text_color(rgb(col::muted()))
-                        .cursor_pointer()
-                        .hover(|s| s.bg(rgb(col::page_bg())))
-                        .child("×")
-                        .on_click(cx.listener(move |view, _: &ClickEvent, _, cx| {
-                            view.change(cx, |s| set_shortcut(s, action, String::new()))
-                        }))
+                        .child(t("单按 Esc 取消 · 单按 Backspace / Delete 禁用"))
                 }));
-            let mut item = row(label, None, field);
-            if unavailable.contains(&action) {
-                item = item.text_color(rgb(col::danger()));
-            }
-            rows.push(item);
+            let label = div().flex().items_center().child(t(name)).children(
+                unavailable.contains(&action).then(|| {
+                    div()
+                        .ml(px(8.0))
+                        .text_xs()
+                        .text_color(rgb(col::danger()))
+                        .child(t("已被占用"))
+                }),
+            );
+            rows.push(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap(px(16.0))
+                    .min_h(px(44.0))
+                    .py(px(7.0))
+                    .pr(px(12.0))
+                    .border_b_1()
+                    .border_color(rgb(col::sep()))
+                    .child(label)
+                    .child(control),
+            );
         }
         let reset = div()
             .id("shortcuts-reset")
             .text_xs()
-            .text_color(rgb(col::accent()))
+            .font_weight(FontWeight::NORMAL)
+            .text_color(rgb(col::accent_fg()))
             .cursor_pointer()
             .child(t("恢复默认"))
             .on_click(cx.listener(|view, _: &ClickEvent, _, cx| {
@@ -1702,21 +2304,9 @@ impl SettingsView {
                 })
             }));
         vec![
-            div()
-                .flex()
-                .items_end()
-                .justify_between()
-                .child(heading(t("全局快捷键")))
-                .child(div().mb(px(8.0)).child(reset))
-                .into_any_element(),
+            heading(t("全局快捷键")).child(reset).into_any_element(),
             card(rows).into_any_element(),
-            div()
-                .mt(px(10.0))
-                .text_xs()
-                .text_color(rgb(col::muted()))
-                .child(t("点击按键框后按下组合键；Esc 取消，Backspace 禁用。"))
-                .into_any_element(),
-            div().mt(px(18.0)).child(heading(t("排查"))).into_any_element(),
+            heading(t("排查")).into_any_element(),
             card(self.probe_rows(t, cx)).into_any_element(),
         ]
     }
@@ -1817,41 +2407,135 @@ impl Render for SettingsView {
         let language = Self::language(cx);
         let words = language.clone();
         let t = move |key: &str| snap_core::i18n::for_language(&words, key).to_owned();
+        let query = self.nav_search.read(cx).value().to_string();
         let mut nav = div()
-            .w(px(168.0))
+            .id("settings-sidebar")
+            .w(px(196.0))
             .flex_none()
             .flex()
             .flex_col()
-            .gap(px(2.0))
-            .p(px(10.0))
+            .pt(px(14.0))
+            .px(px(10.0))
+            .pb(px(12.0))
             .border_r_1()
             .border_color(rgb(col::border()))
-            .bg(rgb(col::nav()));
-        for (index, page) in Page::ALL.into_iter().enumerate() {
-            let active = page == self.page;
-            nav = nav.child(
+            .bg(rgb(col::nav()))
+            .overflow_y_scroll()
+            .child(
                 div()
-                    .id(("nav", index))
-                    .h(px(32.0))
-                    .px(px(10.0))
                     .flex()
                     .items_center()
+                    .gap(px(8.0))
+                    .pt(px(2.0))
+                    .px(px(8.0))
+                    .pb(px(12.0))
+                    .text_size(px(13.0))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child(
+                        div()
+                            .size(px(22.0))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded(px(6.0))
+                            .bg(rgb(col::accent()))
+                            .child(
+                                Icon::default()
+                                    .data(icons::SCAN)
+                                    .size(px(14.0))
+                                    .text_color(rgb(0xffffff)),
+                            ),
+                    )
+                    .child("Snap Desk"),
+            )
+            .child(
+                div()
+                    .h(px(30.0))
+                    .mb(px(6.0))
+                    .px(px(8.0))
+                    .flex()
+                    .items_center()
+                    .gap(px(6.0))
                     .rounded(px(6.0))
-                    .text_sm()
+                    .border_1()
+                    .border_color(rgb(col::line()))
+                    .bg(rgb(col::surface()))
+                    .text_size(px(13.0))
+                    .child(
+                        Icon::default()
+                            .data(icons::SEARCH)
+                            .size(px(14.0))
+                            .text_color(rgb(col::muted())),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .child(Input::new(&self.nav_search).appearance(false).small()),
+                    ),
+            );
+        let mut any = false;
+        for (group, pages) in GROUPS {
+            let visible: Vec<Page> = pages
+                .iter()
+                .copied()
+                .filter(|p| p.matches(&query, &t(p.label())))
+                .collect();
+            if visible.is_empty() {
+                continue;
+            }
+            any = true;
+            nav = nav.child(
+                div()
+                    .mt(px(12.0))
+                    .mx(px(8.0))
+                    .mb(px(4.0))
+                    .text_size(px(11.0))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(rgb(col::muted()))
+                    .child(t(group)),
+            );
+            for page in visible {
+                let active = page == self.page;
+                let index = Page::ALL.iter().position(|p| *p == page).unwrap_or(0);
+                let hover = col::hover_nav();
+                let mut item = div()
+                    .id(("nav", index))
+                    .min_h(px(30.0))
+                    .mb(px(1.0))
+                    .px(px(8.0))
+                    .flex()
+                    .items_center()
+                    .gap(px(9.0))
+                    .rounded(px(6.0))
+                    .text_size(px(13.0))
                     .cursor_pointer()
-                    .text_color(rgb(if active { col::accent() } else { col::text() }))
-                    .bg(rgb(if active {
-                        col::accent_soft()
-                    } else {
-                        col::nav()
-                    }))
-                    .hover(|s| s.bg(rgb(col::hover())))
-                    .child(t(page.label()))
-                    .on_click(cx.listener(move |view, _: &ClickEvent, _, cx| {
+                    .child(
+                        Icon::default()
+                            .data(page.icon())
+                            .size(px(16.0))
+                            .text_color(rgb(if active {
+                                col::accent_fg()
+                            } else {
+                                col::muted()
+                            })),
+                    )
+                    .child(t(page.label()));
+                item = if active {
+                    item.bg(rgb(col::accent_soft()))
+                        .text_color(rgb(col::accent_fg()))
+                        .font_weight(FontWeight::MEDIUM)
+                } else {
+                    item.text_color(rgb(col::text()))
+                        .hover(move |s| s.bg(rgb(hover)))
+                };
+                nav = nav.child(
+                    item.on_click(cx.listener(move |view, _: &ClickEvent, _, cx| {
                         if view.capture.is_some() {
                             view.end_capture(None, cx);
                         }
                         view.page = page;
+                        view.open_select = None;
                         if page == Page::Logs {
                             view.load_logs(cx);
                         }
@@ -1867,8 +2551,38 @@ impl Render for SettingsView {
                         view.notice = None;
                         cx.notify();
                     })),
+                );
+            }
+        }
+        if !any {
+            nav = nav.child(
+                div()
+                    .m(px(12.0))
+                    .text_xs()
+                    .text_color(rgb(col::muted()))
+                    .child(t("没有匹配的页面")),
             );
         }
+        let version = about_page::product_version();
+        nav = nav.child(
+            div()
+                .mt_auto()
+                .pt(px(12.0))
+                .px(px(8.0))
+                .flex()
+                .items_center()
+                .gap(px(6.0))
+                .text_size(px(11.0))
+                .text_color(rgb(col::muted()))
+                .child(
+                    div()
+                        .size(px(6.0))
+                        .flex_none()
+                        .rounded_full()
+                        .bg(rgb(col::success())),
+                )
+                .child(format!("v{version}")),
+        );
         let body = match self.page {
             Page::Capture => self.capture_page(&settings, &t, cx),
             Page::Recording => self.recording_page(&settings, &t, cx),
@@ -1880,30 +2594,95 @@ impl Render for SettingsView {
             Page::Logs => self.logs_page(&t, cx),
             Page::About => self.about_page(&settings, &t, cx),
         };
+        let notice = |text: String, error: bool| {
+            div()
+                .mt(px(16.0))
+                .px(px(14.0))
+                .py(px(10.0))
+                .rounded(px(6.0))
+                .border_1()
+                .border_color(rgb(if error { col::danger() } else { col::line() }))
+                .bg(rgb(if error {
+                    col::notice_error()
+                } else {
+                    col::notice()
+                }))
+                .text_xs()
+                .line_height(relative(1.6))
+                .text_color(rgb(if error { col::danger() } else { col::text() }))
+                .child(text)
+        };
         let status = match (&self.error, self.saved) {
+            (Some(error), _) => Some(notice(
+                snap_core::i18n::for_language(&language, error).to_owned(),
+                true,
+            )),
             (None, _) if self.notice.is_some() => Some(
                 div()
-                    .mt(px(12.0))
+                    .mt(px(6.0))
+                    .mx(px(4.0))
                     .text_xs()
                     .text_color(rgb(col::success()))
                     .child(t(self.notice.as_deref().unwrap_or_default())),
             ),
-            (Some(error), _) => Some(
-                div()
-                    .mt(px(12.0))
-                    .text_xs()
-                    .text_color(rgb(col::danger()))
-                    .child(snap_core::i18n::for_language(&language, error).to_owned()),
-            ),
             (None, true) => Some(
                 div()
-                    .mt(px(12.0))
+                    .mt(px(6.0))
+                    .mx(px(4.0))
+                    .flex()
+                    .items_center()
+                    .gap(px(4.0))
                     .text_xs()
                     .text_color(rgb(col::success()))
+                    .child(
+                        Icon::default()
+                            .data(icons::CHECK)
+                            .size(px(14.0))
+                            .text_color(rgb(col::success())),
+                    )
                     .child(t("已自动保存")),
             ),
             _ => None,
         };
+        let shortcuts_on = settings.shortcuts_enabled;
+        let unavailable = !crate::shell::unavailable_shortcuts(cx).is_empty();
+        let topbar = div()
+            .h(px(52.0))
+            .flex_none()
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap(px(12.0))
+            .px(px(24.0))
+            .border_b_1()
+            .border_color(rgb(col::border()))
+            .text_xs()
+            .text_color(rgb(col::muted()))
+            .child(
+                div()
+                    .text_size(px(15.0))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(rgb(col::text()))
+                    .child(t(self.page.label())),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(8.0))
+                    .children(
+                        unavailable
+                            .then(|| div().text_color(rgb(col::danger())).child(t("注册异常"))),
+                    )
+                    .child(t("全局快捷键"))
+                    .child(
+                        switch("shortcuts-enabled-top", shortcuts_on, true).on_click(cx.listener(
+                            move |view, _: &ClickEvent, _, cx| {
+                                view.change(cx, |s| s.shortcuts_enabled = !shortcuts_on)
+                            },
+                        )),
+                    ),
+            );
         div()
             .id("settings")
             .track_focus(&self.focus)
@@ -1911,27 +2690,45 @@ impl Render for SettingsView {
             .flex()
             .bg(rgb(col::page_bg()))
             .text_color(rgb(col::text()))
+            .text_size(px(13.0))
+            .line_height(relative(1.5))
             .on_key_down(cx.listener(Self::key_down))
             .on_key_up(cx.listener(Self::key_up))
             .on_modifiers_changed(cx.listener(Self::modifiers_changed))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|view, _: &MouseDownEvent, _, cx| {
+                    if view.open_select.take().is_some() {
+                        cx.notify();
+                    }
+                }),
+            )
             .child(nav)
             .child(
                 div()
-                    .id("settings-page")
                     .flex_1()
                     .min_w_0()
-                    .overflow_y_scroll()
-                    .px(px(24.0))
-                    .pb(px(24.0))
+                    .flex()
+                    .flex_col()
+                    .child(topbar)
                     .child(
                         div()
-                            .pt(px(6.0))
-                            .text_lg()
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .child(t(self.page.label())),
-                    )
-                    .children(body)
-                    .children(status),
+                            .id("settings-page")
+                            .flex_1()
+                            .min_h_0()
+                            .overflow_y_scroll()
+                            .pt(px(2.0))
+                            .px(px(24.0))
+                            .pb(px(28.0))
+                            .child(
+                                div()
+                                    .w_full()
+                                    .max_w(px(760.0))
+                                    .mx_auto()
+                                    .children(body)
+                                    .children(status),
+                            ),
+                    ),
             )
     }
 }

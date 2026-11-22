@@ -6,7 +6,7 @@
 //!   密钥只写入系统凭据库（core `ai_credentials`，键随服务标识与地址变化），配置里只保存密钥标识。
 //!
 //! 多密钥的列表、逐个测试与删除在 `settings_keys.rs`。与 Tauri 版的差异：没有打开服务商密钥页面的入口。
-use super::{card, col, heading, row, SettingsView};
+use super::{SettingsView, card, col, heading, row};
 use gpui_kit::{
     component::input::{Input, InputState},
     *,
@@ -252,6 +252,8 @@ impl SettingsView {
             model: input(model, false, window, cx),
             keys: keys::Keys::new(existing, window, cx),
         });
+        // 编辑器在“服务管理”页签。
+        self.recognition_tab = 2;
         self.error = None;
         self.load_keys(cx);
         cx.notify();
@@ -430,7 +432,7 @@ impl SettingsView {
             }
             engines = engines.child(option);
         }
-        let mut ocr_rows = Vec::new();
+        let mut ocr_rows: Vec<Div> = Vec::new();
         if s.ocr.provider == "local-ppocr" {
             ocr_rows.push(self.ocr_resource_row(t, cx));
         }
@@ -449,9 +451,8 @@ impl SettingsView {
             let idle = !self.recognition.loading;
             let mut recheck = self.action_button("wechat-recheck", t("重新检测"), idle);
             if idle {
-                recheck = recheck.on_click(
-                    cx.listener(|view, _: &ClickEvent, _, cx| view.load_recognition(cx)),
-                );
+                recheck = recheck
+                    .on_click(cx.listener(|view, _: &ClickEvent, _, cx| view.load_recognition(cx)));
             }
             ocr_rows.push(row(t("WeChat OCR"), Some(status), recheck));
         }
@@ -705,52 +706,93 @@ impl SettingsView {
                     })),
             );
         }
-        let mut elements = vec![
-            heading(t("文字识别")).into_any_element(),
-            div()
-                .rounded(px(8.0))
-                .bg(rgb(col::surface()))
-                .border_1()
-                .border_color(rgb(col::border()))
-                .overflow_hidden()
-                .child(engines)
-                .into_any_element(),
-            div().mt(px(8.0)).child(card(ocr_rows)).into_any_element(),
-            heading(t("翻译")).into_any_element(),
-            div()
-                .rounded(px(8.0))
-                .bg(rgb(col::surface()))
-                .border_1()
-                .border_color(rgb(col::border()))
-                .overflow_hidden()
-                .child(translators)
-                .into_any_element(),
-            div()
-                .mt(px(8.0))
-                .child(card(translation_rows))
-                .into_any_element(),
-            heading(t("服务管理")).into_any_element(),
-            div()
-                .rounded(px(8.0))
-                .bg(rgb(col::surface()))
-                .border_1()
-                .border_color(rgb(col::border()))
-                .overflow_hidden()
-                .child(list)
-                .into_any_element(),
-            div().mt(px(8.0)).child(presets).into_any_element(),
-        ];
-        if let Some(editor) = &self.service_editor {
-            elements.push(self.service_editor_card(editor, t, cx).into_any_element());
-        }
-        elements.push(
-            div()
-                .mt(px(10.0))
+        // 页签（Vue `page-tabs`）：文字识别 / 翻译 / 服务管理，居中的分段控件。
+        let tab = self.recognition_tab;
+        let mut tabs = div()
+            .flex()
+            .gap(px(2.0))
+            .p(px(2.0))
+            .rounded(px(6.0))
+            .border_1()
+            .border_color(rgb(col::line()))
+            .bg(rgb(col::surface()));
+        for (index, label) in ["文字识别", "翻译", "服务管理"].into_iter().enumerate() {
+            let selected = tab == index;
+            let text = col::text();
+            let mut item = div()
+                .id(("recognition-tab", index))
+                .min_w(px(88.0))
+                .min_h(px(24.0))
+                .px(px(11.0))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(4.0))
                 .text_xs()
-                .text_color(rgb(col::muted()))
-                .child(t("在线服务会上传图片或文字；密钥只保存在系统凭据库。"))
+                .cursor_pointer()
+                .child(t(label));
+            item = if selected {
+                item.bg(rgb(col::accent_soft()))
+                    .text_color(rgb(col::accent_fg()))
+            } else {
+                item.text_color(rgb(col::muted()))
+                    .hover(move |s| s.text_color(rgb(text)))
+            };
+            tabs = tabs.child(
+                item.on_click(cx.listener(move |view, _: &ClickEvent, _, cx| {
+                    view.recognition_tab = index;
+                    cx.notify();
+                })),
+            );
+        }
+        let boxed = |content: Div| {
+            div()
+                .rounded(px(8.0))
+                .bg(rgb(col::surface()))
+                .border_1()
+                .border_color(rgb(col::border()))
+                .overflow_hidden()
+                .child(content)
+        };
+        let mut elements = vec![
+            div()
+                .mt(px(16.0))
+                .flex()
+                .justify_center()
+                .child(tabs)
                 .into_any_element(),
-        );
+        ];
+        match tab {
+            0 => {
+                // 引擎卡片下接当前引擎的详情（资源、语言、凭据）；识别后的动作单列一组。
+                let after = ocr_rows.split_off(ocr_rows.len().saturating_sub(2));
+                elements.push(heading(t("引擎")).into_any_element());
+                elements.push(boxed(engines).into_any_element());
+                if !ocr_rows.is_empty() {
+                    elements.push(div().mt(px(8.0)).child(card(ocr_rows)).into_any_element());
+                }
+                elements.push(heading(t("识别后")).into_any_element());
+                elements.push(card(after).into_any_element());
+            }
+            1 => {
+                elements.push(heading(t("引擎")).into_any_element());
+                elements.push(boxed(translators).into_any_element());
+                elements.push(heading(t("翻译设置")).into_any_element());
+                elements.push(card(translation_rows).into_any_element());
+            }
+            _ => {
+                elements.push(heading(t("在线服务")).into_any_element());
+                elements.push(boxed(list).into_any_element());
+                elements.push(div().mt(px(8.0)).child(presets).into_any_element());
+                if let Some(editor) = &self.service_editor {
+                    elements.push(self.service_editor_card(editor, t, cx).into_any_element());
+                }
+                elements.push(
+                    super::note(t("在线服务会上传图片或文字；密钥只保存在系统凭据库。"))
+                        .into_any_element(),
+                );
+            }
+        }
         elements
     }
 
@@ -887,7 +929,7 @@ impl SettingsView {
 
 #[cfg(test)]
 mod tests {
-    use super::{new_id, remove_service, service_kind, PRESETS};
+    use super::{PRESETS, new_id, remove_service, service_kind};
     use snap_core::{recognition::services::RecognitionService, settings::Settings};
 
     fn service(protocol: &str, endpoint: &str, vision: bool) -> RecognitionService {

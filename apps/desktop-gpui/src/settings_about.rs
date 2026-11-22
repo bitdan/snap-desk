@@ -3,7 +3,7 @@
 //! 版本号取产品版本（package.json，与 Tauri 版一致），用于和发布列表比较。检查更新复用 core
 //! `updates::latest`（只认带固定更新清单的应用发布，测试版按设置或当前版本决定）。GPUI 预览版尚无安装包，
 //! 发现新版本时只提供“打开发布页”，不在应用内下载安装；也不做后台定时复查。
-use super::{card, col, heading, row, SettingsView};
+use super::{SettingsView, card, col, heading, row};
 use gpui_kit::*;
 use semver::Version;
 
@@ -93,20 +93,7 @@ impl SettingsView {
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
         let button = |id: &'static str, label: String| {
-            div()
-                .id(id)
-                .h(px(28.0))
-                .px(px(10.0))
-                .flex()
-                .items_center()
-                .rounded(px(6.0))
-                .border_1()
-                .border_color(rgb(col::border()))
-                .bg(rgb(col::surface()))
-                .text_xs()
-                .cursor_pointer()
-                .hover(|s| s.bg(rgb(col::page_bg())))
-                .child(label)
+            super::button(id, label, super::ButtonKind::Outline, true)
         };
         let (status, available) = match &self.update {
             None => (t("尚未检查。"), None),
@@ -154,33 +141,34 @@ impl SettingsView {
             .on_click(cx.listener(move |view, _: &ClickEvent, _, cx| {
                 view.open_release(available.clone(), cx)
             }));
+        let latest = matches!(self.update, Some(UpdateState::Latest));
+        let goto = |id: &'static str, label: String, page: super::Page, cx: &mut Context<Self>| {
+            button(id, label).on_click(cx.listener(move |view, _: &ClickEvent, _, cx| {
+                view.page = page;
+                if page == super::Page::Logs {
+                    view.load_logs(cx);
+                }
+                if page == super::Page::Recognition {
+                    view.load_recognition(cx);
+                    view.load_local(cx);
+                    view.load_resources(cx);
+                }
+                cx.notify();
+            }))
+        };
         vec![
-            heading(t("关于")).into_any_element(),
-            card(vec![
-                row(
-                    "Snap Desk".into(),
-                    Some(format!(
-                        "{} {} · {}",
-                        t("版本"),
-                        product_version(),
-                        t("GPUI 预览版")
-                    )),
-                    button("about-home", t("项目主页")).on_click(cx.listener(
-                        |view, _: &ClickEvent, _, cx| {
-                            if let Err(error) = snap_core::platform::open_project_homepage() {
-                                view.error = Some(error);
-                                cx.notify();
-                            }
-                        },
-                    )),
-                ),
-                row(t("许可证"), Some("GPL-3.0-only".into()), div()),
-            ])
+            super::hero(
+                super::icons::SCAN,
+                "Snap Desk".into(),
+                Some(format!("v{}", product_version())),
+                None,
+                Vec::new(),
+            )
             .into_any_element(),
-            heading(t("更新")).into_any_element(),
+            heading(t("应用更新")).into_any_element(),
             card(vec![
                 row(
-                    t("接收测试版更新"),
+                    t("测试版更新"),
                     Some(t("包括 alpha、beta 与 rc 版本；当前为测试版时始终接收。")),
                     self.toggle(
                         "update-preview",
@@ -191,23 +179,84 @@ impl SettingsView {
                 ),
                 row(
                     t("更新代理"),
-                    Some(t("留空时使用系统代理；支持 http、https 与 socks5。")),
+                    Some(t(
+                        "只用于检查和下载更新；留空时使用系统代理。支持 http、https、socks5。",
+                    )),
                     self.text_input(&self.update_proxy, 240.0),
                 ),
                 row(
-                    t("检查更新"),
-                    Some(status),
+                    format!("v{}", product_version()),
+                    Some(status)
+                        .filter(|_| self.update.is_some())
+                        .map(|text| if latest { format!("✓ {text}") } else { text }),
                     div().flex().gap(px(6.0)).child(check).child(release),
                 ),
             ])
             .into_any_element(),
-            div()
-                .mt(px(10.0))
-                .text_xs()
-                .text_color(rgb(col::muted()))
-                .child(t("GPUI 预览版暂不支持应用内安装更新，请从发布页下载。"))
+            super::note(t("GPUI 预览版暂不支持应用内安装更新，请从发布页下载。"))
                 .into_any_element(),
             div().children(notes).into_any_element(),
+            heading(t("帮助")).into_any_element(),
+            card(vec![
+                row(
+                    t("快捷键没有响应"),
+                    None,
+                    goto(
+                        "help-shortcuts",
+                        t("检查快捷键"),
+                        super::Page::Shortcuts,
+                        cx,
+                    ),
+                ),
+                row(
+                    t("识别或翻译不可用"),
+                    None,
+                    goto(
+                        "help-recognition",
+                        t("文字识别"),
+                        super::Page::Recognition,
+                        cx,
+                    ),
+                ),
+                row(
+                    t("遇到其他问题"),
+                    None,
+                    goto("help-logs", t("查看日志"), super::Page::Logs, cx),
+                ),
+            ])
+            .into_any_element(),
+            super::note(t(
+                "Esc 收起主窗口，应用继续在托盘运行。退出会清空贴图，请先保存需要的内容。",
+            ))
+            .into_any_element(),
+            heading(t("应用信息")).into_any_element(),
+            card(vec![
+                row(
+                    t("开源许可"),
+                    None,
+                    div().text_color(rgb(col::muted())).child("GPL-3.0-only"),
+                ),
+                row(
+                    t("录屏系统要求"),
+                    None,
+                    div()
+                        .text_color(rgb(col::muted()))
+                        .child("Windows 10 2004+"),
+                ),
+                row(
+                    t("项目主页"),
+                    Some("github.com/bitdan/snap-desk".into()),
+                    button("about-home", "GitHub ↗".into()).on_click(cx.listener(
+                        |view, _: &ClickEvent, _, cx| {
+                            if let Err(error) = snap_core::platform::open_project_homepage() {
+                                view.error = Some(error);
+                                cx.notify();
+                            }
+                        },
+                    )),
+                ),
+            ])
+            .into_any_element(),
         ]
     }
 }

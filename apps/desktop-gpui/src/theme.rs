@@ -24,15 +24,6 @@ pub struct Palette {
     pub hover: u32,
     pub active_bg: u32,
     pub active_fg: u32,
-    /// 设置窗口页面底色与导航底色。
-    pub page: u32,
-    pub nav: u32,
-    pub accent: u32,
-    pub accent_soft: u32,
-    pub danger: u32,
-    pub success: u32,
-    /// 关闭状态的开关轨道。
-    pub toggle_off: u32,
     /// 列表类窗口（剪贴板历史、预览、结果、贴图管理）的窗口底色、面板底色与内嵌区底色。
     pub window_bg: u32,
     pub panel: u32,
@@ -51,13 +42,6 @@ pub const DARK_PALETTE: Palette = Palette {
     hover: 0x2b323c,
     active_bg: 0x263a57,
     active_fg: 0x93c5fd,
-    page: 0x161a1f,
-    nav: 0x1b2026,
-    accent: 0x3b82f6,
-    accent_soft: 0x1e3a5f,
-    danger: 0xf87171,
-    success: 0x4ade80,
-    toggle_off: 0x4b5563,
     window_bg: 0x0f1115,
     panel: 0x181b20,
     inset: 0x14171c,
@@ -74,13 +58,6 @@ pub const LIGHT_PALETTE: Palette = Palette {
     hover: 0xf4f4f5,
     active_bg: 0xdbeafe,
     active_fg: 0x1d4ed8,
-    page: 0xf4f4f5,
-    nav: 0xfafafa,
-    accent: 0x2563eb,
-    accent_soft: 0xeff6ff,
-    danger: 0xb91c1c,
-    success: 0x16a34a,
-    toggle_off: 0xd4d4d8,
     window_bg: 0xf4f4f5,
     panel: 0xfafafa,
     inset: 0xececef,
@@ -172,6 +149,79 @@ pub const CLIP_DARK: ClipPalette = ClipPalette {
     check_fill: 0x203d2c,
     control_border: 0x768390,
 };
+
+/// 设置主窗口色值（与 Vue `workspace.css` 的 `.app-shell --desk-*` 变量一致；半透明的 soft/hover 已按所在底色混合）。
+pub struct DeskPalette {
+    pub bg: u32,
+    pub surface: u32,
+    pub nav: u32,
+    pub border: u32,
+    pub line: u32,
+    pub sep: u32,
+    pub text: u32,
+    pub muted: u32,
+    pub accent: u32,
+    pub accent_fg: u32,
+    /// 强调色淡底（导航选中、分段控件选中、工具卡片图标底）。
+    pub soft: u32,
+    /// 悬停底色：在导航底色上 / 在卡片底色上。
+    pub hover_nav: u32,
+    pub hover: u32,
+    pub danger: u32,
+    pub success: u32,
+    /// 提示条（`.notice`：强调色 8% 混合卡片底色）。
+    pub notice: u32,
+    pub notice_error: u32,
+}
+
+pub const DESK_LIGHT: DeskPalette = DeskPalette {
+    bg: 0xf9fafb,
+    surface: 0xffffff,
+    nav: 0xf3f4f6,
+    border: 0xe3e6ea,
+    line: 0xd3d8de,
+    sep: 0xeceef1,
+    text: 0x1f2328,
+    muted: 0x5f6670,
+    accent: 0x3b5bdb,
+    accent_fg: 0x3b5bdb,
+    soft: 0xebeffb,
+    hover_nav: 0xe5e6e8,
+    hover: 0xf0f0f0,
+    danger: 0xcf222e,
+    success: 0x24834b,
+    notice: 0xf3f5fd,
+    notice_error: 0xfaebec,
+};
+
+pub const DESK_DARK: DeskPalette = DeskPalette {
+    bg: 0x202227,
+    surface: 0x26292e,
+    nav: 0x1b1d21,
+    border: 0x33373e,
+    line: 0x454a52,
+    sep: 0x30343a,
+    text: 0xe8eaed,
+    muted: 0x9aa0a8,
+    accent: 0x4c6ef5,
+    accent_fg: 0x9db0ff,
+    soft: 0x2c3558,
+    hover_nav: 0x2d2f33,
+    hover: 0x373a3f,
+    danger: 0xff7b72,
+    success: 0x73d69a,
+    notice: 0x2a3040,
+    notice_error: 0x3a2b2d,
+};
+
+/// 设置主窗口的当前色值。
+pub fn desk() -> &'static DeskPalette {
+    if dark() {
+        &DESK_DARK
+    } else {
+        &DESK_LIGHT
+    }
+}
 
 /// 当前主题是否为深色。
 pub fn dark() -> bool {

@@ -3,7 +3,7 @@
 //! 本地 PP-OCR 模型（Windows 上连同 ONNX 运行库）与导出字体的状态、下载、选择本机字体。下载、校验与
 //! 安装在 core `snap_core::resources`（只用内置清单的地址与摘要，校验通过才原子替换）；资源目录与
 //! Tauri 版相同，两个版本共用已下载的资源。下载在后台线程执行，界面每 150 ms 读取一次进度。
-use super::{col, row, SettingsView};
+use super::{SettingsView, col, row};
 use gpui_kit::*;
 use snap_core::resources::{self, ResourceKind, Status};
 use std::{
@@ -85,8 +85,8 @@ impl SettingsView {
 
     /// 下载期间定时重绘进度，直到 `resource_busy` 复位。
     pub(super) fn watch_progress(&mut self, cx: &mut Context<Self>) {
-        cx.spawn(
-            async move |this: WeakEntity<Self>, cx: &mut AsyncApp| loop {
+        cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            loop {
                 cx.background_executor()
                     .timer(Duration::from_millis(150))
                     .await;
@@ -97,8 +97,8 @@ impl SettingsView {
                 if !busy.unwrap_or(false) {
                     break;
                 }
-            },
-        )
+            }
+        })
         .detach();
     }
 
