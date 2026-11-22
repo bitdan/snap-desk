@@ -34,6 +34,7 @@ const ACTIONS: [(&str, &str, ShortcutAction); 5] = [
 ];
 const SHORTCUTS_ID: &str = "shortcuts";
 const SETTINGS_ID: &str = "settings";
+const RESTART_ID: &str = "restart";
 const QUIT_ID: &str = "quit";
 
 /// 主线程独占的外壳状态。托盘与快捷键管理器必须活到进程结束，析构即注销。
@@ -100,10 +101,11 @@ pub fn start(
         settings.shortcuts_enabled,
         None,
     );
-    // 与 Tauri 版托盘菜单一致：五个动作、打开主界面（GPUI 版为设置窗口）、全局快捷键开关、退出。
+    // 与 Tauri 版托盘菜单一致：五个动作、打开主界面（GPUI 版为设置窗口）、全局快捷键开关、重启、退出。
     menu.append_items(&[
         &MenuItem::with_id(SETTINGS_ID, text("打开 Snap Desk"), true, None),
         &shortcuts_item,
+        &MenuItem::with_id(RESTART_ID, text("重启"), true, None),
         &MenuItem::with_id(QUIT_ID, text("退出"), true, None),
     ])
     .map_err(|e| e.to_string())?;
@@ -274,15 +276,8 @@ fn handle(cx: &mut App, event: ShellEvent) {
         }) => run_action(cx, ShortcutAction::Capture, "tray"),
         ShellEvent::Tray(_) => {}
         ShellEvent::Menu(event) => match event.id.0.as_str() {
-            QUIT_ID => {
-                log::info!("event=gpui.quit source=tray");
-                // 录屏中先停止并等视频保存完成再退出。
-                crate::recording::quit_when_idle(cx, |cx| {
-                    crate::local_translate::shutdown();
-                    crate::clipboard::shutdown(cx);
-                    cx.quit();
-                });
-            }
+            QUIT_ID => quit(cx, "tray"),
+            RESTART_ID => restart(cx),
             SHORTCUTS_ID => cx.update_global::<Shell, _>(|shell, _| shell.toggle_shortcuts()),
             SETTINGS_ID => crate::settings_window::open(cx),
             id => {
@@ -623,3 +618,39 @@ fn tray_icon() -> Result<tray_icon::Icon, String> {
     let (width, height) = image.dimensions();
     tray_icon::Icon::from_rgba(image.into_raw(), width, height).map_err(|e| e.to_string())
 }
+
+/// 退出前的资源收尾（本地翻译进程、剪贴板监听）后结束事件循环。
+fn finish(cx: &mut App) {
+    crate::local_translate::shutdown();
+    crate::clipboard::shutdown(cx);
+    cx.quit();
+}
+
+/// 托盘“退出”与应用内更新：录屏中先停止并等视频保存完成再退出。
+pub fn quit(cx: &mut App, source: &str) {
+    log::info!("event=gpui.quit source={source}");
+    crate::recording::quit_when_idle(cx, finish);
+}
+
+/// 托盘“重启”：与退出同一收尾（录屏先保存），再拉起新进程；新进程等本进程结束后再取得单实例锁，
+/// 否则会被当作第二个实例把参数转交回来。
+pub fn restart(cx: &mut App) {
+    log::info!("event=gpui.restart source=tray");
+    crate::recording::quit_when_idle(cx, |cx| {
+        match std::env::current_exe() {
+            Ok(exe) => {
+                if let Err(error) = std::process::Command::new(exe)
+                    .arg(format!("{RELAUNCH_ARG}{}", std::process::id()))
+                    .spawn()
+                {
+                    log::error!("event=gpui.restart_failed message={error}");
+                }
+            }
+            Err(error) => log::error!("event=gpui.restart_failed message={error}"),
+        }
+        finish(cx);
+    });
+}
+
+/// 重启时传给新进程的参数前缀，后接旧进程 PID。
+pub const RELAUNCH_ARG: &str = "--relaunch-after=";

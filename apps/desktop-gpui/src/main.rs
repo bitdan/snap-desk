@@ -28,13 +28,21 @@ mod shelf;
 mod theme;
 mod translation_window;
 mod single_instance;
+mod updater;
 
 use futures::channel::mpsc;
 use gpui_kit::*;
 
 fn main() {
     let log_path = logging::init();
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    let mut args: Vec<String> = std::env::args().skip(1).collect();
+    // 托盘“重启”拉起的新进程：等旧进程退出、释放单实例锁后再继续。
+    if let Some(index) = args.iter().position(|a| a.starts_with(shell::RELAUNCH_ARG)) {
+        let arg = args.remove(index);
+        if let Ok(pid) = arg[shell::RELAUNCH_ARG.len()..].parse::<u32>() {
+            wait_for_exit(pid);
+        }
+    }
     let listener = match single_instance::acquire(&args) {
         single_instance::Instance::Primary(listener) => listener,
         single_instance::Instance::Secondary => {
@@ -64,10 +72,41 @@ fn main() {
             cx.quit();
             return;
         }
+        updater::initialize(cx);
         // 首次启动带的动作参数与转交参数走同一入口。
         if let Some(action) = snap_core::settings::action_from_args(&args) {
             shell::run_action(cx, action, "cli");
         }
     });
     log::info!("event=gpui.exit");
+}
+
+/// 等指定进程退出（最多 15 秒）；进程不存在时立即返回。
+#[cfg(windows)]
+fn wait_for_exit(pid: u32) {
+    use windows_sys::Win32::{
+        Foundation::CloseHandle,
+        System::Threading::{OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE},
+    };
+    unsafe {
+        let handle = OpenProcess(PROCESS_SYNCHRONIZE, 0, pid);
+        if !handle.is_null() {
+            WaitForSingleObject(handle, 15_000);
+            CloseHandle(handle);
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn wait_for_exit(pid: u32) {
+    let started = std::time::Instant::now();
+    while started.elapsed() < std::time::Duration::from_secs(15)
+        && std::process::Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success())
+    {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
 }

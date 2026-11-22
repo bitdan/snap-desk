@@ -275,6 +275,7 @@ enum Field {
     CapturePrefix,
     RecordingPrefix,
     ExcludedApps,
+    UpdateMirror,
     UpdateProxy,
 }
 
@@ -284,6 +285,7 @@ impl Field {
             Field::CapturePrefix => settings.export.filename_prefix = value.to_owned(),
             Field::RecordingPrefix => settings.recording_export.filename_prefix = value.to_owned(),
             Field::ExcludedApps => settings.clipboard.excluded_apps = excluded_apps(value),
+            Field::UpdateMirror => settings.update_network.mirror = value.trim().to_owned(),
             Field::UpdateProxy => settings.update_network.proxy = value.trim().to_owned(),
         }
     }
@@ -319,9 +321,9 @@ struct SettingsView {
     capture_prefix: Entity<InputState>,
     recording_prefix: Entity<InputState>,
     excluded: Entity<InputState>,
+    update_mirror: Entity<InputState>,
     update_proxy: Entity<InputState>,
     /// 关于页的检查更新结果。
-    update: Option<about_page::UpdateState>,
     /// 识别与翻译页：后台读取的语言与密钥状态、正在编辑的服务。
     recognition: recognition_page::RecognitionState,
     service_editor: Option<recognition_page::ServiceEditor>,
@@ -385,7 +387,14 @@ impl SettingsView {
             cx,
         );
         let excluded = input(settings.clipboard.excluded_apps.join(", "), window, cx);
-        let update_proxy = input(settings.update_network.proxy.clone(), window, cx);
+        let placeholder = |key: &str| snap_core::i18n::for_language(&settings.appearance.language, key).to_owned();
+        let (mirror_hint, proxy_hint) = (placeholder("可选，如 https://mirror.example/"), placeholder("可选，如 http://127.0.0.1:7890"));
+        let update_mirror = cx.new(|cx| {
+            InputState::new(window, cx).placeholder(mirror_hint).default_value(settings.update_network.mirror.clone())
+        });
+        let update_proxy = cx.new(|cx| {
+            InputState::new(window, cx).placeholder(proxy_hint).default_value(settings.update_network.proxy.clone())
+        });
         let log_search = {
             let placeholder = snap_core::i18n::for_language(&settings.appearance.language, "搜索事件名、错误码").to_owned();
             cx.new(|cx| InputState::new(window, cx).placeholder(placeholder))
@@ -400,6 +409,7 @@ impl SettingsView {
             (&capture_prefix, Field::CapturePrefix),
             (&recording_prefix, Field::RecordingPrefix),
             (&excluded, Field::ExcludedApps),
+            (&update_mirror, Field::UpdateMirror),
             (&update_proxy, Field::UpdateProxy),
         ] {
             subscriptions.push(cx.subscribe(
@@ -426,8 +436,8 @@ impl SettingsView {
             capture_prefix,
             recording_prefix,
             excluded,
+            update_mirror,
             update_proxy,
-            update: None,
             recognition: Default::default(),
             service_editor: None,
             managing_local: None,
@@ -2629,6 +2639,7 @@ impl Render for SettingsView {
                     settings.recording_export.filename_prefix.clone(),
                 ),
                 (&self.excluded, settings.clipboard.excluded_apps.join(", ")),
+                (&self.update_mirror, settings.update_network.mirror.clone()),
                 (&self.update_proxy, settings.update_network.proxy.clone()),
             ] {
                 state.update(cx, |state, cx| state.set_value(value, window, cx));
@@ -2636,6 +2647,7 @@ impl Render for SettingsView {
         }
         let language = Self::language(cx);
         let words = language.clone();
+        let has_update = crate::updater::view(cx).has_update();
         let t = move |key: &str| snap_core::i18n::for_language(&words, key).to_owned();
         let query = self.nav_search.read(cx).value().to_string();
         let mut nav = div()
@@ -2750,7 +2762,11 @@ impl Render for SettingsView {
                                 col::muted()
                             })),
                     )
-                    .child(t(page.label()));
+                    .child(t(page.label()))
+                    // 有新版本时“关于与帮助”带红点（Vue `.nav-dot`）。
+                    .children((page == Page::About && has_update).then(|| {
+                        div().ml_auto().size(px(6.0)).flex_none().rounded_full().bg(rgb(0xdc2626))
+                    }));
                 item = if active {
                     item.bg(rgb(col::accent_soft()))
                         .text_color(rgb(col::accent_fg()))
@@ -2793,7 +2809,7 @@ impl Render for SettingsView {
                     .child(t("没有匹配的页面")),
             );
         }
-        let version = about_page::product_version();
+        let version = crate::updater::current_version();
         nav = nav.child(
             div()
                 .mt_auto()
@@ -2900,6 +2916,15 @@ impl Render for SettingsView {
                     .flex()
                     .items_center()
                     .gap(px(8.0))
+                    // 有新版本：顶部“有更新”，打开“关于与帮助”的更新面板（Vue `UpdateNotice.vue`）。
+                    .children((has_update && self.page != Page::About).then(|| {
+                        about_page::dot_button("update-notice", t("有更新"), true)
+                            .on_click(cx.listener(|view, _: &ClickEvent, _, cx| {
+                                view.page = Page::About;
+                                view.open_select = None;
+                                cx.notify();
+                            }))
+                    }))
                     .children(
                         unavailable
                             .then(|| div().text_color(rgb(col::danger())).child(t("注册异常"))),
