@@ -112,37 +112,9 @@ pub fn translate_selection(cx: &mut App) {
     .detach();
 }
 
-/// 打开文字翻译窗口；带原文时立即发送翻译（快捷键划词即视为确认）。
+/// 打开文字翻译窗口（`translation_window.rs`）；带原文时立即发送翻译（快捷键划词即视为确认）。
 pub fn open_text(cx: &mut App, text: Option<String>) {
-    let settings = crate::shell::settings(cx);
-    let local = local_engine(cx);
-    let options = WindowOptions {
-        window_bounds: Some(WindowBounds::Windowed(Bounds::centered(None, size(px(560.0), px(620.0)), cx))),
-        titlebar: Some(TitlebarOptions { title: Some(self::text(&settings, "文字翻译").into()), ..Default::default() }),
-        focus: true,
-        show: true,
-        kind: WindowKind::Normal,
-        is_resizable: true,
-        window_min_size: Some(size(px(420.0), px(420.0))),
-        ..Default::default()
-    };
-    let result = cx.open_window(options, |window, cx| {
-        cx.new(|cx| {
-            let mut panel = Panel::new(None, Mode::Translate, settings, local, window, cx);
-            if let Some(text) = text {
-                panel.fill = Some(text.clone());
-                panel.translate_text(text, cx);
-            }
-            panel
-        })
-    });
-    match result {
-        Ok(handle) => {
-            let _ = handle.update(cx, |_, window, _| window.activate_window());
-            log::info!("event=gpui.translation_window_opened");
-        }
-        Err(error) => log::error!("event=gpui.translation_window_failed message={error}"),
-    }
+    crate::translation_window::open(cx, text);
 }
 
 /// 打开识别结果窗口并立即开始识别。

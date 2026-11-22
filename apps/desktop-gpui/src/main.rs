@@ -27,6 +27,7 @@ mod selection;
 mod shell;
 mod shelf;
 mod theme;
+mod translation_window;
 mod single_instance;
 
 use futures::channel::mpsc;
