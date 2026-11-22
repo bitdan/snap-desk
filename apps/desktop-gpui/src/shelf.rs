@@ -165,6 +165,25 @@ fn snapshot(cx: &App) -> Result<(Snapshot, Service), String> {
     Ok((shelf::snapshot(&prefs, &service)?, service))
 }
 
+/// 剪贴板历史右键菜单用：条目是否正显示在暂存架上；暂存架未开启或不可用时为 None（不显示联动入口）。
+pub fn shows(cx: &App, id: i64) -> Option<bool> {
+    let (snapshot, _) = snapshot(cx).ok()?;
+    Some(snapshot.items.iter().any(|item| item.id == id))
+}
+
+/// 放到暂存架（固定，并撤销“已从架上移除”）或从架上取下（只影响架子，不删除历史）；展开中的暂存架随之刷新。
+pub fn place(cx: &mut App, id: i64, on_shelf: bool) -> Result<(), String> {
+    let service = crate::clipboard::service(cx).ok_or("剪贴板历史不可用。")?;
+    let data = service.data()?.clone();
+    data.repo.get(id)?;
+    let action = if on_shelf { ShelfAction::Remove } else { ShelfAction::Keep };
+    update(cx, |prefs| prefs.apply(id, action, |value| data.repo.get(value).is_ok()))?;
+    if let Some(handle) = cx.try_global::<ShelfState>().and_then(|s| s.window) {
+        let _ = handle.update(cx, |view, _, cx| view.refresh(cx));
+    }
+    Ok(())
+}
+
 /// 窗口宽度：每张卡 174 像素，最多一排 5 张，两侧各留 48 像素。
 fn width_for(count: usize) -> f32 {
     (count.clamp(1, PER_PAGE) as f32) * CARD + 96.0

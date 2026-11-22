@@ -443,6 +443,8 @@ struct HistoryView {
     message: Option<String>,
     keep_open: bool,
     confirm: Option<Confirm>,
+    /// 右键菜单：条目序号、窗口内位置、条目是否在暂存架上（None：暂存架未开启，不显示联动入口）。
+    menu: Option<(usize, Point<Pixels>, Option<bool>)>,
     focus: FocusHandle,
     _search: Subscription,
     _activation: Subscription,
@@ -488,6 +490,7 @@ impl HistoryView {
             message: None,
             keep_open: false,
             confirm: None,
+            menu: None,
             focus: cx.focus_handle(),
             _search: subscription,
             _activation: activation,
@@ -855,7 +858,9 @@ impl HistoryView {
         let key = keystroke.key.as_str();
         match key {
             "escape" => {
-                if self.confirm.is_some() {
+                if self.menu.is_some() {
+                    self.menu = None;
+                } else if self.confirm.is_some() {
                     self.confirm = None;
                 } else if !self.picked.is_empty() {
                     self.clear_selection();
@@ -1068,6 +1073,13 @@ impl Render for HistoryView {
                         view.press = Some((index, event.position));
                     }))
                     .on_mouse_up(MouseButton::Left, cx.listener(|view, _: &MouseUpEvent, _, _| view.press = None))
+                    .on_mouse_down(MouseButton::Right, cx.listener(move |view, event: &MouseDownEvent, _, cx| {
+                        cx.stop_propagation();
+                        view.selected = index;
+                        let shelf = crate::shelf::shows(cx, id);
+                        view.menu = Some((index, event.position, shelf));
+                        cx.notify();
+                    }))
                     .on_mouse_move(cx.listener(|view, event: &MouseMoveEvent, _, cx| view.motion(event, cx)))
                     .on_click(cx.listener(move |view, event: &ClickEvent, window, cx| {
                         view.selected = index;
@@ -1242,10 +1254,26 @@ impl Render for HistoryView {
         } else {
             self.message.clone().map(|m| div().text_xs().text_color(rgb(crate::theme::c().ok_text)).child(m))
         };
+        let menu = self.menu.and_then(|(index, at, shelf)| {
+            let item = self.items.get(index)?.clone();
+            Some(self.context_menu(index, item, at, shelf, window, &text, cx))
+        });
         div()
             .id("clipboard-history")
             .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::key))
+            // 菜单外按下即关闭（菜单本身阻止冒泡）。
+            .on_mouse_down(MouseButton::Left, cx.listener(|view, _: &MouseDownEvent, _, cx| {
+                if view.menu.take().is_some() {
+                    cx.notify();
+                }
+            }))
+            .on_mouse_down(MouseButton::Right, cx.listener(|view, _: &MouseDownEvent, _, cx| {
+                if view.menu.take().is_some() {
+                    cx.notify();
+                }
+            }))
+            .relative()
             .size_full()
             .flex()
             .flex_col()
@@ -1273,6 +1301,122 @@ impl Render for HistoryView {
             .children(notice)
             .child(switches)
             .child(footer)
+            .children(menu)
+    }
+}
+
+/// 右键菜单项（对照 Vue `ClipboardItem.vue` 的 `ContextMenuContent`）。
+#[derive(Clone, Copy)]
+enum MenuItem {
+    Copy,
+    Preview,
+    Pin,
+    Shelf(bool),
+    Favorite(bool),
+    Delete,
+}
+
+impl HistoryView {
+    fn menu_action(&mut self, index: usize, item: Item, action: MenuItem, window: &mut Window, cx: &mut Context<Self>) {
+        self.menu = None;
+        let id = item.id;
+        match action {
+            MenuItem::Copy => self.activate(index, false, window, cx),
+            MenuItem::Preview => crate::clipboard_preview::open(cx, self.service.clone(), item),
+            MenuItem::Pin => self.pin(index, cx),
+            MenuItem::Shelf(on_shelf) => {
+                let result = crate::shelf::place(cx, id, on_shelf);
+                if result.is_ok() {
+                    self.error = None;
+                    self.message = Some(snap_core::i18n::for_language(&self.language, if on_shelf { "已从暂存架取下。" } else { "已放到暂存架。" }).to_owned());
+                }
+                self.run(result, cx);
+            }
+            MenuItem::Favorite(favorite) => {
+                let result = self.service.set_favorite(id, !favorite);
+                self.run(result, cx);
+            }
+            MenuItem::Delete => {
+                let result = self.service.delete(&[id]);
+                self.picked.retain(|v| *v != id);
+                self.picked_items.remove(&id);
+                self.run(result, cx);
+            }
+        }
+        cx.notify();
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn context_menu(
+        &self,
+        index: usize,
+        item: Item,
+        at: Point<Pixels>,
+        shelf: Option<bool>,
+        window: &Window,
+        text: &dyn Fn(&'static str) -> String,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let mut entries: Vec<Option<(MenuItem, &'static str)>> = vec![Some((MenuItem::Copy, "复制"))];
+        if item.kind != Kind::File {
+            entries.push(Some((MenuItem::Preview, "预览")));
+        }
+        entries.push(Some((MenuItem::Pin, "悬浮贴图")));
+        if let Some(on_shelf) = shelf {
+            entries.push(Some((MenuItem::Shelf(on_shelf), if on_shelf { "从暂存架取下" } else { "放到暂存架" })));
+        }
+        entries.push(None);
+        entries.push(Some((MenuItem::Favorite(item.favorite), if item.favorite { "取消收藏" } else { "收藏" })));
+        entries.push(Some((MenuItem::Delete, "删除")));
+        const WIDTH: f32 = 168.0;
+        const ROW: f32 = 28.0;
+        let height = entries.iter().map(|e| if e.is_some() { ROW } else { 9.0 }).sum::<f32>() + 8.0;
+        // 贴边时向内翻转，避免菜单超出窗口。
+        let viewport = window.viewport_size();
+        let x = if at.x + px(WIDTH) > viewport.width { (at.x - px(WIDTH)).max(px(4.0)) } else { at.x };
+        let y = if at.y + px(height) > viewport.height { (at.y - px(height)).max(px(4.0)) } else { at.y };
+        let mut menu = div()
+            .id("clipboard-menu")
+            .absolute()
+            .left(x)
+            .top(y)
+            .w(px(WIDTH))
+            .p(px(4.0))
+            .flex()
+            .flex_col()
+            .rounded(px(8.0))
+            .border_1()
+            .border_color(rgb(annotate::border()))
+            .bg(rgb(annotate::surface()))
+            .shadow_lg()
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation());
+        for (row, entry) in entries.into_iter().enumerate() {
+            let Some((action, label)) = entry else {
+                menu = menu.child(div().h(px(9.0)).flex().items_center().child(div().h(px(1.0)).w_full().bg(rgb(annotate::border()))));
+                continue;
+            };
+            let item = item.clone();
+            let danger = matches!(action, MenuItem::Delete);
+            menu = menu.child(
+                div()
+                    .id(("clipboard-menu-item", row))
+                    .h(px(ROW))
+                    .px(px(10.0))
+                    .flex()
+                    .items_center()
+                    .rounded(px(5.0))
+                    .text_sm()
+                    .cursor_pointer()
+                    .text_color(rgb(if danger { crate::theme::c().error_text } else { annotate::text() }))
+                    .hover(|s| s.bg(rgb(annotate::hover())))
+                    .child(text(label))
+                    .on_click(cx.listener(move |view, _: &ClickEvent, window, cx| {
+                        view.menu_action(index, item.clone(), action, window, cx)
+                    })),
+            );
+        }
+        menu
     }
 }
 
