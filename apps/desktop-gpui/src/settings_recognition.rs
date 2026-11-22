@@ -5,8 +5,7 @@
 //! - 服务管理：服务列表（能力、地址、密钥状态）、按预设新增、编辑名称/地址/模型/图片能力/密钥、删除。
 //!   密钥只写入系统凭据库（core `ai_credentials`，键随服务标识与地址变化），配置里只保存密钥标识。
 //!
-//! 与 Tauri 版的差异：微信 OCR、本地 CTranslate2 翻译在 GPUI 版不可用（显示但不可选）；
-//! 每个服务只编辑第一个密钥（其余密钥标识保留不变）；没有打开服务商密钥页面的入口。
+//! 多密钥的列表、逐个测试与删除在 `settings_keys.rs`。与 Tauri 版的差异：没有打开服务商密钥页面的入口。
 use super::{card, col, heading, row, SettingsView};
 use gpui_kit::{
     component::input::{Input, InputState},
@@ -16,11 +15,14 @@ use snap_core::{
     recognition::{
         ai_credentials,
         ocr_config::OcrLanguage,
-        services::{self, RecognitionService, DEFAULT_KEY},
+        services::{self, RecognitionService},
     },
     settings::Settings,
 };
 use std::collections::HashMap;
+
+#[path = "settings_keys.rs"]
+mod keys;
 
 /// 新增服务的预设（与 Vue `servicePresets` 一致）。
 struct Preset {
@@ -111,7 +113,7 @@ pub(super) struct ServiceEditor {
     name: Entity<InputState>,
     endpoint: Entity<InputState>,
     model: Entity<InputState>,
-    key: Entity<InputState>,
+    keys: keys::Keys,
 }
 
 /// 页面后台读取的状态：系统 OCR 语言、WeChat OCR 组件与各服务已保存的密钥数。
@@ -248,103 +250,10 @@ impl SettingsView {
             name: input(name, false, window, cx),
             endpoint: input(endpoint, false, window, cx),
             model: input(model, false, window, cx),
-            key: input(String::new(), true, window, cx),
+            keys: keys::Keys::new(existing, window, cx),
         });
         self.error = None;
-        cx.notify();
-    }
-
-    /// 校验并保存服务；填写了密钥时写入系统凭据库（第一个密钥标识）。
-    fn save_service(&mut self, cx: &mut Context<Self>) {
-        let Some(editor) = self.service_editor.as_ref() else {
-            return;
-        };
-        let read = |state: &Entity<InputState>| state.read(cx).value().trim().to_owned();
-        let (name, endpoint, model, key) = (
-            read(&editor.name),
-            read(&editor.endpoint),
-            read(&editor.model),
-            read(&editor.key),
-        );
-        let current = crate::shell::settings(cx);
-        let previous = editor.existing.as_ref().and_then(|id| {
-            current
-                .recognition_services
-                .iter()
-                .find(|s| &s.id == id)
-                .cloned()
-        });
-        let service = RecognitionService {
-            id: editor.existing.clone().unwrap_or_else(new_id),
-            name,
-            protocol: editor.protocol.into(),
-            endpoint,
-            model,
-            vision: editor.vision || matches!(editor.protocol, "ocr-space" | "paddle-ocr"),
-            keys: previous
-                .as_ref()
-                .map_or_else(services::default_keys, |s| s.keys.clone()),
-        };
-        if let Err(error) = service.validate() {
-            self.error = Some(error);
-            cx.notify();
-            return;
-        }
-        if key.chars().count() > 2048 || key.chars().any(char::is_control) {
-            self.error = Some("密钥格式无效。".into());
-            cx.notify();
-            return;
-        }
-        let saved = service.clone();
-        match crate::shell::update_settings(cx, move |s| {
-            match s.recognition_services.iter_mut().find(|x| x.id == saved.id) {
-                Some(slot) => *slot = saved.clone(),
-                None => s.recognition_services.push(saved.clone()),
-            }
-            // 正在使用的翻译服务改了地址或模型：同步运行时配置。
-            if s.ai.service_id == saved.id {
-                s.ai.provider = if saved.protocol == "deepl" {
-                    "deepl"
-                } else {
-                    "online-llm"
-                }
-                .into();
-                s.ai.endpoint = saved.endpoint.clone();
-                s.ai.model = saved.model.clone();
-            }
-        }) {
-            Ok(_) => {}
-            Err(error) => {
-                self.error = Some(error);
-                cx.notify();
-                return;
-            }
-        }
-        let first = service
-            .keys
-            .first()
-            .cloned()
-            .unwrap_or_else(|| DEFAULT_KEY.into());
-        let endpoint_changed = previous
-            .as_ref()
-            .is_some_and(|p| p.endpoint != service.endpoint);
-        if !key.is_empty() {
-            if let Err(error) = ai_credentials::write(
-                &services::secret_key(&service.id, &service.endpoint, &first),
-                Some(key),
-            ) {
-                self.error = Some(error);
-                cx.notify();
-                return;
-            }
-        }
-        self.service_editor = None;
-        self.error = None;
-        self.saved = true;
-        self.notice = endpoint_changed
-            .then(|| "服务地址已更改，原密钥不会发往新地址，请重新填写密钥。".to_owned());
-        log::info!("event=gpui.recognition_service_saved");
-        self.load_recognition(cx);
+        self.load_keys(cx);
         cx.notify();
     }
 
@@ -898,7 +807,7 @@ impl SettingsView {
                 }),
             ));
         }
-        rows.push(field(t("API 密钥"), &editor.key));
+        rows.push(self.key_rows(editor, t, cx));
         let button = |id: &'static str, primary: bool, danger: bool| {
             div()
                 .id(id)
@@ -934,7 +843,9 @@ impl SettingsView {
             .child(
                 button("service-save", true, false)
                     .child(t("保存"))
-                    .on_click(cx.listener(|view, _: &ClickEvent, _, cx| view.save_service(cx))),
+                    .on_click(cx.listener(|view, _: &ClickEvent, window, cx| {
+                        view.save_service(false, window, cx);
+                    })),
             )
             .child(
                 button("service-cancel", false, false)
@@ -944,6 +855,8 @@ impl SettingsView {
                         cx.notify();
                     })),
             );
+        let (test, result) = self.test_controls(editor, t, cx);
+        actions = actions.child(test);
         if let Some(id) = editor.existing.clone() {
             actions = actions.child(
                 button("service-delete", false, true)
@@ -955,13 +868,12 @@ impl SettingsView {
         }
         rows.push(row(
             String::new(),
-            Some(t(if editor.existing.is_some() {
-                "密钥留空则保持不变。"
-            } else {
-                "可稍后再填写密钥。"
-            })),
+            Some(t("先保存当前配置，再发送一次测试请求，可能产生少量费用。")),
             actions,
         ));
+        if let Some(result) = result {
+            rows.push(div().px(px(14.0)).pb(px(10.0)).child(result));
+        }
         div()
             .mt(px(10.0))
             .child(heading(t(if editor.existing.is_some() {
