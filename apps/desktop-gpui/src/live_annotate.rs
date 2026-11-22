@@ -54,6 +54,8 @@ pub struct Target {
     pub bar: Bounds<Pixels>,
     /// 显示器缩放（物理像素 / 逻辑像素）。
     pub scale: f32,
+    /// 窗口录制：窗口当前位置（全局物理像素），录制区域随之移动；显示器录制为 None。
+    pub follow: Option<Arc<Mutex<Option<(i32, i32)>>>>,
 }
 
 impl Target {
@@ -115,6 +117,9 @@ pub struct Annotator {
     /// 文字、序号栅格化不读取底图；滤镜在录制中不栅格化。
     blank: Arc<RgbaImage>,
     handle: AnyWindowHandle,
+    /// 窗口左上角（全局逻辑像素）与最近一次应用的窗口录制位置。
+    screen_origin: Point<Pixels>,
+    followed: Option<(i32, i32)>,
 }
 
 impl Annotator {
@@ -163,7 +168,10 @@ impl Annotator {
         cx.spawn(
             async move |this: WeakEntity<Annotator>, cx: &mut AsyncApp| loop {
                 cx.background_executor().timer(POLL).await;
-                if this.update(cx, |view, cx| view.expire(cx)).is_err() {
+                if this.update(cx, |view, cx| {
+                    view.follow(cx);
+                    view.expire(cx)
+                }).is_err() {
                     break;
                 }
             },
@@ -183,6 +191,8 @@ impl Annotator {
             error: None,
             blank: Arc::new(RgbaImage::new(1, 1)),
             handle: window.window_handle(),
+            screen_origin: screen.origin,
+            followed: None,
         };
         view.set_editing(editing, window, cx);
         view
@@ -338,6 +348,23 @@ impl Annotator {
     }
 
     /// 到达时效的标注从画布移除（录像中已按媒体时间结束）；不在编辑且没有标注时关闭窗口。
+    /// 窗口录制时把录制区域移到窗口当前位置（画布坐标随之平移，标注仍按录像局部坐标保存）。
+    fn follow(&mut self, cx: &mut Context<Self>) {
+        let Some(origin) = self.target.follow.as_ref().and_then(|f| f.lock().ok().and_then(|o| *o)) else {
+            return;
+        };
+        if self.followed == Some(origin) {
+            return;
+        }
+        self.followed = Some(origin);
+        let scale = self.target.scale;
+        self.region.origin = point(
+            px(origin.0 as f32 / scale) - self.screen_origin.x,
+            px(origin.1 as f32 / scale) - self.screen_origin.y,
+        );
+        cx.notify();
+    }
+
     fn expire(&mut self, cx: &mut Context<Self>) {
         if self.editor.pending || self.editor.interacting() || self.editor.text.is_some() {
             return;

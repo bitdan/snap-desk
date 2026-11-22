@@ -53,7 +53,7 @@ struct Recorder {
     progress: Arc<Mutex<Progress>>,
     /// 已请求退出：不再开始新录屏，准备中的录屏直接放弃。
     quitting: bool,
-    /// 当前录屏的实时标注入口（显示器录制才有）。
+    /// 当前录屏的实时标注入口。
     annotation: Option<crate::live_annotate::Target>,
     annotator: Option<WindowHandle<crate::live_annotate::Annotator>>,
 }
@@ -230,6 +230,8 @@ pub struct Prepared {
     go: mpsc::SyncSender<bool>,
     window: bool,
     live: Arc<Mutex<Live>>,
+    /// 窗口录制：采集线程报告的窗口当前位置（全局物理像素），实时标注据此跟随窗口。
+    follow: Arc<Mutex<Option<(i32, i32)>>>,
 }
 
 /// 选区所在显示器与显示器内的局部选区；跨屏选区不支持。
@@ -350,8 +352,10 @@ pub async fn prepare(cx: &mut AsyncApp, request: Request) -> Result<Prepared, St
         fallback,
         queue.clone(),
     ));
+    let follow: Arc<Mutex<Option<(i32, i32)>>> = Arc::default();
     let host = Arc::new(GpuiHost {
         state: state.clone(),
+        follow: follow.clone(),
         live: live.clone(),
         display: display.clone(),
         export,
@@ -426,6 +430,7 @@ pub async fn prepare(cx: &mut AsyncApp, request: Request) -> Result<Prepared, St
         go: go_tx,
         window: request.window.is_some(),
         live,
+        follow,
     })
 }
 
@@ -439,6 +444,7 @@ pub fn launch(cx: &mut App, prepared: Prepared) {
         go,
         window,
         live,
+        follow,
     } = prepared;
     let recorder = cx.default_global::<Recorder>();
     let state = recorder.state.clone();
@@ -457,7 +463,9 @@ pub fn launch(cx: &mut App, prepared: Prepared) {
     let border = if window { None } else { open_border(cx, logical) };
     let screen = display_bounds(cx, &display);
     let bar = bar_bounds(screen, logical);
-    let annotation = (!window).then(|| crate::live_annotate::Target {
+    // 窗口录制也可标注：画布铺满显示器，录制区域随窗口移动（Tauri `update_origin`）。
+    let annotation = Some(crate::live_annotate::Target {
+        follow: window.then_some(follow),
         id,
         live,
         state: state.clone(),
@@ -1026,6 +1034,7 @@ impl Render for Controls {
 /// GPUI 外壳为录屏流水线提供的能力：标注层来自实时标注会话，显示器变化时中止，状态由控制条轮询。
 struct GpuiHost {
     state: Arc<RecordingState>,
+    follow: Arc<Mutex<Option<(i32, i32)>>>,
     live: Arc<Mutex<Live>>,
     display: Display,
     export: RecordingExportSettings,
@@ -1051,6 +1060,11 @@ impl Host for GpuiHost {
     /// 编辑标注时不录入键鼠特效，避免录下标注工具栏的按键与点击。
     fn annotation_editing(&self, id: u64) -> bool {
         self.live.lock().is_ok_and(|live| live.id == id && live.editing)
+    }
+    fn update_origin(&self, _id: u64, origin: (i32, i32)) {
+        if let Ok(mut follow) = self.follow.lock() {
+            *follow = Some(origin);
+        }
     }
     fn timed_annotations(&self, id: u64) -> bool {
         let ms = self.state.media_time_ms().unwrap_or(0);
