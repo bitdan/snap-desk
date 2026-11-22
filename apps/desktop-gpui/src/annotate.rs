@@ -1316,13 +1316,17 @@ pub fn icon_button(
 pub struct Tooltip(pub SharedString);
 impl Render for Tooltip {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        // Vue `.chinese-tooltip`：浅色主题深底浅字，深色主题反过来。
+        let (bg, fg) = if crate::theme::dark() { (0xf6f8faf2, 0x1f2328) } else { (0x1f2328f2, 0xf6f8fa) };
         div()
-            .px_2()
-            .py_1()
-            .rounded(px(4.0))
-            .bg(rgb(0x0b0d10))
-            .text_xs()
-            .text_color(rgb(text()))
+            .px(px(8.0))
+            .py(px(5.0))
+            .rounded(px(6.0))
+            .bg(rgba(bg))
+            .shadow_md()
+            .text_size(px(12.0))
+            .line_height(relative(1.45))
+            .text_color(rgb(fg))
             .child(self.0.clone())
     }
 }
