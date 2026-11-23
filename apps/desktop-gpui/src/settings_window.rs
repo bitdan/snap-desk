@@ -7,7 +7,7 @@
 //! 快捷键录入：点击按键框后注销全部全局快捷键（否则组合会被系统热键吞掉），按下组合即预览，
 //! 全部按键松开后保存；Esc 取消，Backspace/Delete 禁用该动作；窗口失焦也会取消并恢复全局快捷键。
 //!
-//! 截图、录屏的默认保存目录可更改或恢复默认（目录记录文件与旧版相同）。
+//! 截图、录屏的默认保存目录统一在通用页“文件与存储”中更改或恢复默认（目录记录文件与旧版相同）。
 //! 通用页：开机自启（core `autostart`，与旧版同一登录项）、配置导出/导入（core `settings::backup`，
 //! 导入事务见 `shell::import_backup`）。
 use gpui_kit::{
@@ -1620,49 +1620,6 @@ impl SettingsView {
             .child(Input::new(state).appearance(false).small())
     }
 
-    /// 默认保存目录：当前位置 + 更改…/恢复默认/打开。
-    fn folder_row(
-        &self,
-        folder: Folder,
-        s: &Settings,
-        t: &dyn Fn(&str) -> String,
-        cx: &mut Context<Self>,
-    ) -> Div {
-        let (path, is_default) = folder.current(s);
-        let location = match (&path, is_default) {
-            (Some(path), false) => path.display().to_string(),
-            (Some(path), true) => format!("{} · {}", t("默认"), path.display()),
-            (None, _) => t("系统默认位置（保存对话框决定）"),
-        };
-        let (label, id) = match folder {
-            Folder::Captures => ("截图保存目录", 0usize),
-            Folder::Recordings => ("录屏保存目录", 1),
-        };
-        let small =
-            |id: (&'static str, usize), label: String| button(id, label, ButtonKind::Outline, true);
-        let controls = div()
-            .flex()
-            .gap(px(6.0))
-            .child(small(("folder-change", id), t("更改…")).on_click(
-                cx.listener(move |view, _: &ClickEvent, _, cx| view.choose_folder(folder, cx)),
-            ))
-            .children((!is_default).then(|| {
-                small(("folder-reset", id), t("恢复默认")).on_click(cx.listener(
-                    move |view, _: &ClickEvent, _, cx| {
-                        let settings = crate::shell::settings(cx);
-                        let result = folder.configure(None, &settings);
-                        view.report(result, cx);
-                    },
-                ))
-            }))
-            .child(self.open_button(("folder-open", id), t("打开"), path, cx));
-        row(
-            t(label),
-            Some(location),
-            controls,
-        )
-    }
-
     /// 系统文件夹选择器（期间隐藏置顶贴图，避免盖住对话框）。
     fn choose_folder(&mut self, folder: Folder, cx: &mut Context<Self>) {
         let settings = crate::shell::settings(cx);
@@ -2128,7 +2085,6 @@ impl SettingsView {
                     None,
                     self.toggle("rec-remember", e.remember_directory, cx, |s, v| s.recording_export.remember_directory = v),
                 ),
-                self.folder_row(Folder::Recordings, s, t, cx),
             ])
             .into_any_element(),
         ]
