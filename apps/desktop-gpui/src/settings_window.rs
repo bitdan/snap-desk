@@ -2645,12 +2645,41 @@ impl SettingsView {
                     s.shortcuts = snap_core::settings::Shortcuts::default()
                 })
             }));
-        vec![
+        let mut elements = Vec::new();
+        // Linux（Wayland 或全局快捷键不可用）：列出可在桌面/合成器里绑定的命令（Vue `shortcut-commands`）。
+        if cfg!(target_os = "linux") {
+            let support = snap_core::desktop_support::current();
+            if support.shortcut_commands_needed() {
+                let commands = s
+                    .shortcuts
+                    .entries()
+                    .into_iter()
+                    .map(|(action, name, _)| {
+                        row(
+                            t(name),
+                            None,
+                            div()
+                                .px(px(6.0))
+                                .py(px(2.0))
+                                .rounded(px(4.0))
+                                .bg(rgb(col::page_bg()))
+                                .font_family("Consolas")
+                                .text_xs()
+                                .child(format!("{} --{}", support.command_line(), action.id())),
+                        )
+                    })
+                    .collect();
+                elements.push(heading(t("系统快捷键命令")).into_any_element());
+                elements.push(card(commands).into_any_element());
+            }
+        }
+        elements.extend([
             heading(t("全局快捷键")).child(reset).into_any_element(),
             card(rows).into_any_element(),
             heading(t("排查")).into_any_element(),
             card(self.probe_rows(t, cx)).into_any_element(),
-        ]
+        ]);
+        elements
     }
 }
 

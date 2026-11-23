@@ -73,6 +73,9 @@ fn main() {
             return;
         }
         updater::initialize(cx);
+        // Linux 桌面能力探测含 D-Bus 往返，启动时后台预热，设置页读取时不必等待。
+        #[cfg(target_os = "linux")]
+        snap_core::desktop_support::warm_up();
         // 首次启动带的动作参数与转交参数走同一入口。
         if let Some(action) = snap_core::settings::action_from_args(&args) {
             shell::run_action(cx, action, "cli");

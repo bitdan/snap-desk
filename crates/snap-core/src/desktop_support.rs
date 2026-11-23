@@ -218,6 +218,15 @@ impl DesktopSupport {
     pub fn compositor(&self) -> &'static str {
         self.compositor
     }
+    /// 绑定到桌面快捷键的启动命令（已按 shell 规则加引号）。
+    pub fn command_line(&self) -> &str {
+        &self.command_line
+    }
+    /// 是否需要列出“系统快捷键命令”（与前端 `shortcutCommands` 一致）：Wayland 始终需要，
+    /// 门户绑定可能被桌面拒绝或改键；其他会话只在全局快捷键不可用时需要。
+    pub fn shortcut_commands_needed(&self) -> bool {
+        self.session == "wayland" || !self.features.global_shortcuts.available
+    }
 }
 
 pub const WAYLAND_SHORTCUTS: &str =
