@@ -47,7 +47,8 @@ Screenshots show the Simplified Chinese interface; the app also ships an English
 
 ![Scrolling capture with the live stitching preview on the right](docs/assets/screenshots/scroll-capture.png)
 
-- ✅ Horizontal or vertical auto-stitching, reversing along the same axis
+- ✅ Vertical or horizontal scrolling: the first scroll inside the selection sets the direction; scroll horizontally with a touchpad or tilt wheel, or hold Shift while scrolling
+- ✅ Automatic stitching, with back-and-forth scrolling along the same axis; press Ctrl+C or the screenshot shortcut again to finish, Esc to cancel
 - ✅ Live preview and failure recovery
 - ✅ PNG export with a white or transparent background
 
