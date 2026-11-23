@@ -1,0 +1,103 @@
+name: Test build
+run-name: 测试包 · ${{ inputs.platform || (github.event.label.name == 'mac-build' && 'macos') || 'all' }} · ${{ github.head_ref || github.ref_name }}
+
+# 不发布 Release、不生成签名与更新清单：为任意分支构建安装包供实机测试。
+# 手动触发：Actions → Test build → Run workflow，选择平台；或
+#   gh workflow run test-build.yml --ref <分支> -f platform=windows
+# PR 上添加 test-build 标签构建全部平台，添加 mac-build 标签只构建 macOS。
+# 安装包作为 Actions 附件保留 7 天：gh run download <run-id>。
+on:
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: 构建平台
+        type: choice
+        options: [windows, macos, linux, all]
+        default: windows
+  pull_request:
+    types: [labeled]
+
+concurrency:
+  group: test-build-${{ github.head_ref || github.ref }}-${{ inputs.platform || github.event.label.name }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    name: Select platforms
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'test-build' || github.event.label.name == 'mac-build'
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.select.outputs.matrix }}
+    steps:
+      # runner 与发布流水线一致：macos-15 为 Apple 芯片；Linux 在 24.04 上构建（PipeWire 绑定要求 0.3.65 以上）。
+      - name: Select platforms
+        id: select
+        env:
+          PLATFORM: ${{ inputs.platform || (github.event.label.name == 'mac-build' && 'macos') || 'all' }}
+        run: |
+          all='[{"platform":"windows","name":"Windows x64","os":"windows-2022"},{"platform":"macos","name":"macOS arm64","os":"macos-15"},{"platform":"linux","name":"Linux x64","os":"ubuntu-24.04"}]'
+          if [ "$PLATFORM" = all ]; then selected="$all"; else selected=$(jq -c --arg p "$PLATFORM" 'map(select(.platform == $p))' <<< "$all"); fi
+          echo "matrix={\"include\":$selected}" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build ${{ matrix.name }}
+    needs: plan
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        uses: ./.github/actions/linux-deps
+
+      - name: Setup Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      # 读取 CI 在 master 上保存的编译缓存；测试包不写回缓存。
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+          shared-key: native
+          save-if: false
+
+      # 安装包由 cargo-packager 生成（版本与 scripts/package-gpui.mjs 的 PACKAGER_VERSION 一致）。
+      - name: Install cargo-packager
+        run: cargo install cargo-packager --version 0.11.8 --locked
+
+      # 不注入更新公钥与开发者证书：测试包不能检查更新，macOS 使用 ad-hoc 签名。
+      - name: Build application and installers
+        run: npm run desktop:package
+
+      # 与发布流水线同一份附件清单与文件名，但不签名、不生成更新清单。
+      - name: Collect installers
+        run: node scripts/release-assets.mjs collect test-assets
+
+      - name: Upload installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: snap-desk-test-${{ matrix.platform }}-${{ github.event.pull_request.head.sha || github.sha }}
+          path: test-assets/
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
