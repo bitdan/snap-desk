@@ -109,6 +109,9 @@ mod icons {
     icon!(CHEVRON, "chevron-down");
     icon!(CHECK, "check");
     icon!(X, "x");
+    icon!(MINUS, "minus");
+    icon!(SQUARE, "square");
+    icon!(RESTORE, "copy");
 }
 
 /// 文本框停顿多久后保存。
@@ -136,10 +139,12 @@ pub fn open(cx: &mut App) {
     let size = size(px(820.0), px(580.0));
     let options = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(Bounds::centered(None, size, cx))),
+        // 自绘标题栏：左上角放应用图标与名称，右侧为系统窗口按钮（gpui-component TitleBar）。
         titlebar: Some(TitlebarOptions {
             title: Some(title.into()),
-            ..Default::default()
+            ..gpui_kit::component::TitleBar::title_bar_options()
         }),
+        app_owns_titlebar_drag: true,
         focus: true,
         show: true,
         kind: WindowKind::Normal,
@@ -2925,40 +2930,13 @@ impl Render for SettingsView {
             .flex_none()
             .flex()
             .flex_col()
-            .pt(px(14.0))
+            .pt(px(10.0))
             .px(px(10.0))
             .pb(px(12.0))
             .border_r_1()
             .border_color(rgb(col::border()))
             .bg(rgb(col::nav()))
             .overflow_y_scroll()
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(8.0))
-                    .pt(px(2.0))
-                    .px(px(8.0))
-                    .pb(px(12.0))
-                    .text_size(px(13.0))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child(
-                        div()
-                            .size(px(22.0))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .rounded(px(6.0))
-                            .bg(rgb(col::accent()))
-                            .child(
-                                Icon::default()
-                                    .data(icons::SCAN)
-                                    .size(px(14.0))
-                                    .text_color(rgb(0xffffff)),
-                            ),
-                    )
-                    .child("Snap Desk"),
-            )
             .child(
                 div()
                     .h(px(30.0))
@@ -3217,6 +3195,7 @@ impl Render for SettingsView {
             .children(dialog)
             .size_full()
             .flex()
+            .flex_col()
             .bg(rgb(col::page_bg()))
             .text_color(rgb(col::text()))
             .text_size(px(13.0))
@@ -3232,8 +3211,14 @@ impl Render for SettingsView {
                     }
                 }),
             )
-            .child(nav)
+            .child(title_bar(window))
             .child(
+                div()
+                    .flex()
+                    .flex_1()
+                    .min_h_0()
+                    .child(nav)
+                    .child(
                 div()
                     .flex_1()
                     .min_w_0()
@@ -3258,8 +3243,80 @@ impl Render for SettingsView {
                                     .children(status),
                             ),
                     ),
+                    ),
             )
     }
+}
+
+/// 自绘标题栏：左上角应用图标与名称（拖动区域，双击最大化）；右侧最小化、最大化/还原、关闭。
+/// Windows 用窗口命中区域交给系统处理（贴边吸附、悬停等行为与系统一致）；macOS 保留系统红绿灯，左侧让出位置。
+fn title_bar(window: &Window) -> Div {
+    let macos = cfg!(target_os = "macos");
+    let control = |id: &'static str, icon: &'static [u8], area: WindowControlArea, close: bool| {
+        let (hover_bg, hover_fg) = if close { (0xe81123, 0xffffff) } else { (col::hover(), col::text()) };
+        let button = div()
+            .id(id)
+            .w(px(46.0))
+            .h_full()
+            .flex()
+            .flex_none()
+            .items_center()
+            .justify_center()
+            .text_color(rgb(col::muted()))
+            .hover(move |s| s.bg(rgb(hover_bg)).text_color(rgb(hover_fg)))
+            .child(Icon::default().data(icon).size(px(14.0)));
+        if cfg!(target_os = "linux") {
+            button.on_click(move |_, window, _| match area {
+                WindowControlArea::Min => window.minimize_window(),
+                WindowControlArea::Max => window.zoom_window(),
+                _ => window.remove_window(),
+            })
+        } else {
+            button.window_control_area(area)
+        }
+    };
+    let maximized = window.is_maximized();
+    let mut bar = div()
+        .id("settings-title-bar")
+        .h(px(36.0))
+        .flex_none()
+        .flex()
+        .items_center()
+        .border_b_1()
+        .border_color(rgb(col::border()))
+        .bg(rgb(col::nav()))
+        .child(
+            div()
+                .id("settings-title-drag")
+                .flex_1()
+                .h_full()
+                .flex()
+                .items_center()
+                .gap(px(8.0))
+                .pl(px(if macos { 78.0 } else { 14.0 }))
+                .text_size(px(13.0))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(rgb(col::text()))
+                .window_control_area(WindowControlArea::Drag)
+                .child(img(app_icon()).size(px(18.0)))
+                .child("Snap Desk"),
+        );
+    if !macos {
+        bar = bar
+            .child(control("title-min", icons::MINUS, WindowControlArea::Min, false))
+            .child(control("title-max", if maximized { icons::RESTORE } else { icons::SQUARE }, WindowControlArea::Max, false))
+            .child(control("title-close", icons::X, WindowControlArea::Close, true));
+    }
+    div().child(bar)
+}
+
+/// 应用图标（与托盘、安装包同一张，`src-tauri/icons/32x32.png`）。
+fn app_icon() -> std::sync::Arc<Image> {
+    static ICON: std::sync::OnceLock<std::sync::Arc<Image>> = std::sync::OnceLock::new();
+    ICON.get_or_init(|| {
+        std::sync::Arc::new(Image::from_bytes(ImageFormat::Png, include_bytes!("../../../src-tauri/icons/32x32.png").to_vec()))
+    })
+    .clone()
 }
 
 #[cfg(test)]
