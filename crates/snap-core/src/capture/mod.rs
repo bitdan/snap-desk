@@ -199,7 +199,6 @@ impl Elements {
     }
 }
 
-#[cfg(any(windows, target_os = "macos"))]
 pub fn same_bounds(a: Rect, b: Rect) -> bool {
     a.x.abs_diff(b.x) <= 2
         && a.y.abs_diff(b.y) <= 2

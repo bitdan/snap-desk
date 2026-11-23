@@ -824,15 +824,17 @@ mod gpui_tests {
     #[test]
     fn gpui_rotation_counts_as_an_archive() {
         let dir = tempfile::tempdir().unwrap();
+        // macOS 临时目录位于符号链接 /var 下，日志目录检查不允许链接。
+        let root = dir.path().canonicalize().unwrap();
         for name in [
             "snap-desk-gpui.log",
             "snap-desk-gpui.log.old",
             "snap-desk-gpui.log.bak",
             "other.log",
         ] {
-            std::fs::write(dir.path().join(name), b"x\n").unwrap();
+            std::fs::write(root.join(name), b"x\n").unwrap();
         }
-        let found = files(dir.path(), "snap-desk-gpui").unwrap();
+        let found = files(&root, "snap-desk-gpui").unwrap();
         assert_eq!(found.len(), 2);
         assert!(found[0].active);
         assert!(!found[1].active);
