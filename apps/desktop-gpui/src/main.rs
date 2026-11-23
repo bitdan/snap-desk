@@ -12,6 +12,7 @@ mod clipboard;
 mod clipboard_export;
 mod clipboard_preview;
 mod countdown;
+mod drag_out;
 mod logging;
 mod magnifier;
 mod native;

@@ -1,5 +1,5 @@
-//! 把内容拖到其他应用（系统拖出）。Windows 使用 OLE DoDragDrop；macOS / Linux 的实现依赖各外壳的
-//! 原生窗口对象，仍在 `src-tauri/src/shared/native_drag_*.rs`。
+//! 把内容拖到其他应用（系统拖出）。Windows 使用 OLE DoDragDrop；macOS / Linux 的拖拽由外壳的窗口框架发起
+//! （Tauri：`src-tauri/src/shared/native_drag_*.rs`；GPUI：元素拖拽交给平台的文件拖拽，文字先用 [`text_file`] 写成文件）。
 //! 调用方只能提供受信任的内容：文字，或由 [`image_file`] 从像素编码出的临时 PNG。
 
 /// 拖出的内容：文字或本地文件路径（图片先由 [`image_file`] 写成临时 PNG）。
@@ -23,6 +23,20 @@ pub fn image_file(image: &image::RgbaImage) -> Result<String, String> {
         .save_with_format(&path, image::ImageFormat::Png)
         .map_err(err)?;
     let name = path.to_str().ok_or("临时图片路径编码无效。")?.to_owned();
+    TEMP_FILES.lock().map_err(err)?.push(path);
+    Ok(name)
+}
+
+/// 文字写成临时 UTF-8 .txt（只接受文件拖拽的平台用）；返回路径，保留到进程退出。
+pub fn text_file(text: &str) -> Result<String, String> {
+    let path = tempfile::Builder::new()
+        .prefix("snap-desk-drag-")
+        .suffix(".txt")
+        .tempfile()
+        .map_err(err)?
+        .into_temp_path();
+    std::fs::write(&path, text.as_bytes()).map_err(err)?;
+    let name = path.to_str().ok_or("临时文件路径编码无效。")?.to_owned();
     TEMP_FILES.lock().map_err(err)?.push(path);
     Ok(name)
 }

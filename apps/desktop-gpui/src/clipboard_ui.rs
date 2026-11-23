@@ -279,6 +279,9 @@ fn action_button(
         .child(Icon::default().data(data).size(px(14.0)))
 }
 
+/// macOS / Linux 元素拖拽携带的条目（多选时为整组）。
+struct DragIds(Vec<i64>);
+
 impl HistoryView {
     pub(super) fn text(&self, key: &'static str) -> String {
         snap_core::i18n::for_language(&self.language, key).to_owned()
@@ -686,7 +689,7 @@ impl HistoryView {
         } else {
             (c.card, c.card, c.card_hover)
         };
-        div()
+        let row = div()
             .id(("clipboard-item", index))
             .group(group)
             .relative()
@@ -737,7 +740,31 @@ impl HistoryView {
                     );
                 }
                 cx.notify();
-            }))
+            }));
+        // macOS / Linux：拖出窗口时把条目（多选时为整组）按合并规则交给系统文件拖拽。
+        let row = if cfg!(windows) {
+            row
+        } else {
+            let service = self.service.clone();
+            row.on_drag(DragIds(self.group_for(index)), |_, _, _, cx| cx.new(|_| crate::drag_out::Ghost))
+                .external_drag_payload(move |ids: &DragIds, _, _| {
+                    crate::drag_out::files(
+                        service
+                            .contents(&ids.0)
+                            .and_then(|contents| snap_core::clipboard::service::combine(contents, snap_core::drag::image_file))
+                            .and_then(|content| {
+                                Ok(match content {
+                                    snap_core::clipboard::service::Content::Text(text) => snap_core::drag::Payload::Text(text),
+                                    snap_core::clipboard::service::Content::Files(paths) => snap_core::drag::Payload::Files(paths),
+                                    snap_core::clipboard::service::Content::Image(image) => {
+                                        snap_core::drag::Payload::Files(vec![snap_core::drag::image_file(&image)?])
+                                    }
+                                })
+                            }),
+                    )
+                })
+        };
+        row
             .child(head)
             .child(content)
             .child(actions)

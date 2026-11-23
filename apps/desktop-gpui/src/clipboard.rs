@@ -10,7 +10,7 @@
 //! “固定”时粘贴后不收起。单击选中、Ctrl/⌘ 多选、Shift 连选（按选择顺序，最多 100 条）；
 //! 多选后回车或 Ctrl+C 按 core `service::combine` 合并（文本逐行拼接，图片/文件合成文件列表）；
 //! 所选文本与图片可组合导出为 PDF、长图或分别保存（`clipboard_export.rs`）；文本与图片可在独立窗口预览
-//! 全文或原图（`clipboard_preview.rs`）。按住条目拖动超过几像素即系统拖出（Windows OLE，core `snap_core::drag`）：
+//! 全文或原图（`clipboard_preview.rs`）。按住条目拖动超过几像素即系统拖出（Windows OLE，core `snap_core::drag`；macOS / Linux 为元素拖拽交给系统文件拖拽）：
 //! 文本拖出文字，图片拖出临时 PNG，文件拖出原路径；拖动多选中的条目时按合并规则一起拖出。
 //! 分类标签可拖动排序，或 Alt+←/→ 移动当前分类；顺序保存在设置文件旁的 `clipboard-category-order.json`
 //! （Vue 版存于 WebView localStorage，两版不共用）。
@@ -749,16 +749,18 @@ impl HistoryView {
         let delta = event.position - origin;
         if delta.x.abs() + delta.y.abs() > px(6.0) {
             self.press = None;
-            self.drag_out(index, cx);
+            // macOS / Linux 的拖出由条目上的元素拖拽完成（clipboard_ui.rs）。
+            if cfg!(windows) {
+                self.drag_out(index, cx);
+            }
         }
     }
 
     /// 后台读取并准备内容，回到主线程在框架状态借用之外发起系统拖拽（DoDragDrop 自带消息循环，
     /// 会重入窗口过程，不能在 entity update 中调用）。准备期间已松开左键则不拖出（core 内检查）。
     fn drag_out(&mut self, index: usize, cx: &mut Context<Self>) {
+        // macOS / Linux 走条目上的元素拖拽（clipboard_ui.rs），不经过这里。
         if !cfg!(windows) {
-            self.error = Some(self.t("当前平台尚未支持内容拖出。"));
-            cx.notify();
             return;
         }
         let ids = self.group_for(index);

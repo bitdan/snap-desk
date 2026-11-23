@@ -451,6 +451,9 @@ const MENU: [Item; 27] = [
     Item::Close,
 ];
 
+/// macOS / Linux 贴图拖出的元素拖拽值。
+struct PinDrag;
+
 /// 右键菜单配色。
 struct MenuColors {
     bg: u32,
@@ -809,8 +812,6 @@ impl Pin {
             return;
         }
         if !cfg!(windows) {
-            let message = self.text("当前平台尚未支持贴图内容拖出。");
-            self.flash(message, cx);
             return;
         }
         let (image, shapes, text) = (self.image.clone(), self.editor.shapes().to_vec(), self.drag_text.clone());
@@ -1289,7 +1290,10 @@ impl Pin {
         // 与 Tauri 版一致：Windows/Linux 按住 Ctrl，macOS 按住 ⌥ 拖动即拖出内容。
         let drag_modifier = if cfg!(target_os = "macos") { event.modifiers.alt } else { event.modifiers.control };
         if drag_modifier && !self.locked && !self.click_through {
-            self.drag_out(cx);
+            // macOS / Linux 由根元素的元素拖拽接管（render 里按修饰键挂上），这里不拖动窗口。
+            if cfg!(windows) {
+                self.drag_out(cx);
+            }
             return;
         }
         let scale = window.scale_factor();
@@ -1559,7 +1563,24 @@ impl Render for Pin {
             .on_mouse_up(MouseButton::Left, cx.listener(Self::release))
             .on_mouse_down(MouseButton::Right, cx.listener(Self::right_click))
             .on_scroll(cx.listener(Self::wheel))
+            // 按下/松开拖出修饰键时重绘，决定是否挂上元素拖拽。
+            .on_modifiers_changed(cx.listener(|_, _: &ModifiersChangedEvent, _, cx| cx.notify()))
             .child(stage);
+        // macOS / Linux：按住 ⌥（Linux 为 Ctrl）拖出窗口时，把贴图（含标注）或原文字交给系统文件拖拽。
+        let held = if cfg!(target_os = "macos") { window.modifiers().alt } else { window.modifiers().control };
+        if !cfg!(windows) && held && !self.locked && !self.click_through && !self.busy {
+            let (image, shapes, text) = (self.image.clone(), self.editor.shapes().to_vec(), self.drag_text.clone());
+            root = root
+                .on_drag(PinDrag, |_, _, _, cx| cx.new(|_| crate::drag_out::Ghost))
+                .external_drag_payload(move |_: &PinDrag, _, _| {
+                    crate::drag_out::files(match &text {
+                        Some(text) => Ok(snap_core::drag::Payload::Text(text.clone())),
+                        None => composed(&image, &shapes)
+                            .and_then(|image| snap_core::drag::image_file(&image))
+                            .map(|path| snap_core::drag::Payload::Files(vec![path])),
+                    })
+                });
+        }
         if self.annotating && !self.locked {
             root = root.cursor_crosshair();
         }
