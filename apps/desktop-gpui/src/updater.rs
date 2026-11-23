@@ -551,7 +551,7 @@ fn replace_standalone(bytes: &[u8]) -> Result<(), String> {
         .and_then(|_| file.sync_all())
         .map_err(|e| e.to_string())?;
     drop(file);
-    let script = include_str!("../../../src-tauri/src/app/updater/portable.ps1");
+    let script = include_str!("portable.ps1");
     let encoded: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
     let system = std::env::var_os("SystemRoot").ok_or("无法定位 Windows 系统目录。")?;
     let mut helper = Command::new(

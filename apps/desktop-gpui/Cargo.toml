@@ -1,14 +1,12 @@
 [package]
 name = "snap-desk-gpui"
-version = "0.0.0"
+version = "0.2.6-beta.3"
 license = "GPL-3.0-only"
-description = "Snap Desk desktop app on GPUI (packaged by scripts/package-gpui.mjs with the Tauri bundler)"
+description = "Snap Desk desktop app on GPUI (packaged by scripts/package-gpui.mjs with cargo-packager)"
 # gpui-kit 与 gpui-pre 使用 2024 edition。
 edition = "2024"
 rust-version = "1.95"
 publish = false
-# workspace 根在 src-tauri（共用 Cargo.lock 与 target 目录）。
-workspace = "../../src-tauri"
 
 [[bin]]
 name = "snap-desk-gpui"

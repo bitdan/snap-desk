@@ -1,5 +1,5 @@
 //! 顶部暂存架：剪贴板历史的轻量视图，只持久化设置和固定/隐藏的条目 ID（`shelf.json`），不复制素材。
-//! 窗口、悬停唤出与截图期间的隐藏由外壳负责（Tauri `src-tauri/src/shelf`、GPUI `apps/desktop-gpui/src/shelf.rs`）。
+//! 窗口、悬停唤出与截图期间的隐藏由外壳负责（`apps/desktop-gpui/src/shelf.rs`）。
 use crate::clipboard::{
     model::{Item, Kind, Query, TextCategory},
     service::Service,

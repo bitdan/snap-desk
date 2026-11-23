@@ -1,5 +1,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
-//! Snap Desk 的 GPUI 版入口（迁移中，正式发布仍是 `src-tauri`）。
+//! Snap Desk 桌面应用入口（GPUI）。
 //!
 //! 当前能力：单实例、日志、托盘菜单、读取与 Tauri 版相同的 `settings.json` 并注册全局快捷键，
 //! 截图浮层（框选、吸附、复制、保存、贴图）、贴图窗口与录屏控制条；动作入口统一经 `shell::run_action`。

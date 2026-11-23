@@ -67,27 +67,27 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'CT2 install failed' }
       - name: Build worker
         run: |
-          cmake -S src-tauri/native/translator -B .ci/worker-build -A x64 `
+          cmake -S native/translator -B .ci/worker-build -A x64 `
             -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded `
             -DSPM_ENABLE_MSVC_MT_BUILD=ON "-DCMAKE_PREFIX_PATH=$PWD/.ci/ct2-install"
           if ($LASTEXITCODE -ne 0) { throw 'Worker configure failed' }
           cmake --build .ci/worker-build --config Release --parallel 4
           if ($LASTEXITCODE -ne 0) { throw 'Worker build failed' }
-          cmake --install .ci/worker-build --config Release --component translator-runtime --prefix "$PWD/src-tauri/translator-runtime"
+          cmake --install .ci/worker-build --config Release --component translator-runtime --prefix "$PWD/translator-runtime"
           if ($LASTEXITCODE -ne 0) { throw 'Worker install failed' }
       - name: Verify dependencies, licenses, provenance and health
         run: |
-          ./scripts/ci/verify-translator-runtime.ps1 -RuntimeDir src-tauri/translator-runtime `
+          ./scripts/ci/verify-translator-runtime.ps1 -RuntimeDir translator-runtime `
             -EngineTag "translation-engine-v4.6.0-$env:ENGINE_REVISION" `
             -Ct2Source .ci/ctranslate2 -Ct2Install .ci/ct2-install -WorkerBuild .ci/worker-build
       - name: Package verified runtime
         run: |
           New-Item -ItemType Directory dist | Out-Null
-          Compress-Archive -Path src-tauri/translator-runtime/* -DestinationPath dist/translator-runtime-windows-x64.zip
+          Compress-Archive -Path translator-runtime/* -DestinationPath dist/translator-runtime-windows-x64.zip
           $hash = (Get-FileHash dist/translator-runtime-windows-x64.zip -Algorithm SHA256).Hash.ToLowerInvariant()
           # Linux sha256sum 将 CR 当作文件名的一部分；固定 ASCII、无 BOM、LF 换行。
           [System.IO.File]::WriteAllText("$PWD/dist/translator-runtime-windows-x64.zip.sha256", "$hash  translator-runtime-windows-x64.zip`n", [System.Text.Encoding]::ASCII)
-          Copy-Item src-tauri/translator-runtime/runtime-build.json dist/runtime-build.json
+          Copy-Item translator-runtime/runtime-build.json dist/runtime-build.json
           "Engine ZIP SHA-256: $hash" >> $env:GITHUB_STEP_SUMMARY
       - uses: actions/upload-artifact@v4
         with:

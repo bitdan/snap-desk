@@ -66,7 +66,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   } else if (command === 'collect' && output) {
     const root = fileURLToPath(new URL('../', import.meta.url))
     const files = collectReleaseAssets({ platform: process.platform, arch: process.arch, version: readVersion(),
-      releaseDirectory: resolve(root, 'src-tauri', 'target', 'release'), output: resolve(output) })
+      releaseDirectory: resolve(root, 'target', 'release'), output: resolve(output) })
     for (const file of files) console.log(`已收集：${file}`)
   } else {
     throw new Error('用法：node scripts/release-assets.mjs list | collect <output>')

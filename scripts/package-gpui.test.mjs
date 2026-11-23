@@ -4,7 +4,7 @@ import { resolve } from 'node:path'
 import { executableNames, packagerConfig } from './package-gpui.mjs'
 
 const root = resolve('/repo')
-const releaseDirectory = resolve(root, 'src-tauri/target/release')
+const releaseDirectory = resolve(root, 'target/release')
 const config = (platform, env = {}) => packagerConfig({ platform, root, releaseDirectory, version: '1.2.3-beta.1', env })
 
 test('按发布清单选择 cargo-packager 格式，主程序与输出目录固定', () => {
@@ -26,6 +26,14 @@ test('按发布清单选择 cargo-packager 格式，主程序与输出目录固�
 test('macOS 无开发者证书时使用临时签名', () => {
   assert.equal(config('darwin').macos.signingIdentity, '-')
   assert.equal(config('darwin', { APPLE_SIGNING_IDENTITY: 'Developer ID Application: Example' }).macos.signingIdentity, 'Developer ID Application: Example')
+  assert.equal(config('darwin').macos.entitlements, resolve(root, 'resources/Entitlements.plist'))
+  assert.equal(config('darwin').macos.infoPlistPath, resolve(root, 'resources/Info.plist'))
+})
+
+test('图标与随附许可证取自 resources/', () => {
+  const windows = config('win32')
+  assert.ok(windows.icons.every(icon => icon.startsWith(resolve(root, 'resources/icons'))))
+  assert.ok(windows.resources.some(item => item.src === resolve(root, 'resources/licenses/LXGW-OFL.txt')))
 })
 
 test('构建产物复制为主程序名交给打包器', () => {

@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url'
 import { rustEnvironment } from './rust-env.mjs'
 import { readVersion } from './sync-version.mjs'
 
-const workspace = fileURLToPath(new URL('../src-tauri/', import.meta.url))
+const workspace = fileURLToPath(new URL('../', import.meta.url))
 
 /**
  * 运行签名工具；私钥与密码只经环境变量传入，不出现在命令行。

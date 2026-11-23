@@ -1,4 +1,0 @@
-/* 通用设置页：分组卡片与控件外观由主窗口 workspace.css 统一提供，这里只保留本页特有的排版。 */
-.general-settings-page .directory-row { align-items:center; }
-.general-settings-page .directory-row .directory-content > span { display:block; }
-.config-transfer .notice, .general-settings-page .notice { margin-top:8px; }

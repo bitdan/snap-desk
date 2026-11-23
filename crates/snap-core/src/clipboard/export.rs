@@ -415,7 +415,7 @@ mod tests {
     // Noto Sans SC 静态字体的测试子集：ASCII 与下方用例的八个汉字，保留原始度量。
     // 来源 https://github.com/notofonts/noto-cjk；许可证在 tests/fixtures/OFL.txt。
     // 由 fontTools.subset 生成，仅编译进测试程序，生产导出使用用户下载/选择的字体。
-    const FONT: &[u8] = include_bytes!("../../../../src-tauri/tests/fixtures/export-test.ttf");
+    const FONT: &[u8] = include_bytes!("../../tests/fixtures/export-test.ttf");
     fn pdf<W: Write>(items: &[Snapshot], options: &Options, file: &mut W) -> Result<(), String> {
         pdf_with_font(items, options, file, FONT)
     }

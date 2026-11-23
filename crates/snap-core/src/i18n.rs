@@ -1,18 +1,18 @@
 //! 原生菜单与系统对话框的显示文案。设置和 IPC 仍使用原始稳定值。
-//! 与前端共用词典（`src/shared/i18n/messages.native.en.json`），避免同一操作在不同窗口中出现两套译法。
+//! 词典在 `crates/snap-core/i18n/`，各窗口共用，避免同一操作出现两套译法。
 use crate::settings::Language;
 use std::{collections::HashMap, sync::OnceLock};
 
-/// 原生词典之外再并入前端界面词典：GPUI 版的窗口文案（贴图菜单、截图工具栏）原先都在前端，
+/// 原生词典之外再并入界面词典（messages.en.json）：贴图菜单、截图工具栏等窗口文案
 /// 沿用同一译法；两处都有的键以原生词典为准。
 fn catalog() -> &'static HashMap<String, String> {
     static CATALOG: OnceLock<HashMap<String, String>> = OnceLock::new();
     CATALOG.get_or_init(|| {
         let mut catalog: HashMap<String, String> =
-            serde_json::from_str(include_str!("../../../src/shared/i18n/messages.en.json"))
+            serde_json::from_str(include_str!("../i18n/messages.en.json"))
                 .expect("interface language catalog must be valid JSON");
         let native: HashMap<String, String> =
-            serde_json::from_str(include_str!("../../../src/shared/i18n/messages.native.en.json"))
+            serde_json::from_str(include_str!("../i18n/messages.native.en.json"))
                 .expect("native language catalog must be valid JSON");
         catalog.extend(native);
         catalog

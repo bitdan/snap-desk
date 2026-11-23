@@ -33,7 +33,6 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: '22'
-          cache: npm
       # 更新签名由 Rust 小工具 tools/release-sign 生成；runner 已安装 rustup。
       - name: Setup Rust for signing tool
         run: |

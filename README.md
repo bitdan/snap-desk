@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="src-tauri/icons/128x128@2x.png" alt="Snap Desk" width="96" height="96" />
+  <img src="resources/icons/128x128@2x.png" alt="Snap Desk" width="96" height="96" />
 </p>
 
 <h1 align="center">Snap Desk</h1>

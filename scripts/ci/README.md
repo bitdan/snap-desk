@@ -5,7 +5,7 @@
 ## 当前仓库配置
 
 - [translation-engine.json](translation-engine.json) 已配置 `translation-engine-v4.6.0-r1` 及 ZIP SHA-256；应用与模型流水线共用此锁，不接受任意引擎 URL / tag。
-- [模型目录](../../src-tauri/assets/translation-models.json) 已包含英译中、中译英两个固定源版本的文件 URL、大小与摘要。
+- [模型目录](../../resources/assets/translation-models.json) 已包含英译中、中译英两个固定源版本的文件 URL、大小与摘要。
 - [许可记录](../../legal/translation/reviews.json) 与两份许可材料已存在；记录属于自动化来源核对，人工复核字段仍为 `false`。
 
 这些文件表示仓库配置状态，不保证远程附件始终可下载，也不代表干净机器上的完整推理或人工许可审核已经完成。
@@ -23,7 +23,7 @@
    python scripts/ci/generate-model-catalog.py out/en-zh out/zh-en
    ```
 
-   生成器同时校验本地模型与线上附件，写入 `src-tauri/assets/translation-models.json`，不会提交代码。通过代码审查更新清单，不手工编造 URL、大小或摘要。
+   生成器同时校验本地模型与线上附件，写入 `resources/assets/translation-models.json`，不会提交代码。通过代码审查更新清单，不手工编造 URL、大小或摘要。
 7. 推送与应用版本一致的 `v*` 标签。主程序流水线校验引擎锁、模型清单与远程附件后，分别构建 Windows x64（NSIS + 独立 EXE）、macOS Apple 芯片（DMG）和 Linux x64（AppImage + deb），全部成功后统一发布。引擎和模型仍需在应用内安装。
 
 ## 本地校验
@@ -31,7 +31,7 @@
 ```powershell
 python -m unittest discover -s scripts/ci -p 'test_*.py'
 python scripts/ci/generate-model-catalog.py --check
-node --check scripts/build-desktop.mjs
+node --check scripts/package-gpui.mjs
 ```
 
 `generate-model-catalog.py --check` 仅检查内置清单结构；增加 `--remote` 才会下载并复核附件。单独复核某个模型发布使用 `verify-model-release.py <模型目录> --expected-tag <模型tag> --remote`。

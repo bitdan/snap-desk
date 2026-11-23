@@ -74,7 +74,7 @@ jobs:
           $tag = "translation-model-$env:DIRECTION-$short-$env:PACKAGE_REVISION"
           $base = "https://github.com/$env:GH_REPO/releases/download/$tag"
           python scripts/prepare-translation-model.py --direction $env:DIRECTION --revision $env:HF_REVISION `
-            --worker src-tauri/translator-runtime/snap-translator-worker.exe `
+            --worker translator-runtime/snap-translator-worker.exe `
             --license-file "legal/translation/$env:DIRECTION-LICENSE.txt" --output "out/$env:DIRECTION" --base-url $base
           if ($LASTEXITCODE -ne 0) { throw '模型转换或 Worker golden 验证失败' }
           [System.IO.File]::WriteAllText("$PWD/out/release-tag.txt", "$tag`n", [System.Text.Encoding]::ASCII)

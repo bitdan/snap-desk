@@ -746,7 +746,7 @@ pub fn render(html: &str, fonts: &Fonts) -> Result<RgbaImage, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    const FONT: &[u8] = include_bytes!("../../../../src-tauri/tests/fixtures/export-test.ttf");
+    const FONT: &[u8] = include_bytes!("../../tests/fixtures/export-test.ttf");
 
     fn fonts() -> Fonts {
         Fonts { sans: FONT.to_vec(), serif: None, mono: None, bold: None }

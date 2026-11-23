@@ -1,5 +1,5 @@
 //! 贴图的纯逻辑：外观配置、窗口布局（物理像素）、容量预算、缩放步进与像素变换。
-//! 窗口、图片缓存与系统交互由各外壳实现（Tauri 版 `src-tauri/src/pins`，GPUI 版 `apps/desktop-gpui/src/pins.rs`）。
+//! 窗口、图片缓存与系统交互由外壳实现（`apps/desktop-gpui/src/pins.rs`）。
 use base64::{engine::general_purpose::STANDARD, Engine};
 use image::RgbaImage;
 use serde::{Deserialize, Serialize};
@@ -135,11 +135,11 @@ pub struct WorkArea {
 
 impl PinLayout {
     pub fn load() -> &'static Self {
-        // 编译时嵌入仓库内常量，不读取用户文件；前端直接导入相同 JSON。
+        // 编译时嵌入仓库内常量，不读取用户文件。
         // 内容在进程生命周期内不变，只解析一次；缩放、滚轮等高频命令直接复用。
         static LAYOUT: std::sync::OnceLock<PinLayout> = std::sync::OnceLock::new();
         LAYOUT.get_or_init(|| {
-            serde_json::from_str(include_str!("../../../../src/features/pins/pin-layout.json"))
+            serde_json::from_str(include_str!("pin-layout.json"))
                 .expect("内置贴图布局配置无效")
         })
     }

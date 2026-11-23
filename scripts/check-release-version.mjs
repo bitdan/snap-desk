@@ -1,4 +1,4 @@
-// CI 校验标签，再从 package.json 生成 Cargo/npm 字段；Tauri 直接引用 package.json。
+// CI 校验标签，再从 package.json 生成 Cargo/npm 字段；应用运行时直接内嵌 package.json。
 import { readVersion, syncVersion } from './sync-version.mjs'
 
 const tag = process.env.GITHUB_REF_NAME

@@ -6,8 +6,6 @@ description = "Snap Desk 发布工具：生成与校验在线更新包的 minisi
 edition = "2021"
 rust-version = "1.95"
 publish = false
-# workspace 根在 src-tauri（共用 Cargo.lock 与 target 目录）。
-workspace = "../../src-tauri"
 
 [dependencies]
 minisign = "0.10.0"

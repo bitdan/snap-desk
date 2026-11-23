@@ -4,7 +4,7 @@ param(
     [ValidateSet(0, 1, 4, 8, 12)][int]$PinCount = 0,
     [ValidateSet('baseline', 'visible', 'hidden', 'closed', 'scroll', 'export')][string]$Stage = 'baseline',
     [ValidateRange(1, 300)][int]$Seconds = 5,
-    [string]$OutputDirectory = (Join-Path $PSScriptRoot '../src-tauri/target/benchmark-results'),
+    [string]$OutputDirectory = (Join-Path $PSScriptRoot '../target/benchmark-results'),
     [switch]$LibraryOnly
 )
 $ErrorActionPreference = 'Stop'

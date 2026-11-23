@@ -1,5 +1,5 @@
 # 应用/模型流水线共用同一份受审锁；旁边下载的 .sha256 不能替代仓库信任根。
-param([string]$RuntimeDir = 'src-tauri/translator-runtime')
+param([string]$RuntimeDir = 'translator-runtime')
 $ErrorActionPreference = 'Stop'
 $env:PYTHONUTF8 = '1'
 $env:PYTHONIOENCODING = 'utf-8'

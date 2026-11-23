@@ -30,7 +30,7 @@ if ($release -and -not $release.draft) { throw '此版本已公开，不能覆�
 if ($Recover) {
     if (-not $release) { throw '找不到待恢复的 Release 草稿。' }
     # 只恢复发布工具变更，应用与锁定依赖必须和标签完全一致，避免重签来源不一致的包。
-    $changes = git diff "$Tag..HEAD" -- src src-tauri package.json package-lock.json
+    $changes = git diff "$Tag..HEAD" -- apps crates resources Cargo.toml Cargo.lock package.json package-lock.json
     if ($LASTEXITCODE -ne 0 -or $changes) { throw '应用源码已变化，不能复用旧版本安装包。' }
     if ($PSVersionTable.PSVersion -lt [version]'7.4') { throw '二进制下载需要 PowerShell 7.4 或更高版本。' }
     New-Item -ItemType Directory -Force -Path $AssetDirectory | Out-Null

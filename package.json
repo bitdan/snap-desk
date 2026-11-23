@@ -6,42 +6,11 @@
   "version": "0.2.6-beta.3",
   "type": "module",
   "scripts": {
-    "dev": "vite --host 127.0.0.1",
-    "dev:update": "vite --host 127.0.0.1 --mode update-preview",
-    "build": "npm run check && vite build",
-    "check": "npm run check:architecture && npm run check:contracts && vue-tsc --noEmit",
     "check:architecture": "node scripts/check-architecture.mjs",
-    "check:contracts": "node scripts/check-ipc-contracts.mjs",
-    "test": "npm run check:architecture && npm run check:contracts && vitest run && node --test scripts/sync-version.test.mjs scripts/update-manifest.test.mjs scripts/release-assets.test.mjs scripts/release-signing.test.mjs scripts/release-notes.test.mjs scripts/package-gpui.test.mjs scripts/check-architecture.test.mjs scripts/check-ipc-contracts.test.mjs",
-    "tauri": "tauri",
+    "test": "npm run check:architecture && node --test scripts/sync-version.test.mjs scripts/update-manifest.test.mjs scripts/release-assets.test.mjs scripts/release-signing.test.mjs scripts/release-notes.test.mjs scripts/package-gpui.test.mjs scripts/check-architecture.test.mjs",
     "version:sync": "node scripts/sync-version.mjs",
-    "predesktop:dev": "npm run version:sync",
-    "desktop:dev": "tauri dev",
-    "desktop:build": "node scripts/build-desktop.mjs --ci -- --locked",
-    "desktop:build:fast": "node scripts/build-desktop.mjs --ci --debug -- --locked",
+    "desktop:dev": "cargo run -p snap-desk-gpui",
     "desktop:package": "node scripts/package-gpui.mjs",
     "desktop:clean": "node scripts/clean-desktop.mjs"
-  },
-  "dependencies": {
-    "@tauri-apps/api": "^2.0.0",
-    "@tauri-apps/plugin-log": "^2.10.1",
-    "class-variance-authority": "^0.7.1",
-    "clsx": "^2.1.1",
-    "lucide-vue-next": "^0.468.0",
-    "reka-ui": "^2.0.0",
-    "tailwind-merge": "^2.6.0",
-    "vue": "^3.5.13"
-  },
-  "devDependencies": {
-    "@tauri-apps/cli": "^2.0.0",
-    "@types/node": "^22.10.0",
-    "@vitejs/plugin-vue": "^5.2.1",
-    "autoprefixer": "^10.4.20",
-    "postcss": "^8.4.49",
-    "tailwindcss": "^3.4.17",
-    "typescript": "~5.7.3",
-    "vite": "^6.4.3",
-    "vitest": "^3.2.4",
-    "vue-tsc": "^2.2.0"
   }
 }

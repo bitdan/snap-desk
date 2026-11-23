@@ -1,8 +1,8 @@
 node_modules/
 .idea/
 dist/
-src-tauri/target/
-src-tauri/translator-runtime/
+/target/
+/translator-runtime/
 scripts/__pycache__/
 scripts/ci/__pycache__/
 .ci/
@@ -10,12 +10,4 @@ scripts/ci/__pycache__/
 .friday/
 out/
 release-assets/
-src-tauri/gen/schemas/
 *.log
-# Extra icon variants produced by `tauri icon`; this project targets desktop only.
-src-tauri/icons/android/
-src-tauri/icons/ios/
-src-tauri/icons/Square*.png
-src-tauri/icons/StoreLogo.png
-src-tauri/icons/64x64.png
-src-tauri/icons/icon.png

@@ -3308,11 +3308,11 @@ fn title_bar(window: &Window) -> Div {
     div().child(bar)
 }
 
-/// 应用图标（与托盘、安装包同一张，`src-tauri/icons/32x32.png`）。
+/// 应用图标（与托盘、安装包同一张，`resources/icons/32x32.png`）。
 fn app_icon() -> std::sync::Arc<Image> {
     static ICON: std::sync::OnceLock<std::sync::Arc<Image>> = std::sync::OnceLock::new();
     ICON.get_or_init(|| {
-        std::sync::Arc::new(Image::from_bytes(ImageFormat::Png, include_bytes!("../../../src-tauri/icons/32x32.png").to_vec()))
+        std::sync::Arc::new(Image::from_bytes(ImageFormat::Png, include_bytes!("../../../resources/icons/32x32.png").to_vec()))
     })
     .clone()
 }

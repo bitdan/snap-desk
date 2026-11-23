@@ -1,6 +1,6 @@
 // GPUI 版打包：Cargo 构建 snap-desk-gpui，复制为主程序 snap-desk(.exe)，再用 cargo-packager 生成安装包；
 // macOS 另把 .app 压成在线更新用的 .app.tar.gz。更新签名不在这里做，由发布流程对最终附件统一签名
-// （scripts/release-signing.mjs）。产物在 src-tauri/target/release/packages，Windows 独立 EXE 在 target/release。
+// （scripts/release-signing.mjs）。产物在 target/release/packages，Windows 独立 EXE 在 target/release。
 //
 // 需要先安装 cargo-packager：cargo install cargo-packager --version 0.11.8 --locked
 // 用法：node scripts/package-gpui.mjs [--debug]
@@ -48,16 +48,17 @@ export function packagerConfig({ platform, root, releaseDirectory, version, env 
     binariesDir: releaseDirectory,
     binaries: [{ path: executableNames(platform).bundled, main: true }],
     licenseFile: path('LICENSE'),
-    icons: ['32x32.png', '128x128.png', '128x128@2x.png', 'icon.icns', 'icon.ico'].map(name => path('src-tauri', 'icons', name)),
+    icons: ['32x32.png', '128x128.png', '128x128@2x.png', 'icon.icns', 'icon.ico'].map(name => path('resources', 'icons', name)),
     resources: [
       { src: path('LICENSE'), target: 'LICENSE' },
-      { src: path('src-tauri', 'licenses', 'LXGW-OFL.txt'), target: 'licenses/LXGW-OFL.txt' },
+      { src: path('resources', 'licenses', 'LXGW-OFL.txt'), target: 'licenses/LXGW-OFL.txt' },
     ],
   }
   if (platform === 'win32') config.nsis = { installMode: 'currentUser' }
   if (platform === 'darwin') {
-    config.macos = { minimumSystemVersion: '13.3', entitlements: path('src-tauri', 'Entitlements.plist'),
-      signingIdentity: env.APPLE_SIGNING_IDENTITY || '-' }
+    // Info.plist 合并麦克风用途说明；缺少时系统会在录屏访问麦克风时直接终止进程。
+    config.macos = { minimumSystemVersion: '13.3', entitlements: path('resources', 'Entitlements.plist'),
+      infoPlistPath: path('resources', 'Info.plist'), signingIdentity: env.APPLE_SIGNING_IDENTITY || '-' }
   }
   if (platform === 'linux') config.deb = { depends: DEB_DEPENDS }
   return config
@@ -71,7 +72,7 @@ function run(command, args, options) {
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const root = fileURLToPath(new URL('../', import.meta.url))
-  const target = resolve(root, 'src-tauri', 'target')
+  const target = resolve(root, 'target')
   const debug = process.argv.includes('--debug')
   const releaseDirectory = resolve(target, debug ? 'debug' : 'release')
   syncVersion(root)
@@ -79,7 +80,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   const env = { ...rustEnvironment(), CARGO_TARGET_DIR: target }
   console.log(`构建输出：${target}`)
   if (process.platform === 'win32') console.log('请先从托盘退出 Snap Desk，避免 Windows 阻止覆盖正在运行的 EXE。')
-  run('cargo', ['build', '-p', 'snap-desk-gpui', '--locked', ...(debug ? [] : ['--release'])], { cwd: resolve(root, 'src-tauri'), env })
+  run('cargo', ['build', '-p', 'snap-desk-gpui', '--locked', ...(debug ? [] : ['--release'])], { cwd: root, env })
 
   const names = executableNames(process.platform)
   const built = resolve(releaseDirectory, names.built)

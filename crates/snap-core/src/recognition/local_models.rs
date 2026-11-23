@@ -110,7 +110,7 @@ pub fn root(resources: &Path) -> PathBuf {
 }
 /// 编译时内置的可下载语言包清单。
 pub fn catalog() -> Result<Vec<Pack>, String> {
-    let packs: Vec<Pack> = serde_json::from_str(include_str!("../../../../src-tauri/assets/translation-models.json"))
+    let packs: Vec<Pack> = serde_json::from_str(include_str!("../../../../resources/assets/translation-models.json"))
         .map_err(|_| "内置语言包清单无效。".to_string())?;
     let mut ids = HashSet::new();
     for pack in &packs {

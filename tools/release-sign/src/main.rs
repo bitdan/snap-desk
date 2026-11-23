@@ -3,7 +3,7 @@
 //! 密钥与签名沿用既有格式：私钥、公钥、`.sig` 都是 minisign 文本再整体 base64 编码，
 //! 与 `crates/snap-core/src/updates/package.rs` 的校验一致。
 //!
-//! 用法（在 `src-tauri` 下 `cargo run -p snap-release-sign -- <命令>`）：
+//! 用法（在仓库根目录 `cargo run -p snap-release-sign -- <命令>`）：
 //! - `sign --app-version <版本> <文件>...`：私钥取自 `SNAP_DESK_SIGNING_PRIVATE_KEY`，
 //!   密码取自 `SNAP_DESK_SIGNING_PRIVATE_KEY_PASSWORD`（缺省为空密码），每个文件旁写出 `<文件>.sig`。
 //! - `generate <私钥路径>`：生成空密码测试密钥，公钥写到 `<私钥路径>.pub`，只供测试使用。
