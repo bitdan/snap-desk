@@ -994,6 +994,8 @@ impl Render for Controls {
                 match phase {
                     Some(Phase::Recording | Phase::Paused) => stop(cx, false),
                     Some(Phase::Ready | Phase::Countdown) => stop(cx, true),
+                    // 录屏已结束（保存、取消或失败）：Esc 关闭结果条及其附属窗口。
+                    Some(Phase::Completed | Phase::Cancelled | Phase::Failed) => close_controls(cx),
                     _ => return,
                 }
                 cx.stop_propagation();
