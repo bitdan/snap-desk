@@ -183,7 +183,21 @@ impl SettingsView {
                     _ => "更新失败，可重试",
                 }))
         });
-        let action = if has_update {
+        // 不能在线更新时（开发构建、未配置公钥、不支持的安装方式），版本行的按钮换成“打开发布页”，原因写在版本号下方。
+        let unavailable = if view.kind == "unsupported" {
+            Some(t("当前安装方式不支持在线更新，请从发布页下载新版本。"))
+        } else if !view.supported {
+            Some(t("在线更新仅支持已发布平台的正式构建。"))
+        } else if !view.configured {
+            Some(t("此版本未配置更新签名公钥。"))
+        } else {
+            None
+        };
+        let action = if !enabled {
+            outline("update-release", t("打开发布页"))
+                .on_click(cx.listener(|view, _: &ClickEvent, _, cx| view.open_release(cx)))
+                .into_any_element()
+        } else if has_update {
             dot_button("update-check", t("有更新"), true).into_any_element()
         } else {
             let mut check = super::button("update-check", t("检查更新"), super::ButtonKind::Outline, enabled && !view.operating());
@@ -252,7 +266,7 @@ impl SettingsView {
                 ),
                 row(
                     format!("v{}", view.current),
-                    None,
+                    unavailable,
                     div().flex().items_center().gap(px(12.0)).children(status).child(action),
                 ),
             ])
@@ -262,22 +276,6 @@ impl SettingsView {
             elements.push(self.update_panel(&view, t, &language, cx).into_any_element());
         } else if let Some(error) = view.error.as_ref().filter(|_| view.phase == Phase::Error) {
             elements.push(super::note(snap_core::i18n::for_language(&language, error).to_owned()).text_color(rgb(col::danger())).into_any_element());
-        }
-        if view.kind == "unsupported" {
-            elements.push(super::note(t("当前安装方式不支持在线更新，请从发布页下载新版本。")).into_any_element());
-        } else if !view.supported {
-            elements.push(super::note(t("在线更新仅支持已发布平台的正式构建。")).into_any_element());
-        } else if !view.configured {
-            elements.push(super::note(t("此版本未配置更新签名公钥。")).into_any_element());
-        }
-        if !enabled {
-            elements.push(
-                div()
-                    .mt(px(8.0))
-                    .flex()
-                    .child(outline("update-release", t("打开发布页")).on_click(cx.listener(|view, _: &ClickEvent, _, cx| view.open_release(cx))))
-                    .into_any_element(),
-            );
         }
         elements.extend([
             heading(t("帮助")).into_any_element(),
