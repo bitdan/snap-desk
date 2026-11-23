@@ -127,14 +127,15 @@ fn hide(cx: &mut App) {
 
 /// 截图前调用：展开中的暂存架临时关闭，返回是否真的关闭了（调用方据此等待桌面合成）。
 pub fn suspend(cx: &mut App) -> bool {
-    if cx
-        .try_global::<ShelfState>()
-        .is_none_or(|s| s.suspended.is_some())
-    {
+    if !cx.has_global::<ShelfState>() {
         return false;
     }
     let visible = is_visible(cx);
-    cx.global_mut::<ShelfState>().suspended = Some(visible);
+    // 上一次截图交给录屏/滚动截图后可能没有配对恢复，残留的 suspended 不能让这次截图跳过收起：
+    // 否则置顶的暂存架盖在截图浮层上，顶部区域无法框选。展开中的暂存架一律收起，并记住要恢复。
+    let state = cx.global_mut::<ShelfState>();
+    let previous = state.suspended.unwrap_or(false);
+    state.suspended = Some(previous || visible);
     if visible {
         hide(cx);
     }
@@ -269,7 +270,10 @@ fn show(cx: &mut App, grace_ms: u64) {
         window_background: WindowBackgroundAppearance::Transparent,
         ..Default::default()
     };
-    match cx.open_window(options, |_, cx| {
+    match cx.open_window(options, |window, cx| {
+        // 与贴图一致关闭 DWM 非客户区渲染：否则系统给透明弹出窗口加阴影和底色，
+        // 整块窗口区域显得发暗；暂存架应只显示绳子和卡片（参照 tendedero）。
+        crate::native::frameless(window);
         cx.new(|cx| {
             let mut view = ShelfView {
                 service,
@@ -809,7 +813,8 @@ impl Render for ShelfView {
         }
         controls = controls.child(
             control(round_icon("shelf-close", annotate::icons::CLOSE, text("收起"), true))
-                .on_click(cx.listener(|_, _: &ClickEvent, _, cx| hide(cx))),
+                // 事件处理期间本窗口正被借用，直接 hide 会再次 update 同一窗口而静默失败；推迟到本轮事件之后执行。
+                .on_click(cx.listener(|_, _: &ClickEvent, _, cx| cx.defer(hide))),
         );
         let pages = self.pages();
         let page = self.page;
@@ -888,7 +893,7 @@ impl Render for ShelfView {
             .on_key_down(cx.listener(|_, event: &KeyDownEvent, _, cx| {
                 if event.keystroke.key == "escape" {
                     cx.stop_propagation();
-                    hide(cx);
+                    cx.defer(hide);
                 }
             }))
             .on_hover(cx.listener(|view, hovered: &bool, _, cx| {
