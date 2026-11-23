@@ -332,11 +332,12 @@ fn begin(cx: &mut App, settings: &Settings, delay: Duration, purpose: Option<Rec
         log::info!("event=gpui.capture_ignored reason=active");
         return;
     }
-    // 录屏、滚动截图占用屏幕期间不截图；录屏快捷键另行处理停止。
-    if crate::recording::active(cx) {
+    // 录屏中允许截图（拍屏前隐藏录屏窗口，见下）；录屏框选本身不能叠加在进行中的录屏上。
+    if recording && crate::recording::active(cx) {
         log::info!("event=gpui.capture_ignored reason=recording");
         return;
     }
+    // 滚动截图占用屏幕期间不截图（截图键在滚动截图中表示完成，由 shell 先行处理）。
     if crate::scroll::active(cx) {
         log::info!("event=gpui.capture_ignored reason=scroll");
         return;
@@ -371,8 +372,13 @@ fn begin(cx: &mut App, settings: &Settings, delay: Duration, purpose: Option<Rec
                 return;
             }
         }
-        // 展开中的暂存架先临时收起，等桌面合成去掉它再拍屏；会话结束后恢复。
-        if cx.update(crate::shelf::suspend) {
+        // 展开中的暂存架、录屏中的红框与控制条先临时收起，等桌面合成去掉它们再拍屏；会话结束后恢复。
+        let hidden = cx.update(|cx| {
+            let shelf = crate::shelf::suspend(cx);
+            let recording = crate::recording::set_overlays_visible(cx, false);
+            shelf || recording
+        });
+        if hidden {
             cx.background_executor().timer(Duration::from_millis(120)).await;
         }
         let started = Instant::now();
@@ -443,6 +449,7 @@ fn begin(cx: &mut App, settings: &Settings, delay: Duration, purpose: Option<Rec
                 Err(error) => {
                     log::error!("event=gpui.capture_failed message={error}");
                     crate::shelf::resume(cx);
+                    crate::recording::set_overlays_visible(cx, true);
                     None
                 }
             }
@@ -499,7 +506,14 @@ fn open_overlays(cx: &mut App, session: &Entity<Session>) {
         };
         let frame = display_frame(&image, regions[index]);
         let shared = session.clone();
-        match cx.open_window(options, |_, cx| {
+        // 录屏中截图：浮层不进入录像，录下来的仍是实际桌面。
+        let exclude = crate::recording::active(cx);
+        match cx.open_window(options, |window, cx| {
+            if exclude {
+                if let Err(error) = crate::native::exclude_from_capture(window) {
+                    log::warn!("event=gpui.overlay_exclude_failed message={error}");
+                }
+            }
             cx.new(|cx| Overlay::new(shared, index, frame, cx))
         }) {
             Ok(handle) => handles.push(handle.into()),
@@ -599,6 +613,8 @@ fn finish(cx: &mut App) {
     close_overlays(cx, &session);
     history::reset(cx);
     crate::shelf::resume(cx);
+    // 录屏中截图结束：重新显示录屏红框与控制条。
+    crate::recording::set_overlays_visible(cx, true);
 }
 
 /// 选择光标所在的整个屏幕（Ctrl/⌘+A 或工具栏）；已有标注时选区固定。
@@ -753,6 +769,16 @@ fn set_record(session: &Entity<Session>, cx: &mut App, change: impl FnOnce(&mut 
 /// 开始录屏：后台准备编码器与采集，成功后收起浮层交给录屏控制条（暂存架保持收起，录屏结束再恢复）；
 /// 失败时浮层保留并在工具栏下显示原因。
 fn record(cx: &mut App, _owner: isize) {
+    // 录屏中打开的截图会话不能再开始第二段录屏。
+    if crate::recording::active(cx) {
+        if let Some(session) = current(cx) {
+            session.update(cx, |s, cx| {
+                s.editor.error = Some("正在录屏，请先结束当前录屏。".into());
+                cx.notify();
+            });
+        }
+        return;
+    }
     let Some((session, _, rect, shapes)) = begin_export(cx) else {
         return;
     };

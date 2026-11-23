@@ -42,7 +42,7 @@ const POLL: Duration = Duration::from_millis(200);
 const SETTLE: Duration = Duration::from_millis(250);
 const RED: u32 = 0xef4444;
 
-/// 录屏全局状态；同一时间只有一个会话（与截图互斥）。
+/// 录屏全局状态；同一时间只有一个会话。录屏中可以截图（截图期间录屏窗口临时隐藏），但不能再开始录屏框选。
 #[derive(Default)]
 struct Recorder {
     state: Arc<RecordingState>,
@@ -56,6 +56,8 @@ struct Recorder {
     /// 当前录屏的实时标注入口。
     annotation: Option<crate::live_annotate::Target>,
     annotator: Option<WindowHandle<crate::live_annotate::Annotator>>,
+    /// 录屏中截图时红框、控制条与标注窗已临时隐藏，截图会话结束后恢复。
+    hidden_for_capture: bool,
 }
 
 impl Global for Recorder {}
@@ -723,6 +725,40 @@ fn close_border(cx: &mut App) {
             let _ = handle.update(cx, |_, window, _| window.remove_window());
         });
     }
+}
+
+/// 录屏中截图：拍屏前临时隐藏红框、控制条与实时标注窗，截图会话结束后再显示。
+/// 这些窗口排除在采集之外（WDA_EXCLUDEFROMCAPTURE），留在屏幕上时截图里对应位置会是一块黑色。
+/// 返回是否真的隐藏了窗口（调用方据此等待桌面合成）；没有录屏时什么也不做。
+pub fn set_overlays_visible(cx: &mut App, visible: bool) -> bool {
+    let recording = active(cx);
+    let Some(recorder) = cx.has_global::<Recorder>().then(|| cx.global_mut::<Recorder>()) else {
+        return false;
+    };
+    // 只恢复本模块为截图隐藏过的窗口；普通截图结束时不碰录屏结果条。
+    if visible != recorder.hidden_for_capture || (!visible && !recording) {
+        return false;
+    }
+    recorder.hidden_for_capture = !visible;
+    let handles: Vec<AnyWindowHandle> = [recorder.border, recorder.controls]
+        .into_iter()
+        .flatten()
+        .chain(recorder.annotator.map(Into::into))
+        .collect();
+    if handles.is_empty() {
+        return false;
+    }
+    // 推迟到本轮更新之后，避免调用方正处于这些窗口自身的事件处理中而重入失败。
+    cx.defer(move |cx| {
+        for handle in handles {
+            let _ = handle.update(cx, |_, window, _| {
+                if let Err(error) = crate::native::set_visible_async(window, visible) {
+                    log::warn!("event=gpui.recording_overlay_visibility_failed message={error}");
+                }
+            });
+        }
+    });
+    true
 }
 
 /// 收起已结束录屏的结果条；仍在录制时不关闭。
