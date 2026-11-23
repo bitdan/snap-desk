@@ -207,6 +207,8 @@ struct Panel {
     overlay: Option<Vec<OverlayItem>>,
     /// 覆盖块显示译文还是露出原文（底栏眼睛按钮切换）。
     show_overlay: bool,
+    /// 正在按段落翻译、完成后会覆盖原文；期间就隐藏右侧翻译面板，避免面板出现又消失。
+    overlay_pending: bool,
     /// 当前译文对应的（目标语言, 原文）；回到翻译视图时两者都没变才沿用旧译文。
     translated_for: Option<(String, String)>,
 }
@@ -262,8 +264,19 @@ impl Panel {
             paragraphs: None,
             overlay: None,
             show_overlay: true,
+            overlay_pending: false,
             translated_for: None,
         }
+    }
+
+    /// 覆盖原文时只显示原图：译文已画在图上，右侧面板只会重复一遍。
+    /// 翻译出错（需要看到原因）、隐藏原图或没有覆盖结果时恢复分栏，可在面板里改原文、换语言。
+    fn overlay_only(&self) -> bool {
+        self.mode == Mode::Translate
+            && self.show_image
+            && self.preview.is_some()
+            && self.error.is_none()
+            && (self.overlay.is_some() || self.overlay_pending)
     }
 
     fn t(&self, key: &'static str) -> String {
@@ -438,6 +451,7 @@ impl Panel {
         let sample = paragraphs
             .zip(self.image.clone())
             .zip(self.ocr.as_ref().map(|r| (r.image_width, r.image_height)));
+        self.overlay_pending = sample.is_some();
         self.busy = Some("正在翻译…");
         self.error = None;
         self.message = None;
@@ -474,6 +488,7 @@ impl Panel {
             };
             let _ = this.update(cx, |panel, cx| {
                 panel.busy = None;
+                panel.overlay_pending = false;
                 match result {
                     Ok((texts, items)) => {
                         log::info!(
