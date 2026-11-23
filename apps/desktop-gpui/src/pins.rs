@@ -176,6 +176,7 @@ pub fn create(
                 _bounds: None,
             });
             // 贴图移动或缩放时，工具栏窗口跟着重新定位。
+            crate::native::frameless(window);
             pin.update(cx, |pin, cx| {
                 pin._bounds = Some(cx.observe_window_bounds(window, |pin: &mut Pin, window, cx| pin.place_toolbar(window, cx)));
             });
@@ -488,6 +489,7 @@ struct PinMenu {
 
 impl PinMenu {
     fn new(pin: WindowHandle<Pin>, entries: Vec<Entry>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        crate::native::frameless(window);
         let focus = cx.focus_handle();
         window.focus(&focus, cx);
         cx.observe_window_activation(window, |_, window, _| {
@@ -561,11 +563,16 @@ const TOOLBAR_POPOVER: f32 = 210.0;
 
 /// 贴图的独立工具栏窗口：内容由贴图生成，贴图变化时重绘并调整位置；贴图关闭时随之关闭。
 struct PinToolbar {
-    pin: Entity<Pin>,
+    /// 弱引用：工具栏不能让贴图在关闭后继续存活（否则收不到释放通知，工具栏关不掉）。
+    pin: WeakEntity<Pin>,
 }
+
+/// 工具栏窗口四周的透明边距，容纳工具条的阴影（太窄时阴影被窗口边缘截断，像多了一层边框）。
+const TOOLBAR_SHADOW: f32 = 16.0;
 
 impl PinToolbar {
     fn new(pin: Entity<Pin>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        crate::native::frameless(window);
         cx.observe_in(&pin, window, |_, pin, _, cx| {
             // 分组下拉的开合改变窗口高度。
             pin.update(cx, |pin, cx| {
@@ -582,21 +589,24 @@ impl PinToolbar {
         })
         .detach();
         cx.observe_release_in(&pin, window, |_, _, window, _| window.remove_window()).detach();
-        Self { pin }
+        Self { pin: pin.downgrade() }
     }
 }
 
 impl Render for PinToolbar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let toolbar = self.pin.update(cx, |pin, cx| pin.toolbar(window, cx));
+        let Ok(toolbar) = self.pin.update(cx, |pin, cx| pin.toolbar(window, cx)) else {
+            window.remove_window();
+            return div();
+        };
         let pin = self.pin.clone();
         div()
             .size_full()
-            .p(px(4.0))
+            .p(px(TOOLBAR_SHADOW))
             // 焦点落在工具栏时，快捷键（空格、Ctrl+C、Esc 等）仍交给贴图处理。
             .on_key_down(move |event: &KeyDownEvent, _, cx| {
                 let event = event.clone();
-                pin.update(cx, |pin, cx| pin.in_own_window(cx, move |pin, window, cx| pin.key(&event, window, cx)));
+                let _ = pin.update(cx, |pin, cx| pin.in_own_window(cx, move |pin, window, cx| pin.key(&event, window, cx)));
             })
             .child(toolbar)
     }
@@ -1128,17 +1138,19 @@ impl Pin {
         let extra = if self.editor.open_group.is_some() { TOOLBAR_POPOVER } else { 0.0 };
         // 窗口贴合工具栏：工具行 40 + 上下边距；选了标注工具时多一行样式条（行距 6）。
         let options = self.annotating && !(self.editor.tool == Tool::Edit && self.editor.selected.is_none());
-        let width = if options { TOOLBAR_WIDTH + 80.0 } else { TOOLBAR_WIDTH + 40.0 };
-        let height = 48.0 + if options { 46.0 } else { 0.0 } + extra;
-        let size = size(px(width), px(height));
+        let width = if options { TOOLBAR_WIDTH + 72.0 } else { TOOLBAR_WIDTH + 32.0 };
+        let height = 40.0 + if options { 46.0 } else { 0.0 } + extra;
+        // 窗口比工具条大一圈透明边距放阴影；定位按工具条本身计算。
+        let margin = px(TOOLBAR_SHADOW);
+        let size = size(px(width) + margin * 2.0, px(height) + margin * 2.0);
         let gap = px(PinLayout::load().gap as f32);
         let screen = window.display(cx).map(|d| d.visible_bounds());
-        let mut at = point(pin.origin.x, pin.bottom() + gap);
+        let mut at = point(pin.origin.x - margin, pin.bottom() + gap - margin);
         if let Some(screen) = screen {
-            if at.y + size.height > screen.bottom() {
-                at.y = (pin.origin.y - gap - size.height).max(screen.origin.y);
+            if at.y + size.height - margin > screen.bottom() {
+                at.y = (pin.origin.y - gap - size.height + margin).max(screen.origin.y - margin);
             }
-            at.x = at.x.min(screen.right() - size.width).max(screen.origin.x);
+            at.x = at.x.min(screen.right() - size.width + margin).max(screen.origin.x - margin);
         }
         Bounds::new(at, size)
     }

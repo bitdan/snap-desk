@@ -97,6 +97,25 @@ pub fn move_to(window: &Window, at: gpui_kit::Point<gpui_kit::Pixels>) -> bool {
     }
 }
 
+/// 去掉系统给无边框弹出窗口画的 1px 边框（关闭 DWM 非客户区渲染），透明窗口只显示自己画的内容。
+pub fn frameless(window: &Window) {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMNCRP_DISABLED, DWMWA_NCRENDERING_POLICY};
+        let hwnd = hwnd(window) as windows_sys::Win32::Foundation::HWND;
+        if hwnd.is_null() {
+            return;
+        }
+        let policy = DWMNCRP_DISABLED;
+        // SAFETY: hwnd 来自存活窗口；属性值指向栈上的整数，长度与类型一致。
+        unsafe {
+            DwmSetWindowAttribute(hwnd, DWMWA_NCRENDERING_POLICY as u32, &policy as *const _ as *const _, std::mem::size_of_val(&policy) as u32);
+        }
+    }
+    #[cfg(not(windows))]
+    let _ = window;
+}
+
 /// 点击穿透：加上分层 + 透明扩展样式后，鼠标事件落到下面的窗口；DirectComposition 渲染不受影响。
 /// 透明度保持 255，显示透明度由界面自己的 opacity 决定。
 pub fn set_click_through(window: &Window, enabled: bool) -> Result<(), String> {
