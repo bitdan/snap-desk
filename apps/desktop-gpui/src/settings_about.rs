@@ -194,8 +194,12 @@ impl SettingsView {
             None
         };
         let action = if !enabled {
-            outline("update-release", t("打开发布页"))
-                .on_click(cx.listener(|view, _: &ClickEvent, _, cx| view.open_release(cx)))
+            // 不能在线更新：检查更新保留（禁用），旁边给“打开发布页”。
+            div()
+                .flex()
+                .gap(px(6.0))
+                .child(outline("update-release", t("打开发布页")).on_click(cx.listener(|view, _: &ClickEvent, _, cx| view.open_release(cx))))
+                .child(super::button("update-check", t("检查更新"), super::ButtonKind::Outline, false))
                 .into_any_element()
         } else if has_update {
             dot_button("update-check", t("有更新"), true).into_any_element()
