@@ -795,6 +795,14 @@ impl Controls {
             close_border(cx);
             close_annotations(cx);
             crate::shelf::resume(cx);
+            // 保存或取消后控制条直接关闭；失败时保留，显示错误原因。
+            if matches!(phase, Some(Phase::Completed | Phase::Cancelled)) {
+                if let Some(handle) = cx.global_mut::<Recorder>().controls.take() {
+                    cx.defer(move |cx| {
+                        let _ = handle.update(cx, |_, window, _| window.remove_window());
+                    });
+                }
+            }
         }
         cx.notify();
     }
