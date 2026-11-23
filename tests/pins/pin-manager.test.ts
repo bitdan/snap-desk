@@ -57,7 +57,7 @@ describe('贴图管理与外观', () => {
     radius.props['onUpdate:modelValue'](16)
     findNode(root, node => node.type === 'form')!.props.onInput()
     await vi.advanceTimersByTimeAsync(350)
-    expect(api.saveSettings).toHaveBeenCalledWith(expect.objectContaining({ pinAppearance: { shadow: 'none', cornerRadius: 16, borderColor: '#a1a1aa' }, export: expect.objectContaining({ filenamePrefix: 'SnapDesk' }) }))
+    expect(api.saveSettings).toHaveBeenCalledWith(expect.objectContaining({ pinAppearance: { shadow: 'none', cornerRadius: 16, borderColor: '#a1a1aa', shadowColor: '#3b5bdb' }, export: expect.objectContaining({ filenamePrefix: 'SnapDesk' }) }))
     expect(findNode(root, node => String(node.props.class).includes('preview-sheet'))?.props.style).toMatchObject({ borderRadius: '16px', boxShadow: 'none' })
   })
   it('选择边框颜色后自动保存，预览同步更新', async () => {

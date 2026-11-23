@@ -1411,6 +1411,33 @@ impl SettingsView {
         container
     }
 
+    fn shadow_swatches(&self, a: &snap_core::pins::PinAppearance, cx: &mut Context<Self>) -> Div {
+        const COLORS: [&str; 8] = ["#3b5bdb", "#18181b", "#71717a", "#ef4444", "#f59e0b", "#22c55e", "#0ea5e9", "#a855f7"];
+        let enabled = !matches!(a.shadow, PinShadow::None);
+        let mut swatches = div().flex().items_center().gap(px(6.0));
+        if !enabled {
+            swatches = swatches.opacity(0.45);
+        }
+        for (index, color) in COLORS.iter().enumerate() {
+            let selected = a.shadow_color.eq_ignore_ascii_case(color);
+            let value = u32::from_str_radix(&color[1..], 16).unwrap_or(0);
+            let mut swatch = div()
+                .id(("pin-shadow-color", index))
+                .size(px(20.0))
+                .rounded_full()
+                .bg(rgb(value))
+                .border_2()
+                .border_color(rgb(if selected { col::accent() } else { col::border() }));
+            if enabled {
+                swatch = swatch.cursor_pointer().on_click(cx.listener(move |view, _: &ClickEvent, _, cx| {
+                    view.change(cx, |s| s.pin_appearance.shadow_color = (*color).to_owned())
+                }));
+            }
+            swatches = swatches.child(swatch);
+        }
+        swatches
+    }
+
     /// macOS 系统权限卡片；其他平台为空。状态每次渲染实时查询（系统调用很轻）。
     fn permission_section(&self, t: &dyn Fn(&str) -> String, cx: &mut Context<Self>) -> Vec<AnyElement> {
         #[cfg(target_os = "macos")]
@@ -2119,6 +2146,8 @@ impl SettingsView {
                         },
                     ),
                 ),
+                // 阴影颜色（关闭阴影时隐藏）：色板，首个为主题色。
+                row(t("阴影颜色"), None, self.shadow_swatches(a, cx)),
                 row(
                     t("圆角"),
                     None,

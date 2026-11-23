@@ -215,15 +215,18 @@ fn image_inset(shadow: &PinShadow, scale: f64) -> i32 {
     (f64::from(shadow_size(shadow).1) * scale).round() as i32
 }
 
-/// 主题色阴影（设置窗口的强调色 `theme::desk().accent`）。
-fn pin_shadow(shadow: &PinShadow) -> Vec<BoxShadow> {
+/// 阴影颜色取设置（默认主题色 #3b5bdb），按档位调整浓淡。
+fn pin_shadow(appearance: &PinAppearance) -> Vec<BoxShadow> {
+    let shadow = &appearance.shadow;
     let (blur, _) = shadow_size(shadow);
     if blur == 0.0 {
         return Vec::new();
     }
     let alpha = if matches!(shadow, PinShadow::Auto) { 0x66 } else { 0x40 };
+    let color = u32::from_str_radix(appearance.shadow_color.trim_start_matches('#'), 16)
+        .unwrap_or_else(|_| u32::from_str_radix(&core_pins::DEFAULT_SHADOW_COLOR[1..], 16).unwrap_or(0x3b5bdb));
     vec![BoxShadow {
-        color: rgba((crate::theme::desk().accent << 8) | alpha).into(),
+        color: rgba((color << 8) | alpha).into(),
         offset: point(px(0.0), px(1.0)),
         blur_radius: px(blur),
         spread_radius: px(0.0),
@@ -1574,7 +1577,7 @@ impl Render for Pin {
             .overflow_hidden()
             .opacity(self.opacity)
             .child(content);
-        stage = stage.shadow(pin_shadow(&self.appearance.shadow));
+        stage = stage.shadow(pin_shadow(&self.appearance));
         let mut root = div()
             .id("pin")
             .track_focus(&self.focus)
