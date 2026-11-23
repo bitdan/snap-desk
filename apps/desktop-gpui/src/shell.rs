@@ -590,7 +590,13 @@ pub fn run_action(cx: &mut App, action: ShortcutAction, source: &str) {
         }
         ShortcutAction::Translate => {
             log::info!("event=gpui.action action=translate source={source}");
-            crate::recognition::translate_selection(cx);
+            // 只有全局快捷键时前台才是用户选中文字的应用；托盘菜单等入口直接打开空白窗口，
+            // 不再向任务栏/托盘发送 Ctrl+C 并空等复制超时。
+            if source == "hotkey" {
+                crate::recognition::translate_selection(cx);
+            } else {
+                crate::recognition::open_text(cx, None);
+            }
         }
         ShortcutAction::Shelf => {
             log::info!("event=gpui.action action=shelf source={source}");

@@ -209,7 +209,9 @@ pub fn copy(
         }
         return Err("无法自动复制选中文字，请检查目标应用权限。".into());
     }
-    let deadline = Instant::now() + Duration::from_secs(1);
+    // 有选区时应用通常在 100 ms 内写入剪贴板；没有选区时剪贴板不会变化，只能等到超时，
+    // 超时直接决定空白翻译窗口出现前的停顿，因此控制在 500 ms。
+    let deadline = Instant::now() + Duration::from_millis(500);
     loop {
         if !same_window() {
             return Err("前台窗口已切换，请重新选中文字。".into());
