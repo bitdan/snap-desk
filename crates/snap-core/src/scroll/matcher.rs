@@ -45,17 +45,6 @@ impl Content {
             bottom: image.height(),
         }
     }
-
-    /// 已确认排除的固定栏不因滚动方向改变而重新进入正文。
-    /// 新检测到更窄的区域仍交给 Stitch 的布局检查拒绝，不能静默改写旧画布。
-    fn intersect(self, known: Self) -> Self {
-        Self {
-            left: self.left.max(known.left),
-            top: self.top.max(known.top),
-            right: self.right.min(known.right),
-            bottom: self.bottom.min(known.bottom),
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -82,18 +71,29 @@ fn difference(a: &RgbaImage, b: &RgbaImage, ax: u32, ay: u32, bx: u32, by: u32) 
 }
 
 /// 静止边界必须连续、包含纹理且在四分之一尺寸内终止；空白背景不当成固定栏。
-fn content(a: &RgbaImage, b: &RgbaImage) -> Content {
+/// 只在 `within`（已确认的正文区）内检测并从它的四边起算：已确认排除的固定栏不因滚动方向
+/// 改变而重新进入正文；新检测到更窄的区域仍交给 Stitch 的布局检查拒绝，不能静默改写旧画布。
+/// 已排除的侧栏也不再参与采样，否则正文里恰好同屏空白的行会借静止侧栏的纹理被误当成页眉、页脚。
+fn content(a: &RgbaImage, b: &RgbaImage, within: Content) -> Content {
     let band = |vertical: bool, reverse: bool| {
-        let length = if vertical { a.width() } else { a.height() };
-        let cross = if vertical { a.height() } else { a.width() };
+        let (start, end, cross_start, cross_end) = if vertical {
+            (within.left, within.right, within.top, within.bottom)
+        } else {
+            (within.top, within.bottom, within.left, within.right)
+        };
+        let length = end.saturating_sub(start);
+        let cross = cross_end.saturating_sub(cross_start);
+        if cross < 2 {
+            return 0;
+        }
         let mut textured = 0;
         let mut count = 0;
         for i in 0..length / 4 {
-            let pos = if reverse { length - 1 - i } else { i };
+            let pos = if reverse { end - 1 - i } else { start + i };
             let mut same = 0;
             let mut row_texture = 0;
             for n in 1..=48 {
-                let q = n * (cross - 1) / 49;
+                let q = cross_start + n * (cross - 1) / 49;
                 let (x, y) = if vertical { (pos, q) } else { (q, pos) };
                 same += u32::from(difference(a, b, x, y, x, y) <= 6);
                 let (nx, ny) = if vertical {
@@ -116,10 +116,10 @@ fn content(a: &RgbaImage, b: &RgbaImage) -> Content {
         }
     };
     Content {
-        left: band(true, false),
-        right: a.width() - band(true, true),
-        top: band(false, false),
-        bottom: a.height() - band(false, true),
+        left: within.left + band(true, false),
+        right: within.right - band(true, true),
+        top: within.top + band(false, false),
+        bottom: within.bottom - band(false, true),
     }
 }
 
@@ -217,14 +217,37 @@ fn fixed_side(
 /// 按已定位的位移裁去四边随屏幕静止的区域（网页粘性侧栏、目录时间轴、滚动条等）。
 /// 同屏比较的 `content` 要求整条线几乎完全不变且不超过四分之一；粘性侧栏里常有随滚动移动的
 /// 进度指示，宽度也可能超过四分之一。这里改用位移证据：静止像素多于随文档移动的像素才算固定。
-fn trim_fixed(a: &RgbaImage, b: &RgbaImage, roi: Content, dx: i32, dy: i32) -> Content {
+/// `known` 是检测的外边界（首次定位时为整帧）。
+fn trim_fixed(
+    a: &RgbaImage,
+    b: &RgbaImage,
+    roi: Content,
+    known: Content,
+    dx: i32,
+    dy: i32,
+) -> Content {
     let mut out = roi;
     out.left += fixed_side(a, b, roi, dx, dy, true, false);
     out.right -= fixed_side(a, b, roi, dx, dy, true, true);
+    if out.left != roi.left || out.right != roi.right {
+        // 侧栏裁去后，页眉、页脚只在正文列内重新做同屏检测：整宽检测时，正文里恰好同屏
+        // 空白的行会借静止侧栏的纹理被误判成固定条带，拼接时会少掉这些行。
+        let rows = content(
+            a,
+            b,
+            Content {
+                left: out.left,
+                right: out.right,
+                ..known
+            },
+        );
+        out.top = rows.top;
+        out.bottom = rows.bottom;
+    }
     let sides = Content {
         left: out.left,
         right: out.right,
-        ..roi
+        ..out
     };
     out.top += fixed_side(a, b, sides, dx, dy, false, false);
     out.bottom -= fixed_side(a, b, sides, dx, dy, false, true);
@@ -233,8 +256,8 @@ fn trim_fixed(a: &RgbaImage, b: &RgbaImage, roi: Content, dx: i32, dy: i32) -> C
 
 /// 首次定位（尚无已确认正文区）时用位移证据收紧正文区；收紧后的区域仍须通过完整复核，
 /// 否则沿用原结果。
-fn refine(a: &RgbaImage, b: &RgbaImage, result: Alignment) -> Alignment {
-    let trimmed = trim_fixed(a, b, result.content, result.dx, result.dy);
+fn refine(a: &RgbaImage, b: &RgbaImage, known: Content, result: Alignment) -> Alignment {
+    let trimmed = trim_fixed(a, b, result.content, known, result.dx, result.dy);
     if trimmed == result.content
         || trimmed.right.saturating_sub(trimmed.left) < MIN_OVERLAP
         || trimmed.bottom.saturating_sub(trimmed.top) < MIN_OVERLAP
@@ -251,6 +274,7 @@ fn align_central(
     a: &RgbaImage,
     b: &RgbaImage,
     roi: Content,
+    known: Content,
     vertical: bool,
     stationary: bool,
 ) -> Match {
@@ -275,7 +299,7 @@ fn align_central(
     if found.dx == 0 && found.dy == 0 {
         return Match::Uncertain;
     }
-    let content = trim_fixed(a, b, roi, found.dx, found.dy);
+    let content = trim_fixed(a, b, roi, known, found.dx, found.dy);
     if content.right.saturating_sub(content.left) < MIN_OVERLAP
         || content.bottom.saturating_sub(content.top) < MIN_OVERLAP
     {
@@ -383,8 +407,7 @@ pub(super) fn verify_at(
     {
         return None;
     }
-    verify(a, b, content(a, b).intersect(known), dx, dy)
-        .map(|result| reconcile_bounds(a, b, known, result))
+    verify(a, b, content(a, b, known), dx, dy).map(|result| reconcile_bounds(a, b, known, result))
 }
 
 /// 同屏相同像素只能提名固定栏：正文中的周期纹理也可能暂时静止。
@@ -527,7 +550,7 @@ pub(super) fn alignment_in(
     let roi = if stationary {
         known
     } else {
-        content(a, b).intersect(known)
+        content(a, b, known)
     };
     if roi.right.saturating_sub(roi.left) < MIN_OVERLAP
         || roi.bottom.saturating_sub(roi.top) < MIN_OVERLAP
@@ -561,13 +584,13 @@ pub(super) fn alignment_in(
         return result;
     }
     match result {
-        Match::Aligned(alignment) => Match::Aligned(refine(a, b, alignment)),
+        Match::Aligned(alignment) => Match::Aligned(refine(a, b, known, alignment)),
         Match::Uncertain => match mode {
-            ScrollMode::Vertical => align_central(a, b, roi, true, stationary),
-            ScrollMode::Horizontal => align_central(a, b, roi, false, stationary),
+            ScrollMode::Vertical => align_central(a, b, roi, known, true, stationary),
+            ScrollMode::Horizontal => align_central(a, b, roi, known, false, stationary),
             ScrollMode::Auto => match (
-                align_central(a, b, roi, true, stationary),
-                align_central(a, b, roi, false, stationary),
+                align_central(a, b, roi, known, true, stationary),
+                align_central(a, b, roi, known, false, stationary),
             ) {
                 (found @ Match::Aligned(_), Match::Uncertain)
                 | (Match::Uncertain, found @ Match::Aligned(_)) => found,
