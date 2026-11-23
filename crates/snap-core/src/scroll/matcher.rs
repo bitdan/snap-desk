@@ -1,5 +1,10 @@
 //! 单轴平移匹配：只扫描固定的 20 条采样线，分区投票后复核重叠像素。
 //! 不缩放或拉伸文字；重复纹理、运动冲突和无重叠均保守拒绝。
+//!
+//! 固定区域分两步识别：同屏比较（`content`）找出贴边、完全静止的窄条（页眉、冻结列）；
+//! 首次定位时再按位移证据（`trim_fixed`）裁去随屏幕静止的侧栏，例如网页的粘性导航、
+//! 带移动进度指示的目录时间轴和滚动条。整帧定位失败时，先用横截方向中间三分之一提名位移
+//! （`align_central`），再按同样的证据确定正文区并完整复核。
 use image::RgbaImage;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -116,6 +121,167 @@ fn content(a: &RgbaImage, b: &RgbaImage) -> Content {
         top: band(false, false),
         bottom: a.height() - band(false, true),
     }
+}
+
+/// 已知位移下一条边线（列或行）的归属：随屏幕静止、随文档移动，或证据不足。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Line {
+    Fixed,
+    Moving,
+    Neutral,
+}
+
+/// 沿一条线取 48 个采样点，只统计有纹理的点，分别与旧帧同屏位置、按文档位移的位置比较。
+/// 旧帧没有对应文档坐标的点不计入（新增条带没有反证）；两者都吻合（空白、周期纹理）
+/// 或都不吻合（原地变化的进度指示）时不下结论。
+fn classify_line(
+    a: &RgbaImage,
+    b: &RgbaImage,
+    roi: Content,
+    dx: i32,
+    dy: i32,
+    column: bool,
+    pos: u32,
+) -> Line {
+    let (start, end) = if column {
+        (roi.top, roi.bottom)
+    } else {
+        (roi.left, roi.right)
+    };
+    if end.saturating_sub(start) < 8 {
+        return Line::Neutral;
+    }
+    let (mut textured, mut fixed, mut moving) = (0u32, 0u32, 0u32);
+    for n in 0..48 {
+        let q = start + (end - start - 3) * n / 47;
+        let (x, y) = if column { (pos, q) } else { (q, pos) };
+        if x + 2 >= b.width() || y + 2 >= b.height() || !texture(b, x, y) {
+            continue;
+        }
+        let (ax, ay) = (i64::from(x) + i64::from(dx), i64::from(y) + i64::from(dy));
+        if ax < 0 || ay < 0 || ax >= i64::from(a.width()) || ay >= i64::from(a.height()) {
+            continue;
+        }
+        textured += 1;
+        fixed += u32::from(difference(a, b, x, y, x, y) <= 36);
+        moving += u32::from(difference(a, b, ax as u32, ay as u32, x, y) <= 36);
+    }
+    if textured < 3 {
+        Line::Neutral
+    } else if moving * 10 >= textured * 6 && moving > fixed {
+        Line::Moving
+    } else if fixed * 10 >= textured * 6 && fixed > moving {
+        Line::Fixed
+    } else {
+        Line::Neutral
+    }
+}
+
+/// 从一侧向内逐线扫描，返回应裁去的线数：到第一条随文档移动的线为止、最后一条静止线以内。
+/// 只有确实遇到正文、且至少 4 条线有静止证据时才裁；最多看到 3/5 处，保证正文仍占多数。
+fn fixed_side(
+    a: &RgbaImage,
+    b: &RgbaImage,
+    roi: Content,
+    dx: i32,
+    dy: i32,
+    column: bool,
+    from_end: bool,
+) -> u32 {
+    let (lo, hi) = if column {
+        (roi.left, roi.right)
+    } else {
+        (roi.top, roi.bottom)
+    };
+    let mut last_fixed = None;
+    let mut fixed = 0;
+    for i in 0..hi.saturating_sub(lo) * 3 / 5 {
+        let pos = if from_end { hi - 1 - i } else { lo + i };
+        match classify_line(a, b, roi, dx, dy, column, pos) {
+            Line::Moving => {
+                return match last_fixed {
+                    Some(last) if fixed >= 4 => last + 1,
+                    _ => 0,
+                };
+            }
+            Line::Fixed => {
+                fixed += 1;
+                last_fixed = Some(i);
+            }
+            Line::Neutral => {}
+        }
+    }
+    0
+}
+
+/// 按已定位的位移裁去四边随屏幕静止的区域（网页粘性侧栏、目录时间轴、滚动条等）。
+/// 同屏比较的 `content` 要求整条线几乎完全不变且不超过四分之一；粘性侧栏里常有随滚动移动的
+/// 进度指示，宽度也可能超过四分之一。这里改用位移证据：静止像素多于随文档移动的像素才算固定。
+fn trim_fixed(a: &RgbaImage, b: &RgbaImage, roi: Content, dx: i32, dy: i32) -> Content {
+    let mut out = roi;
+    out.left += fixed_side(a, b, roi, dx, dy, true, false);
+    out.right -= fixed_side(a, b, roi, dx, dy, true, true);
+    let sides = Content {
+        left: out.left,
+        right: out.right,
+        ..roi
+    };
+    out.top += fixed_side(a, b, sides, dx, dy, false, false);
+    out.bottom -= fixed_side(a, b, sides, dx, dy, false, true);
+    out
+}
+
+/// 首次定位（尚无已确认正文区）时用位移证据收紧正文区；收紧后的区域仍须通过完整复核，
+/// 否则沿用原结果。
+fn refine(a: &RgbaImage, b: &RgbaImage, result: Alignment) -> Alignment {
+    let trimmed = trim_fixed(a, b, result.content, result.dx, result.dy);
+    if trimmed == result.content
+        || trimmed.right.saturating_sub(trimmed.left) < MIN_OVERLAP
+        || trimmed.bottom.saturating_sub(trimmed.top) < MIN_OVERLAP
+    {
+        return result;
+    }
+    verify(a, b, trimmed, result.dx, result.dy).unwrap_or(result)
+}
+
+/// 整帧定位失败时的回退：只用横截方向中间三分之一提名位移（侧栏、时间轴多在两侧，
+/// 导航栏常超过四分之一宽），再按位移证据确定真正的正文区，并对该区域完整复核。
+/// 中间区域单独通过不足以接受。
+fn align_central(
+    a: &RgbaImage,
+    b: &RgbaImage,
+    roi: Content,
+    vertical: bool,
+    stationary: bool,
+) -> Match {
+    let mut central = roi;
+    if vertical {
+        let third = (roi.right - roi.left) / 3;
+        central.left += third;
+        central.right -= third;
+    } else {
+        let third = (roi.bottom - roi.top) / 3;
+        central.top += third;
+        central.bottom -= third;
+    }
+    if central.right.saturating_sub(central.left) < MIN_OVERLAP
+        || central.bottom.saturating_sub(central.top) < MIN_OVERLAP
+    {
+        return Match::Uncertain;
+    }
+    let Match::Aligned(found) = align_axis(a, b, central, vertical, stationary) else {
+        return Match::Uncertain;
+    };
+    if found.dx == 0 && found.dy == 0 {
+        return Match::Uncertain;
+    }
+    let content = trim_fixed(a, b, roi, found.dx, found.dy);
+    if content.right.saturating_sub(content.left) < MIN_OVERLAP
+        || content.bottom.saturating_sub(content.top) < MIN_OVERLAP
+    {
+        return Match::Uncertain;
+    }
+    verify(a, b, content, found.dx, found.dy).map_or(Match::Uncertain, Match::Aligned)
 }
 
 fn texture(image: &RgbaImage, x: u32, y: u32) -> bool {
@@ -385,8 +551,29 @@ pub(super) fn alignment_in(
             _ => Match::Uncertain,
         },
     };
-    match result {
+    let result = match result {
         Match::Aligned(alignment) => Match::Aligned(reconcile_bounds(a, b, known, alignment)),
+        other => other,
+    };
+    // 首次定位决定整段拼接的正文区，之后的帧都与它相交；只在这一步用位移证据识别粘性侧栏。
+    // 已确认正文区后不再改动，避免中途改变边界（由 Stitch 的固定栏检查拒绝）。
+    if known != Content::full(a) || stationary {
+        return result;
+    }
+    match result {
+        Match::Aligned(alignment) => Match::Aligned(refine(a, b, alignment)),
+        Match::Uncertain => match mode {
+            ScrollMode::Vertical => align_central(a, b, roi, true, stationary),
+            ScrollMode::Horizontal => align_central(a, b, roi, false, stationary),
+            ScrollMode::Auto => match (
+                align_central(a, b, roi, true, stationary),
+                align_central(a, b, roi, false, stationary),
+            ) {
+                (found @ Match::Aligned(_), Match::Uncertain)
+                | (Match::Uncertain, found @ Match::Aligned(_)) => found,
+                _ => Match::Uncertain,
+            },
+        },
         other => other,
     }
 }
@@ -678,6 +865,77 @@ mod tests {
                     if horizontal { (-shift, 0) } else { (0, shift) }
                 );
             }
+        }
+    }
+
+    /// 论坛页面的布局：左侧粘性导航（宽于四分之一，超过同屏检测的上限）、右侧粘性时间轴，
+    /// 时间轴上的进度指示随滚动下移。正文仍须正确定位，并把两侧排除在正文区外。
+    fn sticky_frame(doc: &RgbaImage, offset: u32) -> RgbaImage {
+        let noise = |x: u32, y: u32| {
+            let v = (x.wrapping_mul(2654435761) ^ y.wrapping_mul(40503)).wrapping_mul(2246822519);
+            let shade = (v >> 24) as u8;
+            Rgba([shade, shade.wrapping_add(40), 200, 255])
+        };
+        let handle = 40 + offset / 4;
+        let mut frame = image::imageops::crop_imm(doc, 0, offset, 480, 320).to_image();
+        for (x, y, pixel) in frame.enumerate_pixels_mut() {
+            if x < 140 || x >= 400 {
+                *pixel = noise(x, y);
+            }
+            if (410..470).contains(&x) && (handle..handle + 40).contains(&y) {
+                *pixel = Rgba([37, 99, 235, 255]);
+            }
+        }
+        frame
+    }
+
+    #[test]
+    fn sticky_side_columns_with_moving_indicator_are_trimmed() {
+        let doc = text_document();
+        for horizontal in [false, true] {
+            let view = |offset| {
+                let frame = sticky_frame(&doc, offset);
+                if horizontal {
+                    image::imageops::rotate90(&frame)
+                } else {
+                    frame
+                }
+            };
+            let mode = if horizontal {
+                ScrollMode::Horizontal
+            } else {
+                ScrollMode::Vertical
+            };
+            let (first, next) = (view(150), view(210));
+            let Match::Aligned(result) = alignment(&first, &next, mode) else {
+                panic!("粘性侧栏页面未定位，horizontal={horizontal}");
+            };
+            assert_eq!(
+                (result.dx, result.dy),
+                if horizontal { (-60, 0) } else { (0, 60) }
+            );
+            let (start, end) = if horizontal {
+                (result.content.top, result.content.bottom)
+            } else {
+                (result.content.left, result.content.right)
+            };
+            assert_eq!((start, end), (140, 400), "horizontal={horizontal}");
+
+            // 拼接器同样接受：正文区固定为两栏之间，后续帧沿用，不被悬浮控件检查拒绝。
+            let mut stitch = super::super::stitcher::Stitch::with_mode(first, mode).unwrap();
+            for offset in [210, 260] {
+                assert!(
+                    matches!(stitch.consider(view(offset)).unwrap(), Match::Aligned(_)),
+                    "offset={offset}, horizontal={horizontal}, reason={}",
+                    stitch.rejection()
+                );
+            }
+            let (along, across) = if horizontal {
+                (stitch.width, stitch.height)
+            } else {
+                (stitch.height, stitch.width)
+            };
+            assert_eq!((along, across), (320 + 110, 260), "horizontal={horizontal}");
         }
     }
 
