@@ -218,6 +218,9 @@ fn fixed_side(
 /// 同屏比较的 `content` 要求整条线几乎完全不变且不超过四分之一；粘性侧栏里常有随滚动移动的
 /// 进度指示，宽度也可能超过四分之一。这里改用位移证据：静止像素多于随文档移动的像素才算固定。
 /// `known` 是检测的外边界（首次定位时为整帧）。
+///
+/// 先裁与滚动方向垂直的两侧（纵向滚动的左右侧栏、横向滚动的上下栏），再在剩余区域内裁另外两侧：
+/// 另两侧的每条线都会横穿侧栏，静止侧栏的纹理会压过正文，必须先把侧栏排除。
 fn trim_fixed(
     a: &RgbaImage,
     b: &RgbaImage,
@@ -226,32 +229,45 @@ fn trim_fixed(
     dx: i32,
     dy: i32,
 ) -> Content {
-    let mut out = roi;
-    out.left += fixed_side(a, b, roi, dx, dy, true, false);
-    out.right -= fixed_side(a, b, roi, dx, dy, true, true);
-    if out.left != roi.left || out.right != roi.right {
-        // 侧栏裁去后，页眉、页脚只在正文列内重新做同屏检测：整宽检测时，正文里恰好同屏
-        // 空白的行会借静止侧栏的纹理被误判成固定条带，拼接时会少掉这些行。
-        let rows = content(
-            a,
-            b,
-            Content {
-                left: out.left,
-                right: out.right,
-                ..known
-            },
-        );
-        out.top = rows.top;
-        out.bottom = rows.bottom;
-    }
-    let sides = Content {
-        left: out.left,
-        right: out.right,
-        ..out
+    let (left, right, top, bottom) = if dy != 0 {
+        let left = fixed_side(a, b, roi, dx, dy, true, false);
+        let right = fixed_side(a, b, roi, dx, dy, true, true);
+        let sides = Content {
+            left: roi.left + left,
+            right: roi.right - right,
+            ..roi
+        };
+        let top = fixed_side(a, b, sides, dx, dy, false, false);
+        let bottom = fixed_side(a, b, sides, dx, dy, false, true);
+        (left, right, top, bottom)
+    } else {
+        let top = fixed_side(a, b, roi, dx, dy, false, false);
+        let bottom = fixed_side(a, b, roi, dx, dy, false, true);
+        let sides = Content {
+            top: roi.top + top,
+            bottom: roi.bottom - bottom,
+            ..roi
+        };
+        let left = fixed_side(a, b, sides, dx, dy, true, false);
+        let right = fixed_side(a, b, sides, dx, dy, true, true);
+        (left, right, top, bottom)
     };
-    out.top += fixed_side(a, b, sides, dx, dy, false, false);
-    out.bottom -= fixed_side(a, b, sides, dx, dy, false, true);
-    out
+    if left + right + top + bottom == 0 {
+        return roi;
+    }
+    // 位移证据没有裁的边，从外边界起在剩余区域内重新做同屏检测：整帧检测时，正文里恰好
+    // 同屏空白的行或列会借静止侧栏的纹理被误判成固定条带，拼接时会少掉这些内容。
+    let pick = |trimmed: u32, inner: u32, outer: u32| if trimmed > 0 { inner } else { outer };
+    content(
+        a,
+        b,
+        Content {
+            left: pick(left, roi.left + left, known.left),
+            right: pick(right, roi.right - right, known.right),
+            top: pick(top, roi.top + top, known.top),
+            bottom: pick(bottom, roi.bottom - bottom, known.bottom),
+        },
+    )
 }
 
 /// 首次定位（尚无已确认正文区）时用位移证据收紧正文区；收紧后的区域仍须通过完整复核，
