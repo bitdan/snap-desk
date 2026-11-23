@@ -152,7 +152,6 @@ pub fn create(
                 layers: Layers::default(),
                 annotating: false,
                 toolbar: false,
-                toolbar_above: false,
                 drag_text: drag_text.clone(),
                 hidden: false,
                 text_input: None,
@@ -172,6 +171,13 @@ pub fn create(
                 busy: false,
                 focus: cx.focus_handle(),
                 focused: false,
+                own: None,
+                toolbar_window: None,
+                _bounds: None,
+            });
+            // 贴图移动或缩放时，工具栏窗口跟着重新定位。
+            pin.update(cx, |pin, cx| {
+                pin._bounds = Some(cx.observe_window_bounds(window, |pin: &mut Pin, window, cx| pin.place_toolbar(window, cx)));
             });
             // 实际所在屏的缩放与预估不同（多屏混合 DPI）时，按实际缩放修正窗口尺寸。
             if (f64::from(window.scale_factor()) - scale).abs() > 0.01 {
@@ -184,6 +190,9 @@ pub fn create(
         .map_err(|e| e.to_string())?;
     let handle: AnyWindowHandle = handle.into();
     let _ = handle.update(cx, |_, window, _| window.activate_window());
+    if let Some(weak) = &weak {
+        let _ = weak.update(cx, |pin, _| pin.own = Some(handle));
+    }
     if let Some(weak) = weak {
         cx.default_global::<Registry>().pins.push((handle, weak));
     }
@@ -221,6 +230,9 @@ pub fn hide_pins(cx: &mut App, except: Option<AnyWindowHandle>) -> Vec<AnyWindow
             continue;
         }
         let result = handle.update(cx, |_, window, _| crate::native::set_visible(window, false));
+        if let Some(toolbar) = pin.read(cx).toolbar_window {
+            let _ = toolbar.update(cx, |_, window, _| crate::native::set_visible(window, false));
+        }
         match result {
             Ok(Ok(())) => {
                 pin.update(cx, |pin, _| pin.hidden = true);
@@ -243,6 +255,9 @@ pub fn show_pins(cx: &mut App, hidden: Vec<AnyWindowHandle>) {
             continue;
         }
         let result = handle.update(cx, |_, window, _| crate::native::set_visible(window, true));
+        if let Some(toolbar) = pin.read(cx).toolbar_window {
+            let _ = toolbar.update(cx, |_, window, _| crate::native::set_visible(window, true));
+        }
         if let Ok(Err(error)) = result {
             log::warn!("event=gpui.pin_show_failed message={error}");
         }
@@ -541,6 +556,52 @@ impl Render for PinMenu {
     }
 }
 
+/// 分组下拉展开时工具栏窗口加高的量（最多一组 6 个工具）。
+const TOOLBAR_POPOVER: f32 = 210.0;
+
+/// 贴图的独立工具栏窗口：内容由贴图生成，贴图变化时重绘并调整位置；贴图关闭时随之关闭。
+struct PinToolbar {
+    pin: Entity<Pin>,
+}
+
+impl PinToolbar {
+    fn new(pin: Entity<Pin>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        cx.observe_in(&pin, window, |_, pin, _, cx| {
+            // 分组下拉的开合改变窗口高度。
+            pin.update(cx, |pin, cx| {
+                if let Some(own) = pin.own {
+                    let weak = cx.entity().downgrade();
+                    cx.defer(move |cx| {
+                        let _ = own.update(cx, |_, window, cx| {
+                            let _ = weak.update(cx, |pin, cx| pin.place_toolbar(window, cx));
+                        });
+                    });
+                }
+            });
+            cx.notify();
+        })
+        .detach();
+        cx.observe_release_in(&pin, window, |_, _, window, _| window.remove_window()).detach();
+        Self { pin }
+    }
+}
+
+impl Render for PinToolbar {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let toolbar = self.pin.update(cx, |pin, cx| pin.toolbar(window, cx));
+        let pin = self.pin.clone();
+        div()
+            .size_full()
+            .p(px(4.0))
+            // 焦点落在工具栏时，快捷键（空格、Ctrl+C、Esc 等）仍交给贴图处理。
+            .on_key_down(move |event: &KeyDownEvent, _, cx| {
+                let event = event.clone();
+                pin.update(cx, |pin, cx| pin.in_own_window(cx, move |pin, window, cx| pin.key(&event, window, cx)));
+            })
+            .child(toolbar)
+    }
+}
+
 fn menu_height() -> f32 {
     MENU.iter()
         .map(|item| if *item == Item::Separator { SEPARATOR_HEIGHT } else { ITEM_HEIGHT })
@@ -558,8 +619,6 @@ pub struct Pin {
     annotating: bool,
     /// 外置工具栏是否显示（空格切换）。
     toolbar: bool,
-    /// 工具栏放在图片上方（图片下方超出屏幕可见区域时；窗口向上扩展，图片不动）。
-    toolbar_above: bool,
     /// 被 [`hide_pins`] 临时隐藏（对话框期间）。
     hidden: bool,
     /// 文字/文件路径贴图拖出时提供的文字（颜色值规范化为 HEX，见 core `drag_text`）。
@@ -584,6 +643,11 @@ pub struct Pin {
     busy: bool,
     focus: FocusHandle,
     focused: bool,
+    /// 自身窗口（工具栏窗口里的操作转回这里执行）。
+    own: Option<AnyWindowHandle>,
+    /// 空格展开的工具栏：独立的弹出窗口，跟随贴图移动。
+    toolbar_window: Option<AnyWindowHandle>,
+    _bounds: Option<Subscription>,
 }
 
 impl Pin {
@@ -591,16 +655,10 @@ impl Pin {
         snap_core::i18n::for_language(&self.language, message).to_owned()
     }
 
-    /// 工具栏区域高度（逻辑像素）。
-    fn band() -> f32 {
-        let layout = PinLayout::load();
-        (layout.gap + layout.toolbar_height) as f32
-    }
-
     /// 图片左上角距窗口顶边（逻辑像素）：透明边距，工具栏在上方时再加工具栏区域。
     fn image_top(&self, scale: f32) -> f32 {
         let inset = image_inset(f64::from(scale)) as f32 / scale;
-        inset + if self.toolbar && self.toolbar_above { Self::band() } else { 0.0 }
+        inset
     }
 
     fn base_size(&self, scale: f32) -> Size<Pixels> {
@@ -610,13 +668,7 @@ impl Pin {
     /// 工具栏或菜单打开时窗口扩到能放下它们；图片左上角不动（窗口只向右下扩展）。
     fn fit_window(&self, window: &mut Window) {
         let scale = window.scale_factor();
-        let mut size = self.base_size(scale);
-        if self.toolbar {
-            let inset = image_inset(f64::from(scale)) as f32 / scale;
-            size.width = size.width.max(px(inset + TOOLBAR_WIDTH + 4.0));
-            size.height += px(Self::band());
-        }
-        window.resize(size);
+        window.resize(self.base_size(scale));
     }
 
     fn flash(&mut self, message: String, cx: &mut Context<Self>) {
@@ -1056,28 +1108,94 @@ impl Pin {
         if self.editor.pending || self.editor.interacting() {
             return;
         }
-        let scale = window.scale_factor();
-        let band = (Self::band() * scale).round() as i32;
         self.toolbar = !self.toolbar;
         if self.toolbar {
-            // 图片下方放不下工具栏时翻到上方：窗口先加高再整体上移，图片在屏幕上不动。
-            let bottom = window.bounds().bottom();
-            let limit = window.display(cx).map(|d| d.visible_bounds().bottom());
-            self.toolbar_above = limit.is_some_and(|limit| bottom + px(Self::band()) > limit);
-            self.fit_window(window);
-            if self.toolbar_above && !crate::native::offset_window(window, -band) {
-                self.toolbar_above = false;
-            }
+            self.open_toolbar(window, cx);
         } else {
             self.annotating = false;
             self.editor.select(None);
-            let was_above = std::mem::take(&mut self.toolbar_above);
-            if was_above {
-                crate::native::offset_window(window, band);
+            if let Some(toolbar) = self.toolbar_window.take() {
+                let _ = toolbar.update(cx, |_, window, _| window.remove_window());
             }
-            self.fit_window(window);
         }
         self.after_edit(window, cx);
+    }
+
+    /// 工具栏窗口的位置与大小：贴图下方，放不下时放上方；左缘对齐贴图并收进屏幕。
+    fn toolbar_bounds(&self, window: &Window, cx: &App) -> Bounds<Pixels> {
+        let pin = window.bounds();
+        // 分组下拉展开时窗口向下加高，容纳下拉列表。
+        let extra = if self.editor.open_group.is_some() { TOOLBAR_POPOVER } else { 0.0 };
+        let size = size(px(TOOLBAR_WIDTH + 8.0), px(PinLayout::load().toolbar_height as f32 + extra));
+        let gap = px(PinLayout::load().gap as f32);
+        let screen = window.display(cx).map(|d| d.visible_bounds());
+        let mut at = point(pin.origin.x, pin.bottom() + gap);
+        if let Some(screen) = screen {
+            if at.y + size.height > screen.bottom() {
+                at.y = (pin.origin.y - gap - size.height).max(screen.origin.y);
+            }
+            at.x = at.x.min(screen.right() - size.width).max(screen.origin.x);
+        }
+        Bounds::new(at, size)
+    }
+
+    fn open_toolbar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let bounds = self.toolbar_bounds(window, cx);
+        let pin = cx.entity();
+        let options = WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(bounds)),
+            display_id: window.display(cx).map(|d| d.id()),
+            titlebar: None,
+            focus: false,
+            show: true,
+            kind: WindowKind::PopUp,
+            is_movable: false,
+            is_resizable: false,
+            is_minimizable: false,
+            window_background: WindowBackgroundAppearance::Transparent,
+            ..Default::default()
+        };
+        match cx.open_window(options, |window, cx| cx.new(|cx| PinToolbar::new(pin, window, cx))) {
+            Ok(handle) => self.toolbar_window = Some(handle.into()),
+            Err(error) => {
+                log::warn!("event=gpui.pin_toolbar_failed message={error}");
+                self.toolbar = false;
+            }
+        }
+    }
+
+    /// 贴图移动、缩放或下拉展开后重新放置工具栏窗口。
+    fn place_toolbar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(toolbar) = self.toolbar_window else {
+            return;
+        };
+        let bounds = self.toolbar_bounds(window, cx);
+        let alive = toolbar.update(cx, |_, window, _| {
+            if window.bounds().size != bounds.size {
+                window.resize(bounds.size);
+            }
+            crate::native::move_to(window, bounds.origin);
+        });
+        if alive.is_err() {
+            self.toolbar_window = None;
+            self.toolbar = false;
+        }
+    }
+
+    /// 工具栏窗口里的操作在贴图自己的窗口里执行（缩放、菜单、关闭等都以贴图窗口为准）。
+    fn in_own_window(&self, cx: &mut Context<Self>, f: impl FnOnce(&mut Pin, &mut Window, &mut Context<Pin>) + 'static) {
+        let (Some(handle), weak) = (self.own, cx.entity().downgrade()) else {
+            return;
+        };
+        cx.defer(move |cx| {
+            let _ = handle.update(cx, |_, window, cx| {
+                let _ = weak.update(cx, |pin, cx| f(pin, window, cx));
+            });
+        });
+    }
+
+    fn remote_action(this: &mut Self, action: Action, _: &mut Window, cx: &mut Context<Self>) {
+        this.in_own_window(cx, move |pin, window, cx| Self::action(pin, action, window, cx));
     }
 
     /// 工具栏与样式条的操作；选择工具时进入标注模式。
@@ -1446,30 +1564,29 @@ impl Render for Pin {
             let hint = self.text("鼠标穿透中 · 用全局贴图快捷键或托盘恢复");
             root = root.child(badge(hint, (top + h - 24.0).max(top + 8.0)));
         }
-        if self.toolbar {
-            root = root.child(self.toolbar(inset, top, h, window, cx));
-        }
         root
     }
 }
 
 impl Pin {
     /// 图片下方的外置工具栏：移动、标注工具、撤销重做 + 缩放比例、图片处理、置顶、保存、关闭、复制。
-    fn toolbar(&self, inset: f32, image_top: f32, image_height: f32, window: &Window, cx: &mut Context<Self>) -> Stateful<Div> {
+    fn toolbar(&self, window: &Window, cx: &mut Context<Self>) -> Stateful<Div> {
         let view = cx.entity();
         let text = |key: &'static str| self.text(key);
         let disabled = self.locked || self.busy;
-        let props = ToolbarProps { editor: &self.editor, active: self.annotating, disabled, compact: true, grouped: true, collapsible: false, popover_up: !self.toolbar_above, text: &text };
-        let host = annotate::Host { view: &view, window, dispatch: Self::action };
+        let props = ToolbarProps { editor: &self.editor, active: self.annotating, disabled, compact: true, grouped: true, collapsible: false, popover_up: false, text: &text };
+        let host = annotate::Host { view: &view, window, dispatch: Self::remote_action };
         let leading = vec![
             annotate::icon_button("pin-move", annotate::icons::MOVE, self.text("移动贴图"), !self.annotating, disabled)
-                .on_click(cx.listener(|pin, _: &ClickEvent, window, cx| {
-                    if pin.editor.interacting() || pin.editor.pending {
-                        return;
-                    }
-                    pin.annotating = false;
-                    pin.editor.select(None);
-                    pin.after_edit(window, cx);
+                .on_click(cx.listener(|pin, _: &ClickEvent, _, cx| {
+                    pin.in_own_window(cx, |pin, window, cx| {
+                        if pin.editor.interacting() || pin.editor.pending {
+                            return;
+                        }
+                        pin.annotating = false;
+                        pin.editor.select(None);
+                        pin.after_edit(window, cx);
+                    })
                 }))
                 .into_any_element(),
             annotate::divider().into_any_element(),
@@ -1487,25 +1604,35 @@ impl Pin {
             .text_xs()
             .text_color(rgb(annotate::text()))
             .child(format!("{}%", (self.zoom * 100.0).round()))
-            .on_click(cx.listener(|pin, _: &ClickEvent, window, cx| {
-                if pin.locked {
-                    return;
-                }
-                pin.zoom = 1.0_f64.max(PinLayout::load().minimum_zoom(pin.image.width(), pin.image.height(), f64::from(window.scale_factor())));
-                pin.fit_window(window);
-                cx.notify();
+            .on_click(cx.listener(|pin, _: &ClickEvent, _, cx| {
+                pin.in_own_window(cx, |pin, window, cx| {
+                    if pin.locked {
+                        return;
+                    }
+                    pin.zoom = 1.0_f64.max(PinLayout::load().minimum_zoom(pin.image.width(), pin.image.height(), f64::from(window.scale_factor())));
+                    pin.fit_window(window);
+                    cx.notify();
+                })
             }));
         let trailing = vec![
             zoom.into_any_element(),
             annotate::icon_button("pin-recognize", annotate::icons::SCAN_TEXT, self.text("识别"), false, self.busy)
                 .on_click(cx.listener(|pin, event: &ClickEvent, window, cx| {
-                    // 识别菜单与右键菜单共用（识别项在最上方）。
-                    pin.open_menu(event.position(), window, cx);
+                    // 识别菜单与右键菜单共用（识别项在最上方）；按屏幕位置换算回贴图窗口坐标。
+                    let global = window.bounds().origin + event.position();
+                    pin.in_own_window(cx, move |pin, window, cx| {
+                        let local = global - window.bounds().origin;
+                        pin.open_menu(local, window, cx)
+                    })
                 }))
                 .into_any_element(),
             annotate::icon_button("pin-adjust", annotate::icons::SLIDERS, self.text("图片处理"), false, disabled)
                 .on_click(cx.listener(|pin, event: &ClickEvent, window, cx| {
-                    pin.open_menu(event.position(), window, cx);
+                    let global = window.bounds().origin + event.position();
+                    pin.in_own_window(cx, move |pin, window, cx| {
+                        let local = global - window.bounds().origin;
+                        pin.open_menu(local, window, cx)
+                    })
                 }))
                 .into_any_element(),
             annotate::divider().into_any_element(),
@@ -1516,26 +1643,21 @@ impl Pin {
                 self.topmost,
                 self.busy,
             )
-            .on_click(cx.listener(|pin, _: &ClickEvent, window, cx| pin.select(Item::Topmost, window, cx)))
+            .on_click(cx.listener(|pin, _: &ClickEvent, _, cx| pin.in_own_window(cx, |pin, window, cx| pin.select(Item::Topmost, window, cx))))
             .into_any_element(),
             annotate::icon_button("pin-save", annotate::icons::SAVE, self.text("保存图片 Ctrl/⌘+S"), false, self.busy)
-                .on_click(cx.listener(|pin, _: &ClickEvent, window, cx| pin.save(window, cx)))
+                .on_click(cx.listener(|pin, _: &ClickEvent, _, cx| pin.in_own_window(cx, |pin, window, cx| pin.save(window, cx))))
                 .into_any_element(),
             annotate::icon_button("pin-close", annotate::icons::CLOSE, self.text("关闭贴图 Esc"), false, false)
-                .on_click(|_, window, _| window.remove_window())
+                .on_click(cx.listener(|pin, _: &ClickEvent, _, cx| pin.in_own_window(cx, |_, window, _| window.remove_window())))
                 .into_any_element(),
             annotate::icon_button("pin-copy", annotate::icons::COPY, self.text("复制图片 Ctrl/⌘+C"), false, self.busy)
                 .bg(rgb(0x2563eb))
-                .on_click(cx.listener(|pin, _: &ClickEvent, window, cx| pin.copy(window, cx)))
+                .on_click(cx.listener(|pin, _: &ClickEvent, _, cx| pin.in_own_window(cx, |pin, window, cx| pin.copy(window, cx))))
                 .into_any_element(),
         ];
-        let layout = PinLayout::load();
         div()
             .id("pin-toolbar")
-            .absolute()
-            .left(px(inset))
-            // 上方时工具栏在窗口顶部、图片之上；否则在图片下方。
-            .top(px(if self.toolbar_above { inset } else { image_top + image_height + layout.gap as f32 }))
             .flex()
             .flex_col()
             .items_start()

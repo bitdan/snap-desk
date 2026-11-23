@@ -68,6 +68,27 @@ pub fn start_move(window: &Window) {
     window.start_window_move();
 }
 
+/// 把窗口移到全局逻辑坐标 `at`（按窗口缩放换算成物理像素），不改尺寸与层级、不激活。
+pub fn move_to(window: &Window, at: gpui_kit::Point<gpui_kit::Pixels>) -> bool {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::UI::WindowsAndMessaging::*;
+        let hwnd = hwnd(window) as windows_sys::Win32::Foundation::HWND;
+        if hwnd.is_null() {
+            return false;
+        }
+        let scale = window.scale_factor();
+        let (x, y) = ((f32::from(at.x) * scale).round() as i32, (f32::from(at.y) * scale).round() as i32);
+        // SAFETY: hwnd 来自存活窗口，只移动位置。
+        unsafe { SetWindowPos(hwnd, std::ptr::null_mut(), x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE) != 0 }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (window, at);
+        false
+    }
+}
+
 /// 点击穿透：加上分层 + 透明扩展样式后，鼠标事件落到下面的窗口；DirectComposition 渲染不受影响。
 /// 透明度保持 255，显示透明度由界面自己的 opacity 决定。
 pub fn set_click_through(window: &Window, enabled: bool) -> Result<(), String> {
@@ -304,40 +325,6 @@ pub fn consume_startup_show_state() {
 
 #[cfg(not(windows))]
 pub fn consume_startup_show_state() {}
-
-/// 平移窗口（物理像素）；贴图工具栏翻到图片上方时窗口向上扩展，图片在屏幕上的位置不变。
-/// 其他平台不支持时返回 false，调用方保持工具栏在下方。
-pub fn offset_window(window: &Window, dy: i32) -> bool {
-    #[cfg(windows)]
-    {
-        use windows_sys::Win32::{Foundation::RECT, UI::WindowsAndMessaging::*};
-        let hwnd = hwnd(window) as windows_sys::Win32::Foundation::HWND;
-        if hwnd.is_null() {
-            return false;
-        }
-        // SAFETY: hwnd 来自仍然存活的 GPUI 窗口，只移动位置，不改尺寸与层级。
-        unsafe {
-            let mut rect: RECT = std::mem::zeroed();
-            if GetWindowRect(hwnd, &mut rect) == 0 {
-                return false;
-            }
-            SetWindowPos(
-                hwnd,
-                std::ptr::null_mut(),
-                rect.left,
-                rect.top + dy,
-                0,
-                0,
-                SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
-            ) != 0
-        }
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = (window, dy);
-        false
-    }
-}
 
 /// 鼠标位置，换算为 GPUI 的全局逻辑坐标（与 `PlatformDisplay::bounds` 同一坐标系）；取不到时为 None。
 /// Windows：GPUI 的显示器边界是“物理像素 ÷ 该屏缩放”，按光标所在显示器的 DPI 换算。
