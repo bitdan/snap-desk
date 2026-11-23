@@ -2490,8 +2490,6 @@ impl SettingsView {
             .into_any_element(),
             // macOS 系统权限（Vue `GeneralSettings.vue`）：屏幕录制、辅助功能、输入监控。
             div().children(self.permission_section(t, cx)).into_any_element(),
-            heading(t("导出字体")).into_any_element(),
-            card(vec![self.font_resource_row(t, cx)]).into_any_element(),
             heading(t("文件与存储")).into_any_element(),
             card(directories).into_any_element(),
             heading(t("配置备份")).into_any_element(),
@@ -3036,7 +3034,7 @@ impl Render for SettingsView {
                             view.load_recognition(cx);
                             view.load_local(cx);
                         }
-                        if matches!(page, Page::Recognition | Page::General) {
+                        if page == Page::Recognition {
                             view.load_resources(cx);
                         }
                         view.error = None;
