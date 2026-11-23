@@ -72,9 +72,6 @@ mod col {
     pub fn nav() -> u32 {
         d().nav
     }
-    pub fn toggle_off() -> u32 {
-        d().line
-    }
     pub fn hover() -> u32 {
         d().hover
     }
@@ -265,6 +262,67 @@ impl Page {
     }
 }
 
+/// 数字设置项（输入框：回车或离开输入框时保存，超出范围按上下限修正）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Number {
+    ClipItems,
+    ClipStorage,
+    ClipDays,
+    Timeout,
+    JpegQuality,
+    PinRadius,
+}
+
+impl Number {
+    const ALL: [Number; 6] = [
+        Number::ClipItems,
+        Number::ClipStorage,
+        Number::ClipDays,
+        Number::Timeout,
+        Number::JpegQuality,
+        Number::PinRadius,
+    ];
+    fn range(self) -> (u32, u32) {
+        match self {
+            Number::ClipItems => (100, 5000),
+            Number::ClipStorage => (50, 2048),
+            Number::ClipDays => (0, 3650),
+            Number::Timeout => (5, 120),
+            Number::JpegQuality => (1, 100),
+            Number::PinRadius => (0, 24),
+        }
+    }
+    fn suffix(self) -> &'static str {
+        match self {
+            Number::ClipStorage => "MiB",
+            Number::ClipDays => "天",
+            Number::Timeout => "秒",
+            Number::PinRadius => "px",
+            _ => "",
+        }
+    }
+    fn get(self, s: &Settings) -> u32 {
+        match self {
+            Number::ClipItems => s.clipboard.max_items,
+            Number::ClipStorage => s.clipboard.max_storage_mb,
+            Number::ClipDays => s.clipboard.retain_days,
+            Number::Timeout => s.ai.timeout_seconds as u32,
+            Number::JpegQuality => u32::from(s.export.jpeg_quality),
+            Number::PinRadius => u32::from(s.pin_appearance.corner_radius),
+        }
+    }
+    fn set(self, s: &mut Settings, value: u32) {
+        match self {
+            Number::ClipItems => s.clipboard.max_items = value,
+            Number::ClipStorage => s.clipboard.max_storage_mb = value,
+            Number::ClipDays => s.clipboard.retain_days = value,
+            Number::Timeout => s.ai.timeout_seconds = u64::from(value),
+            Number::JpegQuality => s.export.jpeg_quality = value as u8,
+            Number::PinRadius => s.pin_appearance.corner_radius = value as u8,
+        }
+    }
+}
+
 /// 防抖保存的文本字段。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Field {
@@ -318,6 +376,10 @@ struct SettingsView {
     recording_prefix: Entity<InputState>,
     excluded: Entity<InputState>,
     update_mirror: Entity<InputState>,
+    /// 数字设置项的输入框。
+    numbers: Vec<(Number, Entity<InputState>)>,
+    /// 下次渲染时把未聚焦的数字输入框同步为设置中的值（保存、修正或外部改动后）。
+    sync_numbers: bool,
     update_proxy: Entity<InputState>,
     /// 关于页的检查更新结果。
     /// 识别与翻译页：后台读取的语言与密钥状态、正在编辑的服务。
@@ -398,6 +460,22 @@ impl SettingsView {
             cx.new(|cx| InputState::new(window, cx).placeholder(placeholder))
         };
         let mut subscriptions = Vec::new();
+        let numbers: Vec<(Number, Entity<InputState>)> = Number::ALL
+            .into_iter()
+            .map(|number| {
+                let value = number.get(settings).to_string();
+                (number, cx.new(|cx| InputState::new(window, cx).default_value(value)))
+            })
+            .collect();
+        for (number, state) in &numbers {
+            let number = *number;
+            subscriptions.push(cx.subscribe(state, move |view: &mut Self, state, event: &InputEvent, cx| {
+                if matches!(event, InputEvent::Blur | InputEvent::PressEnter { .. }) {
+                    let text = state.read(cx).value().trim().to_string();
+                    view.commit_number(number, &text, cx);
+                }
+            }));
+        }
         subscriptions.push(cx.subscribe(&log_search, |_: &mut Self, _, event: &InputEvent, cx| {
             if matches!(event, InputEvent::Change) {
                 cx.notify();
@@ -435,6 +513,8 @@ impl SettingsView {
             recording_prefix,
             excluded,
             update_mirror,
+            numbers,
+            sync_numbers: false,
             update_proxy,
             recognition: Default::default(),
             service_editor: None,
@@ -1497,75 +1577,31 @@ impl SettingsView {
         }
     }
 
-    fn stepper(
-        &self,
-        id: &'static str,
-        value: u32,
-        (min, max, step): (u32, u32, u32),
-        suffix: &str,
-        cx: &mut Context<Self>,
-        change: impl Fn(&mut Settings, u32) + Clone + 'static,
-    ) -> Div {
-        let button = |index: usize,
-                      label: &'static str,
-                      next: u32,
-                      enabled: bool,
-                      change: Box<dyn Fn(&mut Settings, u32)>| {
-            div()
-                .id((id, index))
-                .size(px(28.0))
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded(px(6.0))
-                .border_1()
-                .border_color(rgb(col::line()))
-                .bg(rgb(col::surface()))
-                .text_sm()
-                .text_color(rgb(if enabled {
-                    col::text()
-                } else {
-                    col::toggle_off()
-                }))
-                .cursor_pointer()
-                .child(label)
-                .on_click(cx.listener(move |view, _: &ClickEvent, _, cx| {
-                    if enabled {
-                        view.change(cx, |s| change(s, next));
-                    }
-                }))
-        };
-        let down = value.saturating_sub(step).max(min);
-        let up = value.saturating_add(step).min(max);
-        let (c1, c2) = (change.clone(), change);
+    /// 数字输入框 + 单位；保存时机见 [`Self::commit_number`]。
+    fn number(&self, number: Number, t: &dyn Fn(&str) -> String) -> Div {
+        let state = self.numbers.iter().find(|(n, _)| *n == number).map(|(_, s)| s.clone());
+        let suffix = number.suffix();
         div()
             .flex()
             .items_center()
             .gap(px(6.0))
-            .child(button(
-                0,
-                "−",
-                down,
-                value > min,
-                Box::new(move |s, v| c1(s, v)),
-            ))
-            .child(
-                div()
-                    .min_w(px(64.0))
-                    .text_center()
-                    .text_sm()
-                    .child(format!("{value}{suffix}")),
-            )
-            .child(button(
-                1,
-                "+",
-                up,
-                value < max,
-                Box::new(move |s, v| c2(s, v)),
-            ))
+            .children(state.map(|state| self.text_input(&state, 96.0)))
+            // 单位栏固定宽度，有无单位的输入框右对齐。
+            .child(div().w(px(28.0)).text_xs().text_color(rgb(col::muted())).child(if suffix.is_empty() { String::new() } else { t(suffix) }))
     }
 
-    /// 文本框（1px 细线框，6 像素圆角，28 像素高）。
+    /// 解析并按上下限修正后保存；非数字时恢复为当前值。输入框随后在渲染时同步成保存后的值。
+    fn commit_number(&mut self, number: Number, text: &str, cx: &mut Context<Self>) {
+        let (min, max) = number.range();
+        let current = number.get(&crate::shell::settings(cx));
+        let value = text.parse::<u64>().map(|v| v.clamp(u64::from(min), u64::from(max)) as u32).unwrap_or(current);
+        if value != current {
+            self.change(cx, |s| number.set(s, value));
+        }
+        self.sync_numbers = true;
+        cx.notify();
+    }
+
     fn text_input(&self, state: &Entity<InputState>, width: f32) -> Div {
         div()
             .w(px(width))
@@ -1755,14 +1791,7 @@ impl SettingsView {
             export.push(row(
                 t("JPEG 质量"),
                 None,
-                self.stepper(
-                    "jpeg-quality",
-                    u32::from(s.export.jpeg_quality),
-                    (1, 100, 5),
-                    "",
-                    cx,
-                    |s, v| s.export.jpeg_quality = v as u8,
-                ),
+                self.number(Number::JpegQuality, t),
             ));
         }
         export.push(row(
@@ -2151,14 +2180,7 @@ impl SettingsView {
                 row(
                     t("圆角"),
                     None,
-                    self.stepper(
-                        "pin-radius",
-                        u32::from(a.corner_radius),
-                        (0, 24, 2),
-                        " px",
-                        cx,
-                        |s, v| s.pin_appearance.corner_radius = v as u8,
-                    ),
+                    self.number(Number::PinRadius, t),
                 ),
             ])
             .into_any_element(),
@@ -2305,9 +2327,9 @@ impl SettingsView {
             .into_any_element(),
             heading(t("自动清理")).into_any_element(),
             card(vec![
-                row(t("最多条目"), None, self.stepper("clip-items", c.max_items, (100, 5000, 100), "", cx, |s, v| s.clipboard.max_items = v)),
-                row(t("容量上限（MiB）"), None, self.stepper("clip-storage", c.max_storage_mb, (50, 2048, 50), "", cx, |s, v| s.clipboard.max_storage_mb = v)),
-                row(t("保留天数（0 为不限）"), None, self.stepper("clip-days", c.retain_days, (0, 3650, 1), "", cx, |s, v| s.clipboard.retain_days = v)),
+                row(t("最多条目"), None, self.number(Number::ClipItems, t)),
+                row(t("容量上限"), None, self.number(Number::ClipStorage, t)),
+                row(t("保留天数（0 为不限）"), None, self.number(Number::ClipDays, t)),
             ])
             .into_any_element(),
             heading(t("使用")).into_any_element(),
@@ -2848,6 +2870,14 @@ impl Render for SettingsView {
         // “跟随系统”时系统外观可能已切换；其他窗口在保存设置时统一重绘。
         crate::theme::refresh(cx);
         let settings = crate::shell::settings(cx);
+        if std::mem::take(&mut self.sync_numbers) || self.reload_inputs {
+            for (number, state) in &self.numbers {
+                let value = number.get(&settings).to_string();
+                if !state.read(cx).focus_handle(cx).is_focused(window) && state.read(cx).value().trim() != value {
+                    state.update(cx, |state, cx| state.set_value(value, window, cx));
+                }
+            }
+        }
         if std::mem::take(&mut self.reload_inputs) {
             // set_value 不触发 Change，不会把重填当成编辑再次保存。
             for (state, value) in [

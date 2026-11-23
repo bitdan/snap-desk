@@ -523,16 +523,9 @@ impl SettingsView {
         let mut translation_rows = vec![
             row(t("默认目标语言"), None, targets),
             row(
-                t("超时（秒）"),
+                t("超时"),
                 None,
-                self.stepper(
-                    "tr-timeout",
-                    s.ai.timeout_seconds as u32,
-                    (5, 120, 5),
-                    "",
-                    cx,
-                    |s, v| s.ai.timeout_seconds = u64::from(v),
-                ),
+                self.number(super::Number::Timeout, t),
             ),
             row(
                 t("翻译后自动复制译文"),
