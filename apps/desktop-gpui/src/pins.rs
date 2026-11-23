@@ -6,7 +6,7 @@
 //! 鼠标穿透后窗口收不到点击，由全局贴图快捷键或托盘“贴图”恢复（与 Tauri 版一致）。
 //!
 //! 尺寸与 Tauri 版共用 `snap_core::pins::PinLayout`：缩放 1 表示一图像像素对应一物理像素，
-//! 图片四周保留 (padding + border) 的透明边距，按物理像素取整后再换算成窗口逻辑像素。
+//! 窗口只包住图片（不留透明边距）；右键菜单是独立的弹出窗口，不撑大贴图窗口。
 //! 像素预算、变换、文字排版同样来自 core。识别文字/二维码/翻译图片打开独立结果窗口（`recognition.rs`）。
 //! 按住 Ctrl（macOS 为 ⌥）拖动把内容拖到其他应用：文字贴图拖出文字，其余拖出合成后的 PNG
 //! （系统拖出目前只实现 Windows，`snap_core::drag`）。托盘“打开图片贴图”从文件创建贴图。
@@ -100,7 +100,7 @@ pub fn create(
     let (bounds, display, zoom, scale) = match placement {
         Placement::Source { origin, scale, display } => {
             let zoom = 1.0_f64.max(layout.minimum_zoom(width, height, scale));
-            let inset = layout.image_inset(scale);
+            let inset = image_inset(scale);
             let size = window_size(width, height, zoom, scale);
             let origin = point(
                 px((origin.0 - inset) as f32 / scale as f32),
@@ -191,6 +191,11 @@ pub fn create(
     Ok(())
 }
 
+/// 图片首像素到窗口原点的距离：窗口只包住图片本身（不留透明边距，截图区域即贴图大小）。
+fn image_inset(_scale: f64) -> i32 {
+    0
+}
+
 fn image_bounds(image: &RgbaImage) -> ImageBounds {
     ImageBounds { x: 0.0, y: 0.0, width: f64::from(image.width()), height: f64::from(image.height()) }
 }
@@ -198,7 +203,7 @@ fn image_bounds(image: &RgbaImage) -> ImageBounds {
 /// 图片 + 两侧透明边距的窗口逻辑尺寸；边距按物理像素取整，首像素落在整数屏幕坐标上。
 fn window_size(width: u32, height: u32, zoom: f64, scale: f64) -> Size<Pixels> {
     let layout = PinLayout::load();
-    let inset = layout.image_inset(scale);
+    let inset = image_inset(scale);
     let (w, h) = layout.displayed(width, height, zoom);
     size(
         px((w + inset * 2) as f32 / scale as f32),
@@ -440,6 +445,102 @@ struct MenuColors {
     separator: u32,
 }
 
+impl MenuColors {
+    /// Vue `.pin-context-menu`：浅色白底、悬停浅蓝；深色主题深灰底。
+    fn current() -> Self {
+        if crate::theme::dark() {
+            MenuColors { bg: 0x20252c, text: 0xe6edf3, border: 0x39424e, hover_bg: 0x303f56, hover_text: 0xe6edf3, separator: 0x39424e }
+        } else {
+            MenuColors { bg: 0xffffff, text: 0x1f2328, border: 0xe4e4e7, hover_bg: 0xeff6ff, hover_text: 0x2563eb, separator: 0xe4e4e7 }
+        }
+    }
+}
+
+/// 打开菜单时的一项（文案与勾选状态在打开时确定）。
+struct Entry {
+    item: Item,
+    label: String,
+    checked: bool,
+    shortcut: &'static str,
+}
+
+/// 贴图右键菜单窗口：失去焦点、Esc 或选中一项后关闭，选中项交回所属贴图执行。
+struct PinMenu {
+    pin: WindowHandle<Pin>,
+    entries: Vec<Entry>,
+    focus: FocusHandle,
+}
+
+impl PinMenu {
+    fn new(pin: WindowHandle<Pin>, entries: Vec<Entry>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let focus = cx.focus_handle();
+        window.focus(&focus, cx);
+        cx.observe_window_activation(window, |_, window, _| {
+            if !window.is_window_active() {
+                window.remove_window();
+            }
+        })
+        .detach();
+        Self { pin, entries, focus }
+    }
+}
+
+impl Render for PinMenu {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let menu = MenuColors::current();
+        let mut list = div()
+            .id("pin-menu")
+            .track_focus(&self.focus)
+            .size_full()
+            .p(px(5.0))
+            .flex()
+            .flex_col()
+            .rounded(px(8.0))
+            .border_1()
+            .border_color(rgb(menu.border))
+            .bg(rgb(menu.bg))
+            .text_size(px(12.0))
+            .text_color(rgb(menu.text))
+            .on_key_down(|event: &KeyDownEvent, window, _| {
+                if event.keystroke.key == "escape" {
+                    window.remove_window();
+                }
+            });
+        for (index, entry) in self.entries.iter().enumerate() {
+            if entry.item == Item::Separator {
+                list = list.child(div().h(px(SEPARATOR_HEIGHT)).px(px(4.0)).flex().items_center().child(div().h(px(1.0)).w_full().bg(rgb(menu.separator))));
+                continue;
+            }
+            let (hover_bg, hover_text) = (menu.hover_bg, menu.hover_text);
+            let (item, pin) = (entry.item, self.pin);
+            list = list.child(
+                div()
+                    .id(("pin-menu-item", index))
+                    .h(px(ITEM_HEIGHT))
+                    .flex_none()
+                    .px(px(8.0))
+                    .flex()
+                    .items_center()
+                    .gap(px(8.0))
+                    .rounded(px(4.0))
+                    .cursor_pointer()
+                    .hover(move |style| style.bg(rgb(hover_bg)).text_color(rgb(hover_text)))
+                    .child(div().w(px(12.0)).text_color(rgb(0x2563eb)).child(if entry.checked { "✓" } else { "" }))
+                    .child(div().flex_1().child(entry.label.clone()))
+                    .child(div().text_size(px(10.0)).text_color(rgb(0xa1a1aa)).child(entry.shortcut))
+                    .on_click(move |_, window, cx| {
+                        window.remove_window();
+                        let _ = pin.update(cx, |pin, window, cx| {
+                            pin.menu = None;
+                            pin.select(item, window, cx);
+                        });
+                    }),
+            );
+        }
+        list
+    }
+}
+
 fn menu_height() -> f32 {
     MENU.iter()
         .map(|item| if *item == Item::Separator { SEPARATOR_HEIGHT } else { ITEM_HEIGHT })
@@ -475,7 +576,8 @@ pub struct Pin {
     export: ExportSettings,
     language: Language,
     /// 右键菜单在窗口内的位置（逻辑像素）。
-    menu: Option<Point<Pixels>>,
+    /// 右键菜单（独立弹出窗口，不撑大贴图窗口）。
+    menu: Option<AnyWindowHandle>,
     /// 缩放比例、“已复制”等短暂提示。
     badge: Option<String>,
     badge_task: Option<Task<()>>,
@@ -497,7 +599,7 @@ impl Pin {
 
     /// 图片左上角距窗口顶边（逻辑像素）：透明边距，工具栏在上方时再加工具栏区域。
     fn image_top(&self, scale: f32) -> f32 {
-        let inset = PinLayout::load().image_inset(f64::from(scale)) as f32 / scale;
+        let inset = image_inset(f64::from(scale)) as f32 / scale;
         inset + if self.toolbar && self.toolbar_above { Self::band() } else { 0.0 }
     }
 
@@ -510,14 +612,9 @@ impl Pin {
         let scale = window.scale_factor();
         let mut size = self.base_size(scale);
         if self.toolbar {
-            let layout = PinLayout::load();
-            let inset = layout.image_inset(f64::from(scale)) as f32 / scale;
+            let inset = image_inset(f64::from(scale)) as f32 / scale;
             size.width = size.width.max(px(inset + TOOLBAR_WIDTH + 4.0));
             size.height += px(Self::band());
-        }
-        if let Some(at) = self.menu {
-            size.width = size.width.max(at.x + px(MENU_WIDTH + 4.0));
-            size.height = size.height.max(at.y + px(menu_height() + 4.0));
         }
         window.resize(size);
     }
@@ -548,11 +645,60 @@ impl Pin {
         self.flash(format!("{}%", (self.zoom * 100.0).round()), cx);
     }
 
-    fn close_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.menu.take().is_some() {
-            self.fit_window(window);
+    fn close_menu(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(menu) = self.menu.take() {
+            let _ = menu.update(cx, |_, window, _| window.remove_window());
             cx.notify();
         }
+    }
+
+    /// 在贴图内 `position`（窗口逻辑坐标）处打开右键菜单：独立的弹出窗口，放不下时向上/向左挪进屏幕。
+    fn open_menu(&mut self, position: Point<Pixels>, window: &mut Window, cx: &mut Context<Self>) {
+        self.close_menu(window, cx);
+        let Some(pin) = window.window_handle().downcast::<Pin>() else {
+            return;
+        };
+        let entries: Vec<Entry> = MENU
+            .into_iter()
+            .map(|item| {
+                let (label, checked) = self.label(item);
+                Entry { item, label, checked, shortcut: Self::shortcut(item) }
+            })
+            .collect();
+        let size = size(px(MENU_WIDTH + 2.0), px(menu_height() + 2.0));
+        let origin = window.bounds().origin + position;
+        let screen = window.display(cx).map(|d| d.bounds());
+        let mut at = origin;
+        if let Some(screen) = screen {
+            if at.y + size.height > screen.origin.y + screen.size.height {
+                at.y = (at.y - size.height).max(screen.origin.y);
+            }
+            if at.x + size.width > screen.origin.x + screen.size.width {
+                at.x = (at.x - size.width).max(screen.origin.x);
+            }
+        }
+        let options = WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(Bounds::new(at, size))),
+            display_id: window.display(cx).map(|d| d.id()),
+            titlebar: None,
+            focus: true,
+            show: true,
+            kind: WindowKind::PopUp,
+            is_movable: false,
+            is_resizable: false,
+            is_minimizable: false,
+            window_background: WindowBackgroundAppearance::Transparent,
+            ..Default::default()
+        };
+        match cx.open_window(options, |window, cx| cx.new(|cx| PinMenu::new(pin, entries, window, cx))) {
+            Ok(handle) => {
+                let handle: AnyWindowHandle = handle.into();
+                let _ = handle.update(cx, |_, window, _| window.activate_window());
+                self.menu = Some(handle);
+            }
+            Err(error) => log::warn!("event=gpui.pin_menu_failed message={error}"),
+        }
+        cx.notify();
     }
 
     fn set_click_through(&mut self, enabled: bool, window: &mut Window, cx: &mut Context<Self>) {
@@ -829,7 +975,7 @@ impl Pin {
     /// 窗口内逻辑坐标 → 贴图图像像素。
     fn to_point(&self, position: Point<Pixels>, scale: f32) -> ImagePoint {
         let layout = PinLayout::load();
-        let inset = layout.image_inset(f64::from(scale)) as f32 / scale;
+        let inset = image_inset(f64::from(scale)) as f32 / scale;
         let (w, h) = layout.displayed(self.image.width(), self.image.height(), self.zoom);
         let (w, h) = (w as f32 / scale, h as f32 / scale);
         let top = self.image_top(scale);
@@ -973,9 +1119,12 @@ impl Pin {
     }
 
     fn press(&mut self, event: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
-        if self.menu.is_some() {
-            self.close_menu(window, cx);
-            return;
+        // 菜单失焦时已自行关闭；只有它还开着时，这次按下才只用来关菜单。
+        if let Some(menu) = self.menu.take() {
+            if menu.update(cx, |_, window, _| window.remove_window()).is_ok() {
+                cx.notify();
+                return;
+            }
         }
         if self.editor.text.is_some() {
             self.commit_text(window, cx);
@@ -1050,9 +1199,7 @@ impl Pin {
             self.after_edit(window, cx);
             return;
         }
-        self.menu = Some(event.position);
-        self.fit_window(window);
-        cx.notify();
+        self.open_menu(event.position, window, cx);
     }
 
     fn wheel(&mut self, event: &ScrollEvent, window: &mut Window, cx: &mut Context<Self>) {
@@ -1203,7 +1350,7 @@ impl Render for Pin {
         }
         let scale = window.scale_factor();
         let layout = PinLayout::load();
-        let inset = layout.image_inset(f64::from(scale)) as f32 / scale;
+        let inset = image_inset(f64::from(scale)) as f32 / scale;
         let top = self.image_top(scale);
         let (w, h) = layout.displayed(self.image.width(), self.image.height(), self.zoom);
         let (w, h) = (w as f32 / scale, h as f32 / scale);
@@ -1302,62 +1449,6 @@ impl Render for Pin {
         if self.toolbar {
             root = root.child(self.toolbar(inset, top, h, window, cx));
         }
-        if let Some(at) = self.menu {
-            // Vue `.pin-context-menu`：浅色白底、悬停浅蓝；深色主题深灰底。
-            let palette = if crate::theme::dark() {
-                MenuColors { bg: 0x20252c, text: 0xe6edf3, border: 0x39424e, hover_bg: 0x303f56, hover_text: 0xe6edf3, separator: 0x39424e }
-            } else {
-                MenuColors { bg: 0xffffff, text: 0x1f2328, border: 0xe4e4e7, hover_bg: 0xeff6ff, hover_text: 0x2563eb, separator: 0xe4e4e7 }
-            };
-            let menu = palette;
-            let mut menu_box = div()
-                .id("pin-menu")
-                .absolute()
-                .left(at.x)
-                .top(at.y)
-                .w(px(MENU_WIDTH))
-                .p(px(5.0))
-                .flex()
-                .flex_col()
-                .rounded(px(8.0))
-                .border_1()
-                .border_color(rgb(menu.border))
-                .bg(rgb(menu.bg))
-                .shadow_lg()
-                .text_size(px(12.0))
-                .text_color(rgb(menu.text))
-                // 菜单内的按下不能冒泡成拖动窗口或关闭菜单。
-                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation());
-            for (index, item) in MENU.into_iter().enumerate() {
-                if item == Item::Separator {
-                    menu_box = menu_box.child(
-                        div().h(px(SEPARATOR_HEIGHT)).px(px(4.0)).flex().items_center().child(div().h(px(1.0)).w_full().bg(rgb(menu.separator))),
-                    );
-                    continue;
-                }
-                let (label, checked) = self.label(item);
-                let (hover_bg, hover_text) = (menu.hover_bg, menu.hover_text);
-                menu_box = menu_box.child(
-                    div()
-                        .id(("pin-menu-item", index))
-                        .h(px(ITEM_HEIGHT))
-                        .pl(px(8.0))
-                        .pr(px(8.0))
-                        .flex()
-                        .items_center()
-                        .gap(px(8.0))
-                        .rounded(px(4.0))
-                        .cursor_pointer()
-                        .hover(move |style| style.bg(rgb(hover_bg)).text_color(rgb(hover_text)))
-                        .child(div().w(px(12.0)).text_color(rgb(0x2563eb)).child(if checked { "✓" } else { "" }))
-                        .child(div().flex_1().child(label))
-                        .child(div().text_size(px(10.0)).text_color(rgb(0xa1a1aa)).child(Self::shortcut(item)))
-                        .on_click(cx.listener(move |pin, _: &ClickEvent, window, cx| pin.select(item, window, cx))),
-                );
-            }
-            root = root.child(menu_box);
-        }
         root
     }
 }
@@ -1409,16 +1500,12 @@ impl Pin {
             annotate::icon_button("pin-recognize", annotate::icons::SCAN_TEXT, self.text("识别"), false, self.busy)
                 .on_click(cx.listener(|pin, event: &ClickEvent, window, cx| {
                     // 识别菜单与右键菜单共用（识别项在最上方）。
-                    pin.menu = Some(event.position());
-                    pin.fit_window(window);
-                    cx.notify();
+                    pin.open_menu(event.position(), window, cx);
                 }))
                 .into_any_element(),
             annotate::icon_button("pin-adjust", annotate::icons::SLIDERS, self.text("图片处理"), false, disabled)
                 .on_click(cx.listener(|pin, event: &ClickEvent, window, cx| {
-                    pin.menu = Some(event.position());
-                    pin.fit_window(window);
-                    cx.notify();
+                    pin.open_menu(event.position(), window, cx);
                 }))
                 .into_any_element(),
             annotate::divider().into_any_element(),
