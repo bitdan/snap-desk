@@ -1,22 +1,34 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { executableNames, gpuiBundleConfig } from './package-gpui.mjs'
+import { resolve } from 'node:path'
+import { executableNames, packagerConfig } from './package-gpui.mjs'
 
-test('GPUI 打包沿用发布清单的目标，去掉独立 EXE 标记处理并跳过 WebView2', () => {
-  const windows = gpuiBundleConfig('win32', {})
-  assert.deepEqual(windows.bundle.targets, ['nsis'])
-  assert.equal(windows.build, undefined)
-  assert.deepEqual(windows.bundle.windows, { webviewInstallMode: { type: 'skip' } })
-  assert.equal(windows.bundle.createUpdaterArtifacts, false)
-  assert.equal(gpuiBundleConfig('win32', { TAURI_SIGNING_PRIVATE_KEY: 'k' }).bundle.createUpdaterArtifacts, true)
-  const mac = gpuiBundleConfig('darwin', {})
-  assert.deepEqual(mac.bundle.targets, ['dmg', 'app'])
-  assert.equal(mac.bundle.windows, undefined)
-  assert.deepEqual(gpuiBundleConfig('linux', {}).bundle.targets, ['appimage', 'deb'])
-  assert.equal(gpuiBundleConfig('freebsd', {}), null)
+const root = resolve('/repo')
+const releaseDirectory = resolve(root, 'src-tauri/target/release')
+const config = (platform, env = {}) => packagerConfig({ platform, root, releaseDirectory, version: '1.2.3-beta.1', env })
+
+test('按发布清单选择 cargo-packager 格式，主程序与输出目录固定', () => {
+  const windows = config('win32')
+  assert.deepEqual(windows.formats, ['nsis'])
+  assert.equal(windows.identifier, 'io.snapdesk.app')
+  assert.equal(windows.version, '1.2.3-beta.1')
+  assert.deepEqual(windows.binaries, [{ path: 'snap-desk.exe', main: true }])
+  assert.equal(windows.binariesDir, releaseDirectory)
+  assert.equal(windows.outDir, resolve(releaseDirectory, 'packages'))
+  assert.deepEqual(windows.nsis, { installMode: 'currentUser' })
+  assert.equal(windows.macos, undefined)
+  assert.deepEqual(config('darwin').formats, ['dmg', 'app'])
+  assert.deepEqual(config('linux').formats, ['appimage', 'deb'])
+  assert.ok(config('linux').deb.depends.includes('libvulkan1'))
+  assert.equal(config('freebsd'), null)
 })
 
-test('主程序以 Tauri 包的二进制名交给打包器', () => {
+test('macOS 无开发者证书时使用临时签名', () => {
+  assert.equal(config('darwin').macos.signingIdentity, '-')
+  assert.equal(config('darwin', { APPLE_SIGNING_IDENTITY: 'Developer ID Application: Example' }).macos.signingIdentity, 'Developer ID Application: Example')
+})
+
+test('构建产物复制为主程序名交给打包器', () => {
   assert.deepEqual(executableNames('win32'), { built: 'snap-desk-gpui.exe', bundled: 'snap-desk.exe' })
   assert.deepEqual(executableNames('linux'), { built: 'snap-desk-gpui', bundled: 'snap-desk' })
 })

@@ -34,12 +34,15 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-      - name: Install signing tools
-        run: npm ci
+      # 更新签名由 Rust 小工具 tools/release-sign 生成；runner 已安装 rustup。
+      - name: Setup Rust for signing tool
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
       - name: Verify updater signing configuration
         env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          SNAP_DESK_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          SNAP_DESK_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           SNAP_DESK_UPDATER_PUBLIC_KEY: ${{ vars.SNAP_DESK_UPDATER_PUBLIC_KEY }}
         run: node scripts/release-signing.mjs
       # 从草稿取回全部平台的附件，重新签名并生成更新清单后公开。
@@ -47,8 +50,8 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          SNAP_DESK_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          SNAP_DESK_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           $notes = Join-Path $env:RUNNER_TEMP 'snap-desk-release-notes.md'
           node scripts/release-notes.mjs $env:RELEASE_TAG $notes

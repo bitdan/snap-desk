@@ -84,7 +84,8 @@ npm run desktop:dev
 - `npm run check`：目录边界、IPC 契约和 TypeScript 静态检查。
 - `npm test`：前端与脚本测试。
 - `npm run desktop:build:fast`：生成调试程序 `src-tauri/target/debug/snap-desk`（Windows 为 `snap-desk.exe`）。
-- `npm run desktop:build` / `npm run desktop:package`：生成发布程序 / 安装包；构建前从托盘退出旧程序。
+- `npm run desktop:build`：生成 Tauri 版发布程序（迁移期对照用，不生成安装包）。
+- `npm run desktop:package`：构建 GPUI 版并用 cargo-packager 生成安装包；构建前从托盘退出旧程序。
 
 Linux 另需截图库的系统依赖，Debian / Ubuntu 可执行 `bash scripts/ci/install-linux-deps.sh`。
 
@@ -96,12 +97,14 @@ Linux 另需截图库的系统依赖，Debian / Ubuntu 可执行 `bash scripts/c
 | macOS Apple 芯片 | DMG、`.app.tar.gz` 更新包 | `darwin-aarch64-app` |
 | Linux x64 | AppImage、deb | `linux-x86_64-appimage`（deb 不在应用内更新） |
 
-- 附件清单集中在 `scripts/release-assets.mjs`：打包目标、统一文件名、签名范围和更新清单都由它派生；增删平台或分发形式时同步 `src-tauri/src/app/updater.rs` 的平台、分发形式与文件后缀。
+- 附件清单集中在 `scripts/release-assets.mjs`：打包格式、统一文件名、签名范围和更新清单都由它派生；增删平台或分发形式时同步 `apps/desktop-gpui/src/updater.rs` 的平台、分发形式与文件后缀。
+- 安装包由 [cargo-packager](https://github.com/crabnebula-dev/cargo-packager) 生成（`scripts/package-gpui.mjs`，需先 `cargo install cargo-packager --version 0.11.8 --locked`），产物在 `src-tauri/target/release/packages/`；macOS 的 `.app.tar.gz` 由该脚本压缩 `.app` 得到。Windows 安装包默认装到当前用户目录，不需要管理员权限，也不再检查 WebView2。
+- 更新签名由 `tools/release-sign`（minisign）生成，可信注释写入 `version:<版本>`，客户端据此拒绝版本不符的包；私钥经 `SNAP_DESK_SIGNING_PRIVATE_KEY`（及可选的 `SNAP_DESK_SIGNING_PRIVATE_KEY_PASSWORD`）传入，CI 中取自 `TAURI_SIGNING_PRIVATE_KEY` Secret，公钥为 `SNAP_DESK_UPDATER_PUBLIC_KEY` Variable，编译时嵌入程序。
 - 发布流水线分三段：校验标签 / 更新说明 / 签名配置 → 三个平台各自测试、打包并上传附件 → 汇总签名、生成 `updater.json` 并公开。任一平台失败都不会创建 Release。
-- macOS 默认使用临时签名（ad-hoc），未经公证；在流水线中配置 `APPLE_SIGNING_IDENTITY` 及 Tauri 的 Apple 证书变量后改用开发者证书。ONNX Runtime 不提供 Intel Mac 预编译库，因此不构建 macOS x64。
+- macOS 默认使用临时签名（ad-hoc），未经公证；在流水线中配置 `APPLE_SIGNING_IDENTITY` 后改用开发者证书。ONNX Runtime 不提供 Intel Mac 预编译库，因此不构建 macOS x64。
 - Linux 在 Ubuntu 24.04 上构建（截图库的 PipeWire 绑定要求 0.3.65 以上），生成的程序需要 glibc 2.39 及以上的发行版；截图依赖 X11，Wayland 会话会给出提示。
 
-- AppImage 把 WebKitGTK、GTK 及依赖的系统库一并打包，体积约 100 MB；deb、Windows 与 macOS 的包使用系统自带的界面引擎，因此小得多。
+- AppImage 由 linuxdeploy 把主程序依赖的系统库一并打包；deb 依赖系统安装的库，因此小得多。
 
 ### 持续集成
 
@@ -143,6 +146,7 @@ crates/snap-core/src/  # 与界面无关的核心，Tauri 版和 GPUI 版共用
   pins/                # 贴图布局、像素预算、缩放步进、变换、图片文件解码与文字贴图
   i18n.rs · paths.rs
 apps/desktop-gpui/src/ # GPUI 版（迁移中）：托盘、快捷键、单实例、日志、截图浮层（capture.rs、selection.rs）、贴图（pins.rs、native.rs）
+tools/release-sign/    # 发布工具：在线更新包的 minisign 签名
 tests/<功能>/          # 前端测试
 ```
 
