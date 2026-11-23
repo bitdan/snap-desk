@@ -45,6 +45,10 @@ base64 = "0.22"
 sha2 = "0.10"
 
 # macOS .app.tar.gz 与 Linux AppImage 更新包解压（版本与 tauri-plugin-updater 锁定的一致）。
+[build-dependencies]
+# 程序图标资源（版本与 Tauri 依赖树中锁定的一致）。
+embed-resource = "3"
+
 [target.'cfg(unix)'.dependencies]
 tar = "0.4"
 flate2 = "1"
