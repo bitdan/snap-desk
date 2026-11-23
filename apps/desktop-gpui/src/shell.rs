@@ -637,7 +637,8 @@ pub fn quit(cx: &mut App, source: &str) {
 pub fn restart(cx: &mut App) {
     log::info!("event=gpui.restart source=tray");
     crate::recording::quit_when_idle(cx, |cx| {
-        match std::env::current_exe() {
+        // AppImage 要重新运行镜像本身，挂载点里的程序路径在退出后失效。
+        match crate::updater::appimage().map(Ok).unwrap_or_else(std::env::current_exe) {
             Ok(exe) => {
                 if let Err(error) = std::process::Command::new(exe)
                     .arg(format!("{RELAUNCH_ARG}{}", std::process::id()))

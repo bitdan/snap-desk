@@ -4,7 +4,8 @@
 //!
 //! 分发形式：程序目录有 NSIS 卸载程序（`uninstall.exe`）即安装版，运行同一清单目标
 //! `windows-x86_64-nsis` 的安装器（`/P /UPDATE /R`，与 updater 插件被动模式一致，装完重启）；否则为独立 EXE，
-//! 交给与 Tauri 版相同的助手脚本在退出后原子替换。macOS/Linux 的 GPUI 版尚无安装包，只提供发布页。
+//! 交给与 Tauri 版相同的助手脚本在退出后原子替换。macOS 替换整个 .app（`darwin-aarch64-app`），Linux 替换
+//! AppImage 文件（`linux-x86_64-appimage`），装完自行重启；deb 等由系统包管理器管理的安装不支持，只提供发布页。
 use gpui_kit::*;
 use semver::Version;
 use snap_core::updates::{
@@ -33,6 +34,10 @@ const RETRY_INTERVAL: Duration = Duration::from_secs(10 * 60);
 /// 发布流水线实际产出更新包的平台（与 `scripts/release-assets.mjs` 一致）。
 const PLATFORM: Option<&str> = if cfg!(all(target_os = "windows", target_arch = "x86_64")) {
     Some("windows-x86_64")
+} else if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+    Some("darwin-aarch64")
+} else if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
+    Some("linux-x86_64")
 } else {
     None
 };
@@ -51,6 +56,12 @@ fn current() -> Version {
 
 /// 当前进程的分发形式，同时决定清单目标和安装方式。
 pub fn package_kind() -> &'static str {
+    if cfg!(target_os = "macos") {
+        return if app_bundle().is_some() { "app" } else { "unsupported" };
+    }
+    if cfg!(target_os = "linux") {
+        return if appimage().is_some() { "appimage" } else { "unsupported" };
+    }
     if !cfg!(windows) {
         return "unsupported";
     }
@@ -66,11 +77,23 @@ pub fn package_kind() -> &'static str {
 }
 
 fn suffix(kind: &str) -> &'static str {
-    if kind == "nsis" {
-        "-setup.exe"
-    } else {
-        "-standalone.exe"
+    match kind {
+        "nsis" => "-setup.exe",
+        "app" => ".app.tar.gz",
+        "appimage" => ".AppImage",
+        _ => "-standalone.exe",
     }
+}
+
+/// macOS：当前程序所在的 .app 目录（`X.app/Contents/MacOS/程序`）。
+fn app_bundle() -> Option<std::path::PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    exe.ancestors().find(|p| p.extension().is_some_and(|e| e == "app")).map(|p| p.to_path_buf())
+}
+
+/// Linux：AppImage 运行时把镜像路径放在 `$APPIMAGE`（挂载点每次启动都会变，替换的是镜像文件本身）。
+pub fn appimage() -> Option<std::path::PathBuf> {
+    std::env::var_os("APPIMAGE").map(std::path::PathBuf::from).filter(|p| p.has_root() && p.is_file())
 }
 
 pub fn supported() -> bool {
@@ -427,18 +450,22 @@ pub fn install(cx: &mut App) {
     };
     cx.refresh_windows();
     let result = package::verify(&bytes, &package.signature, PUBLIC_KEY, &package.version)
-        .and_then(|_| {
-            if package_kind() == "nsis" {
-                launch_installer(&package, &bytes)
-            } else {
-                replace_standalone(&bytes)
-            }
+        .and_then(|_| match package_kind() {
+            "nsis" => launch_installer(&package, &bytes),
+            "app" => install_app_bundle(&bytes),
+            "appimage" => install_appimage(&bytes),
+            _ => replace_standalone(&bytes),
         });
     busy.store(false, Ordering::SeqCst);
     match result {
         Ok(()) => {
             log::info!("event=gpui.update_installing kind={}", package_kind());
-            crate::shell::quit(cx, "update");
+            // Windows 由安装器/助手重启；macOS 与 Linux 已原地替换文件，自行重启到新版本。
+            if matches!(package_kind(), "app" | "appimage") {
+                crate::shell::restart(cx);
+            } else {
+                crate::shell::quit(cx, "update");
+            }
         }
         Err(error) => {
             log::warn!("event=gpui.update_install_failed message={error}");
@@ -565,6 +592,104 @@ fn replace_standalone(bytes: &[u8]) -> Result<(), String> {
 #[cfg(not(windows))]
 fn replace_standalone(_: &[u8]) -> Result<(), String> {
     Err("独立 EXE 更新仅适用于 Windows。".into())
+}
+
+/// 与 .app 同一文件系统的临时目录（改名只能在同一文件系统内进行）：优先系统临时目录，否则放在 .app 旁边。
+#[cfg(unix)]
+fn same_volume_temp(target: &std::path::Path) -> Result<std::path::PathBuf, String> {
+    use std::os::unix::fs::MetadataExt;
+    let device = std::fs::symlink_metadata(target).map_err(|e| e.to_string())?.dev();
+    [Some(std::env::temp_dir()), target.parent().map(std::path::Path::to_path_buf)]
+        .into_iter()
+        .flatten()
+        .find(|dir| dir.metadata().is_ok_and(|m| m.dev() == device))
+        .ok_or_else(|| "临时目录与程序不在同一磁盘，无法在线更新，请从发布页下载。".to_string())
+}
+
+/// macOS：解压 .app.tar.gz 到同卷临时目录，旧 .app 移到备份后换入新版；失败时还原旧版。
+#[cfg(target_os = "macos")]
+fn install_app_bundle(bytes: &[u8]) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+    let bundle = app_bundle().ok_or("找不到当前应用目录。")?;
+    let root = same_volume_temp(&bundle)?;
+    let error = |e: std::io::Error| e.to_string();
+    let extract = tempfile::Builder::new().prefix(".snapdesk-update-").tempdir_in(&root).map_err(error)?;
+    let backup_dir = tempfile::Builder::new().prefix(".snapdesk-backup-").tempdir_in(&root).map_err(error)?;
+    let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(std::io::Cursor::new(bytes)));
+    let mut found = false;
+    for entry in archive.entries().map_err(error)? {
+        let mut entry = entry.map_err(error)?;
+        // 包内第一层是 “Snap Desk.app/”，去掉后放进临时目录根，临时目录即新的 .app。
+        let relative: std::path::PathBuf = entry.path().map_err(error)?.iter().skip(1).collect();
+        if relative.as_os_str().is_empty() {
+            continue;
+        }
+        if relative.components().any(|c| matches!(c, std::path::Component::ParentDir | std::path::Component::RootDir)) {
+            return Err("更新包内容无效。".into());
+        }
+        let path = extract.path().join(&relative);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(error)?;
+        }
+        entry.unpack(&path).map_err(error)?;
+        found = true;
+    }
+    if !found || !extract.path().join("Contents").is_dir() {
+        return Err("更新包内容无效。".into());
+    }
+    std::fs::set_permissions(extract.path(), std::fs::Permissions::from_mode(0o755)).map_err(error)?;
+    let backup = backup_dir.path().join("current.app");
+    std::fs::rename(&bundle, &backup).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::PermissionDenied {
+            "没有权限替换应用（可能需要管理员权限），请从发布页下载新版本。".to_string()
+        } else {
+            e.to_string()
+        }
+    })?;
+    let fresh = extract.keep();
+    if let Err(e) = std::fs::rename(&fresh, &bundle) {
+        let _ = std::fs::rename(&backup, &bundle);
+        let _ = std::fs::remove_dir_all(&fresh);
+        return Err(format!("替换应用失败，已还原旧版本：{e}"));
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn install_app_bundle(_: &[u8]) -> Result<(), String> {
+    Err("当前平台不支持 .app 更新。".into())
+}
+
+/// Linux：旧 AppImage 移到同卷临时目录备份，新镜像写到原路径并沿用原权限；失败时还原。
+#[cfg(target_os = "linux")]
+fn install_appimage(bytes: &[u8]) -> Result<(), String> {
+    // AppImage 是 ELF 可执行文件。
+    if !bytes.starts_with(b"\x7fELF") {
+        return Err("更新包不是 AppImage。".into());
+    }
+    let target = appimage().ok_or("找不到当前 AppImage。")?;
+    let root = same_volume_temp(&target)?;
+    let error = |e: std::io::Error| e.to_string();
+    let backup_dir = tempfile::Builder::new().prefix(".snapdesk-backup-").tempdir_in(&root).map_err(error)?;
+    let backup = backup_dir.path().join("current.AppImage");
+    let permissions = std::fs::metadata(&target).map_err(error)?.permissions();
+    std::fs::rename(&target, &backup).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::PermissionDenied {
+            "没有权限替换 AppImage，请从发布页下载新版本。".to_string()
+        } else {
+            e.to_string()
+        }
+    })?;
+    if let Err(e) = std::fs::write(&target, bytes).and_then(|_| std::fs::set_permissions(&target, permissions)) {
+        let _ = std::fs::rename(&backup, &target);
+        return Err(format!("替换 AppImage 失败，已还原旧版本：{e}"));
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn install_appimage(_: &[u8]) -> Result<(), String> {
+    Err("当前平台不支持 AppImage 更新。".into())
 }
 
 /// 启动时调用：处理独立 EXE 更新失败后的重启参数，并开始后台检查。
