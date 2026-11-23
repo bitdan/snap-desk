@@ -30,6 +30,7 @@ mod icons {
     icon!(LINK, "link");
     icon!(TYPE, "type");
     icon!(RETRY, "rotate-ccw");
+    icon!(EYE, "eye");
 }
 
 /// `--ocr-*` 与 `--qr-*` 色值。
@@ -212,6 +213,46 @@ impl Panel {
                 .object_fit(ObjectFit::Fill),
         );
         let mut boxes = 0;
+        // 覆盖原文：每段先铺取样背景遮住原文，再按框宽逐行排版译文；字号从原文行高起步，放不下时缩小。
+        let overlay = self
+            .overlay
+            .as_ref()
+            .filter(|_| self.mode == Mode::Translate && self.show_overlay);
+        for item in overlay.into_iter().flatten() {
+            let r = item.rect;
+            let (w, h) = (r.width * k, r.height * k);
+            let (font, lines) = recognition::overlay::fit_text(
+                &item.text,
+                w,
+                h,
+                item.line_height * k,
+                8.0,
+                &recognition::overlay::estimate_width,
+            );
+            let pad = (item.line_height * k * 0.08).max(1.0);
+            let line = font * recognition::overlay::LINE_SPACING;
+            let top = ((h - lines.len() as f32 * line) / 2.0).max(0.0);
+            let [br, bg, bb] = item.colors.background;
+            let [fr, fg, fb] = item.colors.foreground;
+            let mut block = div()
+                .absolute()
+                .left(px(r.x * k - pad))
+                .top(px(r.y * k - pad))
+                .w(px(w + pad * 2.0))
+                .h(px(h + pad * 2.0))
+                .pl(px(pad))
+                .pt(px(pad + top))
+                .flex()
+                .flex_col()
+                .bg(rgb(u32::from_be_bytes([0, br, bg, bb])))
+                .text_color(rgb(u32::from_be_bytes([0, fr, fg, fb])))
+                .text_size(px(font))
+                .line_height(px(line));
+            for text in lines {
+                block = block.child(div().whitespace_nowrap().child(text));
+            }
+            figure = figure.child(block);
+        }
         if self.mode == Mode::Ocr {
             for line in self.ocr.iter().flat_map(|r| r.lines.iter()) {
                 let Some(points) = line.polygon.as_ref().filter(|p| !p.is_empty()) else {
@@ -389,11 +430,7 @@ impl Panel {
                 .cursor_pointer()
                 .text_size(px(13.0))
                 .child(self.t(name))
-                .on_click(cx.listener(move |p, _: &ClickEvent, _, cx| {
-                    p.target = code.into();
-                    p.fill_translation = Some(String::new());
-                    cx.notify();
-                }));
+                .on_click(cx.listener(move |p, _: &ClickEvent, _, cx| p.set_target(code, cx)));
             chip = if active {
                 chip.bg(rgb(c.card))
                     .text_color(rgb(0x2563eb))
@@ -972,10 +1009,7 @@ impl Render for Panel {
                                 &c,
                             )
                             .on_click(cx.listener(
-                                |p, _: &ClickEvent, _, cx| {
-                                    p.mode = Mode::Translate;
-                                    cx.notify();
-                                },
+                                |p, _: &ClickEvent, _, cx| p.enter_translate(cx),
                             )),
                         )
                         .child(
@@ -1021,6 +1055,23 @@ impl Render for Panel {
                         )
                         .children(message(self))
                         .child(div().flex_1())
+                        .children(
+                            (self.overlay.is_some() && self.show_image && self.preview.is_some()).then(|| {
+                                let shown = self.show_overlay;
+                                tool_button(
+                                    "translate-overlay",
+                                    icons::EYE,
+                                    self.t(if shown { "显示原文" } else { "显示译文" }),
+                                    shown,
+                                    true,
+                                    &c,
+                                )
+                                .on_click(cx.listener(|p, _: &ClickEvent, _, cx| {
+                                    p.show_overlay = !p.show_overlay;
+                                    cx.notify();
+                                }))
+                            }),
+                        )
                         .child(pin)
                         .child(
                             tool_button(

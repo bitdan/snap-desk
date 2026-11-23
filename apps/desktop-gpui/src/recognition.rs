@@ -4,7 +4,10 @@
 //! - 识别出内容后截图浮层即关闭，结果窗口独立存活，直到用户关闭；
 //! - OCR 严格使用设置中所选引擎（本地 PP-OCR、系统 OCR、在线服务；微信 OCR 暂不支持），
 //!   设置“自动复制”“自动合并换行”；
-//! - 在线翻译只发送识别出的文字，发送前需要用户点击“发送翻译”确认；本地 CTranslate2 翻译在本机进程中执行（`local_translate.rs`）；
+//! - 进入翻译视图（截图翻译或点击“翻译文字”）即视为确认，自动用所选服务翻译识别出的文字；
+//!   本地 CTranslate2 翻译在本机进程中执行（`local_translate.rs`）；
+//! - 设置开启“截图翻译覆盖原文”且原文未改动时按段落翻译，并把译文按原图配色画回原位置
+//!   （`snap_core::recognition::overlay`）；
 //! - 二维码只在用户确认后才打开 HTTP/HTTPS 链接。
 //! 识别与翻译在后台线程执行（翻译用一个临时的单线程 tokio 运行时承载异步 HTTP 请求）。
 //!
@@ -23,6 +26,7 @@ use snap_core::{
         self,
         ocr::OcrResult,
         Engines,
+        overlay::{self, Paragraph},
         providers::TranslationRequest,
         qr::QrItem,
     },
@@ -197,6 +201,23 @@ struct Panel {
     pinned: bool,
     /// 显示左侧原图（“显示/隐藏原图”）。
     show_image: bool,
+    /// 识别结果合成的覆盖段落；缺坐标或倾斜时为 None（只能普通翻译）。
+    paragraphs: Option<Vec<Paragraph>>,
+    /// 最近一次按段落翻译的覆盖块；重新翻译或切换语言即清空。
+    overlay: Option<Vec<OverlayItem>>,
+    /// 覆盖块显示译文还是露出原文（底栏眼睛按钮切换）。
+    show_overlay: bool,
+    /// 当前译文对应的（目标语言, 原文）；回到翻译视图时两者都没变才沿用旧译文。
+    translated_for: Option<(String, String)>,
+}
+
+/// 一个覆盖块：原图像素坐标下的段落框、行高、译文与取色。
+#[derive(Clone)]
+struct OverlayItem {
+    rect: overlay::Rect,
+    line_height: f32,
+    text: String,
+    colors: overlay::Colors,
 }
 
 impl Panel {
@@ -238,6 +259,10 @@ impl Panel {
             fill_translation: None,
             pinned: false,
             show_image: true,
+            paragraphs: None,
+            overlay: None,
+            show_overlay: true,
+            translated_for: None,
         }
     }
 
@@ -285,8 +310,15 @@ impl Panel {
                             cx.write_to_clipboard(ClipboardItem::new_string(text.clone()));
                             panel.message = Some(panel.t("已复制识别文字"));
                         }
-                        panel.fill = Some(text);
+                        panel.paragraphs = overlay::paragraphs(&result.lines);
+                        panel.overlay = None;
+                        panel.translated_for = None;
+                        panel.fill = Some(text.clone());
                         panel.ocr = Some(result);
+                        // 截图翻译入口：识别完成即自动翻译。
+                        if panel.mode == Mode::Translate && !text.trim().is_empty() {
+                            panel.translate_text(text, cx);
+                        }
                     }
                     Err(error) => {
                         log::warn!("event=gpui.ocr_failed message={error}");
@@ -328,7 +360,32 @@ impl Panel {
         .detach();
     }
 
-    /// 用户点击“发送翻译”即视为确认上传识别文字。
+    /// 切换到翻译视图；尚无当前语言的译文时自动翻译（进入翻译视图即视为确认发送）。
+    fn enter_translate(&mut self, cx: &mut Context<Self>) {
+        self.mode = Mode::Translate;
+        let current = (self.target.clone(), self.draft.read(cx).value().to_string());
+        if self.busy.is_none() && self.translated_for.as_ref() != Some(&current) {
+            self.translate(cx);
+        }
+        cx.notify();
+    }
+
+    /// 切换目标语言并立即重新翻译。
+    fn set_target(&mut self, code: &str, cx: &mut Context<Self>) {
+        if self.target == code {
+            return;
+        }
+        self.target = code.into();
+        self.fill_translation = Some(String::new());
+        self.overlay = None;
+        self.translated_for = None;
+        if self.busy.is_none() {
+            self.translate(cx);
+        }
+        cx.notify();
+    }
+
+    /// 点击翻译按钮或进入翻译视图即视为确认上传识别文字。
     fn translate(&mut self, cx: &mut Context<Self>) {
         let source = self.draft.read(cx).value().to_string();
         self.translate_text(source, cx);
@@ -338,7 +395,12 @@ impl Panel {
         if self.busy.is_some() {
             return;
         }
-        let texts = segments(&source);
+        // 覆盖模式：识别段落可用且原文未改动时按段落翻译，译文才能一一对应原图位置。
+        let paragraphs = self
+            .paragraphs
+            .clone()
+            .filter(|list| self.image.is_some() && overlay::matches(&source, list));
+        let mut texts = segments(&source);
         if texts.is_empty() {
             self.error = Some(self.t("没有可翻译的文字。"));
             cx.notify();
@@ -358,6 +420,11 @@ impl Panel {
             cx.notify();
             return;
         }
+        // 设置关闭“覆盖原文”时始终按空行分段普通翻译。
+        let paragraphs = paragraphs.filter(|_| ai.overlay);
+        if let Some(list) = &paragraphs {
+            texts = list.iter().map(|p| p.text.clone()).collect();
+        }
         let request = TranslationRequest { texts, source_language: None, target_language: self.target.clone() };
         if let Err(error) = request.validate() {
             self.error = Some(error);
@@ -365,9 +432,16 @@ impl Panel {
             return;
         }
         let keys = recognition::services::key_ids(&self.settings, &ai.service_id);
+        let auto_copy = ai.auto_copy;
+        let done_key = (self.target.clone(), source.clone());
+        // 取色需要原图与识别坐标的比例；识别引擎可能缩放过输入图片。
+        let sample = paragraphs
+            .zip(self.image.clone())
+            .zip(self.ocr.as_ref().map(|r| (r.image_width, r.image_height)));
         self.busy = Some("正在翻译…");
         self.error = None;
         self.message = None;
+        self.overlay = None;
         cx.notify();
         cx.spawn(async move |this, cx| {
             let result = cx
@@ -384,12 +458,37 @@ impl Panel {
                     runtime.block_on(recognition::providers::translate(&ai, &request, &keys))
                 })
                 .await;
+            // 覆盖模式在后台线程按段落取色（逐像素扫描），完成后连同译文一起交给界面。
+            let result = match (result, sample) {
+                (Ok(texts), Some(((list, image), (ocr_width, ocr_height)))) if texts.len() == list.len() => {
+                    let items = cx
+                        .background_executor()
+                        .spawn({
+                            let texts = texts.clone();
+                            async move { overlay_items(&image, ocr_width, ocr_height, &list, texts) }
+                        })
+                        .await;
+                    Ok((texts, items))
+                }
+                (result, _) => result.map(|texts| (texts, None)),
+            };
             let _ = this.update(cx, |panel, cx| {
                 panel.busy = None;
                 match result {
-                    Ok(texts) => {
-                        log::info!("event=gpui.translation_finished segments={}", texts.len());
-                        panel.fill_translation = Some(texts.join("\n\n"));
+                    Ok((texts, items)) => {
+                        log::info!(
+                            "event=gpui.translation_finished segments={} overlay={}",
+                            texts.len(),
+                            items.is_some()
+                        );
+                        let text = texts.join("\n\n");
+                        panel.overlay = items;
+                        panel.show_overlay = true;
+                        panel.translated_for = Some(done_key);
+                        panel.fill_translation = Some(text.clone());
+                        if auto_copy {
+                            panel.copy(text, "译文已复制。", cx);
+                        }
                     }
                     Err(error) => {
                         log::warn!("event=gpui.translation_failed");
@@ -421,6 +520,42 @@ impl Panel {
             }
         }
     }
+}
+
+/// 把段落框从识别坐标换算到原图像素后取色；识别坐标与原图宽高比不一致（被裁剪或变形）时不覆盖，避免错位。
+fn overlay_items(
+    image: &RgbaImage,
+    ocr_width: u32,
+    ocr_height: u32,
+    paragraphs: &[Paragraph],
+    texts: Vec<String>,
+) -> Option<Vec<OverlayItem>> {
+    let sx = image.width() as f32 / ocr_width.max(1) as f32;
+    let sy = image.height() as f32 / ocr_height.max(1) as f32;
+    if (sx - sy).abs() > sx.max(sy) * 0.02 {
+        return None;
+    }
+    Some(
+        paragraphs
+            .iter()
+            .zip(texts)
+            .map(|(paragraph, text)| {
+                let r = paragraph.rect;
+                let rect = overlay::Rect {
+                    x: r.x * sx,
+                    y: r.y * sy,
+                    width: r.width * sx,
+                    height: r.height * sy,
+                };
+                OverlayItem {
+                    rect,
+                    line_height: paragraph.line_height * sy,
+                    text,
+                    colors: overlay::sample_colors(image, rect),
+                }
+            })
+            .collect(),
+    )
 }
 
 #[cfg(test)]
