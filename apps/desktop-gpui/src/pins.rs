@@ -30,7 +30,7 @@ use snap_core::{
 use std::{sync::Arc, time::Duration};
 
 /// 右键菜单尺寸（逻辑像素）；打开时窗口临时扩大以容纳菜单，关闭后恢复。
-const MENU_WIDTH: f32 = 196.0;
+const MENU_WIDTH: f32 = 224.0;
 const ITEM_HEIGHT: f32 = 28.0;
 const SEPARATOR_HEIGHT: f32 = 9.0;
 const OPACITIES: [f32; 4] = [1.0, 0.8, 0.6, 0.4];
@@ -430,11 +430,21 @@ const MENU: [Item; 27] = [
     Item::Close,
 ];
 
+/// 右键菜单配色。
+struct MenuColors {
+    bg: u32,
+    text: u32,
+    border: u32,
+    hover_bg: u32,
+    hover_text: u32,
+    separator: u32,
+}
+
 fn menu_height() -> f32 {
     MENU.iter()
         .map(|item| if *item == Item::Separator { SEPARATOR_HEIGHT } else { ITEM_HEIGHT })
         .sum::<f32>()
-        + 8.0
+        + 12.0
 }
 
 pub struct Pin {
@@ -1002,7 +1012,7 @@ impl Pin {
             }
         }
         if !self.locked {
-            window.start_window_move();
+            crate::native::start_move(window);
         }
     }
 
@@ -1176,10 +1186,6 @@ impl Pin {
     }
 }
 
-fn hex(value: &str) -> u32 {
-    u32::from_str_radix(value.trim_start_matches('#'), 16).unwrap_or(0xa1a1aa)
-}
-
 /// 导出用的合成图：底图副本 + 标注，不改变可编辑对象。
 fn composed(image: &RgbaImage, shapes: &[Annotation]) -> Result<RgbaImage, String> {
     let mut output = image.clone();
@@ -1222,14 +1228,14 @@ impl Render for Pin {
         }
         let map = |p: ImagePoint| point(px(p.x as f32 * kx), px(p.y as f32 * ky));
         content = content.children(annotate::selection_overlay(&self.editor, &map));
+        // 不画边框（用户反馈不需要），只保留圆角与阴影。
+        let _ = border;
         let mut stage = div()
             .absolute()
-            .left(px(inset - border))
-            .top(px(top - border))
-            .w(px(w + border * 2.0))
-            .h(px(h + border * 2.0))
-            .border_1()
-            .border_color(rgb(hex(&self.appearance.border_color)))
+            .left(px(inset))
+            .top(px(top))
+            .w(px(w))
+            .h(px(h))
             .rounded(px(radius))
             .overflow_hidden()
             .opacity(self.opacity)
@@ -1297,46 +1303,60 @@ impl Render for Pin {
             root = root.child(self.toolbar(inset, top, h, window, cx));
         }
         if let Some(at) = self.menu {
-            let mut menu = div()
+            // Vue `.pin-context-menu`：浅色白底、悬停浅蓝；深色主题深灰底。
+            let palette = if crate::theme::dark() {
+                MenuColors { bg: 0x20252c, text: 0xe6edf3, border: 0x39424e, hover_bg: 0x303f56, hover_text: 0xe6edf3, separator: 0x39424e }
+            } else {
+                MenuColors { bg: 0xffffff, text: 0x1f2328, border: 0xe4e4e7, hover_bg: 0xeff6ff, hover_text: 0x2563eb, separator: 0xe4e4e7 }
+            };
+            let menu = palette;
+            let mut menu_box = div()
                 .id("pin-menu")
                 .absolute()
                 .left(at.x)
                 .top(at.y)
                 .w(px(MENU_WIDTH))
-                .py_1()
+                .p(px(5.0))
                 .flex()
                 .flex_col()
-                .rounded_md()
-                .bg(rgb(0x18181b))
+                .rounded(px(8.0))
+                .border_1()
+                .border_color(rgb(menu.border))
+                .bg(rgb(menu.bg))
                 .shadow_lg()
-                .text_sm()
-                .text_color(rgb(0xf4f4f5))
+                .text_size(px(12.0))
+                .text_color(rgb(menu.text))
                 // 菜单内的按下不能冒泡成拖动窗口或关闭菜单。
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation());
             for (index, item) in MENU.into_iter().enumerate() {
                 if item == Item::Separator {
-                    menu = menu.child(div().h(px(SEPARATOR_HEIGHT)).flex().items_center().child(div().h(px(1.0)).w_full().bg(rgb(0x3f3f46))));
+                    menu_box = menu_box.child(
+                        div().h(px(SEPARATOR_HEIGHT)).px(px(4.0)).flex().items_center().child(div().h(px(1.0)).w_full().bg(rgb(menu.separator))),
+                    );
                     continue;
                 }
                 let (label, checked) = self.label(item);
-                menu = menu.child(
+                let (hover_bg, hover_text) = (menu.hover_bg, menu.hover_text);
+                menu_box = menu_box.child(
                     div()
                         .id(("pin-menu-item", index))
                         .h(px(ITEM_HEIGHT))
-                        .px_2()
+                        .pl(px(8.0))
+                        .pr(px(8.0))
                         .flex()
                         .items_center()
-                        .gap_2()
+                        .gap(px(8.0))
+                        .rounded(px(4.0))
                         .cursor_pointer()
-                        .hover(|style| style.bg(rgb(0x3f3f46)))
-                        .child(div().w(px(12.0)).child(if checked { "✓" } else { "" }))
+                        .hover(move |style| style.bg(rgb(hover_bg)).text_color(rgb(hover_text)))
+                        .child(div().w(px(12.0)).text_color(rgb(0x2563eb)).child(if checked { "✓" } else { "" }))
                         .child(div().flex_1().child(label))
-                        .child(div().text_xs().text_color(rgb(0xa1a1aa)).child(Self::shortcut(item)))
+                        .child(div().text_size(px(10.0)).text_color(rgb(0xa1a1aa)).child(Self::shortcut(item)))
                         .on_click(cx.listener(move |pin, _: &ClickEvent, window, cx| pin.select(item, window, cx))),
                 );
             }
-            root = root.child(menu);
+            root = root.child(menu_box);
         }
         root
     }

@@ -116,10 +116,6 @@ mod icons {
 
 /// 文本框停顿多久后保存。
 const DEBOUNCE: Duration = Duration::from_millis(500);
-/// 与截图标注色板一致的贴图边框预设。
-const BORDER_COLORS: [&str; 8] = [
-    "#a1a1aa", "#3f3f46", "#ffffff", "#ef4444", "#f59e0b", "#22c55e", "#3b82f6", "#a855f7",
-];
 
 #[derive(Default)]
 struct SettingsState {
@@ -2025,28 +2021,6 @@ impl SettingsView {
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
         let a = &s.pin_appearance;
-        let mut swatches = div().flex().gap(px(6.0));
-        for (index, color) in BORDER_COLORS.iter().enumerate() {
-            let selected = a.border_color.eq_ignore_ascii_case(color);
-            let value = u32::from_str_radix(&color[1..], 16).unwrap_or(0);
-            swatches = swatches.child(
-                div()
-                    .id(("pin-color", index))
-                    .size(px(20.0))
-                    .rounded_full()
-                    .bg(rgb(value))
-                    .border_2()
-                    .border_color(rgb(if selected {
-                        col::accent()
-                    } else {
-                        col::border()
-                    }))
-                    .cursor_pointer()
-                    .on_click(cx.listener(move |view, _: &ClickEvent, _, cx| {
-                        view.change(cx, |s| s.pin_appearance.border_color = (*color).to_owned())
-                    })),
-            );
-        }
         vec![
             hero(
                 icons::PIN,
@@ -2098,7 +2072,6 @@ impl SettingsView {
                         |s, v| s.pin_appearance.corner_radius = v as u8,
                     ),
                 ),
-                row(t("边框颜色"), None, swatches),
             ])
             .into_any_element(),
         ]
