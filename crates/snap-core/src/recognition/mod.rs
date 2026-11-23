@@ -7,6 +7,7 @@ pub mod local_runtime;
 pub mod local_worker;
 pub mod ocr;
 pub mod ocr_config;
+pub mod overlay;
 #[cfg(windows)]
 pub mod ocr_runtime;
 pub mod online_ocr;

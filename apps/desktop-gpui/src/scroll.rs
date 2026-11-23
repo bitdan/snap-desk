@@ -6,7 +6,7 @@
 //! 2. 选区紫色边框（鼠标穿透）、侧边预览窗（拼接缩略图 + 当前画面位置）与下方控制条
 //!    （状态、完成/保存已确认部分/重试、取消），三者置顶且不进入采集（Windows 用 WDA_EXCLUDEFROMCAPTURE）；
 //! 3. 采集线程通过 [`GpuiHost`] 写入共享状态，控制条每 100 ms 读取并执行窗口操作；
-//!    结束后控制条显示结果（文件名、打开文件夹），数秒后自动关闭。
+//!    完成后全部窗口立即收起（结果已复制并保存），不再显示结果条。
 //!
 //! 结果 PNG 存在数据目录 `scroll-results`（不经导出暂存记录）；预览/控制条遮挡选区时
 //! 只在 Windows 上由捕获排除保证不进入画面（macOS/Linux 未实现采样时临时隐藏）；结果不进主界面。
@@ -33,8 +33,6 @@ const BAR_WIDTH: f32 = 400.0;
 const BAR_HEIGHT: f32 = 44.0;
 const PREVIEW_WIDTH: f32 = 240.0;
 const GAP: f32 = 8.0;
-/// 结果条自动关闭前的显示时长。
-const RESULT_TICKS: u32 = 60;
 
 /// 采集线程写入、界面轮询读取的共享状态。
 #[derive(Default)]
@@ -298,7 +296,6 @@ fn open_controls(
                 view: None,
                 busy: None,
                 hidden: false,
-                result: None,
                 waiting: 0,
                 notice: None,
             }
@@ -540,7 +537,7 @@ impl Render for Preview {
     }
 }
 
-/// 控制条：状态、完成/保存已确认部分/重试、取消；结束后显示结果。
+/// 控制条：状态、完成/保存已确认部分/重试、取消。
 struct Controls {
     id: u64,
     language: Language,
@@ -548,8 +545,6 @@ struct Controls {
     /// 已点击：Some(true) 为取消中，Some(false) 为保存中。
     busy: Option<bool>,
     hidden: bool,
-    /// 结束后显示的结果与剩余显示时间（轮询次数）。
-    result: Option<(String, Option<PathBuf>, u32)>,
     /// 会话已关闭但完成通知尚未到达的等待次数。
     waiting: u32,
     notice: Option<String>,
@@ -578,14 +573,6 @@ impl Controls {
                 shared.error.take(),
             )
         };
-        if let Some((_, _, ticks)) = self.result.as_mut() {
-            *ticks = ticks.saturating_sub(1);
-            if *ticks == 0 {
-                close_windows(cx, true);
-            }
-            cx.notify();
-            return;
-        }
         if let Some(next) = view.filter(|v| v.id == self.id) {
             // 新的失败版本表示后台已结束本轮输出：恢复重试/取消入口。
             if next.status == "failed"
@@ -610,27 +597,15 @@ impl Controls {
         }
         if closed == Some(self.id) {
             match result {
+                // 完成即全部收起：结果已复制并保存在 scroll-results（通用页可打开），不再留结果条。
+                // 结果条被排除在采集之外，留在屏幕上时紧接着截图会在它的位置出现一块黑色。
                 Some((path, copied)) => {
-                    let text = match (&path, copied) {
-                        (Some(path), copied) => format!(
-                            "{} {}{}",
-                            self.t("已保存"),
-                            path.file_name()
-                                .map(|n| n.to_string_lossy().into_owned())
-                                .unwrap_or_default(),
-                            if copied {
-                                format!(" · {}", self.t("已复制到剪贴板"))
-                            } else {
-                                String::new()
-                            }
-                        ),
-                        (None, _) => self.t("已复制到剪贴板"),
-                    };
-                    log::info!("event=gpui.scroll_finished id={}", self.id);
-                    self.result = Some((text, path, RESULT_TICKS));
-                    close_windows(cx, false);
-                    set_visible(cx, true);
-                    self.hidden = false;
+                    log::info!(
+                        "event=gpui.scroll_finished id={} saved={} copied={copied}",
+                        self.id,
+                        path.is_some()
+                    );
+                    close_windows(cx, true);
                 }
                 // 取消，或完成通知迟迟不来（不应发生）：直接收起。
                 None if cancelled || self.waiting >= 20 => close_windows(cx, true),
@@ -731,41 +706,11 @@ impl Render for Controls {
             .text_color(rgb(0x27272a))
             // Esc 取消且不保存。
             .on_key_down(cx.listener(|v, event: &KeyDownEvent, _, cx| {
-                if event.keystroke.key == "escape" && v.result.is_none() {
+                if event.keystroke.key == "escape" {
                     cx.stop_propagation();
                     v.act(true, cx);
                 }
             }));
-        if let Some((text, path, _)) = self.result.clone() {
-            let folder = path
-                .as_ref()
-                .and_then(|p| p.parent().map(Path::to_path_buf));
-            return base
-                .child(div().size(px(8.0)).rounded_full().bg(rgb(0x22c55e)))
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .overflow_hidden()
-                        .text_ellipsis()
-                        .whitespace_nowrap()
-                        .text_xs()
-                        .child(text),
-                )
-                .children(folder.map(|folder| {
-                    self.button("scroll-folder", self.t("打开文件夹"), false, true)
-                        .on_click(cx.listener(move |view, _: &ClickEvent, _, cx| {
-                            if let Err(error) = snap_core::platform::open_directory(&folder) {
-                                view.notice = Some(error);
-                            }
-                            cx.notify();
-                        }))
-                }))
-                .child(
-                    self.button("scroll-close", self.t("关闭"), false, true)
-                        .on_click(|_, _, cx| close_windows(cx, true)),
-                );
-        }
         let view = self.view.as_ref();
         let recovering = view.is_some_and(|v| v.collecting && v.status == "recovering");
         let failed = view.is_some_and(|v| v.status == "failed");

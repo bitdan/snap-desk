@@ -1136,6 +1136,7 @@
   "已复制到剪贴板": "Copied to clipboard",
   "滚动截图不包含标注，请先清除标注。": "Scroll capture doesn't include annotations. Clear them first.",
   "正在录屏或滚动截图，请先结束。": "A recording or scroll capture is in progress. Finish it first.",
+  "正在录屏，请先结束当前录屏。": "A recording is in progress. Finish it first.",
   "正在滚动截图，请先结束。": "A scroll capture is in progress. Finish it first.",
   "显示器布局、尺寸或 DPI 发生变化，请重新截图。": "The display layout, size or scaling changed. Take the screenshot again.",
   "设置…": "Settings…",
