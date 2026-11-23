@@ -1126,7 +1126,11 @@ impl Pin {
         let pin = window.bounds();
         // 分组下拉展开时窗口向下加高，容纳下拉列表。
         let extra = if self.editor.open_group.is_some() { TOOLBAR_POPOVER } else { 0.0 };
-        let size = size(px(TOOLBAR_WIDTH + 8.0), px(PinLayout::load().toolbar_height as f32 + extra));
+        // 窗口贴合工具栏：工具行 40 + 上下边距；选了标注工具时多一行样式条（行距 6）。
+        let options = self.annotating && !(self.editor.tool == Tool::Edit && self.editor.selected.is_none());
+        let width = if options { TOOLBAR_WIDTH + 80.0 } else { TOOLBAR_WIDTH + 40.0 };
+        let height = 48.0 + if options { 46.0 } else { 0.0 } + extra;
+        let size = size(px(width), px(height));
         let gap = px(PinLayout::load().gap as f32);
         let screen = window.display(cx).map(|d| d.visible_bounds());
         let mut at = point(pin.origin.x, pin.bottom() + gap);
@@ -1155,13 +1159,23 @@ impl Pin {
             window_background: WindowBackgroundAppearance::Transparent,
             ..Default::default()
         };
-        match cx.open_window(options, |window, cx| cx.new(|cx| PinToolbar::new(pin, window, cx))) {
-            Ok(handle) => self.toolbar_window = Some(handle.into()),
-            Err(error) => {
-                log::warn!("event=gpui.pin_toolbar_failed message={error}");
-                self.toolbar = false;
+        // 新窗口创建时立即绘制，绘制要读贴图；贴图此刻正在处理按键（被借用），所以等这次更新结束再打开。
+        cx.defer(move |cx| {
+            if !pin.read(cx).toolbar || pin.read(cx).toolbar_window.is_some() {
+                return;
             }
-        }
+            let view = pin.clone();
+            match cx.open_window(options, |window, cx| cx.new(|cx| PinToolbar::new(view, window, cx))) {
+                Ok(handle) => pin.update(cx, |pin, _| pin.toolbar_window = Some(handle.into())),
+                Err(error) => {
+                    log::warn!("event=gpui.pin_toolbar_failed message={error}");
+                    pin.update(cx, |pin, cx| {
+                        pin.toolbar = false;
+                        cx.notify();
+                    });
+                }
+            }
+        });
     }
 
     /// 贴图移动、缩放或下拉展开后重新放置工具栏窗口。
@@ -1170,16 +1184,28 @@ impl Pin {
             return;
         };
         let bounds = self.toolbar_bounds(window, cx);
-        let alive = toolbar.update(cx, |_, window, _| {
-            if window.bounds().size != bounds.size {
-                window.resize(bounds.size);
+        // 调整大小会让工具栏窗口重绘（读贴图），同样等贴图的这次更新结束再做。
+        let pin = cx.entity().downgrade();
+        cx.defer(move |cx| {
+            let alive = toolbar.update(cx, |_, window, _| {
+                let current = window.bounds();
+                if current.size != bounds.size {
+                    window.resize(bounds.size);
+                }
+                let moved = (current.origin.x - bounds.origin.x).abs() > px(0.5) || (current.origin.y - bounds.origin.y).abs() > px(0.5);
+                if moved {
+                    crate::native::move_to(window, bounds.origin);
+                }
+            });
+            if alive.is_err() {
+                let _ = pin.update(cx, |pin, _| {
+                    if pin.toolbar_window == Some(toolbar) {
+                        pin.toolbar_window = None;
+                        pin.toolbar = false;
+                    }
+                });
             }
-            crate::native::move_to(window, bounds.origin);
         });
-        if alive.is_err() {
-            self.toolbar_window = None;
-            self.toolbar = false;
-        }
     }
 
     /// 工具栏窗口里的操作在贴图自己的窗口里执行（缩放、菜单、关闭等都以贴图窗口为准）。

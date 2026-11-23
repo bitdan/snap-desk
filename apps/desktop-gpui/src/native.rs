@@ -79,8 +79,16 @@ pub fn move_to(window: &Window, at: gpui_kit::Point<gpui_kit::Pixels>) -> bool {
         }
         let scale = window.scale_factor();
         let (x, y) = ((f32::from(at.x) * scale).round() as i32, (f32::from(at.y) * scale).round() as i32);
-        // SAFETY: hwnd 来自存活窗口，只移动位置。
-        unsafe { SetWindowPos(hwnd, std::ptr::null_mut(), x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE) != 0 }
+        // 同线程调用会同步重入窗口过程（WM_MOVE），在 GPUI 回调里触发 App 重复借用；从辅助线程带
+        // SWP_ASYNCWINDOWPOS 调用，移动请求进入窗口所属线程的消息队列，由消息循环正常处理。
+        let raw = hwnd as isize;
+        std::thread::spawn(move || {
+            // SAFETY: 句柄失效时 SetWindowPos 只返回失败，不会访问无效内存。
+            unsafe {
+                SetWindowPos(raw as _, std::ptr::null_mut(), x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS);
+            }
+        });
+        true
     }
     #[cfg(not(windows))]
     {
