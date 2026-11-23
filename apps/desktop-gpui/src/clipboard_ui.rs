@@ -837,7 +837,7 @@ impl HistoryView {
                         } else {
                             "组合导出仅支持文本和图片，文件引用请复制后粘贴"
                         }))
-                        .on_click(cx.listener(move |view, _: &ClickEvent, _, cx| {
+                        .on_click(cx.listener(move |view, _: &ClickEvent, window, cx| {
                             if exportable {
                                 let items: Vec<Item> = view
                                     .picked
@@ -845,6 +845,9 @@ impl HistoryView {
                                     .filter_map(|id| view.picked_items.get(id).cloned())
                                     .collect();
                                 crate::clipboard_export::open(cx, view.service.clone(), items);
+                                // 组合导出在独立窗口里进行，剪贴板历史随即收起。
+                                log::info!("event=gpui.clipboard_window_hidden reason=export");
+                                window.remove_window();
                             }
                         })),
                 )
