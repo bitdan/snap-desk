@@ -206,6 +206,8 @@ pub mod icons {
     icon!(SCROLL, "scroll-capture");
     icon!(CHEVRON_DOWN, "chevron-down");
     icon!(CHEVRON_UP, "chevron-up");
+    icon!(CHEVRONS_RIGHT, "chevrons-right");
+    icon!(CHEVRONS_LEFT, "chevrons-left");
     icon!(MONITOR, "monitor");
     icon!(RESELECT, "rotate-ccw");
     icon!(GRIP, "grip-vertical");
@@ -1490,7 +1492,8 @@ pub fn tool_row<T: 'static>(
             .rounded(px(6.0))
             .cursor_pointer()
             .hover(|s| s.bg(rgb(hover())))
-            .child(icon(if props.grouped { icons::CHEVRON_DOWN } else { icons::CHEVRON_UP }, text()))
+            // 双箭头横向指示整行变长/变短，与各工具旁的单箭头下拉区分。
+            .child(icon(if props.grouped { icons::CHEVRONS_RIGHT } else { icons::CHEVRONS_LEFT }, text()))
             .tooltip({
                 let label = (props.text)(label);
                 move |_, cx| cx.new(|_| Tooltip(label.clone().into())).into()
