@@ -217,6 +217,8 @@ struct CaptureState {
     starting: bool,
     /// 延时截图倒计时中的取消句柄。
     countdown: Option<crate::countdown::Countdown>,
+    /// 浮层被系统或用户从外部关掉（Alt+F4、显示器断开等）时结束会话；首次打开浮层时注册，常驻。
+    closed_watch: Option<Subscription>,
 }
 impl Global for CaptureState {}
 
@@ -504,12 +506,39 @@ fn open_overlays(cx: &mut App, session: &Entity<Session>) {
             Err(error) => log::error!("event=gpui.overlay_failed display={index} message={error}"),
         }
     }
+    // 一个浮层都没打开时会话无处可操作，却仍算“截图中”：快捷键只会取消一个看不见的会话，
+    // 导入配置、安装更新等也会被拒绝。直接结束会话（issue #71）。
+    if handles.is_empty() {
+        log::error!("event=gpui.capture_aborted reason=no_overlay");
+        finish(cx);
+        return;
+    }
     // focus: true 只在本进程已是前台时生效；从命令行转交、或保存对话框关闭后系统把焦点还给了
     // 原来的应用，浮层就收不到 Esc / 回车 / Ctrl+S。主动激活一个浮层（所有浮层共享会话，激活哪个都行）。
     if let Some(first) = handles.first() {
         let _ = first.update(cx, |_, window, _| window.activate_window());
     }
     session.update(cx, |s, _| s.windows = handles);
+    watch_closed(cx);
+}
+
+/// 浮层窗口被外部关掉时结束会话。自己关闭浮层（`close_overlays`）会先把句柄从 `windows` 取走，
+/// 因此这里仍能在 `windows` 中找到的窗口，一定不是本模块关闭的；剩下的浮层随会话一起关闭。
+fn watch_closed(cx: &mut App) {
+    if cx.default_global::<CaptureState>().closed_watch.is_some() {
+        return;
+    }
+    let subscription = cx.on_window_closed(|cx, closed| {
+        let Some(session) = current(cx) else {
+            return;
+        };
+        if session.read(cx).windows.iter().any(|handle| handle.window_id() == closed) {
+            log::warn!("event=gpui.capture_aborted reason=overlay_closed");
+            // 回调在窗口移除流程中执行，结束会话延后到当前更新完成。
+            cx.defer(finish);
+        }
+    });
+    cx.global_mut::<CaptureState>().closed_watch = Some(subscription);
 }
 
 /// 截图显示器对应的 GPUI 显示器（录屏红框与控制条定位）。
