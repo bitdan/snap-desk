@@ -1,6 +1,6 @@
 //! 用户级登录自启：系统登录项是唯一状态源，不在设置文件中重复保存布尔值。
 //!
-//! 与 Tauri 版（tauri-plugin-autostart，同为 auto-launch 0.6）使用同一登录项名称与启动参数，
+//! 与旧版（tauri-plugin-autostart，同为 auto-launch 0.6）使用同一登录项名称与启动参数，
 //! 两个版本共用一条登录项：后开启的一方生效，不会同时自启而争抢全局快捷键。
 //! 注意 Windows 上的状态查询只看登录项名称是否存在，不核对其指向哪个可执行文件。
 use auto_launch::{AutoLaunch, AutoLaunchBuilder};
@@ -8,7 +8,7 @@ use std::sync::Mutex;
 
 /// 自启入口携带固定参数，让程序初始化托盘和快捷键但不弹出界面。
 pub const STARTUP_ARG: &str = "--autostart";
-/// 登录项名称（与 Tauri 版 productName 一致）。
+/// 登录项名称（产品名，与旧版相同）。
 pub const APP_NAME: &str = "Snap Desk";
 
 /// 串行化系统查询、启用与禁用，避免并发请求返回相互矛盾的状态。

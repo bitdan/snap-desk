@@ -26,7 +26,7 @@ use crate::settings::Settings;
 use ocr::{LocalOcr, OcrResult};
 use wechat_ocr::WechatOcr;
 
-/// 进程内常驻的本地识别引擎（GPUI 外壳持有；Tauri 外壳各自放在托管状态）。
+/// 进程内常驻的本地识别引擎（由应用外壳持有）。
 #[derive(Default)]
 pub struct Engines {
     pub local: LocalOcr,

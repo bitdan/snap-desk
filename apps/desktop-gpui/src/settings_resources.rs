@@ -1,8 +1,8 @@
-//! 设置窗口中的资源下载（对照 Vue `ResourceSettings.vue` 与 Tauri `resources/mod.rs`）。
+//! 设置窗口中的资源下载。
 //!
 //! 本地 PP-OCR 模型（Windows 上连同 ONNX 运行库）的状态与下载（GPUI 版不使用导出字体，不提供字体设置）。下载、校验与
 //! 安装在 core `snap_core::resources`（只用内置清单的地址与摘要，校验通过才原子替换）；资源目录与
-//! Tauri 版相同，两个版本共用已下载的资源。下载在后台线程执行，界面每 150 ms 读取一次进度。
+//! 旧版相同，升级后沿用已下载的资源。下载在后台线程执行，界面每 150 ms 读取一次进度。
 use super::{SettingsView, col, row};
 use gpui_kit::*;
 use snap_core::resources::{self, ResourceKind, Status};

@@ -1,4 +1,4 @@
-//! 本地 CTranslate2 翻译（对照 Tauri `recognition/local_translation.rs`）。
+//! 本地 CTranslate2 翻译。
 //!
 //! 协议、校验、worker 生命周期与语言包安装都在 core（`snap_core::recognition::local_*`）。缓存的 worker 进程
 //! 绑定创建它的 tokio 运行时，因此这里持有一个常驻运行时，所有本地翻译与语言包管理都在其上执行；

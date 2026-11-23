@@ -207,7 +207,7 @@ pub fn set_topmost(window: &Window, topmost: bool) -> Result<(), String> {
     }
 }
 
-/// 无边框的工具窗口（剪贴板历史、翻译）：置顶且不出现在任务栏，与 Tauri 版的 `always_on_top` + `skip_taskbar` 一致。
+/// 无边框的工具窗口（剪贴板历史、翻译）：置顶且不出现在任务栏。
 /// 以普通窗口创建以保留可调整大小的边框，再改成工具窗口样式；Windows 需重新显示一次任务栏才会移除按钮。
 pub fn utility_window(window: &Window) -> Result<(), String> {
     #[cfg(windows)]

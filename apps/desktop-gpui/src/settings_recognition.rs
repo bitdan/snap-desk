@@ -1,4 +1,4 @@
-//! 设置窗口“识别与翻译”页（对照 Vue `OcrSettings.vue`、`AiProviderSettings.vue`、`ServiceSettings.vue`）。
+//! 设置窗口“识别与翻译”页。
 //!
 //! - 文字识别：引擎（本地 PP-OCR、系统 OCR、支持图片识别的在线服务）、系统 OCR 语言、识别后自动复制/合并换行。
 //! - 翻译：引擎（支持翻译的在线服务）、目标语言、超时、自动复制译文、截图翻译覆盖原文。
@@ -26,9 +26,9 @@ mod keys;
 #[path = "settings_services.rs"]
 mod catalog;
 
-/// 新增服务的预设（与 Vue `servicePresets` 一致）。
+/// 新增服务的预设。
 struct Preset {
-    /// 与 Vue 预设标识一致（测试中用于定位失败的预设）。
+    /// 预设标识（测试中用于定位失败的预设）。
     #[cfg_attr(not(test), allow(dead_code))]
     id: &'static str,
     name: &'static str,
@@ -127,7 +127,7 @@ pub(super) struct RecognitionState {
     pub(super) loading: bool,
 }
 
-/// 服务能力说明（与 Vue `serviceKind` 一致）。
+/// 服务能力说明。
 fn service_kind(service: &RecognitionService) -> &'static str {
     match service.protocol.as_str() {
         "deepl" => "在线翻译",
@@ -144,7 +144,7 @@ fn service_kind(service: &RecognitionService) -> &'static str {
     }
 }
 
-/// 服务商的密钥页面（与 Tauri `open_recognition_portal` 一致）；按协议与地址识别，自定义服务没有。
+/// 服务商的密钥页面；按协议与地址识别，自定义服务没有。
 fn portal(protocol: &str, endpoint: &str) -> Option<&'static str> {
     let host = url::Url::parse(endpoint).ok().and_then(|u| u.host_str().map(str::to_owned)).unwrap_or_default();
     match protocol {
@@ -315,7 +315,7 @@ impl SettingsView {
                 None => t("凭据状态未读取"),
             }
         };
-        // ---- 文字识别：OCR 引擎下拉（Vue `ProviderMenu`）----
+        // ---- 文字识别：OCR 引擎下拉 ----
         let system_label = if cfg!(target_os = "macos") { "macOS 系统 OCR" } else { "Windows 系统 OCR" };
         // (provider, service_id, 名称, 说明)；不支持的引擎不列出。
         let mut choices: Vec<(String, String, String, String)> = vec![(
@@ -543,7 +543,7 @@ impl SettingsView {
         if local_selected {
             translation_rows.extend(self.local_rows(t, cx));
         }
-        // 页签（Vue `page-tabs`）：文字识别 / 翻译 / 服务管理，居中的分段控件。
+        // 页签：文字识别 / 翻译 / 服务管理，居中的分段控件。
         let tab = self.recognition_tab;
         let mut tabs = div()
             .flex()
@@ -604,7 +604,7 @@ impl SettingsView {
                 // 引擎卡片下接当前引擎的详情（资源、语言、凭据）；识别后的动作单列一组。
                 let after = ocr_rows.split_off(ocr_rows.len().saturating_sub(2));
                 elements.push(heading(t("引擎")).into_any_element());
-                // 当前引擎的详情排在同一张卡片里（Vue `.recognition-detail`）。
+                // 当前引擎的详情排在同一张卡片里。
                 let count = ocr_rows.len();
                 let detail = (count > 0).then(|| {
                     div().pl(px(12.0)).border_t_1().border_color(rgb(col::sep())).children(

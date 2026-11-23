@@ -1,6 +1,6 @@
 //! Snap Desk 与界面框架无关的业务核心，由桌面应用（`apps/desktop-gpui`）调用。
 //!
-//! 边界约定：本 crate 不依赖 `tauri`、`gpui` 或任何窗口/事件循环；需要通知界面或调用系统
+//! 边界约定：本 crate 不依赖 `gpui` 或任何窗口/事件循环；需要通知界面或调用系统
 //! 外壳能力（注册快捷键、发事件、读写窗口）时，由调用方以闭包或 trait 注入。
 pub mod annotations;
 pub mod autostart;

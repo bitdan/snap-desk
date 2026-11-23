@@ -1,6 +1,6 @@
 //! 截图取色放大镜：光标处 15×15 原图像素放大 8 倍，显示坐标与色值。
 //!
-//! 对照 Vue 版 `magnifier.ts`、`color-picker.ts`、`CaptureMagnifier.vue`：
+//! 放大镜与取色：
 //! Shift 切换 HEX / RGB，C 复制色值（保留截图会话，可继续取色或框选），P 切换全局/相对坐标。
 //! 像素格直接用 225 个纯色方块绘制，不生成纹理，光标高频移动时没有 GPU 上传与释放。
 use gpui_kit::*;
@@ -21,7 +21,7 @@ pub struct Picker {
     pub copied: bool,
 }
 
-/// 色值文本，与 Tauri 版 `pixel_color` 的格式一致。
+/// 色值文本。
 pub fn color_text(image: &RgbaImage, x: u32, y: u32, hex: bool) -> Option<String> {
     if x >= image.width() || y >= image.height() {
         return None;
@@ -133,7 +133,7 @@ mod tests {
     use image::{Rgba, RgbaImage};
 
     #[test]
-    fn color_text_matches_tauri_formats_and_rejects_out_of_bounds() {
+    fn color_text_formats_and_rejects_out_of_bounds() {
         let image = RgbaImage::from_pixel(2, 2, Rgba([255, 8, 160, 255]));
         assert_eq!(color_text(&image, 1, 1, true).as_deref(), Some("#FF08A0"));
         assert_eq!(color_text(&image, 0, 0, false).as_deref(), Some("rgb(255, 8, 160)"));

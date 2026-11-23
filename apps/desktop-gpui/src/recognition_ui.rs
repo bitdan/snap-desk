@@ -1,4 +1,4 @@
-//! 截图识别结果窗口的界面（还原 Vue `OcrWorkspace.vue`、`TranslationPanel.vue`（workspace）与 `QrResultView.vue`）。
+//! 截图识别结果窗口的界面：文字识别、翻译与二维码结果。
 //!
 //! 文字识别：左侧浅底原图（识别框描边），右侧整理工具条与可编辑文字，底栏为行数/字数与“翻译文字”“复制文字”。
 //! 截图翻译：右侧为浅底上的原文卡片、语言条与译文卡片，底栏“返回识别”。二维码：结果卡片列表与底栏。
@@ -163,7 +163,7 @@ fn tool_button(
     }
 }
 
-/// 整理空格（Vue `tidySpaces`）：去掉行尾空白、合并连续空格、中文之间的空格。
+/// 整理空格：去掉行尾空白、合并连续空格、中文之间的空格。
 pub(super) fn tidy_spaces(text: &str) -> String {
     let is_cjk = |c: char| matches!(c as u32, 0x3000..=0x303f | 0x3400..=0x4dbf | 0x4e00..=0x9fff | 0xff00..=0xffef);
     let mut lines = Vec::new();

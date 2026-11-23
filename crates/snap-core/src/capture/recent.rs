@@ -2,7 +2,7 @@
 //!
 //! 对应前端 `recent-selection.ts`：只记住范围，不保存截图内容或标注；显示器布局（`layout_key`，
 //! 即显示器列表的 JSON）或截图尺寸变化时不恢复，不猜测原来的目标位置。
-//! Tauri 版存在 WebView localStorage；GPUI 版没有 WebView，存为数据目录下的 JSON 文件。
+//! 存为数据目录下的 JSON 文件（旧版存在 WebView localStorage，不迁移）。
 use super::{Display, Rect};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -17,7 +17,7 @@ pub struct RecentSelection {
     pub rect: Rect,
 }
 
-/// 显示器布局键：与 Tauri 版 `Frame::layout_key` 相同（显示器列表的 JSON）。
+/// 显示器布局键：显示器列表的 JSON。
 pub fn layout_key(displays: &[Display]) -> String {
     serde_json::to_string(displays).unwrap_or_default()
 }

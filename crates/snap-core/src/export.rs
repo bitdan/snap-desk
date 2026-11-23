@@ -1,5 +1,5 @@
 //! 截图与贴图的图片导出：文件名、编码、扩展名校验和保存目录记忆。保存路径只能来自系统对话框，
-//! 对话框本身与临时文件追踪由各外壳负责（Tauri 用 dialog 插件，GPUI 用 rfd）。
+//! 对话框本身与临时文件追踪由各外壳负责（GPUI 用 rfd）。
 use crate::settings::{ExportFormat, ExportSettings};
 use image::{codecs::jpeg::JpegEncoder, ImageFormat, RgbImage, RgbaImage};
 use std::{
@@ -18,7 +18,7 @@ pub fn timestamp() -> String {
     chrono::Local::now().format("%Y%m%d-%H%M%S").to_string()
 }
 
-/// 编码到同目录临时文件再替换目标：失败时保留旧文件。不做崩溃残留追踪（Tauri 版另有 export_staging）。
+/// 编码到同目录临时文件再替换目标：失败时保留旧文件。不做崩溃残留追踪。
 pub fn write_file(path: &Path, image: &RgbaImage, settings: &ExportSettings) -> Result<(), String> {
     validate_extension(path, settings.format)?;
     let parent = path.parent().ok_or("保存路径无效。")?;

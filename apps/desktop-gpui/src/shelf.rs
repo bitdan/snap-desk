@@ -1,11 +1,11 @@
 //! 顶部暂存架：剪贴板历史按所选类别的最近条目，
 //! 像照片一样挂在鼠标所在显示器顶部中央的一根绳上。
 //!
-//! 设置、固定/隐藏的条目与快照拼装在 core `snap_core::shelf`（与 Tauri 版共用 `shelf.json`，开发调试时随
+//! 设置、固定/隐藏的条目与快照拼装在 core `snap_core::shelf`（`shelf.json` 与旧版相同，开发调试时随
 //! `SNAP_DESK_SETTINGS` 放在临时设置目录）。唤出：“展开 / 收起暂存架”快捷键，或开启“顶部悬停”后鼠标停在
 //! 屏幕顶边中央约 0.35 秒。鼠标离开约 0.7 秒后收起；截图期间临时隐藏，结束后恢复并多停留一会儿。
 //! 卡片：单击复制，按住拖动超过 6 像素拖出（Windows），可固定在架上、取下为贴图、从架上移除（保留历史，可撤销）。
-//! 暂存架窗口不抢焦点，因此没有 Vue 版的方向键翻页、Esc 与 Ctrl+Z；改用翻页按钮、滚轮与撤销按钮。
+//! 暂存架窗口不抢焦点，因此不支持方向键翻页、Esc 与 Ctrl+Z；改用翻页按钮、滚轮与撤销按钮。
 use crate::annotate;
 use gpui_kit::*;
 use snap_core::{
@@ -327,7 +327,7 @@ mod icons {
     icon!(FILE, "file");
 }
 
-/// 卡片操作条里的圆形按钮（Vue `.shelf-card-actions button`，27×25）。
+/// 卡片操作条里的圆形按钮（27×25）。
 fn icon_pill(id: impl Into<ElementId>, data: &'static [u8], tooltip: String, pressed: bool) -> Stateful<Div> {
     div()
         .id(id)
@@ -600,7 +600,7 @@ impl ShelfView {
         let kept = self.snapshot.kept_ids.contains(&id);
         let language = self.language.clone();
         let text = move |key: &'static str| snap_core::i18n::for_language(&language, key).to_owned();
-        // 内容尺寸：图片按比例适配 144×108，文字便签 144×100（Vue `shelf-layout.ts`）。
+        // 内容尺寸：图片按比例适配 144×108，文字便签 144×100。
         let (w, h) = match item.kind {
             Kind::Image => photo_size(item.width, item.height),
             _ => (144.0, 100.0),
@@ -635,7 +635,7 @@ impl ShelfView {
         };
         let group = SharedString::from(format!("shelf-card-{id}"));
         let frame_height = h + 10.0;
-        // 金属夹子：固定项为深色（Vue `.shelf-clip`）。
+        // 金属夹子：固定项为深色。
         let (clip_from, clip_to, clip_border) = if kept {
             (0x414a55, 0x89939f, 0xafb8c1)
         } else {
@@ -793,7 +793,7 @@ impl Render for ShelfView {
         let language = self.language.clone();
         let text =
             move |key: &'static str| snap_core::i18n::for_language(&language, key).to_owned();
-        // 右上角：撤销移除、收起（悬停时显示，Vue `.shelf-controls`）。
+        // 右上角：撤销移除、收起（悬停时显示）。
         let control = |button: Stateful<Div>| {
             button.bg(rgba(0xf8fafce8)).border_1().border_color(rgba(0xffffffc7)).shadow_sm()
         };
@@ -869,7 +869,7 @@ impl Render for ShelfView {
                     .child(text("暂无匹配内容")),
             )
         });
-        // 下垂的绳子：沿 `rope_y` 的抛物线用短线段拼出（Vue 为 SVG 贝塞尔曲线：阴影、主体与高光三层）。
+        // 下垂的绳子：沿 `rope_y` 的抛物线用短线段拼出。
         let mut rope = div().absolute().top_0().left_0().size_full();
         let step = 4.0;
         let mut x = 0.0;
@@ -914,7 +914,7 @@ impl Render for ShelfView {
             .child(controls)
             .children(pager)
             .children(feedback.map(|(message, color)| {
-                // 成功提示在顶部，错误在底部（Vue `.shelf-feedback` / `.shelf-error`）。
+                // 成功提示在顶部，错误在底部。
                 let bubble = div()
                     .px(px(11.0))
                     .py(px(5.0))
@@ -938,7 +938,7 @@ mod tests {
     use super::{photo_size, rope_y, width_for};
 
     #[test]
-    fn layout_matches_vue_shelf() {
+    fn shelf_layout() {
         assert_eq!(width_for(0), 270.0);
         assert_eq!(width_for(9), 966.0);
         assert_eq!(photo_size(Some(320), Some(180)), (144.0, 81.0));

@@ -1,7 +1,6 @@
 //! 录制偏好（格式、帧率、画质、倒计时、光标、键鼠特效、声音）。
 //!
-//! 字段与 Vue 版 `features/recording/preferences.ts` 一致；Vue 版存在 WebView 的 localStorage 里，
-//! 原生外壳读不到，GPUI 版改存设置目录下的 `recording.json`（`{ "version": 1, "preferences": … }`）。
+//! 存在设置目录下的 `recording.json`（`{ "version": 1, "preferences": … }`）。
 //! 旧的或损坏的字段逐项回退为默认值，不保存选区、窗口身份。
 use super::config::{
     EncodingPreference, InputEffects, KeyPosition, OutputFormat, RecordingQuality,
@@ -67,7 +66,7 @@ impl Preferences {
             && cfg!(any(target_os = "windows", target_os = "macos"))
     }
 
-    /// 逐项读取，非法值保留默认（与 Vue 版 normalizeRecordingPreferences 相同的取值范围）。
+    /// 逐项读取，非法值保留默认。
     pub fn normalize(value: &Value) -> Self {
         let mut result = Self::default();
         let Some(source) = value.as_object() else {

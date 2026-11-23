@@ -1,10 +1,10 @@
 //! 日志：`log` 门面 + 追加写入应用日志目录。
 //!
-//! 与 Tauri 版共用日志目录（`snap_core::paths::log_dir`），但写入独立文件 `snap-desk-gpui.log`，
+//! 与旧版共用日志目录（`snap_core::paths::log_dir`），但写入独立文件 `snap-desk-gpui.log`，
 //! 两个程序同时运行时不会交错写同一文件。日志器自身失败（磁盘满、文件被占用）只丢弃该条，
 //! 不影响用户操作，也不在失败路径递归记录。
 //!
-//! 级别：本机偏好 `logging.json`（配置目录，与 Tauri 版共用，设置窗口“日志”页可改，立即生效）；
+//! 级别：本机偏好 `logging.json`（配置目录，与旧版相同，设置窗口“日志”页可改，立即生效）；
 //! 环境变量 `SNAP_DESK_LOG` 存在时以它为准（调试用，可到 trace）。
 use snap_core::diagnostics::{level, logs::Level};
 use std::{

@@ -1,6 +1,6 @@
 //! 标注编辑几何与撤销历史：外接矩形、移动、缩放、命中测试、放大镜镜框、序号与历史。
 //!
-//! 与 Vue 版 `src/features/annotations/annotations.ts` 逐项对应，供 GPUI 版截图与贴图共用。
+//! 供截图与贴图共用。
 //! 坐标全部是原图物理像素；`crop` 是允许编辑的范围（截图选区或贴图整图）。
 use super::{Annotation, Kind, Point};
 use std::collections::HashSet;

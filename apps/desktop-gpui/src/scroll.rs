@@ -1,4 +1,4 @@
-//! 滚动截图（对照 Tauri 版 `capture/scroll/{session,chrome}.rs` 与 Vue `ScrollPreview.vue`）。
+//! 滚动截图。
 //!
 //! 采集、稳定检测、匹配、拼接、恢复与输出都在 core（`snap_core::scroll`），由采集线程驱动；
 //! 全局监听（首次滚轮锁定方向、Esc 取消、Ctrl+C 完成）也在 core。这里负责：
@@ -8,7 +8,7 @@
 //! 3. 采集线程通过 [`GpuiHost`] 写入共享状态，控制条每 100 ms 读取并执行窗口操作；
 //!    结束后控制条显示结果（文件名、打开文件夹），数秒后自动关闭。
 //!
-//! 与 Tauri 版的差异：结果 PNG 存在数据目录 `scroll-results`（不经导出暂存记录）；预览/控制条遮挡选区时
+//! 结果 PNG 存在数据目录 `scroll-results`（不经导出暂存记录）；预览/控制条遮挡选区时
 //! 只在 Windows 上由捕获排除保证不进入画面（macOS/Linux 未实现采样时临时隐藏）；结果不进主界面。
 use gpui_kit::*;
 use image::RgbaImage;
@@ -79,7 +79,7 @@ pub fn active(cx: &App) -> bool {
     })
 }
 
-/// 截图/滚动截图快捷键或托盘在采集中触发：结束采集并输出（与 Tauri 版一致）。
+/// 截图/滚动截图快捷键或托盘在采集中触发：结束采集并输出。
 pub fn stop(cx: &App) -> bool {
     cx.try_global::<Scroller>()
         .is_some_and(|s| core::stop(&s.state))
@@ -729,7 +729,7 @@ impl Render for Controls {
             .border_1()
             .border_color(rgb(0xd4d4d8))
             .text_color(rgb(0x27272a))
-            // Esc 取消且不保存（Vue `ScrollPreview.vue`）。
+            // Esc 取消且不保存。
             .on_key_down(cx.listener(|v, event: &KeyDownEvent, _, cx| {
                 if event.keystroke.key == "escape" && v.result.is_none() {
                     cx.stop_propagation();
@@ -834,7 +834,7 @@ impl Render for Controls {
                 .on_click(cx.listener(|v, _: &ClickEvent, _, cx| v.act(false, cx))),
         )
         .child({
-            // 取消：只有图标，恢复或失败时带文字；悬停为浅红（Vue `.cancel`）。
+            // 取消：只有图标，恢复或失败时带文字；悬停为浅红。
             let labelled = recovering || failed;
             let mut cancel = div()
                 .id("scroll-cancel")

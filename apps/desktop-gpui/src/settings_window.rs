@@ -1,4 +1,4 @@
-//! 设置窗口（对照 Vue 主界面 `App.vue` 的设置页与 `ShortcutInput.vue`）。
+//! 设置窗口。
 //!
 //! 托盘“设置…”打开。左侧导航，右侧为页面：截图、录屏、贴图、剪贴板、通用、快捷键。每个控件修改后立即
 //! 经 [`crate::shell::update_settings`] 写盘（先重读磁盘再只改对应字段，快捷键注册与写盘为一笔事务）；
@@ -7,8 +7,8 @@
 //! 快捷键录入：点击按键框后注销全部全局快捷键（否则组合会被系统热键吞掉），按下组合即预览，
 //! 全部按键松开后保存；Esc 取消，Backspace/Delete 禁用该动作；窗口失焦也会取消并恢复全局快捷键。
 //!
-//! 截图、录屏的默认保存目录可更改或恢复默认（与 Tauri 版共用目录记录文件）。
-//! 通用页：开机自启（core `autostart`，与 Tauri 版共用登录项）、配置导出/导入（core `settings::backup`，
+//! 截图、录屏的默认保存目录可更改或恢复默认（目录记录文件与旧版相同）。
+//! 通用页：开机自启（core `autostart`，与旧版同一登录项）、配置导出/导入（core `settings::backup`，
 //! 导入事务见 `shell::import_backup`）。
 use gpui_kit::{
     component::{
@@ -26,7 +26,7 @@ use std::{
     time::Duration,
 };
 
-/// 设置窗口配色（Vue `.app-shell` 的 `--desk-*` 变量，见 `theme::desk`），随主题变化。
+/// 设置窗口配色（见 `theme::desk`），随主题变化。
 mod col {
     fn d() -> &'static crate::theme::DeskPalette {
         crate::theme::desk()
@@ -135,7 +135,7 @@ pub fn open(cx: &mut App) {
     }
     let settings = crate::shell::settings(cx);
     let title = snap_core::i18n::for_language(&settings.appearance.language, "设置").to_owned();
-    // 与 Tauri 主窗口一致：820×580，最小 680×500。
+    // 820×580，最小 680×500。
     let size = size(px(820.0), px(580.0));
     let options = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(Bounds::centered(None, size, cx))),
@@ -189,7 +189,7 @@ enum Page {
     About,
 }
 
-/// 导航分组（Vue `groups`）：名称与页面；关键词让搜索也能命中页面内的设置项。
+/// 导航分组：名称与页面；关键词让搜索也能命中页面内的设置项。
 const GROUPS: [(&str, &[Page]); 3] = [
     (
         "工具",
@@ -905,7 +905,7 @@ enum KeyResult {
     Shortcut(String),
 }
 
-/// GPUI 按键 → 设置中的快捷键写法（与 Vue `captureShortcut` 一致：`Ctrl+Alt+Shift+Super+主键`）。
+/// GPUI 按键 → 设置中的快捷键写法（`Ctrl+Alt+Shift+Super+主键`）。
 fn shortcut_from_keystroke(keystroke: &Keystroke) -> KeyResult {
     let m = &keystroke.modifiers;
     let modifiers: Vec<&str> = [
@@ -1084,7 +1084,7 @@ fn note(text: String) -> Div {
         .child(text)
 }
 
-/// 按钮样式（Vue `Button`：default / outline / ghost / destructive，28 像素高）。
+/// 按钮样式（default / outline / ghost / destructive，28 像素高）。
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ButtonKind {
     Primary,
@@ -1151,7 +1151,7 @@ fn kbd(text: String) -> Div {
         .child(text)
 }
 
-/// 工具页顶部卡片（Vue `ToolHero`）：图标、名称与可选说明、快捷键与操作。
+/// 工具页顶部卡片：图标、名称与可选说明、快捷键与操作。
 fn hero(
     icon: &'static [u8],
     title: String,
@@ -1325,7 +1325,7 @@ impl SettingsView {
         switch(id, on, false).on_click(cx.listener(move |view, _: &ClickEvent, _, cx| view.change_recording(cx, |p| change(p, !on))))
     }
 
-    /// 下拉选择（Vue `SelectControl`）：细线框触发器 + 浮层列表，选中项强调色。
+    /// 下拉选择：细线框触发器 + 浮层列表，选中项强调色。
     fn select<T: Copy + PartialEq + 'static>(
         &self,
         id: &'static str,
@@ -1352,7 +1352,7 @@ impl SettingsView {
         self.select_core(id, current, options, None, cx, pick)
     }
 
-    /// 带图标与连接方式的下拉（Vue `ProviderMenu`：识别/翻译引擎）。`decor(value)` 返回 (图标, 连接方式文字)。
+    /// 带图标与连接方式的下拉（识别/翻译引擎）。`decor(value)` 返回 (图标, 连接方式文字)。
     fn select_decorated<T: Copy + PartialEq + 'static>(
         &self,
         id: &'static str,
@@ -1915,7 +1915,7 @@ impl SettingsView {
         let e = &s.recording_export;
         let p = crate::recording::preferences();
         let mp4 = p.format == OutputFormat::Mp4;
-        // 视频与导出、录制行为（Vue `RecordingPreferences.vue`）。
+        // 视频与导出、录制行为。
         let mut video = vec![
             row(
                 t("保存格式"),
@@ -1967,7 +1967,7 @@ impl SettingsView {
             ),
             row(t("录制光标"), None, self.rec_toggle("rec-cursor", p.capture_cursor, cx, |p, v| p.capture_cursor = v)),
         ];
-        // 键鼠特效（Vue `RecordingInputSettings.vue` 的设置行形态）。
+        // 键鼠特效。
         let fx = &p.effects;
         let mut effects = Vec::new();
         for (index, (label, on)) in [("点击光圈", fx.clicks), ("鼠标移动尾迹", fx.movement), ("按住拖动轨迹", fx.drag), ("滚轮方向提示", fx.wheel)].into_iter().enumerate() {
@@ -2009,7 +2009,7 @@ impl SettingsView {
                 self.rec_segmented("fx-duration", fx.duration_ms, [400, 800, 1200, 2000].into_iter().map(|v| (v, format!("{v} ms"))).collect(), cx, |p, v| p.effects.duration_ms = v),
             ));
         }
-        // 特效颜色（Vue 用系统取色器；GPUI 没有原生取色控件，改为色板，含各自的默认色）。
+        // 特效颜色：GPUI 没有原生取色控件，用色板（含各自的默认色）。
         const FX_COLORS: [[u8; 3]; 8] = [
             [64, 160, 255],
             [255, 112, 80],
@@ -2066,7 +2066,7 @@ impl SettingsView {
             .cursor_pointer()
             .child(t("恢复默认"))
             .on_click(cx.listener(|view, _: &ClickEvent, _, cx| view.change_recording(cx, |p| p.effects = Default::default())));
-        // 录屏进行中：主操作换成开始/暂停/恢复/停止并导出/取消并清理（Vue `RecordingPanel.vue`）。
+        // 录屏进行中：主操作换成开始/暂停/恢复/停止并导出/取消并清理。
         use snap_core::recording::{Phase, RecordingAction};
         let control = |id: &'static str, label: &str, kind: ButtonKind, action: RecordingAction, cx: &mut Context<Self>| {
             button(id, t(label), kind, true)
@@ -2204,7 +2204,7 @@ impl SettingsView {
         let meta = status.as_ref().map(|status| {
             format!("{} {} {:.1} MiB", status.count, t("条 ·"), status.byte_size as f64 / 1_048_576.0)
         });
-        // 记录状态（Vue：正在记录 / 已暂停 / 当前平台不支持）。
+        // 记录状态：正在记录 / 已暂停 / 当前平台不支持。
         let recording_status = match &status {
             Some(st) if st.supported && st.enabled => div()
                 .flex()
@@ -2218,7 +2218,7 @@ impl SettingsView {
             Some(_) => div().text_xs().text_color(rgb(col::muted())).child(t("已暂停")),
             None => div().text_xs().text_color(rgb(col::muted())).child(t("状态未读取")),
         };
-        // 顶部暂存架（Vue `ShelfSettings.vue`）。
+        // 顶部暂存架。
         let shelf = crate::shelf::settings(cx);
         let mut shelf_rows = Vec::new();
         if let Some(shelf) = shelf {
@@ -2365,7 +2365,7 @@ impl SettingsView {
         t: &dyn Fn(&str) -> String,
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
-        // 文件与存储（与 Tauri 版 `app_directories` 顺序一致，日志目录在日志页）。
+        // 文件与存储（日志目录在日志页）。
         let mut directories = Vec::new();
         let data = snap_core::paths::local_data_dir();
         let fixed: [(&'static str, Option<PathBuf>); 2] = [
@@ -2488,7 +2488,7 @@ impl SettingsView {
                     })),
             )])
             .into_any_element(),
-            // macOS 系统权限（Vue `GeneralSettings.vue`）：屏幕录制、辅助功能、输入监控。
+            // macOS 系统权限：屏幕录制、辅助功能、输入监控。
             div().children(self.permission_section(t, cx)).into_any_element(),
             heading(t("文件与存储")).into_any_element(),
             card(directories).into_any_element(),
@@ -2639,7 +2639,7 @@ impl SettingsView {
         for (index, (action, name, value)) in s.shortcuts.entries().into_iter().enumerate() {
             let capturing = self.capture.as_ref().filter(|c| c.action == action);
             let editing = capturing.is_some();
-            // 按键框（Vue `ShortcutInput`）：每个键一个 kbd；录入中显示预览与帮助。
+            // 按键框：每个键一个 kbd；录入中显示预览与帮助。
             let mut field = div()
                 .id(("shortcut", index))
                 .min_w(px(120.0))
@@ -2761,7 +2761,7 @@ impl SettingsView {
                 })
             }));
         let mut elements = Vec::new();
-        // Linux（Wayland 或全局快捷键不可用）：列出可在桌面/合成器里绑定的命令（Vue `shortcut-commands`）。
+        // Linux（Wayland 或全局快捷键不可用）：列出可在桌面/合成器里绑定的命令。
         if cfg!(target_os = "linux") {
             let support = snap_core::desktop_support::current();
             if support.shortcut_commands_needed() {
@@ -2812,7 +2812,7 @@ fn shadow_index(value: &PinShadow) -> usize {
     }
 }
 
-/// 可更改的默认保存目录。记录文件与 Tauri 版共用（配置目录下）。
+/// 可更改的默认保存目录。记录文件在配置目录下，与旧版相同。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Folder {
     Captures,
@@ -3008,7 +3008,7 @@ impl Render for SettingsView {
                             })),
                     )
                     .child(t(page.label()))
-                    // 有新版本时“关于与帮助”带红点（Vue `.nav-dot`）。
+                    // 有新版本时“关于与帮助”带红点。
                     .children((page == Page::About && has_update).then(|| {
                         div().ml_auto().size(px(6.0)).flex_none().rounded_full().bg(rgb(0xdc2626))
                     }));
@@ -3161,7 +3161,7 @@ impl Render for SettingsView {
                     .flex()
                     .items_center()
                     .gap(px(8.0))
-                    // 有新版本：顶部“有更新”，打开“关于与帮助”的更新面板（Vue `UpdateNotice.vue`）。
+                    // 有新版本：顶部“有更新”，打开“关于与帮助”的更新面板。
                     .children((has_update && self.page != Page::About).then(|| {
                         about_page::dot_button("update-notice", t("有更新"), true)
                             .on_click(cx.listener(|view, _: &ClickEvent, _, cx| {

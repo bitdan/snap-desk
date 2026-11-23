@@ -1,5 +1,5 @@
 //! 用户下载资源（OCR 模型、运行库、字体）的清单、校验、下载与安装；进度显示由各外壳实现。
-//! 资源存入可写的数据目录 `<data_dir>/resources`（与 Tauri 版 `app_data_dir/resources` 相同），绝不写安装目录。
+//! 资源存入可写的数据目录 `<data_dir>/resources`（与旧版相同），绝不写安装目录。
 //! 临时文件经过大小、摘要校验后原子替换，失败不破坏已有文件。
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};

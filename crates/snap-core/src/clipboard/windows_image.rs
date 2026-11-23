@@ -1,6 +1,6 @@
 //! Windows 图片复制：编码在打开剪贴板之前完成，缩短系统资源占用时间。
 //! 同时写入 PNG 与 CF_DIBV5（保留 alpha）。剪贴板必须有所有者窗口（空所有者会让写入失败），
-//! 由外壳传入其常驻窗口的 HWND：Tauri 版用主窗口，GPUI 版用截图浮层窗口。
+//! 由外壳传入其常驻窗口的 HWND（截图浮层窗口）。
 use image::{ImageFormat, RgbaImage};
 use std::{io::Cursor, sync::Mutex, time::Duration};
 

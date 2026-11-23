@@ -1,14 +1,14 @@
 //! 识别结果窗口：文字识别（可编辑草稿）、图片翻译、二维码。截图与贴图共用。
 //!
-//! 对照 Vue 版 `OcrWorkspace.vue`、`TranslationPanel.vue`、`QrResultView.vue`、`PinRecognition.vue`：
+//! 截图与贴图的识别结果：
 //! - 识别出内容后截图浮层即关闭，结果窗口独立存活，直到用户关闭；
 //! - OCR 严格使用设置中所选引擎（本地 PP-OCR、系统 OCR、在线服务；微信 OCR 暂不支持），
-//!   设置“自动复制”“自动合并换行”与 Tauri 版一致；
+//!   设置“自动复制”“自动合并换行”；
 //! - 在线翻译只发送识别出的文字，发送前需要用户点击“发送翻译”确认；本地 CTranslate2 翻译在本机进程中执行（`local_translate.rs`）；
 //! - 二维码只在用户确认后才打开 HTTP/HTTPS 链接。
 //! 识别与翻译在后台线程执行（翻译用一个临时的单线程 tokio 运行时承载异步 HTTP 请求）。
 //!
-//! 文字翻译窗口（对照 Vue 版 `TranslationWindow.vue`）复用同一面板、不带图片：“翻译”快捷键先在前台应用
+//! 文字翻译窗口复用同一面板、不带图片：“翻译”快捷键先在前台应用
 //! 复制选中文字（core `recognition::selected_text`；X11 读 PRIMARY 选区），取到时自动翻译，否则打开空白窗口
 //! 手动输入；窗口内可“截图翻译”。
 #[path = "recognition_ui.rs"]
@@ -193,9 +193,9 @@ struct Panel {
     /// 识别结果首次就绪时填入草稿（需要窗口，留到下次渲染执行）。
     fill: Option<String>,
     fill_translation: Option<String>,
-    /// 窗口置顶（对照 Vue 翻译窗口的置顶按钮）；新窗口为普通层级。
+    /// 窗口置顶；新窗口为普通层级。
     pinned: bool,
-    /// 显示左侧原图（Vue “显示/隐藏原图”）。
+    /// 显示左侧原图（“显示/隐藏原图”）。
     show_image: bool,
 }
 
@@ -328,7 +328,7 @@ impl Panel {
         .detach();
     }
 
-    /// 用户点击“发送翻译”即视为确认上传识别文字（与 Tauri 版 consent 一致）。
+    /// 用户点击“发送翻译”即视为确认上传识别文字。
     fn translate(&mut self, cx: &mut Context<Self>) {
         let source = self.draft.read(cx).value().to_string();
         self.translate_text(source, cx);

@@ -1,4 +1,4 @@
-//! 本机日志级别偏好（配置目录 `logging.json`，Tauri 版与 GPUI 版共用）：独立于可导入的业务配置。
+//! 本机日志级别偏好（配置目录 `logging.json`，与旧版相同）：独立于可导入的业务配置。
 use super::logs::Level;
 use std::{fs, io::Write, path::Path};
 

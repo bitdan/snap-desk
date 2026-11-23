@@ -1,8 +1,8 @@
-//! 剪贴板组合导出窗口（对照 Vue 版 `ClipboardComposer.vue`）：所选文本与图片按顺序导出为 PDF、长图或分别保存。
+//! 剪贴板组合导出窗口：所选文本与图片按顺序导出为 PDF、长图或分别保存。
 //!
-//! 素材可上移、下移、移除；参数与 Tauri 版相同（页面 A4/原始比例、长图背景、间距 0～200px、边距 0～30mm），
+//! 素材可上移、下移、移除；参数（页面 A4/原始比例、长图背景、间距 0～200px、边距 0～30mm），
 //! 编码与校验在 core `snap_core::clipboard::export`。文本素材可改写（只作用于本次导出，不修改历史，可还原原文）；
-//! Vue 版的分页预览未迁移。
+//! 暂不提供分页预览。
 //! 文本排版字体：设置里下载/选择的导出字体，没有时回退到本机中文字体。
 use crate::annotate;
 use gpui_kit::{
@@ -355,7 +355,7 @@ async fn run(
     Ok(Some(count))
 }
 
-/// `--cmp-*` 色值（Vue `ClipboardComposer.vue`）。
+/// `--cmp-*` 色值。
 struct Colors {
     bg: u32,
     soft: u32,
@@ -433,7 +433,7 @@ impl Composer {
         button.hover(move |s| s.bg(rgb(soft)).text_color(rgb(hover_fg)))
     }
 
-    /// 数值输入（−/+ 与数值，样式同 Vue 的 64 像素数字框）。
+    /// 数值输入（−/+ 与数值，64 像素宽）。
     fn stepper(&self, id: &'static str, value: String, unit: &'static str, down: fn(&mut Self, &mut Context<Self>), up: fn(&mut Self, &mut Context<Self>), c: &Colors, cx: &mut Context<Self>) -> Div {
         let small = |index: usize, label: &'static str, action: fn(&mut Self, &mut Context<Self>)| {
             let hover = c.hover;

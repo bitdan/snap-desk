@@ -190,7 +190,7 @@ Use the [issue forms](https://github.com/bitdan/snap-desk/issues/new/choose); Ch
 ## Acknowledgements
 
 - [Tendedero](https://github.com/alejandrobujan/tendedero) by Alejandro Buján: a reference for the top shelf's hanging cards, hover-to-reveal, click-to-copy, and drag-to-share interactions. Thanks for sharing the project as open source.
-- [Tauri](https://github.com/tauri-apps/tauri): an easy-to-use GUI framework.
+- [GPUI](https://www.gpui.rs/) (by Zed): the GPU-accelerated Rust UI framework the current version is built on; earlier versions were built on [Tauri](https://github.com/tauri-apps/tauri).
 - [Pot](https://github.com/pot-app/pot-desktop): a reference for the translation and OCR modules. Thanks for sharing the project as open source.
 - [wechat_ocr_sdk](https://github.com/MapleREHub/wechat_ocr_sdk): provides the Rust adapter for WeChat PC's built-in OCR engine.
 - [LINUX DO](https://linux.do): a sincere, friendly and professional tech community; thanks to its members for trying Snap Desk and sending feedback.

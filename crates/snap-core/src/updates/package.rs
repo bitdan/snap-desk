@@ -1,5 +1,5 @@
-//! 更新包：读取发布自带的固定清单（Tauri updater 静态 JSON），校验其中的版本与安装包地址，
-//! 下载后用 minisign 公钥校验签名（与 tauri-plugin-updater 的 `verify_signature` 规则一致，且要求签名中记录的版本
+//! 更新包：读取发布自带的固定清单（静态 JSON），校验其中的版本与安装包地址，
+//! 下载后用 minisign 公钥校验签名（且要求签名中记录的版本
 //! 与清单版本相同）。清单与镜像都不受信任：地址只能指向同一 tag 下、当前分发形式的附件。
 use super::{download::Network, Found, REPOSITORY};
 use base64::Engine;

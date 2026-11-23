@@ -1,4 +1,4 @@
-//! 截图会话回放（对照 Tauri `capture/history.rs`）：只在内存保留成功截图的压缩底图、选区和标注，
+//! 截图会话回放：只在内存保留成功截图的压缩底图、选区和标注，
 //! 独立于剪贴板历史。`,` 回到上一张、`.` 前往下一张，越过最新一张时回到本次现场，不重新抓屏。
 //!
 //! 回放的画面没有吸附候选与窗口来源（历史 HWND 已失效），不执行“截图后动作”，也不再计入历史。
@@ -13,7 +13,7 @@ use std::{collections::VecDeque, sync::Arc};
 
 const MAX_ENTRIES: usize = 20;
 const MAX_BYTES: usize = 128 * 1024 * 1024;
-/// 超过该像素数的截图不加入历史（与 Tauri 版一致）。
+/// 超过该像素数的截图不加入历史。
 const MAX_PIXELS: u64 = 32_000_000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

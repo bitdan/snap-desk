@@ -1,4 +1,4 @@
-//! 剪贴板历史窗口的界面（还原 Vue `ClipboardHistory.vue` 与 `ClipboardItem.vue`）。
+//! 剪贴板历史窗口的界面。
 //!
 //! 无边框窗口：顶栏（搜索框、固定、收起）与底栏可拖动窗口；分类为圆角胶囊；条目为浅灰卡片，标题行显示类型图标、
 //! 类型、信息、收藏星标与时间，悬停或选中时操作按钮浮在标题行右侧；底栏未选择时显示容量与帮助、刷新、清空，
@@ -66,7 +66,7 @@ fn icon(data: &'static [u8], size: f32, color: u32) -> Icon {
         .text_color(rgb(color))
 }
 
-/// 条目类型（与 Vue `type` 计算一致）：图片、文件、颜色、链接、文本。
+/// 条目类型：图片、文件、颜色、链接、文本。
 fn kind_of(item: &Item) -> (&'static [u8], &'static str) {
     match item.kind {
         Kind::Image => (icons::IMAGE, "图片"),
@@ -88,7 +88,7 @@ fn is_link(text: &str) -> bool {
         && !text.chars().any(char::is_whitespace)
 }
 
-/// 按扩展名的文件图标与颜色（Vue `fileTypes`）；以分隔符结尾为文件夹。
+/// 按扩展名的文件图标与颜色；以分隔符结尾为文件夹。
 pub(super) fn file_icon(path: &str) -> (&'static [u8], u32) {
     if path.ends_with(['/', '\\']) {
         return (icons::FOLDER, 0x71717a);
@@ -157,7 +157,7 @@ fn file_name(path: &str) -> String {
         .to_owned()
 }
 
-/// 字节数（Vue `size`）。
+/// 字节数。
 pub(super) fn size_label(bytes: u64) -> String {
     if bytes < 1024 {
         format!("{bytes} B")
@@ -168,7 +168,7 @@ pub(super) fn size_label(bytes: u64) -> String {
     }
 }
 
-/// 当天只显示时刻，更早的记录带“月/日”（Vue `time`）。
+/// 当天只显示时刻，更早的记录带“月/日”。
 pub(super) fn time_label(millis: i64) -> String {
     use chrono::{Local, TimeZone};
     let Some(date) = Local.timestamp_millis_opt(millis).single() else {
@@ -949,7 +949,7 @@ impl HistoryView {
             .child(actions)
     }
 
-    /// 窗口内浮层：遮罩 + 居中卡片（帮助、删除确认；Vue 版为独立子窗口）。
+    /// 窗口内浮层：遮罩 + 居中卡片（帮助、删除确认）。
     fn overlay(&self, card: Div, cx: &mut Context<Self>) -> Div {
         div()
             .absolute()
@@ -1242,7 +1242,7 @@ impl HistoryView {
         menu
     }
 
-    /// 列表接近底部时加载下一页（Vue `near-end`）。
+    /// 列表接近底部时加载下一页。
     fn maybe_load_more(&mut self, cx: &mut Context<Self>) {
         if self.loading || self.next_cursor.is_none() {
             return;
@@ -1420,7 +1420,7 @@ mod tests {
     use super::{file_icon, icons, is_link, size_label};
 
     #[test]
-    fn labels_follow_the_vue_item() {
+    fn item_labels() {
         assert_eq!(size_label(512), "512 B");
         assert_eq!(size_label(2048), "2.0 KB");
         assert_eq!(size_label(3 * 1_048_576), "3.0 MB");

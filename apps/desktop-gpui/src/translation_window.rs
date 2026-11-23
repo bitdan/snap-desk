@@ -1,10 +1,10 @@
-//! 文字翻译窗口（还原 Vue `TranslationWindow.vue` + `TranslationPanel.vue` 的 standalone 形态）。
+//! 文字翻译窗口。
 //!
 //! 无边框窗口（380×560）：顶栏为置顶按钮、可拖动的“文字翻译”标题与关闭；下方依次是原文卡片（可编辑，
 //! 复制/读取剪贴板/合并换行/清空/截图翻译，检测到的语言，翻译按钮）、语言条（原文语言、交换、目标语言）、
 //! “中英自动互译”与译文卡片（服务名、状态、重新读取配置；复制/回译/重新翻译，取消或目标语言）。
-//! 回车翻译、Shift+回车换行，Ctrl+回车也翻译，Esc 关闭。中英自动互译按原文主体语言选择方向（与 Vue
-//! `translation-direction.ts` 相同），不改写默认目标语言。
+//! 回车翻译、Shift+回车换行，Ctrl+回车也翻译，Esc 关闭。中英自动互译按原文主体语言选择方向，
+//! 不改写默认目标语言。
 use crate::theme;
 use gpui_kit::{
     component::{
@@ -42,7 +42,7 @@ mod icons {
     icon!(INFO, "info");
 }
 
-/// 目标语言（Vue `targetLanguages`）；本地翻译只支持前两项。
+/// 目标语言；本地翻译只支持前两项。
 const LANGUAGES: [(&str, &str); 6] = [
     ("zh-CN", "简体中文"),
     ("en", "英语"),
@@ -52,7 +52,7 @@ const LANGUAGES: [(&str, &str); 6] = [
     ("de", "德语"),
 ];
 
-/// 兼容服务的显示名（Vue `translationPresets`，按接口地址匹配）。
+/// 兼容服务的显示名（按接口地址匹配）。
 const PRESETS: [(&str, &str); 4] = [
     ("DeepSeek", "https://api.deepseek.com/chat/completions"),
     ("Groq", "https://api.groq.com/openai/v1/chat/completions"),
@@ -103,7 +103,7 @@ fn colors() -> Colors {
     }
 }
 
-/// 轻量中英主体语言判断（Vue `detectTextLanguage`）：两个汉字约等于一个英文词。
+/// 轻量中英主体语言判断：两个汉字约等于一个英文词。
 pub fn detect_language(text: &str) -> &'static str {
     let mut chinese = 0usize;
     let mut english = 0usize;
@@ -341,7 +341,7 @@ impl Translator {
         cx.notify();
     }
 
-    /// 修改原文或方向即清除旧结果（Vue `invalidate`）。
+    /// 修改原文或方向即清除旧结果。
     fn invalidate(&mut self, cx: &mut Context<Self>) {
         self.translated.clear();
         self.message = None;
@@ -1277,7 +1277,7 @@ fn checkbox(checked: bool, c: &Colors) -> Div {
         }))
 }
 
-/// 合并换行（Vue `mergeLines`）：连字符换行直接拼接，其余换行换成空格。
+/// 合并换行：连字符换行直接拼接，其余换行换成空格。
 pub fn merge_lines(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut chars = text.chars().peekable();

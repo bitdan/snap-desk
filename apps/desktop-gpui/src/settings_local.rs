@@ -1,8 +1,8 @@
-//! 设置“识别与翻译”页的本地翻译管理（对照 Vue `LocalTranslationModels.vue` 与 Tauri `translation_models.rs`）。
+//! 设置“识别与翻译”页的本地翻译管理。
 //!
 //! 引擎（CTranslate2 worker，Windows x64）与两个语言包（英→中、中→英）的状态、下载、导入、删除。
 //! 校验与安装在 core；替换前先停止并锁住缓存的 worker（`local_translate::with_worker_stopped`），
-//! 进度与资源下载共用同一显示。语言包与引擎目录和 Tauri 版共用。
+//! 进度与资源下载共用同一显示。语言包与引擎目录与旧版相同。
 use super::{SettingsView, col, row};
 use gpui_kit::*;
 use snap_core::recognition::{

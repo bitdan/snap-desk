@@ -34,9 +34,9 @@ use std::{sync::Arc, time::{Duration, Instant}};
 #[path = "capture_history.rs"]
 mod history;
 
-/// 选区边框与吸附框（Vue `.selection` / `.snap-target` 的 #60a5fa）。
+/// 选区边框与吸附框（#60a5fa）。
 const ACCENT: u32 = 0x60a5fa;
-/// 手柄边框（Vue `.resize-handle`）。
+/// 手柄边框。
 const HANDLE_BORDER: u32 = 0x3b82f6;
 /// 选区外的遮罩：半透明黑，保留冻结画面可辨认。
 const MASK: u32 = 0x0000_0066;
@@ -91,12 +91,12 @@ pub struct Session {
     record: snap_core::recording::preferences::Preferences,
     /// 截图时的顶层窗口（录屏“整个窗口”来源）；选区与其边界一致时可选。
     window_targets: Vec<crate::recording::WindowTarget>,
-    /// 本次录屏选择录制整个窗口（不保存为偏好，与 Tauri 版来源选择一致）。
+    /// 本次录屏选择录制整个窗口（不保存为偏好）。
     record_window: bool,
     /// 已识别的顶层窗口及原生句柄（“原生窗口截图”只接受这些窗口）与截图是否含光标。
     natives: Vec<(Rect, snap_core::capture::NativeWindow)>,
     include_cursor: bool,
-    /// 工具栏被拖动后的偏移（逻辑像素，Vue 的“拖动工具栏；双击恢复位置”），与拖动起点。
+    /// 工具栏被拖动后的偏移（逻辑像素；双击工具栏恢复位置），与拖动起点。
     toolbar_offset: (f32, f32),
     toolbar_drag: Option<(Point<Pixels>, (f32, f32))>,
 }
@@ -144,7 +144,7 @@ impl Session {
         self.layers.update(&self.editor);
     }
 
-    /// 取色放大镜只在调整选区模式、没有标注且不在导出时显示（与 Vue 版一致）。
+    /// 取色放大镜只在调整选区模式、没有标注且不在导出时显示。
     fn picking(&self) -> bool {
         !self.busy && !self.annotating && self.editor.shapes().is_empty() && !self.editor.interacting()
     }
@@ -332,7 +332,7 @@ fn begin(cx: &mut App, settings: &Settings, delay: Duration, purpose: Option<Rec
         log::info!("event=gpui.capture_ignored reason=active");
         return;
     }
-    // 录屏、滚动截图占用屏幕期间不截图（与 Tauri 版一致）；录屏快捷键另行处理停止。
+    // 录屏、滚动截图占用屏幕期间不截图；录屏快捷键另行处理停止。
     if crate::recording::active(cx) {
         log::info!("event=gpui.capture_ignored reason=recording");
         return;
@@ -618,7 +618,7 @@ fn select_screen(cx: &mut App, _owner: isize) {
     }
 }
 
-/// 选区正好是已识别窗口时的原生句柄（Vue：选中的吸附目标是窗口才显示“原生窗口截图”）。
+/// 选区正好是已识别窗口时的原生句柄（选中的吸附目标是窗口时才显示“原生窗口截图”）。
 fn selected_native(s: &Session) -> Option<(Rect, snap_core::capture::NativeWindow)> {
     let selection = s.selection?;
     s.natives.iter().find(|(rect, _)| snap_core::capture::same_bounds(*rect, selection)).cloned()
@@ -910,7 +910,7 @@ fn copy(cx: &mut App, owner: isize) {
 
 #[cfg(windows)]
 pub(crate) fn write_clipboard(_cx: &App, owner: isize, image: &RgbaImage, png: Vec<u8>) -> Result<(), String> {
-    // 与 Tauri 版一致：同时写 PNG 与保留 alpha 的 DIBV5，兼容只认位图的老程序。
+    // 同时写 PNG 与保留 alpha 的 DIBV5，兼容只认位图的老程序。
     snap_core::clipboard::windows_image::copy_png(owner, image, &png)
 }
 
@@ -989,7 +989,7 @@ pub fn pin(cx: &mut App) {
     .detach();
 }
 
-/// 识别选区：文字识别与翻译用原始像素（标注可能遮挡文字），二维码与 Vue 版一致包含标注。
+/// 识别选区：文字识别与翻译用原始像素（标注可能遮挡文字），二维码包含标注。
 /// 识别在结果窗口中进行；浮层随即关闭，结果窗口独立存活。
 pub fn recognize(cx: &mut App, mode: RecognitionMode) {
     let Some((session, image, rect, shapes)) = begin_export(cx) else {
@@ -1017,7 +1017,7 @@ pub fn recognize(cx: &mut App, mode: RecognitionMode) {
 }
 
 /// 保存选区。置顶浮层会挡住系统保存对话框，因此先关闭浮层但保留会话；取消或失败时重新打开浮层，
-/// 选区保持不变。文件名、格式、目录记忆与 Tauri 版共用 `snap_core::export`。
+/// 选区保持不变。文件名、格式、目录记忆见 `snap_core::export`。
 fn save(cx: &mut App) {
     let Some((session, image, rect, shapes)) = begin_export(cx) else {
         return;
@@ -1125,7 +1125,7 @@ fn reopen(cx: &mut App, session: &Entity<Session>) {
     open_overlays(cx, session);
 }
 
-/// 截图历史模式条：上一张、位置、下一张（对照 Vue `capture-modebar`）。
+/// 截图历史模式条：上一张、位置、下一张。
 fn mode_bar(s: &Session, position: Option<(usize, usize)>, has_history: bool) -> Stateful<Div> {
     let enabled = !s.busy && !s.editor.pending && !s.editor.interacting();
     let button = |id: &'static str, label: String, on: bool| {
@@ -1210,7 +1210,7 @@ fn mode_bar(s: &Session, position: Option<(usize, usize)>, has_history: bool) ->
     bar.child(restore)
 }
 
-/// 未框选时的提示（Vue `.capture-tip`）：显示器顶部居中的深色圆角框。
+/// 未框选时的提示：显示器顶部居中的深色圆角框。
 fn capture_tip(s: &Session) -> Div {
     let (main, keys) = if s.recording {
         ("拖动选择录屏范围", "Esc 退出 · Ctrl / ⌘ + A 全屏 · R 最近选区")
@@ -1502,7 +1502,7 @@ impl Overlay {
             }
             s.sync();
             cx.notify();
-            // 回放的截图不执行“截图后动作”（与 Tauri 版一致）。
+            // 回放的截图不执行“截图后动作”。
             let after = (matches!(drag, Some(Drag::Create { .. })) && !s.recording && history::position(cx).is_none())
                 .then(|| {
                     s.selection.map(|_| match s.purpose {
@@ -1784,7 +1784,7 @@ fn export_button(
     action: fn(&mut App, isize),
 ) -> AnyElement {
     let button = if primary {
-        // 主操作（复制）：蓝底白色图标（Vue `.copy-button`）。
+        // 主操作（复制）：蓝底白色图标。
         div()
             .id(id)
             .size(px(30.0))
@@ -2136,7 +2136,7 @@ impl Render for Overlay {
                 export_button("capture-record-start", annotate::icons::VIDEO, s.text("开始录屏"), true, record),
             ]
         } else {
-            // 顺序同 Vue：重新框选、全屏、滚动截图、录屏 | 贴图、识别文字、截图翻译、二维码、保存、复制（主色）、取消。
+            // 顺序：重新框选、全屏、滚动截图、录屏 | 贴图、识别文字、截图翻译、二维码、保存、复制（主色）、取消。
             // 回放中的画面不是现场，不能开始滚动截图或录屏。
             let replaying = history::position(cx).is_some();
             let mut actions = vec![

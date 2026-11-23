@@ -1,4 +1,4 @@
-//! 设置窗口“关于与帮助”页（对照 Vue `SupportPages.vue`、`UpdateSettings.vue`、`UpdateNotice.vue`）。
+//! 设置窗口“关于与帮助”页。
 //!
 //! 应用更新：测试版开关、检查更新间隔、下载镜像、更新代理、当前版本与“检查更新 / 有更新”；发现新版本后
 //! 在下方展开更新面板（下载进度、退出并安装、下载失败时在浏览器中下载）。检查、下载、校验与安装在
@@ -8,7 +8,7 @@ use crate::updater::{self, Phase};
 use gpui_kit::*;
 use snap_core::settings::UPDATE_CHECK_MINUTES;
 
-/// 带红点的描边按钮（Vue `.update-dot` + “有更新”）。
+/// 带红点的描边按钮（“有更新”）。
 pub(super) fn dot_button(id: &'static str, label: String, enabled: bool) -> Stateful<Div> {
     let button = div()
         .id(id)
@@ -42,7 +42,7 @@ impl SettingsView {
         }
     }
 
-    /// 发现新版本后的更新面板（Vue `UpdateNotice.vue` 的窗口内容）。
+    /// 发现新版本后的更新面板。
     fn update_panel(&self, view: &updater::View, t: &dyn Fn(&str) -> String, language: &snap_core::settings::Language, cx: &mut Context<Self>) -> Div {
         let status = t(match view.phase {
             Phase::Latest => "当前渠道暂无更新",
@@ -167,7 +167,7 @@ impl SettingsView {
         let enabled = view.supported && view.configured;
         let has_update = view.has_update();
         let prerelease_build = view.current.contains('-');
-        // 版本行状态：只在检查中、已是最新、失败时显示（Vue `update-version`）。
+        // 版本行状态：只在检查中、已是最新、失败时显示。
         let status = (!has_update && matches!(view.phase, Phase::Checking | Phase::Latest | Phase::Error)).then(|| {
             let latest = view.phase == Phase::Latest;
             div()

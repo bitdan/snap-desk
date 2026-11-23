@@ -97,7 +97,7 @@ pub fn step_zoom(zoom: f64, direction: i32, minimum: f64) -> f64 {
     next.max(minimum).min(MAX_ZOOM.max(minimum))
 }
 
-/// 与 Vue 共用同一份布局尺寸，单位均为逻辑像素。
+/// 布局尺寸，单位均为逻辑像素。
 /// 窗口只包住图片；工具栏显示时才在图片上方或下方扩出一条，图片不让位、不被裁。
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]

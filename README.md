@@ -188,7 +188,7 @@
 ## 致谢
 
 - [Tendedero](https://github.com/alejandrobujan/tendedero)（Alejandro Buján）：顶部暂存架的悬挂式卡片、悬停展开、点击复制与拖出分享等交互参考了该项目，感谢其开源分享。
-- [Tauri](https://github.com/tauri-apps/tauri)：好用的 GUI 框架。
+- [GPUI](https://www.gpui.rs/)（Zed）：GPU 加速的 Rust 界面框架，当前版本基于它构建；早期版本基于 [Tauri](https://github.com/tauri-apps/tauri)。
 - [Pot](https://github.com/pot-app/pot-desktop)：翻译与 OCR 模块参考了该项目，感谢其开源分享。
 - [wechat_ocr_sdk](https://github.com/MapleREHub/wechat_ocr_sdk)：提供调用 WeChat PC 内置 OCR 引擎的 Rust 适配层。
 - [LINUX DO](https://linux.do)：真诚、友善、团结、专业的技术社区，感谢佬友们的试用与反馈。
