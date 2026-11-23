@@ -21,9 +21,9 @@ rusqlite = { version = "=0.37.0", features = ["bundled"] }
 url = "2"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 dirs = "6"
-# 只用其中的 HotKey 解析与比较；Tauri 全局快捷键插件也用同一版本，两边类型一致。
+# 只用其中的 HotKey 解析与比较，版本与应用一致。
 global-hotkey = { version = "0.8", features = ["serde"] }
-# 屏幕与窗口采集；版本与 Tauri 版锁定的一致。
+# 屏幕与窗口采集。
 xcap = "=0.9.8"
 # 识别：本地 PP-OCR（OAR 前后处理 + ort CPU 推理）、在线 OCR/翻译、二维码、资源摘要与运行库解压。
 oar-ocr = { version = "=0.10.0", default-features = false }
@@ -31,17 +31,17 @@ reqwest = { version = "0.12", default-features = false, features = ["blocking", 
 rqrr = { version = "=0.10.1", default-features = false }
 sha2 = "0.10"
 blake3 = "=1.8.2"
-# 富文本贴图：HTML 解析（与 Tauri 依赖树中已锁定的版本一致，不引入新 crate）。
+# 富文本贴图：HTML 解析。
 html5ever = "=0.27.0"
 markup5ever_rcdom = "=0.3.0"
 zip = { version = "=6.0.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 # 录屏 GIF 编码。
 gif = "=0.14.2"
-# 登录自启；与 tauri-plugin-autostart 依赖的版本一致（同一登录项格式）。
+# 登录自启；与旧版（tauri-plugin-autostart）同一版本，登录项格式不变。
 auto-launch = "=0.6.0"
 # 应用版本比较。
 semver = "1"
-# 应用更新包签名校验（minisign，与 tauri-plugin-updater 同一实现与版本）。
+# 应用更新包签名校验（minisign）。
 minisign-verify = "0.3"
 # 本地翻译 worker 进程桥（异步管道与超时）。
 tokio = { version = "1", features = ["rt", "sync", "process", "io-util", "time"] }
@@ -60,7 +60,7 @@ windows-core = "=0.62.2"
 windows-sys = { version = "=0.59.0", features = ["Win32_System_Registry", "Win32_Foundation"] }
 wechat-ocr-core = { git = "https://github.com/MapleREHub/wechat_ocr_sdk", rev = "146d838ba045aba82451a187a0fb459cc784d086" }
 
-# macOS：光标、窗口层级、隐私授权与辅助功能控件候选；版本与 Tauri/native-tls 已锁定的一致。
+# macOS：光标、窗口层级、隐私授权与辅助功能控件候选。
 [target.'cfg(target_os = "macos")'.dependencies]
 # AI 密钥存于钥匙串。
 security-framework = "=3.7.0"

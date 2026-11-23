@@ -1,6 +1,6 @@
 //! 延时截图倒计时：主屏中央显示剩余秒数，期间再按截图快捷键（或托盘“截图”）取消。
 //!
-//! Tauri 版在主窗口显示倒计时（`capture-delay` 事件）；GPUI 版没有主窗口，改为一个小的置顶提示窗。
+//! 倒计时显示在一个小的置顶提示窗里（没有常驻主窗口可用）。
 //! 提示窗不抢焦点、鼠标穿透，避免打断用户为截图准备的界面状态（菜单、悬停提示等）；
 //! 倒计时结束先关闭提示窗并稍候，再拍屏，提示窗不会出现在截图里。
 use gpui_kit::*;
@@ -15,7 +15,7 @@ const SETTLE: Duration = Duration::from_millis(250);
 /// 检查取消的间隔。
 const TICK: Duration = Duration::from_millis(100);
 
-/// 剩余整秒（向上取整），与 Tauri 版 `wait_delay` 一致。
+/// 剩余整秒（向上取整）。
 pub fn remaining(deadline: Instant, now: Instant) -> u8 {
     if now >= deadline {
         return 0;
@@ -49,7 +49,7 @@ impl Render for View {
             .items_center()
             .justify_center()
             .gap(px(6.0))
-            // 与截图浮层提示（Vue `.capture-tip`）同一套深色圆角框。
+            // 与截图浮层提示同一套深色圆角框。
             .rounded(px(10.0))
             .bg(rgba(0x242330ed))
             .text_color(rgb(0xffffff))

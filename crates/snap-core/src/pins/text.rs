@@ -118,7 +118,7 @@ mod drag_tests {
     }
 }
 
-/// 优先使用调用方传入的用户字体（Tauri 版为“通用设置”中下载或选择并校验过的字体）；
+/// 优先使用调用方传入的用户字体（“通用设置”中下载或选择并校验过的字体）；
 /// 没有时回退到本机中文字体，让普通复制文字也能直接贴图。
 pub fn font_bytes(preferred: Option<Vec<u8>>) -> Result<Vec<u8>, String> {
     if let Some(bytes) = preferred {

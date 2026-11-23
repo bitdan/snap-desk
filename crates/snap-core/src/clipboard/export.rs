@@ -1,5 +1,5 @@
 //! 剪贴板组合导出的编码部分：参数校验、素材快照、长图与 PDF 排版。
-//! 保存对话框、暂存与恢复登记由外壳负责（Tauri `clipboard/export.rs`、GPUI 历史窗口）。
+//! 保存对话框、暂存与恢复登记由外壳负责（剪贴板历史窗口）。
 use super::{
     model::{validate_ids, Kind},
     service::Service,

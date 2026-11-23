@@ -1,4 +1,4 @@
-//! 设置模型、校验与磁盘读写：Tauri 版和 GPUI 版共用同一份 `settings.json`。
+//! 设置模型、校验与磁盘读写：沿用旧版的 `settings.json`。
 //! 这里只描述“设置是什么、如何合法、如何落盘”，不注册系统快捷键、不通知界面；
 //! 快捷键事务通过闭包传入注册/释放动作，由各前端外壳接到自己的快捷键管理器上。
 pub mod backup;
@@ -10,11 +10,11 @@ pub use writer::{persist, SettingsWriter};
 use serde::{Deserialize, Serialize};
 use std::{fs, path::{Path, PathBuf}};
 
-/// 系统快捷键类型；Tauri 的 `tauri_plugin_global_shortcut::Shortcut` 也是它的重导出，
-/// 两个程序解析出的按键可直接比较和注册。
+/// 系统快捷键类型（global-hotkey 的 `HotKey`）；设置中的写法解析成它后，
+/// 可直接比较和注册。
 pub use global_hotkey::hotkey::HotKey as Shortcut;
 
-/// 设置文件路径：与 Tauri `app_config_dir()` 相同（系统配置目录 / 应用标识），
+/// 设置文件路径：与旧版（Tauri `app_config_dir()`）相同（系统配置目录 / 应用标识），
 /// 两个可执行程序读写同一份配置。
 pub fn default_path() -> Option<PathBuf> {
     crate::paths::config_dir().map(|dir| dir.join("settings.json"))

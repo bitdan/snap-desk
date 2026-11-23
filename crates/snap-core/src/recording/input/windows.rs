@@ -159,7 +159,7 @@ impl InputWindow {
     fn new(config: InputEffects) -> Result<Self, String> {
         static NEXT_CLASS: AtomicU64 = AtomicU64::new(1);
         unsafe {
-            // 独立线程生命周期内使用物理坐标；不改变 Tauri UI 线程的 DPI 上下文。
+            // 独立线程生命周期内使用物理坐标；不改变界面线程的 DPI 上下文。
             if SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)
                 .0
                 .is_null()

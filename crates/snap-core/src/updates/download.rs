@@ -1,7 +1,6 @@
 //! 更新包下载：不设总时限，持续 30 秒收不到数据才算卡住；断线或卡住后按 2、4、8、16、30 秒重试，
 //! 用 HTTP Range 从已收到的位置续传。设置了下载镜像时先经镜像下载，后面的重试再直连 GitHub。
 //! 这里只负责取回字节；调用方必须用 `package::verify` 校验签名后才能保存或安装。
-//! （由 Tauri 版 `app/updater/download.rs` 移入 core，供 GPUI 外壳使用；两边行为一致。）
 use crate::settings::{update_mirror, update_proxy, UpdateNetwork};
 use reqwest::{header, StatusCode, Url};
 use std::time::Duration;

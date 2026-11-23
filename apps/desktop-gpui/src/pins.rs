@@ -3,14 +3,14 @@
 //! 来源：截图选区（原位贴图，图片首像素对准选区）或剪贴板（图片、文件路径、文字，居中显示）。
 //! 操作：拖动移动、滚轮/±键缩放（10% 步进）、右键菜单（复制、保存、置顶、锁定、鼠标穿透、
 //! 变换、不透明度、关闭）、Ctrl+C / Ctrl+S / Ctrl+W / Esc、Ctrl+Alt+P 切换穿透。
-//! 鼠标穿透后窗口收不到点击，由全局贴图快捷键或托盘“贴图”恢复（与 Tauri 版一致）。
+//! 鼠标穿透后窗口收不到点击，由全局贴图快捷键或托盘“贴图”恢复。
 //!
-//! 尺寸与 Tauri 版共用 `snap_core::pins::PinLayout`：缩放 1 表示一图像像素对应一物理像素，
+//! 尺寸见 `snap_core::pins::PinLayout`：缩放 1 表示一图像像素对应一物理像素，
 //! 窗口只包住图片（不留透明边距）；右键菜单是独立的弹出窗口，不撑大贴图窗口。
 //! 像素预算、变换、文字排版同样来自 core。识别文字/二维码/翻译图片打开独立结果窗口（`recognition.rs`）。
 //! 按住 Ctrl（macOS 为 ⌥）拖动把内容拖到其他应用：文字贴图拖出文字，其余拖出合成后的 PNG
 //! （系统拖出目前只实现 Windows，`snap_core::drag`）。托盘“打开图片贴图”从文件创建贴图。
-//! 剪贴板富文本（CF_HTML）由 core 的白名单排版器转成图片（Tauri 版用 WebView 排版，效果略有差异）。
+//! 剪贴板富文本（CF_HTML）由 core 的白名单排版器转成图片（旧版用 WebView 排版，效果略有差异）。
 //!
 //! 标注：空格（或右键菜单“显示工具栏”）在图片下方展开工具栏，窗口随之加高、加宽；选择标注工具后
 //! 图片上的按下交给编辑器（`annotate.rs`），“移动贴图”按钮回到拖动窗口。标注坐标为贴图图像像素，
@@ -61,7 +61,7 @@ fn alive(cx: &mut App) -> Vec<(AnyWindowHandle, Entity<Pin>)> {
         .collect()
 }
 
-/// Rust 侧常驻像素：原图 + 与原图不同的当前图（与 Tauri 版的预算口径一致）。
+/// Rust 侧常驻像素：原图 + 与原图不同的当前图。
 fn retained(pin: &Pin) -> u64 {
     let pixels = |image: &RgbaImage| u64::from(image.width()) * u64::from(image.height());
     pixels(&pin.original) + if Arc::ptr_eq(&pin.original, &pin.image) { 0 } else { pixels(&pin.image) }
@@ -249,7 +249,7 @@ fn window_size(width: u32, height: u32, zoom: f64, scale: f64, shadow: &PinShado
     )
 }
 
-/// 打开/保存对话框期间临时隐藏可见贴图，防止置顶贴图盖住系统对话框（与 Tauri 版 `with_hidden_pins` 一致）。
+/// 打开/保存对话框期间临时隐藏可见贴图，防止置顶贴图盖住系统对话框。
 /// `except` 为对话框的父贴图（对话框归它所有，总在它上面）。返回本次隐藏的窗口，只恢复这些。
 pub fn hide_pins(cx: &mut App, except: Option<AnyWindowHandle>) -> Vec<AnyWindowHandle> {
     let mut hidden = Vec::new();
@@ -320,7 +320,7 @@ pub fn from_clipboard(cx: &mut App) {
         /// 富文本与其纯文字（拖出时提供文字）。
         Html(String, Option<String>),
     }
-    // 与 Tauri 版顺序一致：文件路径 → 图片 → 富文本 → 纯文字。
+    // 顺序：文件路径 → 图片 → 富文本 → 纯文字。
     let item = cx.read_from_clipboard();
     let entries = item.as_ref().map(|item| item.entries().to_vec()).unwrap_or_default();
     let plain = entries.iter().find_map(|entry| match entry {
@@ -382,7 +382,7 @@ pub fn from_clipboard(cx: &mut App) {
     .detach();
 }
 
-/// 托盘“打开图片贴图”：选择 PNG / JPEG / WebP，解码与像素上限检查同 Tauri 版（core `read_image`），居中显示。
+/// 托盘“打开图片贴图”：选择 PNG / JPEG / WebP，解码与像素上限检查见 core `read_image`，居中显示。
 /// 取消不创建贴图。
 pub fn open_file(cx: &mut App) {
     let language = crate::shell::settings(cx).appearance.language;
@@ -493,7 +493,7 @@ struct MenuColors {
 }
 
 impl MenuColors {
-    /// Vue `.pin-context-menu`：浅色白底、悬停浅蓝；深色主题深灰底。
+    /// 右键菜单：浅色白底、悬停浅蓝；深色主题深灰底。
     fn current() -> Self {
         if crate::theme::dark() {
             MenuColors { bg: 0x20252c, text: 0xe6edf3, border: 0x39424e, hover_bg: 0x303f56, hover_text: 0xe6edf3, separator: 0x39424e }
@@ -986,7 +986,7 @@ impl Pin {
         .detach();
     }
 
-    /// 像素变换在后台线程计算；预先按 Tauri 版口径检查预算，恢复原图直接共享原缓冲。
+    /// 像素变换在后台线程计算；预先检查像素预算，恢复原图直接共享原缓冲。
     fn transform(&mut self, action: Transform, cx: &mut Context<Self>) {
         if self.locked || self.busy {
             return;
@@ -1317,7 +1317,7 @@ impl Pin {
             self.commit_text(window, cx);
             return;
         }
-        // 与 Tauri 版一致：Windows/Linux 按住 Ctrl，macOS 按住 ⌥ 拖动即拖出内容。
+        // Windows/Linux 按住 Ctrl，macOS 按住 ⌥ 拖动即拖出内容。
         let drag_modifier = if cfg!(target_os = "macos") { event.modifiers.alt } else { event.modifiers.control };
         if drag_modifier && !self.locked && !self.click_through {
             // macOS / Linux 由根元素的元素拖拽接管（render 里按修饰键挂上），这里不拖动窗口。

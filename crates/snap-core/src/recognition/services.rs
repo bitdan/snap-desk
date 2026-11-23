@@ -157,7 +157,7 @@ pub fn key_ids(settings: &Settings, service_id: &str) -> Vec<String> {
     find(settings, service_id).map(|service| service.keys.clone()).unwrap_or_default()
 }
 
-/// 每个服务最多保存的密钥数（与 Vue `maxServiceKeys` 一致）。
+/// 每个服务最多保存的密钥数。
 pub const MAX_KEYS: usize = 16;
 
 /// 只显示首尾少量字符，界面可区分多个密钥而不暴露完整内容。

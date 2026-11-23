@@ -53,7 +53,7 @@ pub const LIGHT_PALETTE: Palette = Palette {
     warn_text: 0xb45309,
 };
 
-/// 剪贴板历史窗口的色值（与 Vue `ClipboardHistory.vue` 的 `--clip-*` 变量一致）。
+/// 剪贴板历史窗口的色值。
 pub struct ClipPalette {
     pub bg: u32,
     pub text: u32,
@@ -137,7 +137,7 @@ pub const CLIP_DARK: ClipPalette = ClipPalette {
     control_border: 0x768390,
 };
 
-/// 设置主窗口色值（与 Vue `workspace.css` 的 `.app-shell --desk-*` 变量一致；半透明的 soft/hover 已按所在底色混合）。
+/// 设置主窗口色值（半透明的 soft/hover 已按所在底色混合）。
 pub struct DeskPalette {
     pub bg: u32,
     pub surface: u32,

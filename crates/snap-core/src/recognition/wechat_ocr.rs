@@ -1,6 +1,6 @@
 //! 微信 4.x 本机 OCR：只发现用户已安装组件，不下载或分发微信二进制文件。
 //!
-//! 连接由调用方持有的 [`WechatOcr`] 缓存（Tauri 放在托管状态，GPUI 放在识别引擎全局）。
+//! 连接由调用方持有的 [`WechatOcr`] 缓存（放在识别引擎全局）。
 use super::ocr::OcrResult;
 use serde::Serialize;
 use std::time::Duration;

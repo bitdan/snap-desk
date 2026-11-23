@@ -1,6 +1,6 @@
 //! 截图与贴图共用的标注编辑器：工具状态、绘制/选择/移动/缩放手势、撤销重做、样式与预览图层。
 //!
-//! 行为对照 Vue 版 `use-annotations.ts`：
+//! 行为：
 //! - 标注始终使用原图物理像素坐标（截图为整张虚拟桌面截图，贴图为贴图图像），`crop` 为可编辑范围；
 //! - 一次拖动只提交一次历史；文字、序号与滤镜在完成时栅格化（`snap_core::annotations::raster`），
 //!   栅格化在后台线程进行，期间 `pending` 为真，完成后由宿主调用 [`Editor::complete`]；
@@ -43,7 +43,7 @@ pub enum Tool {
 }
 
 impl Tool {
-    /// 工具栏顺序，与 Vue 版默认顺序一致。
+    /// 工具栏顺序。
     pub const ALL: [Self; 17] = [
         Self::Edit,
         Self::Rectangle,
@@ -139,7 +139,7 @@ impl Tool {
     }
 }
 
-/// 折叠模式按用途合并工具（与 Vue 版 `annotationToolGroups` 一致）；每组显示最近使用的工具，
+/// 折叠模式按用途合并工具；每组显示最近使用的工具，
 /// 旁边的小箭头展开该组全部工具。
 pub const GROUPS: [(&str, &[Tool]); 7] = [
     ("选择 / 编辑", &[Tool::Edit]),
@@ -155,7 +155,7 @@ fn group_of(tool: Tool) -> usize {
     GROUPS.iter().position(|(_, tools)| tools.contains(&tool)).unwrap_or(0)
 }
 
-/// 截图工具栏是否展开全部工具；进程内各次截图共享（Vue 版存于 localStorage）。
+/// 截图工具栏是否展开全部工具；进程内各次截图共享，不落盘。
 static EXPANDED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 pub fn expanded() -> bool {
@@ -1249,7 +1249,7 @@ pub enum UiAction {
     ToggleExpanded,
 }
 
-/// 预设颜色（Vue 版使用系统取色器；这里提供常用色板）。
+/// 预设颜色：GPUI 没有原生取色控件，提供常用色板。
 pub const COLORS: [&str; 9] = [
     "#ef4444", "#f97316", "#facc15", "#22c55e", "#3b82f6", "#a855f7", "#ec4899", "#000000", "#ffffff",
 ];
@@ -1319,7 +1319,7 @@ pub fn icon_button(
 pub struct Tooltip(pub SharedString);
 impl Render for Tooltip {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        // Vue `.chinese-tooltip`：浅色主题深底浅字，深色主题反过来。
+        // 提示框：浅色主题深底浅字，深色主题反过来。
         let (bg, fg) = if crate::theme::dark() { (0xf6f8faf2, 0x1f2328) } else { (0x1f2328f2, 0xf6f8fa) };
         div()
             .px(px(8.0))
@@ -1726,7 +1726,7 @@ pub fn selection_overlay(editor: &Editor, map: &dyn Fn(Point) -> gpui_kit::Point
     elements
 }
 
-/// Tauri 版“通用设置”中下载或选择的导出字体；文字标注与文字贴图共用。
+/// “通用设置”中下载或选择的导出字体；文字标注与文字贴图共用。
 pub fn user_font() -> Option<Vec<u8>> {
     let path = snap_core::paths::data_dir()?.join("resources").join("export-font.ttf");
     let bytes = std::fs::read(path).ok()?;
@@ -1798,7 +1798,7 @@ mod tests {
     }
 
     #[test]
-    fn pen_polyline_and_eraser_follow_vue_semantics() {
+    fn pen_polyline_and_eraser_semantics() {
         let mut e = Editor::new(CROP, vec![]);
         e.set_tool(Tool::Pen);
         e.begin(p(10.0, 10.0), 6.0, None, false);

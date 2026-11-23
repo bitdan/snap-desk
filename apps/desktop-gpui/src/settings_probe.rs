@@ -1,4 +1,4 @@
-//! 设置“快捷键”页的兼容测试（对照 Vue `ShortcutCompatibility.vue` 与 Tauri `settings/shortcut_probe.rs`）。
+//! 设置“快捷键”页的兼容测试。
 //!
 //! 测试与平台探测在 core（`snap_core::settings::shortcut_probe`）。测试期间外壳的热键回调先交给
 //! [`receive`]，返回 true 时不执行动作；托盘或菜单发起的动作调用 [`interrupt`] 结束测试。

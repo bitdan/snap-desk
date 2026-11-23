@@ -1,5 +1,5 @@
 //! 经审计的导出值白名单。新增事件/错误码需同时检查生产处字段，再显式加入此表。
-//! 外壳各自的命令审计名单（Tauri IPC 命令）作为参数传给 [`super::logs`]。
+//! 外壳的命令审计名单作为参数传给 [`super::logs`]。
 pub const EVENTS: &[&str] = &[
     "recording.window_select_failed",
     "recording.failed",

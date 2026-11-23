@@ -1,8 +1,8 @@
-//! 设置窗口“日志”页（对照 Vue `DiagnosticsSettings.vue` 与 Tauri `diagnostics/mod.rs`）。
+//! 设置窗口“日志”页。
 //!
 //! 读取 GPUI 版日志文件（`snap-desk-gpui.log` 与轮转的 `.log.old`）的有限尾部，经 core 白名单清洗后显示：
 //! GPUI 外壳事件只显示事件名，core 事件按审计字段显示，其余行计入“已省略”。可修改日志级别（立即生效，
-//! 与 Tauri 版共用本机偏好）、按级别筛选、刷新、打开目录、清理历史日志（确认后只删归档）、导出本地诊断包。
+//! 与旧版相同的本机偏好）、按级别筛选、刷新、打开目录、清理历史日志（确认后只删归档）、导出本地诊断包。
 use super::{ButtonKind, SettingsView, button, card, col, heading, row, switch};
 use gpui_kit::{
     component::{input::Input, Icon, Sizable},
@@ -47,7 +47,7 @@ fn read(level: Option<Level>, module: Option<Module>) -> Result<LogsView, String
     })
 }
 
-/// 模块筛选（Vue `modules`）。
+/// 模块筛选。
 const MODULES: [(Module, &str); 9] = [
     (Module::App, "应用"),
     (Module::Capture, "截图"),
@@ -232,7 +232,7 @@ impl SettingsView {
     }
 
     pub(super) fn logs_page(&self, t: &dyn Fn(&str) -> String, cx: &mut Context<Self>) -> Vec<AnyElement> {
-        // 还原 Vue `DiagnosticsSettings.vue`：记录（状态与级别下拉）、最近日志（筛选、搜索、列表、统计）、文件。
+        // 布局：记录（状态与级别下拉）、最近日志（筛选、搜索、列表、统计）、文件。
         let current = crate::logging::level();
         let ready = directory().is_ok();
         let status = if ready {
@@ -443,7 +443,7 @@ impl SettingsView {
     }
 }
 
-/// 列表首行不画分隔线（Vue `.diagnostics-entry:first-of-type`）。
+/// 列表首行不画分隔线。
 trait FirstRow: Styled + Sized {
     fn when_first(self, first: bool) -> Self {
         if first { self } else { self.border_t_1().border_color(rgb(col::sep())) }

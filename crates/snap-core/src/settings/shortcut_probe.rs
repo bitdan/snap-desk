@@ -193,7 +193,7 @@ impl ProbeState {
 }
 
 /// 排查建议：观测事实与建议分开，满屏几何信息不能证明独占，权限差异也不能证明拦截。
-/// 每条为词典模板（`{0}`、`{1}` 占位）与参数，与 Vue `shortcutProbeMessages` 一致。
+/// 每条为词典模板（`{0}`、`{1}` 占位）与参数。
 pub fn messages(report: &ProbeReport) -> Vec<(&'static str, Vec<String>)> {
     let mut messages: Vec<(&'static str, Vec<String>)> = Vec::new();
     if !report.enabled {

@@ -1,6 +1,6 @@
 //! 全局翻译键先在原应用执行复制，确认剪贴板更新后再读取，避免使用历史文字。
 //! X11 例外：直接读取 PRIMARY 选区（用户当前选中的文字），不经过剪贴板。
-//! 读取剪贴板文字由调用方提供（Tauri 用剪贴板插件，GPUI 用 [`clipboard_text`]）。
+//! 读取剪贴板文字由调用方提供（GPUI 用 [`clipboard_text`]）。
 
 /// 翻译原文的上限与空白检查（按 UTF-8 字节计，保留首尾空白）。
 pub fn validate(text: String) -> Result<String, String> {

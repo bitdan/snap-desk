@@ -147,7 +147,7 @@ const OVERLAY_BEHAVIOR: usize = (1 << 0) | (1 << 4) | (1 << 6) | (1 << 8);
 ///
 /// # Safety
 /// `ns_window` 必须是存活的 NSWindow 指针，且只能在 Cocoa 主线程调用。
-/// Tauri 版经 `run_on_main_thread` 取 `ns_window()` 后调用；GPUI 版可由 raw-window-handle 取得。
+/// 窗口指针由 raw-window-handle 取得，须在主线程调用。
 pub unsafe fn raise_ns_window(ns_window: *mut c_void) {
     if ns_window.is_null() {
         return;

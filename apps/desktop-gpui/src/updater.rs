@@ -1,10 +1,10 @@
-//! 应用内更新（对照 Tauri `app/updater.rs`）：启动 10 秒后检查一次，之后按设置的间隔复查（每分钟重读间隔，
+//! 应用内更新：启动 10 秒后检查一次，之后按设置的间隔复查（每分钟重读间隔，
 //! 失败 10 分钟后重试）；只提示，不自动下载。发现新版本后读取发布自带的固定清单，下载（镜像优先、断点续传）
 //! 并用编译时注入的公钥校验 minisign 签名，通过后才允许安装。
 //!
 //! 分发形式：程序目录有 NSIS 卸载程序（`uninstall.exe`）即安装版，运行同一清单目标
 //! `windows-x86_64-nsis` 的安装器（`/P /UPDATE /R`，与 updater 插件被动模式一致，装完重启）；否则为独立 EXE，
-//! 交给与 Tauri 版相同的助手脚本在退出后原子替换。macOS 替换整个 .app（`darwin-aarch64-app`），Linux 替换
+//! 交给助手脚本在退出后原子替换。macOS 替换整个 .app（`darwin-aarch64-app`），Linux 替换
 //! AppImage 文件（`linux-x86_64-appimage`），装完自行重启；deb 等由系统包管理器管理的安装不支持，只提供发布页。
 use gpui_kit::*;
 use semver::Version;
@@ -42,7 +42,7 @@ const PLATFORM: Option<&str> = if cfg!(all(target_os = "windows", target_arch = 
     None
 };
 
-/// 产品版本（与 Tauri 版共用 package.json）。
+/// 产品版本（来自 package.json，发版脚本以它为唯一来源）。
 pub fn current_version() -> String {
     serde_json::from_str::<serde_json::Value>(include_str!("../../../package.json"))
         .ok()
@@ -531,7 +531,7 @@ fn launch_installer(_: &Package, _: &[u8]) -> Result<(), String> {
     Err("当前平台不支持在线安装。".into())
 }
 
-/// 独立 EXE：暂存到程序目录，外部助手（与 Tauri 版同一脚本）等本进程退出后原子替换并重启。
+/// 独立 EXE：暂存到程序目录，外部助手（`portable.ps1`）等本进程退出后原子替换并重启。
 #[cfg(windows)]
 fn replace_standalone(bytes: &[u8]) -> Result<(), String> {
     use base64::Engine;

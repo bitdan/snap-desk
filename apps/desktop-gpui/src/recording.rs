@@ -1,11 +1,11 @@
-//! 录屏（对照 Tauri 版 `capture/recorder/manager.rs` 与 Vue 版 `RecordingControls.vue`）。
+//! 录屏。
 //!
 //! 会话状态机、采集/编码流水线与平台后端都在 core（`snap_core::recording`）。这里负责：
 //! 1. 截图浮层确认选区后，校验选区在单个显示器内、按录制偏好生成配置、试探编码器并在后台线程初始化采集；
 //! 2. 收起浮层，打开选区红框与悬浮控制条（两者都不进入录像：Windows 用 WDA_EXCLUDEFROMCAPTURE）；
 //! 3. 控制条每 200 ms 读取一次状态快照，提供暂停/继续/停止/取消，结束后显示成品并可打开目录、复制路径。
 //!
-//! 4. 托盘退出时先停止并保存录屏，等流水线封装完成再退出（无进展超时规则与 Tauri 版共用 core `recording::exit`）。
+//! 4. 托盘退出时先停止并保存录屏，等流水线封装完成再退出（无进展超时规则见 core `recording::exit`）。
 //!
 //! 选区正好是吸附到的窗口时，可选“整个窗口”：直接采集该窗口表面（跟随窗口移动、不受遮挡），
 //! 控制条放在窗口可见面积最大的显示器上，不画红框。
@@ -13,7 +13,7 @@
 //! 5. 控制条“标注”打开实时标注窗口（`live_annotate.rs`）；截图中画好的标注与录制中新增的标注都由
 //!    core `recording::live::Live` 对账成媒体时间轨，编码线程按修订号换用新的标注层。
 //!
-//! 与 Tauri 版的差异：没有来源下拉（窗口只能从吸附选区进入）；窗口录制不支持实时标注；
+//! 限制：没有来源下拉（窗口只能从吸附选区进入）；窗口录制不支持实时标注；
 //! 确认选区后直接开始（按偏好倒计时），没有单独的“准备就绪”步骤。
 use gpui_kit::*;
 use snap_core::{
@@ -245,7 +245,7 @@ fn locate(rect: Rect, origin: (i32, i32), displays: &[Display]) -> Result<(Displ
         .ok_or_else(|| "请选择单个显示器内的区域；跨屏录制与滚动截图暂不支持。".into())
 }
 
-/// 导出设置与保存目录（目录记录与 Tauri 版共用同一文件）。
+/// 导出设置与保存目录（目录记录文件与旧版相同）。
 fn output_root(export: &RecordingExportSettings) -> Result<PathBuf, String> {
     let record = snap_core::paths::config_dir()
         .ok_or("无法定位配置目录。")?
@@ -463,7 +463,7 @@ pub fn launch(cx: &mut App, prepared: Prepared) {
     let border = if window { None } else { open_border(cx, logical) };
     let screen = display_bounds(cx, &display);
     let bar = bar_bounds(screen, logical);
-    // 窗口录制也可标注：画布铺满显示器，录制区域随窗口移动（Tauri `update_origin`）。
+    // 窗口录制也可标注：画布铺满显示器，录制区域随窗口移动。
     let annotation = Some(crate::live_annotate::Target {
         follow: window.then_some(follow),
         id,
@@ -648,7 +648,7 @@ pub fn protect(window: &Window) {
     }
 }
 
-/// 与 Tauri 版录屏控制条窗口一致（480×48）。
+/// 录屏控制条窗口尺寸（480×48）。
 const BAR_WIDTH: f32 = 480.0;
 const BAR_HEIGHT: f32 = 48.0;
 
@@ -845,7 +845,7 @@ fn clock(seconds: f64) -> String {
 
 impl Render for Controls {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // 还原 Vue `RecordingControls.vue`：红点、时长、状态、分隔线、帧率，右侧图标按钮；与截图工具栏同款胶囊。
+        // 控制条：红点、时长、状态、分隔线、帧率，右侧图标按钮；与截图工具栏同款胶囊。
         use crate::annotate::{border, hover, icon, icons, muted, surface, text};
         let view = self.view.clone();
         let phase = view.as_ref().map(|v| v.phase);
@@ -994,7 +994,7 @@ impl Render for Controls {
             .bg(rgb(if recording { 0xe5484d } else if phase == Some(Phase::Completed) { 0x22c55e } else { 0xa1a1aa }));
         let dot = if recording { dot.border_3().border_color(rgba(0xe5484d33)).size(px(16.0)).mx(px(-3.0)) } else { dot };
         div()
-            // 录屏不能直接隐藏：Esc 录制中结束并保存，就绪/倒计时时取消（Vue `RecordingControls.vue`）。
+            // 录屏不能直接隐藏：Esc 录制中结束并保存，就绪/倒计时时取消。
             .on_key_down(move |event: &KeyDownEvent, _, cx| {
                 if event.keystroke.key != "escape" {
                     return;

@@ -1,4 +1,4 @@
-//! “识别与翻译 · 服务管理”页签（还原 Vue `ServiceSettings.vue` 的目录形态）。
+//! “识别与翻译 · 服务管理”页签。
 //!
 //! 本地引擎：PaddleOCR、系统 OCR、WeChat OCR、CTranslate2，显示品牌图标或字母块、说明与就绪状态；“管理”在条目下方
 //! 展开该引擎的操作（下载资源、重新检测、语言包）。在线服务：已添加的连接（图标、名称与模型、密钥与用途状态），
@@ -52,7 +52,7 @@ impl Brand {
     }
 }
 
-/// 按预设或接口地址识别服务商（Vue `serviceBrand`）。
+/// 按预设或接口地址识别服务商。
 fn brand_for(preset: &str, endpoint: &str) -> Option<Brand> {
     match preset {
         "deepseek" => return Some(Brand::Deepseek),
@@ -80,7 +80,7 @@ fn brand_for(preset: &str, endpoint: &str) -> Option<Brand> {
     }
 }
 
-/// 已保存服务对应的预设（Vue `servicePresetId`）。
+/// 已保存服务对应的预设。
 fn preset_id(service: &RecognitionService) -> &'static str {
     if service.protocol != "openai-compatible" {
         return PRESETS
@@ -98,7 +98,7 @@ fn preset_id(service: &RecognitionService) -> &'static str {
         .map_or("custom", |p| p.id)
 }
 
-/// 28×28 图标：品牌图标在白底细边框里，否则为彩色字母块（Vue `.service-mono`）。
+/// 28×28 图标：品牌图标在白底细边框里，否则为彩色字母块。
 fn tile(brand: Option<Brand>, mono: &str, color: u32) -> Div {
     let base = div()
         .size(px(28.0))
@@ -127,7 +127,7 @@ fn tile(brand: Option<Brand>, mono: &str, color: u32) -> Div {
     }
 }
 
-/// 引擎下拉里的 18×18 图标与连接方式（Vue `ProviderMenu` 的 `.provider-icon` 与连接标记）。
+/// 引擎下拉里的 18×18 图标与连接方式。
 pub(in super::super) fn provider_icon(
     provider: &str,
     service: Option<&RecognitionService>,
@@ -182,7 +182,7 @@ fn svg_icon(brand: Brand) -> Icon {
         .text_color(rgb(col::text()))
 }
 
-/// 名称首字母块（Vue `monograms` 与回退规则）。
+/// 名称首字母块。
 fn monogram(key: &str, label: &str) -> (String, u32) {
     match key {
         "ocr-space" => ("OS".into(), 0x2f7d4f),
@@ -282,7 +282,7 @@ fn item(
     }
 }
 
-/// 白底细线框的“管理”按钮（Vue `.service-action.outlined`）。
+/// 白底细线框的“管理”按钮。
 fn manage(id: impl Into<ElementId>, label: String, enabled: bool) -> Stateful<Div> {
     let button = div()
         .id(id)
@@ -596,7 +596,7 @@ impl SettingsView {
         elements
     }
 
-    /// “添加服务”：按用途分组的预设（Vue 添加服务面板）。
+    /// “添加服务”：按用途分组的预设。
     fn preset_picker(
         &self,
         s: &Settings,
@@ -693,7 +693,7 @@ impl SettingsView {
         panel
     }
 
-    /// “添加服务”与服务编辑器的弹窗（Vue 的服务对话框）；铺满设置窗口，点遮罩或 Esc 关闭。
+    /// “添加服务”与服务编辑器的弹窗；铺满设置窗口，点遮罩或 Esc 关闭。
     pub(in super::super) fn service_dialog(&self, s: &Settings, t: &dyn Fn(&str) -> String, cx: &mut Context<Self>) -> Option<AnyElement> {
         let (title, body) = match &self.service_editor {
             Some(editor) => (

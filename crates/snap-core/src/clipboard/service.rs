@@ -1,6 +1,6 @@
 //! 剪贴板历史记录服务：平台监听 → 工作线程读取、去重、写入 SQLite 与图片仓库，定时维护。
 //! 串行素材操作锁协调文件与数据库；连接锁只在 Repository 方法内短暂持有。
-//! 界面通知经构造时注入的回调发出（Tauri 版发窗口事件，GPUI 版通知历史窗口），本模块不依赖界面框架。
+//! 界面通知经构造时注入的回调发出（通知历史窗口），本模块不依赖界面框架。
 //! `Service` 是可克隆的句柄（内部共享），工作线程持有一份。
 use super::{
     blob_store::BlobStore,
@@ -22,7 +22,7 @@ use std::{
 pub enum Event {
     /// 历史或素材有变化；revision 单调递增。
     Changed(u64),
-    /// 当前要显示的错误；空字符串表示撤下单次复制错误（与 Tauri 版事件契约一致）。
+    /// 当前要显示的错误；空字符串表示撤下单次复制错误。
     Error(String),
 }
 
@@ -99,7 +99,7 @@ fn capture_recovery_message(
 }
 
 impl Service {
-    /// `root` 为历史目录（Tauri 版为 `app_local_data_dir/clipboard`，见 `paths::clipboard_dir`）。
+    /// `root` 为历史目录（见 `paths::clipboard_dir`）。
     pub fn new(root: Result<std::path::PathBuf, String>, notify: Notify) -> Self {
         let data = (|| {
             let root = root?;

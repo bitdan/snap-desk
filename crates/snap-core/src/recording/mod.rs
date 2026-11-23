@@ -1,7 +1,7 @@
 //! 录屏引擎：会话状态机、采集/编码流水线与平台后端（WGC / ScreenCaptureKit / X11·PipeWire 采集，
 //! Media Foundation / AVFoundation / GStreamer 编码，WASAPI / ScreenCaptureKit / PulseAudio 声音，键鼠特效）。
 //!
-//! 与界面无关，Tauri 与 GPUI 两个外壳共用。外壳只负责框选、控制条、实时标注浮层和结果展示，
+//! 与界面无关。外壳只负责框选、控制条、实时标注浮层和结果展示，
 //! 通过 [`Host`] 向流水线提供标注快照、显示器变化检查、输出设置与收尾通知。
 pub mod annotation_layer;
 pub mod annotation_track;

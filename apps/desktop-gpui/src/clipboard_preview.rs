@@ -1,4 +1,4 @@
-//! 剪贴板条目预览窗口（对照 Vue 版 `ClipboardPreview.vue`）：文本显示全文，图片按窗口等比缩放显示原图。
+//! 剪贴板条目预览窗口：文本显示全文，图片按窗口等比缩放显示原图。
 //!
 //! 链接可交给系统浏览器打开（core `classification::link_url` 校验协议）；文件路径只在文件管理器中定位，
 //! 不执行文件本身。内容在后台读取，窗口关闭即释放。同一时间只有一个预览窗口，再次预览替换内容。
@@ -201,7 +201,7 @@ impl Preview {
 
 impl Render for Preview {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // 还原 Vue `ClipboardPreview.vue`：顶栏尺寸与关闭，浅底内容区（原图 / 色块 / 链接 / 路径 / 全文）。
+        // 布局：顶栏尺寸与关闭，浅底内容区（原图 / 色块 / 链接 / 路径 / 全文）。
         let dark = crate::theme::dark();
         let (bg, soft, border, text_fg, muted, accent, danger) = if dark {
             (0x20252c, 0x181b20, 0x39424e, 0xe6edf3, 0xa8b3c2, 0x6ea8ff, 0xff9c95)

@@ -104,7 +104,7 @@ pub fn archive_name(name: &str, base: &str) -> bool {
         && chrono::NaiveDateTime::parse_from_str(date, "%Y-%m-%d_%H-%M-%S").is_ok()
 }
 
-/// 活动日志 `{base}.log` 与归档：Tauri 日志插件的 `{base}_YYYY-MM-DD_HH-MM-SS.log`，
+/// 活动日志 `{base}.log` 与归档：旧版日志插件的 `{base}_YYYY-MM-DD_HH-MM-SS.log`，
 /// GPUI 版启动轮转的 `{base}.log.old`。
 pub fn files(root: &Path, base: &str) -> Result<Vec<LogFile>, String> {
     safe_directory(root)?;
@@ -252,7 +252,7 @@ pub fn recent(files: &[LogFile], query: &Query, commands: &[&str]) -> Result<Rec
 }
 
 /// 二次隐私保护采取重建而非正则替换：自由文本/未知字段/旧日志一律不输出。
-/// 只放行白名单事件与字段。级别兼容 Tauri 日志插件的 `[INFO]` 与 GPUI 版的 `INFO`；
+/// 只放行白名单事件与字段。级别兼容旧版日志的 `[INFO]` 与现在的 `INFO`；
 /// GPUI 外壳的 `gpui.*` 事件（没有 module 字段）只保留事件名，归入 App。
 pub fn sanitize(line: &str, commands: &[&str]) -> Option<Entry> {
     if line.len() > 4096 {

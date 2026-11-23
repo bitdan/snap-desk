@@ -124,7 +124,7 @@ impl Runtime {
 
 /// windows-rs 在进程级缓存 WinRT 激活工厂；最后一个 MTA 线程 RoUninitialize 后套间被拆除，
 /// 缓存的工厂指针随之失效，下一次调用（如另一线程上的 `IsSupported`）会访问违例。
-/// Tauri 进程里 WebView2 等线程一直持有 MTA，没有暴露该问题；GPUI 与测试进程没有，
+/// 带 WebView2 的进程里有线程一直持有 MTA，不会暴露该问题；GPUI 与测试进程没有，
 /// 因此首次使用时让 MTA 在进程内常驻（只增加一次引用，不随录屏结束释放）。
 fn keep_multithreaded_apartment() {
     static KEEP: std::sync::Once = std::sync::Once::new();

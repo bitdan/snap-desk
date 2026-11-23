@@ -1,7 +1,7 @@
 //! 应用版本发现：在 GitHub 发布列表中选出比当前版本新、且带固定更新清单的应用发布。
 //!
 //! 同一仓库还发布翻译模型/引擎等资源，只匹配 SemVer 标签与固定清单地址；测试版是否纳入由调用方决定。
-//! 下载与签名校验：Tauri 版用 updater 插件；GPUI 版用这里的 `download`（断点续传、镜像）与 `package`
+//! 下载与签名校验：用这里的 `download`（断点续传、镜像）与 `package`
 //! （读取固定清单、校验地址与 minisign 签名）。安装（运行 NSIS 安装器或替换独立 EXE）由外壳完成。
 pub mod download;
 pub mod package;

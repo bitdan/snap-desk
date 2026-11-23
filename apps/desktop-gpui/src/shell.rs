@@ -24,7 +24,7 @@ pub enum ShellEvent {
 
 pub type Sender = mpsc::UnboundedSender<ShellEvent>;
 
-/// 托盘菜单项：id 与 Tauri 版一致，文案是词典键（中文原文）。
+/// 托盘菜单项：id 文案是词典键（中文原文）。
 const ACTIONS: [(&str, &str, ShortcutAction); 5] = [
     ("capture", "截图", ShortcutAction::Capture),
     ("pin", "贴图", ShortcutAction::Pin),
@@ -101,7 +101,7 @@ pub fn start(
         settings.shortcuts_enabled,
         None,
     );
-    // 与 Tauri 版托盘菜单一致：五个动作、打开主界面（GPUI 版为设置窗口）、全局快捷键开关、重启、退出。
+    // 托盘菜单：五个动作、打开主界面（设置窗口）、全局快捷键开关、重启、退出。
     menu.append_items(&[
         &MenuItem::with_id(SETTINGS_ID, text("打开 Snap Desk"), true, None),
         &shortcuts_item,
@@ -111,7 +111,7 @@ pub fn start(
     .map_err(|e| e.to_string())?;
     let tray = TrayIconBuilder::new()
         .with_menu(Box::new(menu))
-        // 与 Tauri 版一致：左键单击截图，右键弹菜单。
+        // 左键单击截图，右键弹菜单。
         .with_menu_on_left_click(false)
         .with_tooltip(text("Snap Desk · 截图工具"))
         .with_icon(tray_icon()?)
@@ -150,7 +150,7 @@ pub fn start(
 }
 
 impl Shell {
-    /// 启动时与 Tauri 版相同：old 与 next 都是当前设置，已配置但被占用的按键只尽力注册并提示。
+    /// 启动时 old 与 next 都是当前设置，已配置但被占用的按键只尽力注册并提示。
     fn register_startup(&mut self) {
         if !self.settings.shortcuts_enabled {
             return;
@@ -202,7 +202,7 @@ impl Shell {
         Ok(self.settings.clone())
     }
 
-    /// 托盘“启用全局快捷键”：与 Tauri 版的 `set_shortcuts` 相同，注册结果与磁盘写入是一笔事务。
+    /// 托盘“启用全局快捷键”：注册结果与磁盘写入是一笔事务。
     /// 设置文件很小，主线程同步写入（含 fsync）只需几毫秒；后续有设置界面时再改为后台写入。
     fn toggle_shortcuts(&mut self) {
         let old = self.settings.clone();
@@ -295,7 +295,7 @@ fn handle(cx: &mut App, event: ShellEvent) {
     }
 }
 
-/// 设置文件路径。开发调试用：`SNAP_DESK_SETTINGS` 指向另一份 settings.json，可与已安装的 Tauri 版
+/// 设置文件路径。开发调试用：`SNAP_DESK_SETTINGS` 指向另一份 settings.json，可与已安装的版本
 /// 同时运行而不抢快捷键。
 fn settings_path() -> Option<PathBuf> {
     std::env::var_os("SNAP_DESK_SETTINGS")
@@ -323,7 +323,7 @@ pub fn update_clipboard(
     Ok(saved.clipboard)
 }
 
-/// 修改并保存设置。先从磁盘重新读取再只改 `change` 涉及的部分：Tauri 版可能同时运行并写入同一文件，
+/// 修改并保存设置。先从磁盘重新读取再只改 `change` 涉及的部分：开发时另一个实例可能同时写入同一文件，
 /// 整份覆盖会丢掉它在本进程启动后保存的其他设置。快捷键变化与写盘是一笔事务（注册失败时回滚、不写盘）；
 /// 剪贴板设置变化时在后台按新设置重启记录服务。返回保存后的设置。
 pub fn update_settings(cx: &mut App, change: impl FnOnce(&mut Settings)) -> Result<Settings, String> {
@@ -357,7 +357,7 @@ fn save(cx: &mut App, change: impl FnOnce(&mut Settings)) -> Result<Settings, St
     cx.update_global::<Shell, _>(|shell, _| shell.commit(&path, fresh))
 }
 
-/// 导入完整配置备份（对照 Tauri `settings/backup.rs` 的提交事务）：先校验备份中的目录；快照设置文件与两个
+/// 导入完整配置备份：先校验备份中的目录；快照设置文件与两个
 /// 目录记录；快捷键注册、目录记录与设置写盘为一笔事务，任一步失败恢复快照与运行时目录；成功后按需重启
 /// 剪贴板记录服务并写回备份中的密钥。截图、录屏、滚动截图或快捷键录入进行中时拒绝。
 pub fn import_backup(cx: &mut App, mut backup: snap_core::settings::backup::Backup) -> Result<Settings, String> {
@@ -449,7 +449,7 @@ pub fn apply_theme(cx: &mut App) {
     }
 }
 
-/// 录屏保存目录记录（与 Tauri 版共用）。
+/// 录屏保存目录记录（与旧版相同）。
 pub fn recording_record() -> Option<PathBuf> {
     snap_core::paths::config_dir().map(|dir| dir.join("recording-directory.json"))
 }
@@ -542,12 +542,12 @@ pub fn run_action(cx: &mut App, action: ShortcutAction, source: &str) {
     crate::settings_window::probe::interrupt();
     match action {
         ShortcutAction::Capture => {
-            // 滚动截图采集中按截图键：结束采集并输出（与 Tauri 版一致）。
+            // 滚动截图采集中按截图键：结束采集并输出。
             if crate::scroll::stop(cx) {
                 log::info!("event=gpui.action action=scroll_stop source={source}");
                 return;
             }
-            // 截图中再按截图键：与 Tauri 版一致视为取消。
+            // 截图中再按截图键视为取消。
             if crate::capture::active(cx) {
                 crate::capture::cancel(cx);
                 return;
@@ -574,14 +574,14 @@ pub fn run_action(cx: &mut App, action: ShortcutAction, source: &str) {
             } else {
                 std::time::Duration::ZERO
             };
-            // 识字不叠加普通截图延时（与 Tauri 版一致）。
+            // 识字不叠加普通截图延时。
             let mut settings = cx.global::<Shell>().settings.clone();
             settings.delay_seconds = 0;
             crate::capture::start(cx, &settings, delay, Some(crate::recognition::Mode::Ocr));
         }
         ShortcutAction::Pin => {
             log::info!("event=gpui.action action=pin source={source}");
-            // 与 Tauri 版一致：截图中贴当前选区；否则先恢复穿透中的贴图，没有时才贴剪贴板。
+            // 截图中贴当前选区；否则先恢复穿透中的贴图，没有时才贴剪贴板。
             if crate::capture::active(cx) {
                 crate::capture::pin(cx);
             } else if !crate::pins::restore_click_through(cx) {
@@ -607,7 +607,7 @@ pub fn run_action(cx: &mut App, action: ShortcutAction, source: &str) {
     }
 }
 
-/// 与 Tauri 版托盘共用同一张 32×32 图标。
+/// 托盘图标（32×32，与安装包同一张）。
 fn tray_icon() -> Result<tray_icon::Icon, String> {
     let image = image::load_from_memory_with_format(
         include_bytes!("../../../resources/icons/32x32.png"),

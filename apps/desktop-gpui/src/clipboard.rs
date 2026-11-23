@@ -1,10 +1,10 @@
 //! 剪贴板历史：后台记录服务（`snap_core::clipboard::service`）与历史窗口。
 //!
 //! 记录：启动时按设置 `clipboard` 启用；监听、读取、去重、写入 SQLite 与图片仓库都在 core 的工作线程，
-//! 变化与错误经回调转发到主线程刷新窗口。数据目录与 Tauri 版相同（`app_local_data_dir/clipboard`），
+//! 变化与错误经回调转发到主线程刷新窗口。数据目录与旧版相同（`paths::clipboard_dir`），
 //! 两个版本共用同一份历史；开发调试可用 `SNAP_DESK_CLIPBOARD_DIR` 指向另一目录，避免写入真实历史。
 //!
-//! 窗口（对照 Vue 版 `ClipboardHistory.vue`）：搜索、分类（全部/文本/链接/颜色/文件路径/图片/文件/收藏）、
+//! 窗口：搜索、分类（全部/文本/链接/颜色/文件路径/图片/文件/收藏）、
 //! 分页加载、键盘导航；回车/双击按设置“唤出后直接粘贴”粘贴到唤出前的窗口（否则只复制），
 //! Ctrl+1～9 取第 N 条；每条可复制、贴图、收藏、删除；清空（默认保留收藏，二次确认）；
 //! “固定”时粘贴后不收起。单击选中、Ctrl/⌘ 多选、Shift 连选（按选择顺序，最多 100 条）；
@@ -13,10 +13,10 @@
 //! 全文或原图（`clipboard_preview.rs`）。按住条目拖动超过几像素即系统拖出（Windows OLE，core `snap_core::drag`；macOS / Linux 为元素拖拽交给系统文件拖拽）：
 //! 文本拖出文字，图片拖出临时 PNG，文件拖出原路径；拖动多选中的条目时按合并规则一起拖出。
 //! 分类标签可拖动排序，或 Alt+←/→ 移动当前分类；顺序保存在设置文件旁的 `clipboard-category-order.json`
-//! （Vue 版存于 WebView localStorage，两版不共用）。
+//! （旧版存于 WebView localStorage，不迁移）。
 //! 唤出时窗口左上角贴近光标并夹紧在所在显示器工作区内；失去焦点约 200 毫秒后仍未回到本窗口即收起
 //! （固定、确认中、拖出中、预览或导出窗口打开时不收起）；固定时失焦记下切换到的窗口，作为之后的粘贴目标。
-//! 界面（无边框、置顶的工具窗口，配色与布局同 Vue 版）在 `clipboard_ui.rs`；暂停记录时提示条可“继续记录”。
+//! 界面（无边框、置顶的工具窗口）在 `clipboard_ui.rs`；暂停记录时提示条可“继续记录”。
 use crate::annotate;
 use futures::{channel::mpsc, StreamExt};
 use gpui_kit::{
@@ -162,7 +162,7 @@ pub fn open(cx: &mut App) {
     }
     let service = cx.global::<History>().service.clone();
     let settings = crate::shell::settings(cx);
-    // 与 Tauri 版一致：460×680、最小 420×460，无边框、置顶、不进任务栏（创建后改为工具窗口）。
+    // 460×680、最小 420×460，无边框、置顶、不进任务栏（创建后改为工具窗口）。
     let (bounds, display_id) = placement(cx, size(px(460.0), px(680.0)));
     let options = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(bounds)),
@@ -203,7 +203,7 @@ fn near_cursor(cursor: f32, size: f32, start: f32, extent: f32) -> f32 {
     (cursor + 12.0).min(start + extent - size).max(start)
 }
 
-/// 窗口靠近光标显示（与 Tauri 版 `window::place` 一致）；取不到光标或显示器时居中。
+/// 窗口靠近光标显示；取不到光标或显示器时居中。
 fn placement(cx: &App, size: Size<Pixels>) -> (Bounds<Pixels>, Option<DisplayId>) {
     let centered = || (Bounds::centered(None, size, cx), None);
     let Some(cursor) = crate::native::cursor_point() else {
@@ -231,7 +231,7 @@ enum Category {
     Favorites,
 }
 
-/// 默认顺序与 Vue 版 `use-category-order.ts` 一致。
+/// 默认顺序。
 const CATEGORIES: [Category; 8] = [
     Category::All,
     Category::Text,
@@ -257,7 +257,7 @@ impl Category {
         }
     }
 
-    /// 持久化用的键，与 Vue 版的分类值一致（全部为空字符串）。
+    /// 持久化用的键（全部为空字符串）；改动会让已保存的分类顺序失效。
     fn key(self) -> &'static str {
         match self {
             Self::All => "",
@@ -612,7 +612,7 @@ impl HistoryView {
         cx.notify();
     }
 
-    /// 暂停/继续记录：先落盘，再在后台按新设置重启监听与维护（与 Tauri 版 `clipboard_set_enabled` 一致）。
+    /// 暂停/继续记录：先落盘，再在后台按新设置重启监听与维护。
     fn set_recording(&mut self, enabled: bool, cx: &mut Context<Self>) {
         match crate::shell::update_clipboard(cx, |c| c.enabled = enabled) {
             Ok(settings) => {
@@ -876,7 +876,7 @@ impl HistoryView {
                 } else {
                     self.selected.saturating_sub(1)
                 };
-                // 键盘浏览时才显示焦点框（Vue `:focus-visible`），并滚动到可见。
+                // 键盘浏览时才显示焦点框，并滚动到可见。
                 self.keyboard = true;
                 self.scroll.scroll_to_item(self.selected);
             }
@@ -954,7 +954,7 @@ fn text_pin(text: &str) -> Result<(RgbaImage, Option<String>), String> {
     snap_core::pins::text::render(text, &font).map(|image| (image, Some(drag)))
 }
 
-/// 右键菜单项（对照 Vue `ClipboardItem.vue` 的 `ContextMenuContent`）。
+/// 右键菜单项。
 #[derive(Clone, Copy)]
 enum MenuItem {
     Copy,
