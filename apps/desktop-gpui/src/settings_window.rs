@@ -1411,6 +1411,65 @@ impl SettingsView {
         container
     }
 
+    /// macOS 系统权限卡片；其他平台为空。状态每次渲染实时查询（系统调用很轻）。
+    fn permission_section(&self, t: &dyn Fn(&str) -> String, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        #[cfg(target_os = "macos")]
+        {
+            use snap_core::macos::{self, PrivacyPane};
+            let screen = macos::screen_capture_granted();
+            let input = macos::input_monitoring_granted();
+            let rows = [
+                ("屏幕录制", screen, PrivacyPane::ScreenCapture),
+                ("辅助功能", macos::accessibility_trusted(), PrivacyPane::Accessibility),
+                ("输入监控", input, PrivacyPane::InputMonitoring),
+            ]
+            .into_iter()
+            .enumerate()
+            .map(|(index, (label, granted, pane))| {
+                let status = div()
+                    .flex()
+                    .items_center()
+                    .gap(px(4.0))
+                    .text_xs()
+                    .text_color(rgb(if granted { col::success() } else { col::muted() }))
+                    .children(granted.then(|| Icon::default().data(icons::CHECK).size(px(14.0)).text_color(rgb(col::success()))))
+                    .child(t(if granted { "已授权" } else { "未授权" }));
+                let control = div().flex().items_center().gap(px(12.0)).child(status).children((!granted).then(|| {
+                    button(("permission", index), t("前往授权…"), ButtonKind::Outline, true).on_click(cx.listener(
+                        move |view, _: &ClickEvent, _, cx| {
+                            // 屏幕录制与输入监控先发系统请求，让应用出现在授权列表里；系统弹窗已处理时不再打开设置。
+                            let granted = match pane {
+                                PrivacyPane::ScreenCapture => macos::request_screen_capture(),
+                                PrivacyPane::InputMonitoring => macos::request_input_monitoring(),
+                                _ => false,
+                            };
+                            let result = if granted { Ok(()) } else { macos::open_privacy_pane(pane) };
+                            if result.is_ok() && !matches!(pane, PrivacyPane::Accessibility) {
+                                view.notice = Some("在系统设置中允许 Snap Desk 后，请退出并重新打开应用。".into());
+                            }
+                            view.report(result, cx);
+                        },
+                    ))
+                }));
+                row(t(label), None, control)
+            })
+            .collect();
+            let mut elements = vec![heading(t("系统权限")).into_any_element(), card(rows).into_any_element()];
+            if !screen {
+                elements.push(
+                    note(t("若系统设置中已开启“屏幕录制”但这里仍显示未授权，通常是应用更新后旧授权记录失效：请在系统设置中移除 Snap Desk 后重新添加并重启应用。"))
+                        .into_any_element(),
+                );
+            }
+            elements
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = (t, cx);
+            Vec::new()
+        }
+    }
+
     fn stepper(
         &self,
         id: &'static str,
@@ -2373,6 +2432,8 @@ impl SettingsView {
                     })),
             )])
             .into_any_element(),
+            // macOS 系统权限（Vue `GeneralSettings.vue`）：屏幕录制、辅助功能、输入监控。
+            div().children(self.permission_section(t, cx)).into_any_element(),
             heading(t("导出字体")).into_any_element(),
             card(vec![self.font_resource_row(t, cx)]).into_any_element(),
             heading(t("文件与存储")).into_any_element(),

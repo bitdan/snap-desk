@@ -2,7 +2,7 @@
 //!
 //! 测试与平台探测在 core（`snap_core::settings::shortcut_probe`）。测试期间外壳的热键回调先交给
 //! [`receive`]，返回 true 时不执行动作；托盘或菜单发起的动作调用 [`interrupt`] 结束测试。
-//! macOS 输入法标识需在主线程读取，GPUI 版暂报告为未知。
+//! macOS 输入法标识需在主线程读取：测试期间主线程每 200 毫秒取一次，后台测试读取最近的值。
 use super::{SettingsView, col, row};
 use gpui_kit::*;
 use snap_core::settings::shortcut_probe::{self, ProbeReport, ProbeState};
@@ -48,6 +48,22 @@ impl SettingsView {
             result: None,
         };
         cx.notify();
+        let source: std::sync::Arc<std::sync::Mutex<Option<String>>> = Default::default();
+        #[cfg(target_os = "macos")]
+        {
+            let sampled = source.clone();
+            cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| loop {
+                let running = this.update(cx, |view, _| view.probe.running).unwrap_or(false);
+                if !running {
+                    break;
+                }
+                if let Ok(mut value) = sampled.lock() {
+                    *value = snap_core::macos::input_source_id();
+                }
+                cx.background_executor().timer(std::time::Duration::from_millis(200)).await;
+            })
+            .detach();
+        }
         cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let result = cx
                 .background_executor()
@@ -55,7 +71,7 @@ impl SettingsView {
                     STATE.run(
                         registration,
                         &|| INTERRUPTED.load(Ordering::Relaxed),
-                        &|| None,
+                        &|| source.lock().ok().and_then(|value| value.clone()),
                     )
                 })
                 .await;
