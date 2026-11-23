@@ -100,8 +100,8 @@ pub fn create(
     let (bounds, display, zoom, scale) = match placement {
         Placement::Source { origin, scale, display } => {
             let zoom = 1.0_f64.max(layout.minimum_zoom(width, height, scale));
-            let inset = image_inset(scale);
-            let size = window_size(width, height, zoom, scale);
+            let inset = image_inset(&settings.pin_appearance.shadow, scale);
+            let size = window_size(width, height, zoom, scale, &settings.pin_appearance.shadow);
             let origin = point(
                 px((origin.0 - inset) as f32 / scale as f32),
                 px((origin.1 - inset) as f32 / scale as f32),
@@ -121,7 +121,7 @@ pub fn create(
                 })
                 .unwrap_or(core_pins::WorkArea { x: 0, y: 0, width: 1920, height: 1040 });
             let zoom = layout.fit_zoom(width, height, scale, work);
-            let size = window_size(width, height, zoom, scale);
+            let size = window_size(width, height, zoom, scale, &settings.pin_appearance.shadow);
             let id = primary.map(|d| d.id());
             (Bounds::centered(id, size, cx), id, zoom, scale)
         }
@@ -201,9 +201,34 @@ pub fn create(
     Ok(())
 }
 
-/// 图片首像素到窗口原点的距离：窗口只包住图片本身（不留透明边距，截图区域即贴图大小）。
-fn image_inset(_scale: f64) -> i32 {
-    0
+/// 阴影的模糊半径与透明边距（逻辑像素）：阴影用主题色、范围小；关闭阴影时窗口正好是图片大小。
+fn shadow_size(shadow: &PinShadow) -> (f32, f32) {
+    match shadow {
+        PinShadow::None => (0.0, 0.0),
+        PinShadow::Soft => (4.0, 5.0),
+        PinShadow::Auto => (6.0, 8.0),
+    }
+}
+
+/// 图片首像素到窗口原点的物理距离：只留出阴影需要的边距。
+fn image_inset(shadow: &PinShadow, scale: f64) -> i32 {
+    (f64::from(shadow_size(shadow).1) * scale).round() as i32
+}
+
+/// 主题色阴影（设置窗口的强调色 `theme::desk().accent`）。
+fn pin_shadow(shadow: &PinShadow) -> Vec<BoxShadow> {
+    let (blur, _) = shadow_size(shadow);
+    if blur == 0.0 {
+        return Vec::new();
+    }
+    let alpha = if matches!(shadow, PinShadow::Auto) { 0x66 } else { 0x40 };
+    vec![BoxShadow {
+        color: rgba((crate::theme::desk().accent << 8) | alpha).into(),
+        offset: point(px(0.0), px(1.0)),
+        blur_radius: px(blur),
+        spread_radius: px(0.0),
+        inset: false,
+    }]
 }
 
 fn image_bounds(image: &RgbaImage) -> ImageBounds {
@@ -211,9 +236,9 @@ fn image_bounds(image: &RgbaImage) -> ImageBounds {
 }
 
 /// 图片 + 两侧透明边距的窗口逻辑尺寸；边距按物理像素取整，首像素落在整数屏幕坐标上。
-fn window_size(width: u32, height: u32, zoom: f64, scale: f64) -> Size<Pixels> {
+fn window_size(width: u32, height: u32, zoom: f64, scale: f64, shadow: &PinShadow) -> Size<Pixels> {
     let layout = PinLayout::load();
-    let inset = image_inset(scale);
+    let inset = image_inset(shadow, scale);
     let (w, h) = layout.displayed(width, height, zoom);
     size(
         px((w + inset * 2) as f32 / scale as f32),
@@ -670,12 +695,12 @@ impl Pin {
 
     /// 图片左上角距窗口顶边（逻辑像素）：透明边距，工具栏在上方时再加工具栏区域。
     fn image_top(&self, scale: f32) -> f32 {
-        let inset = image_inset(f64::from(scale)) as f32 / scale;
+        let inset = image_inset(&self.appearance.shadow, f64::from(scale)) as f32 / scale;
         inset
     }
 
     fn base_size(&self, scale: f32) -> Size<Pixels> {
-        window_size(self.image.width(), self.image.height(), self.zoom, f64::from(scale))
+        window_size(self.image.width(), self.image.height(), self.zoom, f64::from(scale), &self.appearance.shadow)
     }
 
     /// 工具栏或菜单打开时窗口扩到能放下它们；图片左上角不动（窗口只向右下扩展）。
@@ -1038,7 +1063,7 @@ impl Pin {
     /// 窗口内逻辑坐标 → 贴图图像像素。
     fn to_point(&self, position: Point<Pixels>, scale: f32) -> ImagePoint {
         let layout = PinLayout::load();
-        let inset = image_inset(f64::from(scale)) as f32 / scale;
+        let inset = image_inset(&self.appearance.shadow, f64::from(scale)) as f32 / scale;
         let (w, h) = layout.displayed(self.image.width(), self.image.height(), self.zoom);
         let (w, h) = (w as f32 / scale, h as f32 / scale);
         let top = self.image_top(scale);
@@ -1134,7 +1159,9 @@ impl Pin {
 
     /// 工具栏窗口的位置与大小：贴图下方，放不下时放上方；左缘对齐贴图并收进屏幕。
     fn toolbar_bounds(&self, window: &Window, cx: &App) -> Bounds<Pixels> {
-        let pin = window.bounds();
+        let margin = px(shadow_size(&self.appearance.shadow).1);
+        let outer = window.bounds();
+        let pin = Bounds::new(outer.origin + point(margin, margin), size(outer.size.width - margin * 2.0, outer.size.height - margin * 2.0));
         // 分组下拉展开时窗口向下加高，容纳下拉列表。
         let extra = if self.editor.open_group.is_some() { TOOLBAR_POPOVER } else { 0.0 };
         // 窗口贴合工具栏：工具行 40 + 上下边距；选了标注工具时多一行样式条（行距 6）。
@@ -1510,7 +1537,7 @@ impl Render for Pin {
         }
         let scale = window.scale_factor();
         let layout = PinLayout::load();
-        let inset = image_inset(f64::from(scale)) as f32 / scale;
+        let inset = image_inset(&self.appearance.shadow, f64::from(scale)) as f32 / scale;
         let top = self.image_top(scale);
         let (w, h) = layout.displayed(self.image.width(), self.image.height(), self.zoom);
         let (w, h) = (w as f32 / scale, h as f32 / scale);
@@ -1547,11 +1574,7 @@ impl Render for Pin {
             .overflow_hidden()
             .opacity(self.opacity)
             .child(content);
-        stage = match self.appearance.shadow {
-            PinShadow::None => stage,
-            PinShadow::Soft => stage.shadow_sm(),
-            PinShadow::Auto => stage.shadow_md(),
-        };
+        stage = stage.shadow(pin_shadow(&self.appearance.shadow));
         let mut root = div()
             .id("pin")
             .track_focus(&self.focus)
