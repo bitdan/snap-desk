@@ -46,6 +46,28 @@ pub fn hwnd(window: &Window) -> isize {
     0
 }
 
+/// 按住鼠标拖动窗口。gpui-pre 在 Windows 上的 `start_window_move` 是空实现，这里改为释放鼠标捕获后
+/// 投递“按下标题栏”消息，交给系统的移动循环（投递而非同步发送，避免在 GPUI 回调里重入窗口过程）。
+pub fn start_move(window: &Window) {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::UI::{
+            Input::KeyboardAndMouse::ReleaseCapture,
+            WindowsAndMessaging::{PostMessageW, HTCAPTION, WM_NCLBUTTONDOWN},
+        };
+        let hwnd = hwnd(window) as windows_sys::Win32::Foundation::HWND;
+        if !hwnd.is_null() {
+            // SAFETY: hwnd 来自存活窗口；消息参数为常量。
+            unsafe {
+                ReleaseCapture();
+                PostMessageW(hwnd, WM_NCLBUTTONDOWN, HTCAPTION as usize, 0);
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    window.start_window_move();
+}
+
 /// 点击穿透：加上分层 + 透明扩展样式后，鼠标事件落到下面的窗口；DirectComposition 渲染不受影响。
 /// 透明度保持 255，显示透明度由界面自己的 opacity 决定。
 pub fn set_click_through(window: &Window, enabled: bool) -> Result<(), String> {

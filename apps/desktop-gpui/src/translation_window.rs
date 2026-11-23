@@ -761,7 +761,7 @@ impl Render for Translator {
                     .text_xs()
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(rgb(c.muted))
-                    .on_mouse_down(MouseButton::Left, |_, window, _| window.start_window_move())
+                    .on_mouse_down(MouseButton::Left, |_, window, _| crate::native::start_move(window))
                     .child(
                         Icon::default()
                             .data(icons::LANGUAGES)

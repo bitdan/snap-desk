@@ -337,7 +337,7 @@ impl HistoryView {
             .pt(px(10.0))
             .px(px(10.0))
             .pb(px(8.0))
-            .on_mouse_down(MouseButton::Left, |_, window, _| window.start_window_move())
+            .on_mouse_down(MouseButton::Left, |_, window, _| crate::native::start_move(window))
             .child(search)
             .child(
                 icon_button(
@@ -914,7 +914,7 @@ impl HistoryView {
             .border_color(rgb(c.border))
             .text_xs()
             .text_color(rgb(c.muted))
-            .on_mouse_down(MouseButton::Left, |_, window, _| window.start_window_move())
+            .on_mouse_down(MouseButton::Left, |_, window, _| crate::native::start_move(window))
             .child(summary)
             .child(actions)
     }
