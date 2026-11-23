@@ -1,55 +1,37 @@
-// 各平台发布附件的唯一清单：构建配置、收集、签名、更新清单和恢复流程都从这里读取，
-// 新增平台或分发形式时只改这一处，并同步 src-tauri/src/app/updater.rs 的目标与后缀。
+// 各平台发布附件的唯一清单：打包格式、收集、签名、更新清单和恢复流程都从这里读取，
+// 新增平台或分发形式时只改这一处，并同步 apps/desktop-gpui/src/updater.rs 的目标与后缀。
 import { copyFileSync, mkdirSync, readdirSync, statSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { readVersion } from './sync-version.mjs'
 
 /**
- * platform/arch：产出该附件的 Node 平台与架构；bundle：Tauri 打包目标。
- * source：相对 target/release 的目录；match：打包器输出文件的后缀，可按版本生成以排除旧版本残留。
+ * platform/arch：产出该附件的 Node 平台与架构；format：cargo-packager 打包格式（app 的更新压缩包由打包脚本生成）。
+ * source：相对 target/release 的目录；match：输出文件的后缀，可按版本生成以排除旧版本残留。
  * suffix：发布附件名后缀，在全部附件中互不为后缀，可据此唯一识别。
- * name：发布时的统一文件名；缺省沿用打包器文件名（已发布的 Windows 客户端依赖原后缀）。
+ * name：发布时的统一文件名。
  * target：在线更新清单目标；缺省表示只供手动下载，不签名。
  */
+export const PACKAGES_DIRECTORY = 'packages'
 export const RELEASE_ASSETS = [
-  { platform: 'win32', arch: 'x64', bundle: 'nsis', source: 'bundle/nsis', match: '-setup.exe', suffix: '-setup.exe',
-    target: 'windows-x86_64-nsis', label: 'Windows x64 NSIS 安装包' },
+  { platform: 'win32', arch: 'x64', format: 'nsis', source: PACKAGES_DIRECTORY, match: '-setup.exe', suffix: '-setup.exe',
+    name: version => `snap-desk-v${version}-windows-x64-setup.exe`, target: 'windows-x86_64-nsis', label: 'Windows x64 NSIS 安装包' },
   { platform: 'win32', arch: 'x64', source: '.', match: version => `snap-desk-v${version}-windows-x64-standalone.exe`, suffix: '-standalone.exe',
     target: 'windows-x86_64-standalone', label: 'Windows x64 独立 EXE' },
-  { platform: 'darwin', arch: 'arm64', bundle: 'dmg', source: 'bundle/dmg', match: '.dmg', suffix: '-macos-arm64.dmg',
+  { platform: 'darwin', arch: 'arm64', format: 'dmg', source: PACKAGES_DIRECTORY, match: '.dmg', suffix: '-macos-arm64.dmg',
     name: version => `snap-desk-v${version}-macos-arm64.dmg`, label: 'macOS Apple 芯片 DMG' },
-  // 更新器整体替换 .app 目录，使用打包器在生成签名产物时一并输出的压缩包。
-  { platform: 'darwin', arch: 'arm64', bundle: 'app', source: 'bundle/macos', match: '.app.tar.gz', suffix: '-macos-arm64.app.tar.gz',
+  // 更新器整体替换 .app 目录；打包脚本把 cargo-packager 输出的 .app 压成 tar.gz。
+  { platform: 'darwin', arch: 'arm64', format: 'app', source: PACKAGES_DIRECTORY, match: '.app.tar.gz', suffix: '-macos-arm64.app.tar.gz',
     name: version => `snap-desk-v${version}-macos-arm64.app.tar.gz`, target: 'darwin-aarch64-app', label: 'macOS 应用更新包' },
-  { platform: 'linux', arch: 'x64', bundle: 'appimage', source: 'bundle/appimage', match: '.AppImage', suffix: '-linux-x64.AppImage',
+  { platform: 'linux', arch: 'x64', format: 'appimage', source: PACKAGES_DIRECTORY, match: '.AppImage', suffix: '-linux-x64.AppImage',
     name: version => `snap-desk-v${version}-linux-x64.AppImage`, target: 'linux-x86_64-appimage', label: 'Linux x64 AppImage' },
-  { platform: 'linux', arch: 'x64', bundle: 'deb', source: 'bundle/deb', match: '.deb', suffix: '-linux-x64.deb',
+  { platform: 'linux', arch: 'x64', format: 'deb', source: PACKAGES_DIRECTORY, match: '.deb', suffix: '-linux-x64.deb',
     name: version => `snap-desk-v${version}-linux-x64.deb`, label: 'Linux x64 deb 安装包' },
 ]
 
-/** 当前平台需要打包的 Tauri 目标；不在发布范围内的平台返回空列表，由调用方决定如何处理。 */
-export function bundleTargets(platform) {
-  return RELEASE_ASSETS.filter(asset => asset.platform === platform && asset.bundle).map(asset => asset.bundle)
-}
-
-/**
- * 传给 `tauri build --config` 的平台打包配置；不在发布范围内的平台返回 null，沿用 tauri.conf.json。
- * 本地无签名密钥时允许正常打包，CI 提供密钥后才生成可在线安装的签名产物。
- */
-export function bundleConfig(platform, env = process.env) {
-  const targets = bundleTargets(platform)
-  if (!targets.length) return null
-  const config = {
-    bundle: { targets, createUpdaterArtifacts: Boolean(env.TAURI_SIGNING_PRIVATE_KEY) },
-    plugins: { updater: { pubkey: env.SNAP_DESK_UPDATER_PUBLIC_KEY?.trim() ?? '' } },
-  }
-  // Tauri 打包时会原地改写主程序的安装类型标记，独立 EXE 必须在打包前另存。
-  if (platform === 'win32') config.build = { beforeBundleCommand: 'node scripts/prepare-standalone.mjs' }
-  // Apple 芯片拒绝运行未签名的应用；未提供开发者证书时使用临时签名（ad-hoc），
-  // 用户首次打开仍需在系统设置中放行。配置了 APPLE_SIGNING_IDENTITY 后由 Tauri 使用正式证书。
-  if (platform === 'darwin' && !env.APPLE_SIGNING_IDENTITY) config.bundle.macOS = { signingIdentity: '-' }
-  return config
+/** 当前平台需要的 cargo-packager 格式；不在发布范围内的平台返回空列表，由调用方决定如何处理。 */
+export function packageFormats(platform) {
+  return RELEASE_ASSETS.filter(asset => asset.platform === platform && asset.format).map(asset => asset.format)
 }
 
 /** 在目录中找到唯一匹配后缀的文件；缺失或重复都停止，避免把旧版本残留当成本次产物发布。 */

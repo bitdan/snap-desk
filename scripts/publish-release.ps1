@@ -56,10 +56,9 @@ foreach ($item in $expected) {
     $files += $found[0].FullName
     if ($item.update) { $signed += $found[0].FullName }
 }
-foreach ($file in $signed) {
-    node node_modules/@tauri-apps/cli/tauri.js signer sign --app-version $version $file
-    if ($LASTEXITCODE -ne 0) { throw '安装包签名失败。' }
-}
+# 私钥经 SNAP_DESK_SIGNING_PRIVATE_KEY 传给 tools/release-sign，签名绑定应用版本。
+node scripts/release-signing.mjs sign @signed
+if ($LASTEXITCODE -ne 0) { throw '安装包签名失败。' }
 
 if (-not $release) {
     $isTest = $Tag.Contains('-')

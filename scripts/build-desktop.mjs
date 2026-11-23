@@ -3,7 +3,6 @@ import { spawnSync } from 'node:child_process'
 import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import { resolve } from 'node:path'
-import { bundleConfig } from './release-assets.mjs'
 import { rustEnvironment } from './rust-env.mjs'
 import { syncVersion } from './sync-version.mjs'
 
@@ -15,10 +14,8 @@ const target = resolve(root, 'src-tauri', 'target')
 syncVersion(root)
 const buildArgs = process.argv.slice(2)
 // 翻译引擎在设置中按需下载或导入，不再随主程序打包，也不依赖本机准备的 runtime。
-// 各平台的打包目标与签名产物由发布附件清单统一决定：Windows 为 NSIS + 独立 EXE，
-// macOS 为 .app + DMG，Linux 为 AppImage + deb。
-const config = bundleConfig(process.platform)
-if (config) buildArgs.unshift('--config', JSON.stringify(config))
+// 安装包只由 GPUI 版生成（scripts/package-gpui.mjs）；这里只构建 Tauri 版主程序供开发对照。
+if (!buildArgs.includes('--no-bundle')) buildArgs.unshift('--no-bundle')
 const env = rustEnvironment()
 console.log(`构建输出：${target}`)
 if (process.platform === 'win32') {
@@ -28,8 +25,7 @@ if (process.platform === 'win32') {
 }
 const result = spawnSync(process.execPath, [cli, 'build', ...buildArgs], {
   cwd: root,
-  env: { ...env, CARGO_TARGET_DIR: target,
-    SNAP_DESK_BUILD_EXECUTABLE: resolve(target, buildArgs.includes('--debug') ? 'debug' : 'release', process.platform === 'win32' ? 'snap-desk.exe' : 'snap-desk') },
+  env: { ...env, CARGO_TARGET_DIR: target },
   stdio: 'inherit',
   windowsHide: true,
 })

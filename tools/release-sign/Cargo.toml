@@ -1,0 +1,18 @@
+[package]
+name = "snap-release-sign"
+version = "0.0.0"
+license = "GPL-3.0-only"
+description = "Snap Desk 发布工具：生成与校验在线更新包的 minisign 签名"
+edition = "2021"
+rust-version = "1.95"
+publish = false
+# workspace 根在 src-tauri（共用 Cargo.lock 与 target 目录）。
+workspace = "../../src-tauri"
+
+[dependencies]
+minisign = "0.10.0"
+base64 = "0.22"
+
+[dev-dependencies]
+# 测试按客户端（snap-core）的同一校验库验证签名。
+minisign-verify = "0.3"
