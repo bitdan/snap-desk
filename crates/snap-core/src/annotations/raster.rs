@@ -427,7 +427,7 @@ pub fn needs_raster(shape: &Annotation, editing: bool) -> bool {
 mod tests {
     use super::*;
     use crate::annotations::{render, validate, Point};
-    const FONT: &[u8] = include_bytes!("../../../../src-tauri/tests/fixtures/export-test.ttf");
+    const FONT: &[u8] = include_bytes!("../../tests/fixtures/export-test.ttf");
 
     fn fonts() -> Fonts {
         Fonts {

@@ -102,7 +102,7 @@ pub fn render(
 mod tests {
     use super::*;
     // 复用导出测试字体，覆盖中英文与排版；不将测试字体嵌入发布程序。
-    const FONT: &[u8] = include_bytes!("../../../src-tauri/tests/fixtures/export-test.ttf");
+    const FONT: &[u8] = include_bytes!("../tests/fixtures/export-test.ttf");
 
     #[test]
     fn text_pins_preserve_lines_wrap_and_draw_visible_pixels() {

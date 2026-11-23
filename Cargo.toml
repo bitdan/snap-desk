@@ -1,0 +1,22 @@
+# Cargo workspace 根：Cargo.lock 与 target/ 在仓库根目录，发版脚本与 CI 都从这里构建。
+# 应用为 apps/desktop-gpui（主程序 snap-desk-gpui，打包时复制为 snap-desk），业务核心在 crates/snap-core。
+[workspace]
+members = ["crates/snap-core", "apps/desktop-gpui", "tools/release-sign"]
+resolver = "2"
+
+# 发布版在依赖之间做链接优化，减少重复代码；沿用 target/release，不创建额外构建目录。
+# 保留速度优化等级和 unwind，避免为缩体积改变截图/录屏性能策略及异常清理行为。
+# Thin LTO 与单代码生成单元会增加编译时间；Windows OCR 引擎另行下载，不链接进主程序。
+# 发布签名工具在调试构建下解密私钥（scrypt）也要足够快。
+[profile.dev.package.scrypt]
+opt-level = 3
+[profile.dev.package.salsa20]
+opt-level = 3
+[profile.dev.package.sha2]
+opt-level = 3
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = "symbols"

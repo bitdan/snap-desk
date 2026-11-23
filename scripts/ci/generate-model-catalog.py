@@ -7,7 +7,7 @@ from model_release import read_pack, validate, verify_remote
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("directories", type=Path, nargs="*")
-    parser.add_argument("--output", type=Path, default=Path("src-tauri/assets/translation-models.json"))
+    parser.add_argument("--output", type=Path, default=Path("resources/assets/translation-models.json"))
     parser.add_argument("--check", action="store_true", help="仅检查现有内置目录，允许空目录")
     parser.add_argument("--remote", action="store_true", help="检查时同时下载附件复核")
     args = parser.parse_args()

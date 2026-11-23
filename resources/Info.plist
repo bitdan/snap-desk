@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- cargo-packager 打包时合并进应用的 Info.plist（scripts/package-gpui.mjs 的 infoPlistPath）；缺少用途说明时，系统会在访问麦克风时直接终止进程。 -->
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Snap Desk uses the microphone only while a screen recording with microphone audio is running.</string>
+</dict>
+</plist>

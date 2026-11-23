@@ -16,7 +16,7 @@ struct Runtime {
 }
 
 fn manifest() -> Result<Runtime, String> {
-    let entries: Vec<Runtime> = serde_json::from_str(include_str!("../../../../src-tauri/assets/onnxruntime.json"))
+    let entries: Vec<Runtime> = serde_json::from_str(include_str!("../../../../resources/assets/onnxruntime.json"))
         .map_err(|e| e.to_string())?;
     entries
         .into_iter()

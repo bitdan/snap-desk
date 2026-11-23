@@ -1,5 +1,5 @@
 //! 把内容拖到其他应用（系统拖出）。Windows 使用 OLE DoDragDrop；macOS / Linux 的拖拽由外壳的窗口框架发起
-//! （Tauri：`src-tauri/src/shared/native_drag_*.rs`；GPUI：元素拖拽交给平台的文件拖拽，文字先用 [`text_file`] 写成文件）。
+//! （元素拖拽交给平台的文件拖拽，文字先用 [`text_file`] 写成文件）。
 //! 调用方只能提供受信任的内容：文字，或由 [`image_file`] 从像素编码出的临时 PNG。
 
 /// 拖出的内容：文字或本地文件路径（图片先由 [`image_file`] 写成临时 PNG）。

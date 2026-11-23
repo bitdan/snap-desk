@@ -6,8 +6,8 @@
 
 ## 技术栈
 
-- Tauri 2 + Rust：桌面窗口、截图 / 录屏、系统集成与后台服务调用。
-- Vue 3 + TypeScript：功能界面、配置表单与 IPC 调用。
+- Rust + [GPUI](https://www.gpui.rs/)：桌面窗口与界面、截图 / 录屏、系统集成与后台服务调用，界面直接用 GPU 渲染，不依赖 WebView。
+- 与界面无关的业务核心（设置、标注、剪贴板、识别、更新等）在 `crates/snap-core`，应用外壳在 `apps/desktop-gpui`。
 - 分发平台：Windows x64（功能完整）、macOS Apple 芯片与 Linux x64（预览，平台专属能力以回退实现或“暂不支持”提示占位）；适配进度见 [TODO](Snap_Desk_TODO.md)。
 
 ## OCR 接入
@@ -60,32 +60,30 @@ DeepSeek 可在 OCR、翻译或服务管理中选择预设；服务管理保存�
 
 | 职责 | 文件 |
 | --- | --- |
-| 服务目录与前端校验 | [services.ts](src/features/recognition/services.ts) |
-| 原生配置与凭据操作 | [services.rs](src-tauri/src/recognition/services.rs) |
-| OCR 引擎选择 | [recognition/mod.rs](src-tauri/src/recognition/mod.rs) |
-| 在线 OCR 适配 | [online_ocr.rs](src-tauri/src/recognition/online_ocr.rs) |
-| Paddle 异步任务与结果解析 | [paddle_ocr.rs](src-tauri/src/recognition/paddle_ocr.rs) |
-| 在线文本翻译 | [providers/](src-tauri/src/recognition/providers/) |
+| 服务管理界面 | [settings_services.rs](apps/desktop-gpui/src/settings_services.rs) |
+| 服务目录、配置与凭据操作 | [services.rs](crates/snap-core/src/recognition/services.rs) |
+| OCR 引擎选择 | [recognition/mod.rs](crates/snap-core/src/recognition/mod.rs) |
+| 在线 OCR 适配 | [online_ocr.rs](crates/snap-core/src/recognition/online_ocr.rs) |
+| Paddle 异步任务与结果解析 | [paddle_ocr.rs](crates/snap-core/src/recognition/paddle_ocr.rs) |
+| 在线文本翻译 | [providers/](crates/snap-core/src/recognition/providers/) |
 
 本地翻译资源的许可材料见 [翻译模型许可说明](legal/translation/README.md)。
 
 ## 本地开发
 
-需要 Node.js、Rust 及 [Tauri 2 开发环境](https://v2.tauri.app/start/prerequisites/)。
+需要 Rust（stable）；发版脚本与测试另需 Node.js 22，没有 npm 依赖。
 
 ```bash
 git clone https://github.com/bitdan/snap-desk.git
 cd snap-desk
-npm ci
-npm run desktop:dev
+cargo run -p snap-desk-gpui
 ```
 
-- `npm run dev:update`：启动浏览器模拟更新，演示下载进度与安装完成，不下载文件或退出应用。
-- `npm run check`：目录边界、IPC 契约和 TypeScript 静态检查。
-- `npm test`：前端与脚本测试。
-- `npm run desktop:build:fast`：生成调试程序 `src-tauri/target/debug/snap-desk`（Windows 为 `snap-desk.exe`）。
-- `npm run desktop:build`：生成 Tauri 版发布程序（迁移期对照用，不生成安装包）。
-- `npm run desktop:package`：构建 GPUI 版并用 cargo-packager 生成安装包；构建前从托盘退出旧程序。
+- `cargo test --workspace --locked`：snap-core、应用与签名工具的单元测试。
+- `npm test`：snap-core 边界与内嵌资源检查（`check:architecture`），以及打包、签名、版本同步等脚本测试。
+- `npm run desktop:dev`：以调试模式运行应用，程序在 `target/debug/snap-desk-gpui`（Windows 为 `.exe`）。
+- `npm run desktop:package`：构建发布版并用 cargo-packager 生成安装包；构建前从托盘退出旧程序。
+- `npm run desktop:clean`：清理 `target/`。
 
 Linux 另需截图库的系统依赖，Debian / Ubuntu 可执行 `bash scripts/ci/install-linux-deps.sh`。
 
@@ -98,7 +96,7 @@ Linux 另需截图库的系统依赖，Debian / Ubuntu 可执行 `bash scripts/c
 | Linux x64 | AppImage、deb | `linux-x86_64-appimage`（deb 不在应用内更新） |
 
 - 附件清单集中在 `scripts/release-assets.mjs`：打包格式、统一文件名、签名范围和更新清单都由它派生；增删平台或分发形式时同步 `apps/desktop-gpui/src/updater.rs` 的平台、分发形式与文件后缀。
-- 安装包由 [cargo-packager](https://github.com/crabnebula-dev/cargo-packager) 生成（`scripts/package-gpui.mjs`，需先 `cargo install cargo-packager --version 0.11.8 --locked`），产物在 `src-tauri/target/release/packages/`；macOS 的 `.app.tar.gz` 由该脚本压缩 `.app` 得到。Windows 安装包默认装到当前用户目录，不需要管理员权限，也不再检查 WebView2。
+- 安装包由 [cargo-packager](https://github.com/crabnebula-dev/cargo-packager) 生成（`scripts/package-gpui.mjs`，需先 `cargo install cargo-packager --version 0.11.8 --locked`），产物在 `target/release/packages/`；macOS 的 `.app.tar.gz` 由该脚本压缩 `.app` 得到。Windows 安装包默认装到当前用户目录，不需要管理员权限，也不再检查 WebView2。
 - 更新签名由 `tools/release-sign`（minisign）生成，可信注释写入 `version:<版本>`，客户端据此拒绝版本不符的包；私钥经 `SNAP_DESK_SIGNING_PRIVATE_KEY`（及可选的 `SNAP_DESK_SIGNING_PRIVATE_KEY_PASSWORD`）传入，CI 中取自 `TAURI_SIGNING_PRIVATE_KEY` Secret，公钥为 `SNAP_DESK_UPDATER_PUBLIC_KEY` Variable，编译时嵌入程序。
 - 发布流水线分三段：校验标签 / 更新说明 / 签名配置 → 三个平台各自测试、打包并上传附件 → 汇总签名、生成 `updater.json` 并公开。任一平台失败都不会创建 Release。
 - macOS 默认使用临时签名（ad-hoc），未经公证；在流水线中配置 `APPLE_SIGNING_IDENTITY` 后改用开发者证书。ONNX Runtime 不提供 Intel Mac 预编译库，因此不构建 macOS x64。
@@ -108,7 +106,7 @@ Linux 另需截图库的系统依赖，Debian / Ubuntu 可执行 `bash scripts/c
 
 ### 持续集成
 
-- 推送到 `master` 和 PR 触发前端检查 / 测试，以及 Windows、macOS、Linux 三个平台的原生库测试；非 Windows 的平台分支只在这里被编译。
+- 推送到 `master` 和 PR 触发脚本检查 / 测试，以及 Windows、macOS、Linux 三个平台的 `cargo test --workspace`；非 Windows 的平台分支只在这里被编译。
 - 只改 `*.md`、`docs/` 或 `LICENSE` 的提交不触发 CI；测试与构建不读取这些文件，同时改了代码的提交照常运行。`legal/` 下的许可文本由校验脚本按字节审核，不在跳过范围内。
 - 提交信息以 `chore(release):` 开头的发版准备提交跳过测试，随后推送的标签会在发布流水线里运行同一套测试。
 
@@ -117,39 +115,35 @@ Linux 另需截图库的系统依赖，Debian / Ubuntu 可执行 `bash scripts/c
 ## 代码组织
 
 ```text
-src/
-  main.ts              # WebView 启动与窗口选择
-  app/                 # 主界面、引导与全局样式
-  features/<功能>/     # 业务组件、逻辑、API、事件与类型
-  shared/              # 通用 UI、独立窗口、几何与语言
-  services/            # IPC、命令白名单、日志与 API 汇总
-src-tauri/src/
-  app/                 # Tauri 组装、在线更新、托盘与快捷键
-  capture/             # 截图；含 recorder/ 和 scroll/
-  pins/                # 桌面贴图
-  clipboard/           # 剪贴板历史、独立列表窗口与导出
-  shelf/               # 顶部暂存架：历史视图、偏好与窗口
-  recognition/         # OCR、二维码、翻译与凭据
-  settings/            # 配置、快捷键、自启与目录
-  resources/           # 资源安装与空闲回收
-  diagnostics/         # 日志与诊断
-  shared/              # 渲染、导出、窗口与系统基础设施
-crates/snap-core/src/  # 与界面无关的核心，Tauri 版和 GPUI 版共用
-  capture/             # 桌面采集与窗口/控件候选（Windows、macOS、Linux X11/Wayland）、选区合成
-  settings/            # 设置模型、校验、落盘与快捷键事务
-  recognition/         # 服务目录、翻译与 OCR 配置模型
-  clipboard/           # 历史模型、分类、SQLite 仓库与 Windows 图片剪贴板
-  export.rs            # 导出文件名、编码与保存目录记忆
-  annotations.rs       # 标注校验与渲染
-  text_image.rs        # 文字转图片
-  platform.rs · desktop_support.rs · x11.rs · wayland_probe.rs · macos.rs  # 平台设施
-  pins/                # 贴图布局、像素预算、缩放步进、变换、图片文件解码与文字贴图
-  i18n.rs · paths.rs
-apps/desktop-gpui/src/ # GPUI 版（迁移中）：托盘、快捷键、单实例、日志、截图浮层（capture.rs、selection.rs）、贴图（pins.rs、native.rs）
+Cargo.toml             # workspace 根；Cargo.lock 与 target/ 在仓库根目录
+apps/desktop-gpui/     # 桌面应用（主程序 snap-desk-gpui，打包时复制为 snap-desk）
+  src/shell.rs         # 启动组装、托盘、全局快捷键与单实例转发
+  src/capture.rs · selection.rs · magnifier.rs · scroll.rs · recording.rs  # 截图浮层、滚动截图与录屏
+  src/annotate.rs · live_annotate.rs  # 标注
+  src/pins.rs · native.rs              # 桌面贴图与平台窗口能力
+  src/clipboard*.rs · shelf.rs         # 剪贴板历史与顶部暂存架
+  src/recognition*.rs · translation_window.rs · local_translate.rs  # OCR、二维码与翻译
+  src/settings_*.rs    # 设置窗口各分类页
+  src/updater.rs       # 在线更新（portable.ps1 为独立 EXE 的替换脚本）
+  assets/              # 界面图标与服务商品牌图
+crates/snap-core/      # 与界面无关的业务核心
+  src/capture/         # 桌面采集与窗口/控件候选（Windows、macOS、Linux X11/Wayland）、选区合成
+  src/settings/        # 设置模型、校验、落盘与快捷键事务
+  src/recognition/     # 服务目录、OCR、翻译与凭据
+  src/clipboard/       # 历史模型、分类、SQLite 仓库与 Windows 图片剪贴板
+  src/recording/       # 录屏采集、编码与输入事件
+  src/pins/            # 贴图布局、像素预算、缩放步进、变换、图片文件解码与文字贴图
+  src/updates/         # 更新清单、下载与签名校验
+  src/export.rs · annotations.rs · text_image.rs  # 导出、标注渲染与文字转图片
+  src/platform.rs · desktop_support.rs · x11.rs · wayland_probe.rs · macos.rs  # 平台设施
+  i18n/                # 界面与原生文案的英文词典
+  tests/fixtures/      # 测试字体
+resources/             # 图标、随附许可证、macOS Entitlements / Info.plist、下载与模型目录（assets/）
+native/translator/     # 本地翻译 worker（CTranslate2，C++）
 tools/release-sign/    # 发布工具：在线更新包的 minisign 签名
-tests/<功能>/          # 前端测试
+scripts/               # 打包、发版、签名与版本同步脚本（scripts/ci/ 为翻译引擎与模型流水线）
 ```
 
-Cargo workspace 的根在 `src-tauri/Cargo.toml`，`Cargo.lock` 与 `target/` 仍在 `src-tauri/`；在该目录执行 `cargo test --lib` 只测 Tauri 包，core 与 GPUI 版用 `-p snap-core`、`-p snap-desk-gpui`。core 不依赖 Tauri 或 GPUI（`check:architecture` 检查），需要外壳能力时由调用方以闭包或 trait 注入。GPUI 版读取与 Tauri 版相同的设置文件；开发时可用环境变量 `SNAP_DESK_SETTINGS` 指向另一份设置，与已安装的版本同时运行。
+core 不依赖 GPUI（`check:architecture` 检查），需要外壳能力时由调用方以闭包或 trait 注入。设置文件沿用旧版的位置与格式；开发时可用环境变量 `SNAP_DESK_SETTINGS` 指向另一份设置，与已安装的版本同时运行。
 
-组件和业务逻辑归属对应功能；命令与事件通过 `services/ipc.ts` 调用，`services/api.ts` 仅汇总。协作规则见 [AGENTS.md](AGENTS.md)，开发进度见 [TODO](Snap_Desk_TODO.md)。
+协作规则见 [AGENTS.md](AGENTS.md)，开发进度见 [TODO](Snap_Desk_TODO.md)。

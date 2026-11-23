@@ -610,7 +610,7 @@ pub fn run_action(cx: &mut App, action: ShortcutAction, source: &str) {
 /// 与 Tauri 版托盘共用同一张 32×32 图标。
 fn tray_icon() -> Result<tray_icon::Icon, String> {
     let image = image::load_from_memory_with_format(
-        include_bytes!("../../../src-tauri/icons/32x32.png"),
+        include_bytes!("../../../resources/icons/32x32.png"),
         image::ImageFormat::Png,
     )
     .map_err(|e| e.to_string())?

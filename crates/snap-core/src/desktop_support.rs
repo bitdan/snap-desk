@@ -618,7 +618,7 @@ mod tests {
     #[test]
     fn user_facing_reasons_have_english_entries() {
         let catalog: std::collections::HashMap<String, String> = serde_json::from_str(
-            include_str!("../../../src/shared/i18n/messages.native.en.json"),
+            include_str!("../i18n/messages.native.en.json"),
         )
         .unwrap();
         for message in [

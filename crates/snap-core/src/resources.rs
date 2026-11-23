@@ -33,7 +33,7 @@ pub struct Asset {
 }
 
 pub fn manifest() -> Result<Vec<Asset>, String> {
-    serde_json::from_str(include_str!("../../../src-tauri/assets/downloads.json"))
+    serde_json::from_str(include_str!("../../../resources/assets/downloads.json"))
         .map_err(|e| e.to_string())
 }
 
@@ -277,7 +277,7 @@ mod tests {
         header[5] = 1;
         header[12..16].copy_from_slice(b"fvar");
         assert!(validate_font(&header).unwrap_err().contains("可变字体"));
-        validate_font(include_bytes!("../../../src-tauri/tests/fixtures/export-test.ttf")).unwrap();
+        validate_font(include_bytes!("../tests/fixtures/export-test.ttf")).unwrap();
     }
 
     #[test]
@@ -305,7 +305,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         assert!(!font_ready(dir.path()));
         assert!(install_font(dir.path(), b"not a font").is_err());
-        install_font(dir.path(), include_bytes!("../../../src-tauri/tests/fixtures/export-test.ttf")).unwrap();
+        install_font(dir.path(), include_bytes!("../tests/fixtures/export-test.ttf")).unwrap();
         assert!(font_ready(dir.path()));
         assert!(!status(dir.path()).unwrap().models_ready);
     }

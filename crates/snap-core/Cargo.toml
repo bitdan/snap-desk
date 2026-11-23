@@ -2,12 +2,10 @@
 name = "snap-core"
 version = "0.0.0"
 license = "GPL-3.0-only"
-description = "Snap Desk UI-independent core shared by the Tauri and GPUI shells"
+description = "Snap Desk UI-independent core used by the GPUI desktop app"
 edition = "2021"
 rust-version = "1.95"
 publish = false
-# workspace 根在 src-tauri（沿用其 Cargo.lock 与 target 目录，发版脚本和 CI 路径不变）。
-workspace = "../../src-tauri"
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
@@ -17,7 +15,7 @@ tempfile = "3"
 base64 = "0.22"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "bmp"] }
 ab_glyph = "=0.2.32"
-# 剪贴板组合导出 PDF；版本与 src-tauri 一致。
+# 剪贴板组合导出 PDF。
 printpdf = { version = "=0.7.0", default-features = false, features = ["font_subsetting"] }
 rusqlite = { version = "=0.37.0", features = ["bundled"] }
 url = "2"
@@ -27,7 +25,7 @@ dirs = "6"
 global-hotkey = { version = "0.8", features = ["serde"] }
 # 屏幕与窗口采集；版本与 Tauri 版锁定的一致。
 xcap = "=0.9.8"
-# 识别：本地 PP-OCR（OAR 前后处理 + ort CPU 推理）、在线 OCR/翻译、二维码、资源摘要与运行库解压；版本与 src-tauri 一致。
+# 识别：本地 PP-OCR（OAR 前后处理 + ort CPU 推理）、在线 OCR/翻译、二维码、资源摘要与运行库解压。
 oar-ocr = { version = "=0.10.0", default-features = false }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "socks"] }
 rqrr = { version = "=0.10.1", default-features = false }
@@ -37,18 +35,18 @@ blake3 = "=1.8.2"
 html5ever = "=0.27.0"
 markup5ever_rcdom = "=0.3.0"
 zip = { version = "=6.0.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
-# 录屏 GIF 编码；版本与 src-tauri 一致。
+# 录屏 GIF 编码。
 gif = "=0.14.2"
 # 登录自启；与 tauri-plugin-autostart 依赖的版本一致（同一登录项格式）。
 auto-launch = "=0.6.0"
-# 应用版本比较（与 src-tauri 一致）。
+# 应用版本比较。
 semver = "1"
 # 应用更新包签名校验（minisign，与 tauri-plugin-updater 同一实现与版本）。
 minisign-verify = "0.3"
-# 本地翻译 worker 进程桥（异步管道与超时）；版本与 src-tauri 一致。
+# 本地翻译 worker 进程桥（异步管道与超时）。
 tokio = { version = "1", features = ["rt", "sync", "process", "io-util", "time"] }
 
-# Windows：物理像素拼接、录屏（WGC 采集、Media Foundation 编码、WASAPI 声音、Raw Input 键鼠）、窗口与 UIA 控件候选、光标合成。版本与 src-tauri 锁定的 windows 0.62.2 一致。
+# Windows：物理像素拼接、录屏（WGC 采集、Media Foundation 编码、WASAPI 声音、Raw Input 键鼠）、窗口与 UIA 控件候选、光标合成。版本已锁定的 windows 0.62.2 一致。
 [target.'cfg(windows)'.dependencies]
 clipboard-win = "=5.4.1"
 # Windows 只在首次识别时从已下载、校验过的路径加载 onnxruntime.dll。
@@ -57,7 +55,7 @@ windows = { version = "=0.62.2", features = ["Win32_Foundation", "Win32_Graphics
 # COM implement 宏（拖出用的 IDataObject / IDropSource）生成 ::windows_core 路径，必须直接声明。
 windows-core = "=0.62.2"
 
-# 微信 OCR：锁定已核对的 SDK，微信运行库和模型仅使用用户本机安装；windows-sys 只读注册表安装路径。版本与 src-tauri 一致。
+# 微信 OCR：锁定已核对的 SDK，微信运行库和模型仅使用用户本机安装；windows-sys 只读注册表安装路径。
 [target.'cfg(all(windows, target_arch = "x86_64"))'.dependencies]
 windows-sys = { version = "=0.59.0", features = ["Win32_System_Registry", "Win32_Foundation"] }
 wechat-ocr-core = { git = "https://github.com/MapleREHub/wechat_ocr_sdk", rev = "146d838ba045aba82451a187a0fb459cc784d086" }
@@ -83,6 +81,6 @@ zbus = "=5.19.0"
 wayland-protocols = { version = "=0.32.13", features = ["client", "staging"] }
 libwayshot-xcap = "=0.3.3"
 
-# 非 Windows 平台在构建时下载 CPU 推理引擎，与 src-tauri 一致。
+# 非 Windows 平台在构建时下载 CPU 推理引擎。
 [target.'cfg(not(windows))'.dependencies]
 ort = { version = "=2.0.0-rc.13", default-features = false, features = ["download-binaries", "tls-native", "api-24"] }

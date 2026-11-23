@@ -1,7 +1,7 @@
 //! 应用数据目录。两个可执行程序必须解析到同一位置，才能共用设置、历史与资源。
 use std::path::PathBuf;
 
-/// 与 `src-tauri/tauri.conf.json` 的 `identifier` 一致；改动会让已安装用户的配置“消失”。
+/// 与安装包标识（`scripts/package-gpui.mjs` 的 `identifier`）一致；改动会让已安装用户的配置“消失”。
 pub const APP_IDENTIFIER: &str = "io.snapdesk.app";
 
 /// 等同 Tauri `app_config_dir()`：Windows 为 `%APPDATA%\io.snapdesk.app`，

@@ -1,4 +1,4 @@
-//! 顶部暂存架（对照 Vue 版 `ShelfWindow.vue`、Tauri `src-tauri/src/shelf`）：剪贴板历史按所选类别的最近条目，
+//! 顶部暂存架：剪贴板历史按所选类别的最近条目，
 //! 像照片一样挂在鼠标所在显示器顶部中央的一根绳上。
 //!
 //! 设置、固定/隐藏的条目与快照拼装在 core `snap_core::shelf`（与 Tauri 版共用 `shelf.json`，开发调试时随

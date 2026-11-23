@@ -1,9 +1,12 @@
-// package.json 是唯一版本来源。Tauri 直接引用它，Cargo/npm 必需的字面量由此生成。
+// package.json 是唯一版本来源（应用运行时也直接内嵌它），Cargo/npm 必需的字面量由此生成。
 import { readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const defaultRoot = fileURLToPath(new URL('../', import.meta.url))
+/** 应用 crate：版本写入它的清单与 Cargo.lock 条目；snap-core 等内部 crate 不单独发布，保持 0.0.0。 */
+export const APP_PACKAGE = 'snap-desk-gpui'
+export const APP_MANIFEST = 'apps/desktop-gpui/Cargo.toml'
 
 /** 读取并校验版本，支持正式版及 alpha.1 / beta.1 / rc.1 等预发布版本。 */
 export function readVersion(root = defaultRoot) {
@@ -18,7 +21,7 @@ export function readVersion(root = defaultRoot) {
 /**
  * 开发、打包和 CI 发布前调用，只更新本项目版本，保留依赖版本和锁定信息。
  * 先计算并检查所有文件，再写入变化，避免结构异常时只同步了一部分文件。
- * root 可指定临时目录，供定向测试使用，不需要启动 Tauri 或 Rust 编译。
+ * root 可指定临时目录，供定向测试使用，不需要 Rust 编译。
  */
 export function syncVersion(root = defaultRoot) {
   const version = readVersion(root)
@@ -40,29 +43,27 @@ export function syncVersion(root = defaultRoot) {
     lock.version = version
     lock.packages[''].version = version
   })
-  // 不把路径改回版本字面量，让 Tauri CLI、应用内版本与安装包直接读取 package.json。
-  const config = JSON.parse(readFileSync(resolve(root, 'src-tauri/tauri.conf.json'), 'utf8'))
-  if (config.version !== '../package.json') {
-    throw new Error('tauri.conf.json version 必须引用 ../package.json。')
-  }
 
   // 按 TOML 段定位，禁止全局替换，以免改到恰好同版本的第三方依赖。
+  const appName = new RegExp(`^name\\s*=\\s*"${APP_PACKAGE}"\\s*$`, 'm')
   const updateToml = (file, header) => update(file, text => {
+    // split 保留捕获的段头：sections[index - 1] 是该段的段头。只认 [package] / [[package]]，
+    // 清单里 [[bin]] 段同样写着 name = "snap-desk-gpui"。
     const sections = text.split(header)
     const indexes = sections.flatMap((section, index) =>
-      index > 0 && /^name\s*=\s*"snap-desk"\s*$/m.test(section) ? [index] : [])
-    if (indexes.length !== 1) throw new Error(`${file} 必须包含唯一的本项目 package 段。`)
+      index > 0 && /^\[\[?package\]\]?\s*$/.test(sections[index - 1].trim()) && appName.test(section) ? [index] : [])
+    if (indexes.length !== 1) throw new Error(`${file} 必须包含唯一的 ${APP_PACKAGE} package 段。`)
     const index = indexes[0]
     if (!/^version\s*=\s*"[^"]+"/m.test(sections[index])) {
-      throw new Error(`${file} 本项目 package 段缺少 version。`)
+      throw new Error(`${file} 中 ${APP_PACKAGE} package 段缺少 version。`)
     }
     sections[index] = sections[index].replace(/^(version\s*=\s*")[^"]+(".*)$/m,
       (_, prefix, suffix) => `${prefix}${version}${suffix}`)
     return sections.join('')
   })
   // 捕获组保留原段头和换行，依赖段内容保持不变。
-  updateToml('src-tauri/Cargo.toml', /(^\[[^\r\n]+\][^\r\n]*\r?\n)/m)
-  updateToml('src-tauri/Cargo.lock', /(^\[\[package\]\]\r?\n)/m)
+  updateToml(APP_MANIFEST, /(^\[[^\r\n]+\][^\r\n]*\r?\n)/m)
+  updateToml('Cargo.lock', /(^\[\[package\]\]\r?\n)/m)
 
   for (const { path, after } of changes) writeFileSync(path, after, 'utf8')
   console.log(`版本已同步：${version}（更新 ${changes.length} 个文件）`)

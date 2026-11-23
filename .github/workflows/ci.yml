@@ -28,8 +28,8 @@ env:
   PYTHONIOENCODING: utf-8
 
 jobs:
-  frontend:
-    name: Frontend checks and tests
+  scripts:
+    name: Script checks and tests
     # 发版准备只改版本号，随后推送的标签会在发布流水线里跑同一套测试，这里不重复。
     # master 只接受 PR，因此三种情况都要跳过：标题为 chore(release): 的发版 PR、
     # 合并它产生的合并提交（正文带 PR 标题），以及直接以该前缀开头的提交。
@@ -52,13 +52,8 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: '22'
-          cache: npm
-      - name: Install dependencies
-        run: npm ci
-      # check 覆盖目录边界、IPC 契约和 vue-tsc；test 覆盖 vitest 与脚本测试。
-      - name: Static checks
-        run: npm run check
-      - name: Frontend tests
+      # 发版脚本没有 npm 依赖；test 覆盖 snap-core 边界与内嵌资源检查，以及打包、签名、版本同步等脚本测试。
+      - name: Script tests
         run: npm test
 
   # 三个发布平台都编译并跑单元测试；非 Windows 的平台分支只有在这里才会被编译到。
@@ -103,14 +98,10 @@ jobs:
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: "./src-tauri -> target"
+          workspaces: ". -> target"
           shared-key: native
           save-if: ${{ github.ref == 'refs/heads/master' }}
-      # 与发布流水线使用同一条命令（Tauri 包与共用的 snap-core）；默认跳过需要实机桌面或模型资源的 ignored 测试。
-      - name: Test native library
-        working-directory: src-tauri
-        run: cargo test --locked --lib -p snap-desk -p snap-core
-      # 发布的主程序是 GPUI 外壳；单元测试不打开窗口，各平台都能运行。
-      - name: Test GPUI shell
-        working-directory: src-tauri
-        run: cargo test --locked -p snap-desk-gpui
+      # 与发布流水线使用同一条命令（snap-core、GPUI 应用与签名工具）；单元测试不打开窗口，
+      # 默认跳过需要实机桌面或模型资源的 ignored 测试。
+      - name: Test workspace
+        run: cargo test --locked --workspace

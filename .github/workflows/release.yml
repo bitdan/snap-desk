@@ -47,7 +47,6 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: '22'
-          cache: npm
 
       - name: Check tag and sync version
         run: node scripts/check-release-version.mjs
@@ -55,9 +54,6 @@ jobs:
       # 标签注释是更新内容的唯一来源，缺失时在构建前停止；正文同时用于应用内更新清单。
       - name: Prepare release notes from tag
         run: node scripts/release-notes.mjs $env:GITHUB_REF_NAME "$env:RUNNER_TEMP/snap-desk-release-notes.md"
-
-      - name: Install frontend dependencies
-        run: npm ci
 
       # 更新签名由 Rust 小工具 tools/release-sign 生成；runner 已安装 rustup。
       - name: Setup Rust for signing tool
@@ -73,7 +69,7 @@ jobs:
           SNAP_DESK_UPDATER_PUBLIC_KEY: ${{ vars.SNAP_DESK_UPDATER_PUBLIC_KEY }}
         run: node scripts/release-signing.mjs
 
-      - name: Test frontend
+      - name: Test scripts
         run: npm test
 
   build:
@@ -110,9 +106,8 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: '22'
-          cache: npm
 
-      # 先从 package.json 同步版本，再执行 npm ci 和 Cargo --locked。
+      # 先从 package.json 同步版本，再执行 Cargo --locked。
       - name: Check tag and sync version
         run: node scripts/check-release-version.mjs
 
@@ -126,26 +121,18 @@ jobs:
           rustup toolchain install stable --profile minimal
           rustup default stable
 
-      # target 相对 src-tauri 解析，与本地构建脚本固定的缓存目录一致。
+      # target 在仓库根目录，与本地构建脚本固定的缓存目录一致。
       # 与 CI 共用 shared-key，读取 master 的测试编译缓存；标签上保存的缓存后续标签读不到，因此不保存。
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: "./src-tauri -> target"
+          workspaces: ". -> target"
           shared-key: native
           save-if: false
 
-      - name: Install frontend dependencies
-        run: npm ci
-
       # 测试失败时停止发布；Rust 默认跳过需要实机桌面或模型资源的 ignored 测试。
-      - name: Test native library
-        working-directory: src-tauri
-        run: cargo test --locked --lib -p snap-desk -p snap-core
-
-      - name: Test GPUI shell
-        working-directory: src-tauri
-        run: cargo test --locked -p snap-desk-gpui
+      - name: Test workspace
+        run: cargo test --locked --workspace
 
       # 安装包由 cargo-packager 生成（版本与 scripts/package-gpui.mjs 的 PACKAGER_VERSION 一致）。
       - name: Install cargo-packager
@@ -199,7 +186,6 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: '22'
-          cache: npm
 
       - name: Check tag and sync version
         run: node scripts/check-release-version.mjs

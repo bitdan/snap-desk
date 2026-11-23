@@ -4,17 +4,13 @@
 
 ## 代码组织
 
-- 前端：`src/main.ts` 为启动入口；`app/` 负责主界面与窗口组装；`features/<功能>/` 放业务组件、逻辑与通信契约；`shared/` 放跨功能通用能力；`services/` 放 IPC、错误处理和日志。禁止恢复平铺的 `lib/`、`components/` 或另建杂物目录。
-- Rust：根目录只保留 `lib.rs`、`main.rs`；`app/` 负责启动、应用命令和托盘/快捷键入口，业务放所属功能目录，通用系统设施放 `shared/`。录屏与滚动截图保留在 `capture/recorder/`、`capture/scroll/`，对应模块为 `capture::recording`、`capture::scroll`；OCR、二维码、翻译及凭据归入 `recognition/`。完整模块地图见 [TECHNICAL.md](TECHNICAL.md#代码组织)。
-- 界面迁移期间（Tauri + Vue → GPUI）：与界面无关的业务逻辑放 `crates/snap-core`（模块名对齐 `src-tauri/src` 的原归属），不得依赖 `tauri`、`gpui`；`src-tauri` 以原路径 `pub use` 重导出，调用方不改路径。GPUI 版在 `apps/desktop-gpui`，Tauri 版保持可用直到功能齐平。
-- 新文件先确定功能归属并复用已有实现。组件放功能内的 `components/`，测试放 `tests/<功能>/`；单功能代码不进入共享层，业务状态与交互不继续堆入应用入口。按职责拆分，不要求前后端目录机械对称。
-- 依赖保持单向：前端 `shared` 不依赖 `app/features/services`，功能模块不依赖 `app`。跨功能直接引用能力所属模块；不通过复制代码、扩大 Rust 可见性或全局兼容转发掩盖循环依赖。
-- 功能内 `api.ts` 维护命令，`events.ts` 维护订阅，`types.ts` 或领域模型维护类型。原生命令统一经过 `services/ipc.ts`；`services/api.ts` 只组合和转发，组件通过它调用 API，领域类型从所属功能直接导入。
-- 移动文件时同步静态/动态导入、样式、测试读取路径、Rust 模块声明及内嵌资源路径，不保留旧路径占位文件。保持 IPC 命令、事件和序列化语义；契约变化核对全部生产者与消费者。
-- 新增顶层领域时同步本文件、TECHNICAL.md 模块地图及目录检查脚本的原生领域名单，不放宽规则绕过检查。
+- 桌面应用是 `apps/desktop-gpui`（GPUI，主程序 `snap-desk-gpui`，打包时复制为 `snap-desk`）：窗口、托盘、快捷键与界面按功能分文件（`capture.rs`、`pins.rs`、`clipboard*.rs`、`settings_*.rs` 等），`shell.rs` 负责启动组装与托盘/快捷键入口。界面图标与品牌图在 `apps/desktop-gpui/assets/`。
+- 与界面无关的业务逻辑放 `crates/snap-core`，不得依赖 `gpui` 或任何窗口/事件循环；需要通知界面或调用外壳能力时由调用方以闭包或 trait 注入。界面词典在 `crates/snap-core/i18n/`。完整模块地图见 [TECHNICAL.md](TECHNICAL.md#代码组织)。
+- 应用与打包共用的资源在 `resources/`（`icons/`、`licenses/`、macOS `Entitlements.plist` / `Info.plist`、`assets/` 下的下载与模型目录）；本地翻译 worker 源码在 `native/translator/`；发布签名工具在 `tools/release-sign/`。
+- 新文件先确定功能归属并复用已有实现；单功能代码不进入共享层，业务状态与交互不继续堆入应用入口。跨功能直接引用能力所属模块；不通过复制代码、扩大可见性或全局兼容转发掩盖循环依赖。
+- 移动文件时同步 Rust 模块声明、`include_str!` / `include_bytes!` 等内嵌资源路径及脚本、工作流中的路径，不保留旧路径占位文件。
 
-- `shelf/` 与前端 `features/shelf/` 负责顶部暂存架；内容复用剪贴板历史，只保存分类与卡片展示偏好。
-- 剪贴板历史列表运行在独立的 `clipboard` 窗口（`clipboard/window.rs`），主窗口只保留唤出入口与设置；历史事件需同时发往 `main` 与 `clipboard`。
+- `shelf.rs` 与 `snap_core::shelf` 负责顶部暂存架；内容复用剪贴板历史，只保存分类与卡片展示偏好。
 
 ## 界面与快捷键
 
@@ -24,30 +20,26 @@
 - 保留必要的表单标签和读屏软件所需的可访问名称，界面清爽不能牺牲可访问性。删除、支付、提交永久性变更等危险或不可逆操作必须保留清晰的后果提示，不将其仅放在 tooltip 中。
 - 去掉说明文字后，首次使用者仍应能看懂下一步点哪里、点击后会发生什么。重写已有界面时，先去掉冗余标签和说明；若清晰度下降，优先优化布局与按钮文案。
 - 设置和常用内容不使用折叠、手风琴或 `<details>/<summary>`；按标题、分隔线直接展示，内容多时使用独立分类页。
-- 区分“行内编辑（Inline Editing）”与“模态对话框（Modal Dialog）”：修改当前页面上的单项设置（开关、下拉、单个输入框）在行内直接生效；新增或编辑一个独立对象（服务、账号、规则等多字段表单，带保存 / 取消）必须用模态对话框，本项目统一使用 `shared/ui/DetachedWindow` 独立窗口，不在列表行下方展开表单（行内展开，Inline Expansion）。对话框标题写明“添加 / 编辑 + 对象”，底部右侧依次为取消、主按钮；取消或关闭不保存，保存失败保留内容供重试。
+- 区分“行内编辑（Inline Editing）”与“模态对话框（Modal Dialog）”：修改当前页面上的单项设置（开关、下拉、单个输入框）在行内直接生效；新增或编辑一个独立对象（服务、账号、规则等多字段表单，带保存 / 取消）必须用模态对话框，本项目统一使用独立窗口，不在列表行下方展开表单（行内展开，Inline Expansion）。对话框标题写明“添加 / 编辑 + 对象”，底部右侧依次为取消、主按钮；取消或关闭不保存，保存失败保留内容供重试。
 - 截图默认快捷键为 `F1`，其他全局功能避开它；仅在功能实现时注册快捷键。
 
-## 前端 Web 写法
+## 官网页面
 
-- 新增或修改前端 HTML/CSS/客户端 JS（组件、样式、表单、弹层、无障碍、性能等）时，先用 Modern Web Guidance 查这个需求的推荐写法，再改代码：`npx.cmd -y modern-web-guidance@latest search "<2–5 词英文查询>"` 找到指南，`retrieve "<id>"` 取回后对照实现。Rust、脚本、CI、测试和构建配置不适用。指南与 `UI-GUIDELINES.md` 或本文件冲突时以项目约定为准。
-- 浏览器支持策略：运行时只有 Tauri WebView —— Windows 为 WebView2（Chromium 常青版），macOS 为 WKWebView（最低 13.3，对应 Safari 16.4），Linux 为系统 WebKitGTK。不以“主流浏览器普遍可用”为默认前提；三端均支持的特性可直接使用，未全部支持的特性须做特性检测并优雅降级，降级代码保持轻量，不引入 polyfill 或额外依赖。
-- JS 语法与内置 API 以 `tsconfig.json` 的 `lib`（当前 ES2022）为准；需要更新的特性（如 `toSorted`、`findLast`）先确认三端运行时支持，再升级 `lib`，不使用类型断言绕过。
+- 修改 `docs/` 下的官网 HTML/CSS 时，先用 Modern Web Guidance 查这个需求的推荐写法，再改代码：`npx.cmd -y modern-web-guidance@latest search "<2–5 词英文查询>"` 找到指南，`retrieve "<id>"` 取回后对照实现。指南与 `UI-GUIDELINES.md` 或本文件冲突时以项目约定为准。
 
 ## 验证与构建
 
-- 源码组织或依赖变化执行 `npm run check:architecture`；前端代码变化执行 `npm run check` 和受影响的定向测试。修正检查发现的问题，不删除检查或增加宽泛忽略。
-- IPC 变化执行 `npm run check:contracts`，同步命令注册、调用参数、审计名单及通信字段。组件测试优先复用 `tests/helpers/component-host.ts`，通过真实交互验证，避免抽取私有函数源码执行。
-- 除非用户明确要求，不执行编译、发布构建或打包，也不通过 Rust 测试隐式触发编译；可运行必要的静态检查和前端定向测试。
-- 构建统一复用 `src-tauri/target/`，不按版本新建目录。`desktop:build` 生成 Tauri 版可运行程序，`desktop:package` 构建 GPUI 版并用 cargo-packager 生成安装包；保留脚本中的 `--ci`、`--locked`，构建前从托盘退出程序。
-- npm 复用 `npm config get cache` 指向的共享缓存，不改用项目内缓存或备份依赖目录。安装因权限或占用失败时报告原因，不通过复制、改名 `node_modules` 绕过。
+- 源码组织或内嵌资源变化执行 `npm run check:architecture`（snap-core 边界与 Rust 内嵌资源路径）；脚本变化执行 `npm test`。修正检查发现的问题，不删除检查或增加宽泛忽略。
+- 除非用户明确要求，不执行编译、发布构建或打包，也不通过 Rust 测试隐式触发编译；可运行必要的静态检查和脚本测试。
+- Cargo workspace 根在仓库根目录 `Cargo.toml`，构建统一复用根目录 `target/`，不按版本新建目录。`desktop:dev` 以调试模式运行应用，`desktop:package` 构建发布版并用 cargo-packager 生成安装包；保留脚本中的 `--locked`，构建前从托盘退出程序。
 
 ## 发版与更新说明
 
-- 发布版本以 `package.json` 为唯一来源，修改后运行 `npm run version:sync`，同步提交 `package-lock.json`、`src-tauri/Cargo.toml` 和 `src-tauri/Cargo.lock`。发版准备提交只改版本号，提交信息使用 `chore(release): prepare <version>`；`master` 只接受 PR，发版提交从 `release/<version>` 分支提 PR，PR 标题与提交信息相同，并以合并提交方式合并（保持提交哈希不变），合并后再在该提交上打标签。CI 按此前缀跳过发版 PR 及其合并提交的测试，由标签触发的发布流水线统一验证，因此不要在这类提交或 PR 里夹带代码改动。发布标签必须为 `v<version>`，与应用版本完全一致。
+- 发布版本以 `package.json` 为唯一来源，修改后运行 `npm run version:sync`，同步提交 `package-lock.json`、`apps/desktop-gpui/Cargo.toml` 和 `Cargo.lock`。发版准备提交只改版本号，提交信息使用 `chore(release): prepare <version>`；`master` 只接受 PR，发版提交从 `release/<version>` 分支提 PR，PR 标题与提交信息相同，并以合并提交方式合并（保持提交哈希不变），合并后再在该提交上打标签。CI 按此前缀跳过发版 PR 及其合并提交的测试，由标签触发的发布流水线统一验证，因此不要在这类提交或 PR 里夹带代码改动。发布标签必须为 `v<version>`，与应用版本完全一致。
 - 发布必须使用附注标签（`git tag -a`），在标签注释中填写面向用户的中文更新内容，概括相对上一已发布版本的功能变化、问题修复及必要的升级注意事项；不能只写版本号、提交哈希或固定资源说明。
 - 标签注释是更新内容的统一来源，由 `scripts/release-notes.mjs` 生成 Releases 正文，再同步进入 `updater.json` 的应用内更新说明。发布时核对三处内容一致，不能只在聊天回复中说明变动。
 - Releases 正文先展示“更新内容”，再展示下载与资源说明；自动生成的提交比较链接作为补充，不能替代人工整理的变动内容。缺少更新内容时应在构建前停止发布。
-- Windows 统一采用 NSIS 安装包与独立 EXE 双分发；macOS Apple 芯片提供 DMG 与应用更新包，Linux x64 提供 AppImage 与 deb。附件清单以 `scripts/release-assets.mjs` 为唯一来源，保持各更新目标、签名及附件完整，并与 `src-tauri/src/app/updater.rs` 的平台、分发形式和后缀一致。全部平台构建成功后才创建草稿，先上传全部产物与更新清单，再公开 Release。
+- Windows 统一采用 NSIS 安装包与独立 EXE 双分发；macOS Apple 芯片提供 DMG 与应用更新包，Linux x64 提供 AppImage 与 deb。附件清单以 `scripts/release-assets.mjs` 为唯一来源，保持各更新目标、签名及附件完整，并与 `apps/desktop-gpui/src/updater.rs` 的平台、分发形式和后缀一致。全部平台构建成功后才创建草稿，先上传全部产物与更新清单，再公开 Release。
 - 已推送的发布标签不移动、不覆盖；需要代码修复时递增版本并创建新标签。仅补充已发布版本的说明时编辑对应 Release 正文，不重新构建或改动标签，并核对应用内说明是否需要同步。
 
 ## TODO 与交付
