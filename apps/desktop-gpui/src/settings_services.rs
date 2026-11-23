@@ -127,6 +127,54 @@ fn tile(brand: Option<Brand>, mono: &str, color: u32) -> Div {
     }
 }
 
+/// 引擎下拉里的 18×18 图标与连接方式（Vue `ProviderMenu` 的 `.provider-icon` 与连接标记）。
+pub(in super::super) fn provider_icon(
+    provider: &str,
+    service: Option<&RecognitionService>,
+    t: &dyn Fn(&str) -> String,
+) -> (Div, Option<String>) {
+    let base = || div().size(px(18.0)).flex().flex_none().items_center().justify_center().rounded(px(5.0));
+    let logo = |brand: Brand| {
+        if brand.monochrome() {
+            base().child(Icon::default().data(brand.svg()).size(px(16.0)).text_color(rgb(col::text())))
+        } else {
+            base().child(img(brand.image()).size(px(16.0)))
+        }
+    };
+    let mono = |text: &str, color: u32| {
+        base()
+            .bg(rgb(color))
+            .text_size(px(9.0))
+            .font_weight(FontWeight::BOLD)
+            .text_color(rgb(0xffffff))
+            .child(text.to_owned())
+    };
+    let offline = Some(t("离线"));
+    match (provider, service) {
+        ("local-ppocr", _) => (logo(Brand::Baidu), offline),
+        ("windows-media", _) if cfg!(target_os = "macos") => (mono("AV", 0x1d1d1f), offline),
+        ("windows-media", _) => (logo(Brand::Microsoft), offline),
+        ("wechat-ocr", _) => (mono("WX", 0x07a35a), offline),
+        ("local-ctranslate2", _) => (mono("CT", 0x475569), offline),
+        (_, Some(service)) => {
+            let preset = preset_id(service);
+            let local = url::Url::parse(&service.endpoint)
+                .ok()
+                .and_then(|u| u.host_str().map(str::to_owned))
+                .is_some_and(|h| ["localhost", "127.0.0.1", "[::1]"].contains(&h.as_str()));
+            let icon = match brand_for(preset, &service.endpoint) {
+                Some(brand) => logo(brand),
+                None => {
+                    let (text, color) = monogram(preset, &service.name);
+                    mono(&text, color)
+                }
+            };
+            (icon, Some(t(if local { "本机 API" } else { "在线 API" })))
+        }
+        _ => (mono("?", 0x6b7280), None),
+    }
+}
+
 fn svg_icon(brand: Brand) -> Icon {
     Icon::default()
         .data(brand.svg())

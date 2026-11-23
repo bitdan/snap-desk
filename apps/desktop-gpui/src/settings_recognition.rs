@@ -344,16 +344,25 @@ impl SettingsView {
             .unwrap_or(0);
         let engine_hint = choices.get(current).map(|c| c.3.clone());
         let picked = choices.clone();
-        let select = self.select(
+        let decor = |index: usize| {
+            let (provider, id, _, _) = &choices[index];
+            let service = s.recognition_services.iter().find(|x| provider == "service" && x.id == *id);
+            catalog::provider_icon(provider, service, t)
+        };
+        let select = self.select_decorated(
             "ocr-engine",
             current,
             choices.iter().enumerate().map(|(index, c)| (index, c.2.clone())).collect(),
+            &decor,
             cx,
-            move |s, index| {
-                if let Some((provider, id, _, _)) = picked.get(index) {
-                    s.ocr.provider = provider.clone();
-                    s.ocr.service_id = id.clone();
-                }
+            move |view, index, cx| {
+                let choice = picked.get(index).cloned();
+                view.change(cx, move |s| {
+                    if let Some((provider, id, _, _)) = choice {
+                        s.ocr.provider = provider;
+                        s.ocr.service_id = id;
+                    }
+                })
             },
         );
         let engines = div().pl(px(12.0)).child(row(t("OCR 引擎"), engine_hint, select).border_b_0());
@@ -466,12 +475,19 @@ impl SettingsView {
             .unwrap_or(0);
         let translator_hint = engines_tr.get(current_tr).map(|e| e.2.clone());
         let picked_tr = engines_tr.clone();
-        let translator_select = self.select(
+        let decor_tr = |index: usize| match &engines_tr[index].3 {
+            Some(service) => catalog::provider_icon("service", Some(service), t),
+            None => catalog::provider_icon("local-ctranslate2", None, t),
+        };
+        let translator_select = self.select_decorated(
             "tr-engine",
             current_tr,
             engines_tr.iter().enumerate().map(|(index, e)| (index, e.1.clone())).collect(),
+            &decor_tr,
             cx,
-            move |s, index| match picked_tr.get(index).and_then(|e| e.3.clone()) {
+            move |view, index, cx| {
+                let chosen = picked_tr.get(index).and_then(|e| e.3.clone());
+                view.change(cx, move |s| match chosen {
                 Some(chosen) => {
                     s.ai.service_id = chosen.id.clone();
                     s.ai.provider = if chosen.protocol == "deepl" { "deepl" } else { "online-llm" }.into();
@@ -486,6 +502,7 @@ impl SettingsView {
                         s.ai.target_language = "zh-CN".into();
                     }
                 }
+                })
             },
         );
         let translators = div().pl(px(12.0)).child(row(t("翻译引擎"), translator_hint, translator_select).border_b_0());
@@ -594,10 +611,14 @@ impl SettingsView {
                 // 引擎卡片下接当前引擎的详情（资源、语言、凭据）；识别后的动作单列一组。
                 let after = ocr_rows.split_off(ocr_rows.len().saturating_sub(2));
                 elements.push(heading(t("引擎")).into_any_element());
-                elements.push(boxed(engines).into_any_element());
-                if !ocr_rows.is_empty() {
-                    elements.push(div().mt(px(8.0)).child(card(ocr_rows)).into_any_element());
-                }
+                // 当前引擎的详情排在同一张卡片里（Vue `.recognition-detail`）。
+                let count = ocr_rows.len();
+                let detail = (count > 0).then(|| {
+                    div().pl(px(12.0)).border_t_1().border_color(rgb(col::sep())).children(
+                        ocr_rows.into_iter().enumerate().map(|(i, r)| if i + 1 == count { r.border_b_0() } else { r }),
+                    )
+                });
+                elements.push(boxed(div().child(engines).children(detail)).into_any_element());
                 elements.push(heading(t("识别后")).into_any_element());
                 elements.push(card(after).into_any_element());
             }

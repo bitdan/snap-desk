@@ -1268,6 +1268,31 @@ impl SettingsView {
         cx: &mut Context<Self>,
         pick: impl Fn(&mut Self, T, &mut Context<Self>) + Clone + 'static,
     ) -> Div {
+        self.select_core(id, current, options, None, cx, pick)
+    }
+
+    /// 带图标与连接方式的下拉（Vue `ProviderMenu`：识别/翻译引擎）。`decor(value)` 返回 (图标, 连接方式文字)。
+    fn select_decorated<T: Copy + PartialEq + 'static>(
+        &self,
+        id: &'static str,
+        current: T,
+        options: Vec<(T, String)>,
+        decor: &dyn Fn(T) -> (Div, Option<String>),
+        cx: &mut Context<Self>,
+        pick: impl Fn(&mut Self, T, &mut Context<Self>) + Clone + 'static,
+    ) -> Div {
+        self.select_core(id, current, options, Some(decor), cx, pick)
+    }
+
+    fn select_core<T: Copy + PartialEq + 'static>(
+        &self,
+        id: &'static str,
+        current: T,
+        options: Vec<(T, String)>,
+        decor: Option<&dyn Fn(T) -> (Div, Option<String>)>,
+        cx: &mut Context<Self>,
+        pick: impl Fn(&mut Self, T, &mut Context<Self>) + Clone + 'static,
+    ) -> Div {
         let open = self.open_select == Some(id);
         let label = options
             .iter()
@@ -1289,8 +1314,21 @@ impl SettingsView {
             .bg(rgb(col::surface()))
             .text_size(px(13.0))
             .cursor_pointer()
-            .hover(|s| s.border_color(rgb(col::muted())))
-            .child(div().truncate().child(label))
+            .hover(|s| s.border_color(rgb(col::muted())));
+        let trigger = match decor {
+            Some(decor) => {
+                let (icon, meta) = decor(current);
+                trigger
+                    .min_w(px(200.0))
+                    .max_w(px(280.0))
+                    .gap(px(8.0))
+                    .child(icon)
+                    .child(div().flex_1().min_w_0().truncate().child(label))
+                    .children(meta.map(|m| div().flex_none().text_size(px(11.0)).text_color(rgb(col::muted())).child(m)))
+            }
+            None => trigger.child(div().truncate().child(label)),
+        };
+        let trigger = trigger
             .child(
                 Icon::default()
                     .data(icons::CHEVRON)
@@ -1337,8 +1375,18 @@ impl SettingsView {
                     .rounded(px(5.0))
                     .text_size(px(13.0))
                     .cursor_pointer()
-                    .hover(move |s| s.bg(rgb(hover)))
-                    .child(label);
+                    .hover(move |s| s.bg(rgb(hover)));
+                item = match decor {
+                    Some(decor) => {
+                        let (icon, meta) = decor(value);
+                        item.min_w(px(260.0))
+                            .gap(px(8.0))
+                            .child(icon)
+                            .child(div().flex_1().min_w_0().truncate().child(label))
+                            .children(meta.map(|m| div().flex_none().text_size(px(11.0)).text_color(rgb(col::muted())).child(m)))
+                    }
+                    None => item.child(label),
+                };
                 if selected {
                     item = item
                         .bg(rgb(col::accent_soft()))
