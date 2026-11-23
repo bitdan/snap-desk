@@ -1,0 +1,800 @@
+//! 录屏流水线：帧采集、有界编码队列、音频提交和最终发布。
+use super::{
+    audio, capture, compositor, config::RecorderConfig, encoder, err, frame, frame::QueuedFrame,
+    input, measured_capture, output, stats, timeline, Host, Phase, RecordingState,
+};
+use std::{
+    fs,
+    path::PathBuf,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc::{self, TrySendError},
+        Arc,
+    },
+    time::{Duration, Instant},
+};
+
+/// 编码队列容量。满时采集侧暂停取样/合成，编码侧取帧后立即释放槽位。
+pub const QUEUE_CAPACITY: usize = 2;
+
+/// 丢弃复用底图时归还缓冲；直接 `None` 会释放大图，下一次仍需重新分配。
+fn clear_base(base: &mut Option<frame::BgraImage>, pool: &frame::FramePool) {
+    if let Some(image) = base.take() {
+        pool.release(image);
+    }
+}
+
+/// 采集线程绝不等待编码队列；开启特效时额外保留一帧干净底图，动画与事件数量有界。
+/// `origin` 为录制显示器的虚拟桌面原点（键鼠特效坐标换算）；`root` 为已准备好的输出目录。
+/// 返回前已写入终态并调用 [`Host::finished`]。
+#[allow(clippy::too_many_arguments)]
+pub fn collect(
+    host: Arc<dyn Host>,
+    id: u64,
+    config: RecorderConfig,
+    origin: (i32, i32),
+    root: PathBuf,
+    mut backend: Box<dyn capture::CaptureBackend>,
+    audio: Option<audio::Worker>,
+    queue: std::sync::Arc<stats::QueueGauge>,
+    pool: std::sync::Arc<frame::FramePool>,
+) {
+    let state = host.state();
+    let (sender, receiver) = mpsc::sync_channel::<QueuedFrame>(QUEUE_CAPACITY);
+    let abort = std::sync::Arc::new(AtomicBool::new(false));
+    let writer_abort = abort.clone();
+    let writer_host = host.clone();
+    let writer_queue = queue.clone();
+    let writer_pool = pool.clone();
+    let writer = std::thread::Builder::new()
+        .name("recording-encoder".into())
+        .spawn(move || {
+            write_video(
+                writer_host.as_ref(),
+                id,
+                config,
+                root,
+                receiver,
+                &writer_abort,
+                audio,
+                writer_queue,
+                writer_pool,
+            )
+        });
+    let result = match writer {
+        Err(e) => {
+            log_step_failure(id, "encoder_thread_start");
+            Err(err(e))
+        }
+        Ok(writer) => {
+            let mut last_sample = None;
+            let mut rejected_generation = None;
+            let mut annotation_revision = host.annotations(id).0;
+            let mut annotation_editing = false;
+            let mut check_screen = Instant::now();
+            let mut waiting_since = None;
+            let mut listener: Option<input::Listener> = None;
+            let mut effects_generation = None;
+            let mut compositor = compositor::Compositor::new(config.input_effects, config.region);
+            compositor.set_origin(origin);
+            let mut base: Option<frame::BgraImage> = None;
+            let mut base_dirty = false;
+            let mut annotation_animation = false;
+            // Cell 跨即时闭包保留最近步骤；错误返回后只读固定标签，不改变业务错误。
+            let capture_stage = std::cell::Cell::new("capture_state");
+            let collected = (|| -> Result<(), String> {
+                loop {
+                    capture_stage.set("capture_state");
+                    let (running, generation) = {
+                        let mut guard = state.0.lock().map_err(err)?;
+                        let s = guard
+                            .as_mut()
+                            .filter(|s| s.view.id == id)
+                            .ok_or("录屏会话已过期。")?;
+                        if s.cancel || s.stop {
+                            break;
+                        }
+                        s.advance_countdown(capture::now());
+                        // 不按录制时长自动停止；停止、取消和采集/编码异常仍走统一收尾。
+                        (s.view.phase == Phase::Recording, s.timeline.generation)
+                    };
+                    // 编码线程尚未取走排队帧时不再取样/合成；否则刚生成的画面仍会因队列满被丢弃。
+                    // 水位只减不增的竞争会让这里偶尔多等一轮，但不会漏采或跳过停止检查。
+                    if running && queue.is_full(QUEUE_CAPACITY) {
+                        if let Ok(mut guard) = state.0.lock() {
+                            if let Some(s) = guard.as_mut().filter(|s| s.view.id == id) {
+                                s.view.stats.queue_backpressure_skips += 1;
+                            }
+                        }
+                        std::thread::sleep(Duration::from_millis(2));
+                        continue;
+                    }
+                    let animated = host.timed_annotations(id);
+                    if animated != annotation_animation && !config.input_effects.enabled() {
+                        clear_base(&mut base, &pool);
+                        base_dirty = false;
+                        if running && animated {
+                            capture_stage.set("capture_refresh");
+                            backend.refresh()?;
+                        }
+                    }
+                    annotation_animation = animated;
+                    if effects_generation != Some(generation) || !running {
+                        // 先停止并 join 消息线程，再清缓存；恢复使用新监听器，不继承按住状态。
+                        listener = None;
+                        compositor.clear();
+                        clear_base(&mut base, &pool);
+                        base_dirty = false;
+                        if running && (config.input_effects.enabled() || annotation_animation) {
+                            capture_stage.set("capture_refresh");
+                            backend.refresh()?;
+                        }
+                        effects_generation = Some(generation);
+                    }
+                    let editing = host.annotation_editing(id);
+                    if editing != annotation_editing {
+                        compositor.clear();
+                        base_dirty = base.is_some();
+                        annotation_editing = editing;
+                    }
+                    let revision = host.annotations(id).0;
+                    if running && revision != annotation_revision {
+                        // 即使桌面静止，确认一笔/撤销后也请求新帧，让标注变化立即进入视频。
+                        capture_stage.set("capture_refresh");
+                        backend.refresh()?;
+                        annotation_revision = revision;
+                    }
+                    if writer.is_finished() {
+                        return Err("录屏编码线程已提前结束。".into());
+                    }
+                    capture_stage.set("capture_source_check");
+                    if check_screen.elapsed() >= Duration::from_millis(500) {
+                        backend.check_source()?;
+                        host.update_origin(id, backend.desktop_origin()?);
+                        if host.screen_changed()? {
+                            capture_stage.set("display_changed");
+                            return Err("显示器位置、尺寸或 DPI 改变，请重新录屏。".into());
+                        }
+                        check_screen = Instant::now();
+                    }
+                    if running {
+                        waiting_since.get_or_insert_with(Instant::now);
+                        capture_stage.set("capture_frame");
+                        if config.input_effects.enabled() || annotation_animation {
+                            if config.input_effects.enabled() && listener.is_none() {
+                                capture_stage.set("input_start");
+                                listener = Some(input::Listener::start(config.input_effects)?);
+                            }
+                            capture_stage.set("capture_frame");
+                            let frame = measured_capture(state, id, backend.as_mut())?;
+                            compositor.set_origin(backend.desktop_origin()?);
+                            let events = if let Some(listener) = listener.as_ref() {
+                                capture_stage.set("input_read");
+                                listener.drain()?
+                            } else {
+                                Vec::new()
+                            };
+                            // 先取完源事件，再取 QPC，避免给未来事件分配更早的视频时间戳。
+                            let now = capture::now();
+                            let projected = {
+                                capture_stage.set("capture_state");
+                                let mut guard = state.0.lock().map_err(err)?;
+                                let s = guard
+                                    .as_mut()
+                                    .filter(|s| s.view.id == id)
+                                    .ok_or("录屏会话已过期。")?;
+                                if s.stop
+                                    || s.cancel
+                                    || s.view.phase != Phase::Recording
+                                    || s.timeline.generation != generation
+                                {
+                                    s.view.stats.rejected_capture_frames +=
+                                        usize::from(frame.is_some());
+                                    s.view.revision += 1;
+                                    None
+                                } else {
+                                    let had_frame = frame.is_some();
+                                    let frame = frame.filter(|f| {
+                                        let accepted = s.timeline.project_composite(f.source_time, now).is_some();
+                                        if !accepted {
+                                            log_timestamp_rejection(
+                                                id, generation, f.source_time, now,
+                                                "before_start", &mut rejected_generation,
+                                            );
+                                        }
+                                        accepted
+                                    });
+                                    if had_frame && frame.is_none() {
+                                        s.view.stats.rejected_capture_frames += 1;
+                                        s.view.revision += 1;
+                                    }
+                                    let events = events
+                                        .into_iter()
+                                        .filter_map(|event| {
+                                            s.timeline
+                                                .project(event.source_time)
+                                                .filter(|(_, pts)| *pts <= s.timeline.elapsed(now))
+                                                .map(|(_, pts)| (pts, event.kind))
+                                        })
+                                        .collect::<Vec<_>>();
+                                    s.timeline.project(now).map(|(_, pts)| (pts, frame, events))
+                                }
+                            };
+                            if let Some((pts, frame, events)) = projected {
+                                if let Some(frame) = frame {
+                                    if let Some(old) = base.replace(frame.image) {
+                                        pool.release(old);
+                                    }
+                                    base_dirty = true;
+                                    waiting_since = None;
+                                }
+                                if !annotation_editing {
+                                    for (time, event) in events {
+                                        compositor.ingest(time, event);
+                                    }
+                                }
+                                if let Some(clean) = base.as_ref() {
+                                    // 静态桌面的淡出复用最近一帧干净底图，不重建 WGC 会话。
+                                    let needed = base_dirty
+                                        || compositor.needs_frame()
+                                        || annotation_animation;
+                                    let accepted = needed
+                                        && timeline::accept_sample(
+                                            &mut last_sample,
+                                            generation,
+                                            pts,
+                                            config.fps,
+                                        );
+                                    if needed && !accepted {
+                                        capture_stage.set("capture_state");
+                                        let mut guard = state.0.lock().map_err(err)?;
+                                        if let Some(s) = guard.as_mut().filter(|s| s.view.id == id)
+                                        {
+                                            s.view.stats.throttled_samples += 1;
+                                            s.view.revision += 1;
+                                        }
+                                    }
+                                    if accepted {
+                                        // 合成在锁外；重绘时只读未叠加的底图，帧时间用同源 QPC 的当前媒体时间。
+                                        let composition_started = Instant::now();
+                                        let image = compositor.render(clean, pts);
+                                        let composition_millis =
+                                            composition_started.elapsed().as_secs_f64() * 1000.0;
+                                        capture_stage.set("capture_state");
+                                        let mut guard = state.0.lock().map_err(err)?;
+                                        let s = guard
+                                            .as_mut()
+                                            .filter(|s| s.view.id == id)
+                                            .ok_or("录屏会话已过期。")?;
+                                        s.view.stats.composed_frames += 1;
+                                        s.view.stats.composition_copy_bytes +=
+                                            image.data.len() as u64;
+                                        s.view.stats.composition_millis += composition_millis;
+                                        s.view.revision += 1;
+                                        if !s.stop
+                                            && !s.cancel
+                                            && s.view.phase == Phase::Recording
+                                            && s.timeline.generation == generation
+                                        {
+                                            match sender.try_send(QueuedFrame {
+                                                generation,
+                                                pts,
+                                                annotations: host.annotations(id).1,
+                                                image,
+                                            }) {
+                                                Ok(()) => {
+                                                    queue.submitted();
+                                                    base_dirty = false;
+                                                    s.view.stats.queued_frames += 1;
+                                                }
+                                                Err(TrySendError::Full(rejected)) => {
+                                                    // 包括效果结束后的干净帧，拥堵后也必须重试，防止光圈冻结。
+                                                    pool.release(rejected.image);
+                                                    base_dirty = true;
+                                                    s.view.stats.queue_dropped_frames += 1;
+                                                    s.view.dropped_frames += 1;
+                                                    s.view.revision += 1;
+                                                }
+                                                Err(TrySendError::Disconnected(_)) => {
+                                                    return Err("录屏编码线程已停止。".into())
+                                                }
+                                            }
+                                        } else {
+                                            s.view.stats.rejected_composed_frames += 1;
+                                        }
+                                    }
+                                }
+                            }
+                        } else if let Some(frame) = measured_capture(state, id, backend.as_mut())?
+                        {
+                            capture_stage.set("capture_state");
+                            let mut guard = state.0.lock().map_err(err)?;
+                            let s = guard
+                                .as_mut()
+                                .filter(|s| s.view.id == id)
+                                .ok_or("录屏会话已过期。")?;
+                            s.view.revision += 1;
+                            let projected = s
+                                .timeline
+                                .project(frame.source_time)
+                                .filter(|(g, _)| !s.stop && !s.cancel && *g == generation);
+                            if let Some((generation, pts)) = projected {
+                                // 帧池可能残留暂停前的帧；project 会拒绝恢复起点以前的数据。
+                                if timeline::accept_sample(
+                                    &mut last_sample,
+                                    generation,
+                                    pts,
+                                    config.fps,
+                                ) {
+                                    waiting_since = None;
+                                    match sender.try_send(QueuedFrame {
+                                        generation,
+                                        pts,
+                                        annotations: host.annotations(id).1,
+                                        image: frame.image,
+                                    }) {
+                                        Ok(()) => {
+                                            queue.submitted();
+                                            s.view.stats.queued_frames += 1;
+                                        }
+                                        Err(TrySendError::Full(rejected)) => {
+                                            pool.release(rejected.image);
+                                            s.view.stats.queue_dropped_frames += 1;
+                                            s.view.dropped_frames += 1;
+                                            s.view.revision += 1;
+                                        }
+                                        Err(TrySendError::Disconnected(_)) => {
+                                            return Err("录屏编码线程已停止。".into())
+                                        }
+                                    }
+                                } else {
+                                    s.view.stats.throttled_samples += 1;
+                                }
+                            } else {
+                                if !s.stop && !s.cancel && s.timeline.generation == generation {
+                                    log_timestamp_rejection(
+                                        id, generation, frame.source_time, capture::now(),
+                                        "before_start", &mut rejected_generation,
+                                    );
+                                }
+                                s.view.stats.rejected_capture_frames += 1;
+                            }
+                        }
+                        // 从未收到有效帧时不能无限等待；已有帧的静态桌面允许无新帧。
+                        if (if config.input_effects.enabled() || annotation_animation {
+                            base.is_none()
+                        } else {
+                            last_sample.is_none()
+                        }) && waiting_since.is_some_and(|t| t.elapsed() > Duration::from_secs(5))
+                        {
+                            let guard = state.0.lock().map_err(err)?;
+                            let received = guard.as_ref().filter(|s| s.view.id == id)
+                                .is_some_and(|s| s.view.stats.rejected_capture_frames > 0);
+                            if received {
+                                capture_stage.set("capture_timestamp_timeout");
+                                return Err("已收到屏幕画面，但帧时间戳校验未通过，请查看录屏诊断日志。".into());
+                            }
+                            capture_stage.set("capture_timeout");
+                            return Err("屏幕采集未返回画面，请检查权限或图形驱动。".into());
+                        }
+                    } else {
+                        waiting_since = None;
+                    }
+                    // 帧事件唤醒采集；超时使静态桌面也能检查停止和设备状态。
+                    if running {
+                        // Raw Input 独立消息线程不会触发 WGC；特效模式按帧率限制最长等待，
+                        // 静态画面也能及时消费输入，并在动画结束后提交一帧干净底图。
+                        let timeout = if config.input_effects.enabled() || annotation_animation {
+                            Duration::from_nanos(1_000_000_000 / u64::from(config.fps))
+                        } else {
+                            Duration::from_millis(50)
+                        };
+                        backend.wait_for_frame(timeout);
+                    } else {
+                        std::thread::sleep(Duration::from_millis(50));
+                    }
+                }
+                Ok(())
+            })();
+            // 编码线程退出由写入侧提供具体阶段，避免把连带退出误当成采集根因。
+            if collected
+                .as_ref()
+                .is_err_and(|e| e != "录屏编码线程已提前结束。" && e != "录屏编码线程已停止。")
+            {
+                log_step_failure(id, capture_stage.get());
+            }
+            // 采集异常不生成部分成品；通知编码侧停止，由临时目录清理未发布输出。
+            if collected.is_err() {
+                abort.store(true, Ordering::Release);
+            }
+            // 先冻结媒体时间，再等待监听器和采集设备释放；驱动清理耗时不计入成品。
+            if let Ok(mut guard) = state.0.lock() {
+                if let Some(s) = guard.as_mut().filter(|s| s.view.id == id) {
+                    s.freeze();
+                    s.stop = true;
+                    s.view.phase = Phase::Encoding;
+                    s.view.message = if s.cancel {
+                        "正在取消录屏并清理临时文件…"
+                    } else {
+                        "录屏已停止，正在完成文件封装…"
+                    }
+                    .into();
+                    s.view.revision += 1;
+                }
+            }
+            // 无论停止、取消或异常，封装前都释放设备；队列保留冻结前的有效代次。
+            drop(listener);
+            compositor.clear();
+            clear_base(&mut base, &pool);
+            drop(backend);
+            drop(sender);
+            let encoded = writer
+                .join()
+                .map_err(|_| {
+                    log_step_failure(id, "encoder_thread_panic");
+                    "录屏编码线程异常退出。".to_string()
+                })
+                .and_then(|r| r);
+            collection_result(collected, encoded)
+        }
+    };
+    host.release_annotations(id);
+    let mut message = String::new();
+    if let Ok(mut guard) = state.0.lock() {
+        if let Some(s) = guard.as_mut().filter(|s| s.view.id == id) {
+            s.freeze();
+            // 查询可能很久没发生；收尾日志前补一次最终水位，避免峰值统计停留在旧值。
+            s.view.stats.queue_depth = queue.depth();
+            s.view.stats.queue_peak = queue.peak();
+            let (phase, text, path) = match result {
+                Ok(path) => (Phase::Completed, format!("录屏已保存：{path}"), Some(path)),
+                Err(_) if s.cancel => (
+                    Phase::Cancelled,
+                    "已取消录屏。".into(),
+                    None,
+                ),
+                Err(error) => (
+                    Phase::Failed,
+                    format!("录屏失败：{error}"),
+                    None,
+                ),
+            };
+            // 只在统一收尾处记录汇总，不把含完整输出路径的 text/path 写盘。
+            if phase == Phase::Failed {
+                log::error!("event=recording.failed module=recording op=rec-{id} code=RECORDING_PIPELINE_FAILED");
+            }
+            let level = if phase == Phase::Failed {
+                log::Level::Error
+            } else {
+                log::Level::Info
+            };
+            let outcome = match phase {
+                Phase::Completed => "success",
+                Phase::Cancelled => "cancelled",
+                _ => "failed",
+            };
+            log::log!(level, "event=recording.finished module=recording op=rec-{id} result={outcome} duration_ms={} captured={} encoded={} dropped={} encoding_ms={} queued={} queue_dropped={} queue_peak={} queue_skips={} throttled={} rejected_capture={} stale={}",
+                (s.view.seconds * 1000.0) as u64, s.view.stats.captured_frames, s.view.frames, s.view.dropped_frames, s.view.encoding_millis,
+                s.view.stats.queued_frames, s.view.stats.queue_dropped_frames, s.view.stats.queue_peak, s.view.stats.queue_backpressure_skips, s.view.stats.throttled_samples,
+                s.view.stats.rejected_capture_frames, s.view.stats.stale_queued_frames);
+            message = text.clone();
+            s.view.phase = phase;
+            s.view.message = text;
+            s.view.path = path;
+            s.view.revision += 1;
+        }
+    }
+    host.changed();
+    // 成功后直接保留已经发布的成品；外壳收起录制交互窗口并发布结果消息。
+    host.finished(id, &message);
+}
+
+/// 编码故障优先展示原生错误；采集异常始终失败，不把片段路径作为成功结果返回。
+fn collection_result(
+    collected: Result<(), String>,
+    encoded: Result<String, String>,
+) -> Result<String, String> {
+    match (collected, encoded) {
+        (Err(_), Err(writer_error)) if writer_error != "录屏采集已中止。" => Err(writer_error),
+        (Err(error), _) => Err(error),
+        (Ok(()), result) => result,
+    }
+}
+
+/// Finalize、sync_all 成功才发布；失败和取消先释放编码句柄，再自动清理临时输出。
+#[allow(clippy::too_many_arguments)]
+fn write_video(
+    host: &dyn Host,
+    id: u64,
+    config: RecorderConfig,
+    root: PathBuf,
+    receiver: mpsc::Receiver<QueuedFrame>,
+    abort: &AtomicBool,
+    audio: Option<audio::Worker>,
+    queue: std::sync::Arc<stats::QueueGauge>,
+    pool: std::sync::Arc<frame::FramePool>,
+) -> Result<String, String> {
+    // 阶段只来自源码常量；保留 UI 的原生错误，日志不接触路径或自由文本。
+    let failure_stage = std::cell::Cell::new("output_config");
+    let result = (|| -> Result<String, String> {
+        let export_settings = host.export_settings()?;
+        failure_stage.set("output_config");
+        export_settings.validate()?;
+        failure_stage.set("output_create");
+        let temporary = output::Pending::new(&root, config.format)?;
+        let pending = temporary.path().to_owned();
+        // 设备与编码器在临时目录之后取得所有权；提前返回时先释放句柄，再清理输出。
+        let mut audio = audio;
+        host.progress("recording", Some(&pending));
+        failure_stage.set("encoder_init");
+        let mut encoder = encoder::create(
+            &pending,
+            config.region.width,
+            config.region.height,
+            config.fps,
+            config.target_bitrate(),
+            config.encoding,
+            config.format,
+            config.system_audio || config.microphone,
+        )?;
+        let state = host.state();
+        let encoder_kind = encoder.kind();
+        {
+            failure_stage.set("encoder_state");
+            let mut guard = state.0.lock().map_err(err)?;
+            if let Some(s) = guard.as_mut().filter(|s| s.view.id == id) {
+                s.view.encoder_kind = encoder_kind;
+                s.view.revision += 1;
+            }
+        }
+        let mut mixer = audio::Mixer::default();
+        loop {
+            if abort.load(Ordering::Acquire) {
+                return Err("录屏采集已中止。".into());
+            }
+            failure_stage.set("audio_pump");
+            if let Some(worker) = audio.as_mut() {
+                // 音频独立于 WGC 新帧；静态桌面和暂停期间仍排空已采集数据。
+                pump_audio(worker, &mut mixer, encoder.as_mut(), state, id, false)?;
+            }
+            let frame = match receiver.recv_timeout(Duration::from_millis(10)) {
+                Ok(frame) => {
+                    // 出队即表示槽位可复用；编码本身仍可能继续占用当前帧。
+                    queue.consumed();
+                    frame
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    // 没有音轨时也推进静止画面，避免长录屏把全部补帧积压到停止导出。
+                    // 只推进已经过的媒体时间，暂停期间 elapsed 保持不变。
+                    if audio.is_none() {
+                        failure_stage.set("encoder_state");
+                        let end = state
+                            .0
+                            .lock()
+                            .map_err(err)?
+                            .as_ref()
+                            .filter(|s| s.view.id == id && !s.cancel)
+                            .map(|s| s.timeline.elapsed(capture::now()));
+                        if let Some(end) = end {
+                            failure_stage.set("video_advance");
+                            encoder.advance_video(end)?;
+                        }
+                    }
+                    continue;
+                }
+                Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            };
+            failure_stage.set("frame_state");
+            {
+                let mut guard = state.0.lock().map_err(err)?;
+                let s = guard
+                    .as_mut()
+                    .filter(|s| s.view.id == id)
+                    .ok_or("录屏会话已过期。")?;
+                if s.cancel {
+                    // 取消后队列中尚未编码的帧仍可归还缓冲，尽早释放大图内存。
+                    pool.release(frame.image);
+                    return Err("已取消录屏。".into());
+                }
+                if frame.generation != s.timeline.generation {
+                    pool.release(frame.image);
+                    s.view.stats.stale_queued_frames += 1;
+                    s.view.dropped_frames += 1;
+                    s.view.revision += 1;
+                    continue;
+                }
+                // 在锁内确认归属即视为提交；原生 WriteSample 不持有状态锁，按钮可及时响应。
+            }
+            let encoding_started = Instant::now();
+            // 标注层只绘制一次；每帧在编码前混合，确保准备阶段的标注真正进入成品。
+            let mut image = frame.image;
+            failure_stage.set("annotation_apply");
+            if let Some(layer) = &frame.annotations {
+                if let Err(error) = layer.apply(&mut image, frame.pts) {
+                    pool.release(image);
+                    return Err(error);
+                }
+            }
+            failure_stage.set("video_write");
+            let written = encoder.push(&image, frame.pts);
+            // MF/GIF 编码器已复制到自有缓冲或完成量化；帧内存可立即归还池。
+            pool.release(image);
+            let written = written?;
+            host.progress("encoding", Some(&pending));
+            let encoding_millis = encoding_started.elapsed().as_secs_f64() * 1000.0;
+            failure_stage.set("encoder_state");
+            let mut guard = state.0.lock().map_err(err)?;
+            if let Some(s) = guard.as_mut().filter(|s| s.view.id == id) {
+                // 重复时间戳的帧无法写入，按丢帧处理但不终止整段录制。
+                if written {
+                    s.view.frames += 1;
+                    s.view.encoding_millis += encoding_millis;
+                    s.view.stats.nv12_output_bytes = encoder.converted_bytes();
+                    // push 期间仍可暂停；旧代次已提交帧计入累计值，但不污染恢复后的窗口。
+                    if frame.generation == s.timeline.generation {
+                        s.fps_window.submitted(frame.pts);
+                    }
+                } else {
+                    s.view.dropped_frames += 1;
+                }
+                s.view.revision += 1;
+            }
+        }
+        if abort.load(Ordering::Acquire) {
+            return Err("录屏采集已中止。".into());
+        }
+        failure_stage.set("encoder_state");
+        let end = {
+            let guard = state.0.lock().map_err(err)?;
+            let s = guard
+                .as_ref()
+                .filter(|s| s.view.id == id && !s.cancel)
+                .ok_or("已取消录屏。")?;
+            s.timeline.elapsed(capture::now())
+        };
+        if let Some(worker) = audio.as_mut() {
+            // 停止设备并 join 后再取尾包；停止时间之后的样本会被 Timeline 裁掉。
+            failure_stage.set("audio_stop");
+            worker.stop()?;
+            failure_stage.set("audio_finalize");
+            pump_audio(worker, &mut mixer, encoder.as_mut(), state, id, true)?;
+        }
+        drop(audio);
+        host.progress("finalizing", Some(&pending));
+        failure_stage.set("encoder_finalize");
+        encoder.finish(end)?;
+        // 释放 MF 文件句柄后才能同步/重命名；取消期间仍由临时目录负责清理。
+        drop(encoder);
+        host.progress("syncing", Some(&pending));
+        failure_stage.set("file_open");
+        let file = fs::OpenOptions::new()
+            .write(true)
+            .open(&pending)
+            .map_err(err)?;
+        failure_stage.set("file_sync");
+        file.sync_all().map_err(err)?;
+        failure_stage.set("file_validate");
+        if file.metadata().map_err(err)?.len() == 0 {
+            return Err("编码器未生成视频。".into());
+        }
+        drop(file);
+        failure_stage.set("publish_state");
+        let guard = state.0.lock().map_err(err)?;
+        guard
+            .as_ref()
+            .filter(|s| s.view.id == id && !s.cancel)
+            .ok_or("已取消录屏。")?;
+        // 发布和取消共用状态锁；未发布输出由 Pending 回收，成功成品移到临时目录之外。
+        host.progress("publishing", Some(&pending));
+        failure_stage.set("file_publish");
+        let output = temporary.publish(
+            &export_settings,
+            (config.region.width, config.region.height),
+        )?;
+        host.published(&output);
+        host.progress("completed", Some(&output));
+        // 终态与成品路径由 collect 收尾时一起发布，确保完成通知携带已经保存的路径。
+        Ok(output.to_string_lossy().into_owned())
+    })();
+    if result
+        .as_ref()
+        .is_err_and(|error| error != "已取消录屏。" && error != "录屏采集已中止。")
+    {
+        log_step_failure(id, failure_stage.get());
+    }
+    result
+}
+
+/// 原生编码放在状态锁外；与视频共用 Timeline，暂停不会在成品中留下音频空洞。
+fn pump_audio(
+    worker: &mut audio::Worker,
+    mixer: &mut audio::Mixer,
+    encoder: &mut dyn encoder::Encoder,
+    state: &RecordingState,
+    id: u64,
+    finishing: bool,
+) -> Result<(), String> {
+    let frames = worker.drain()?;
+    let (timeline, end) = {
+        let guard = state.0.lock().map_err(err)?;
+        let session = guard
+            .as_ref()
+            .filter(|s| s.view.id == id && !s.cancel)
+            .ok_or("已取消录屏。")?;
+        let elapsed = session.timeline.elapsed(capture::now());
+        let end = if finishing {
+            elapsed
+        } else {
+            elapsed.saturating_sub(audio::MIX_DELAY)
+        };
+        (session.timeline.clone(), end)
+    };
+    // 最多 128 个音频包可能累积大量逐样本运算；锁内只复制时间轴快照，
+    // 在锁外混音，避免高负载时暂停/停止/取消按钮等待整批音频处理。
+    for frame in frames {
+        let cancelled = {
+            let guard = state.0.lock().map_err(err)?;
+            !guard.as_ref().is_some_and(|s| s.view.id == id && !s.cancel)
+        };
+        if cancelled {
+            return Err("已取消录屏。".into());
+        }
+        mixer.ingest(frame, &timeline)?;
+    }
+    while let Some(packet) = mixer.next_packet(end) {
+        // 长静音段可能需要补交很多包；每 10 ms 媒体数据重新检查取消，
+        // 不让一次泵送在停止后继续占满编码线程。原生驱动调用本身仍不可抢占。
+        {
+            let guard = state.0.lock().map_err(err)?;
+            if !guard.as_ref().is_some_and(|s| s.view.id == id && !s.cancel) {
+                return Err("已取消录屏。".into());
+            }
+        }
+        encoder.advance_video(packet.pts + packet.duration)?;
+        encoder.push_audio(&packet)?;
+    }
+    Ok(())
+}
+
+/// 具体步骤与最终汇总共享 rec 会话号，分析时以步骤事件确定故障环节。
+fn log_step_failure(id: u64, stage: &'static str) {
+    log::error!("event=recording.step_failed module=recording op=rec-{id} code=RECORDING_STEP_FAILED stage={stage}");
+}
+
+/// 每个录制代次仅记录一次异常，只输出固定原因和毫秒差值，不记录画面内容。
+fn log_timestamp_rejection(
+    id: u64,
+    generation: u64,
+    source: i64,
+    now: i64,
+    reason: &'static str,
+    logged: &mut Option<u64>,
+) {
+    if *logged == Some(generation) {
+        return;
+    }
+    *logged = Some(generation);
+    log::warn!(
+        "event=recording.timestamp_rejected module=recording op=rec-{} generation={} reason={} source_offset_ms={}",
+        id, generation, reason, source.saturating_sub(now) / 10_000
+    );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn source_interruption_never_returns_a_partial_output() {
+        assert!(matches!(collection_result(Err("来源已断开".into()), Ok("partial.mp4".into())), Err(error) if error == "来源已断开"));
+        assert!(matches!(collection_result(Err("来源已断开".into()), Err("封装失败".into())), Err(error) if error == "封装失败"));
+        assert!(matches!(collection_result(Err("来源已断开".into()), Err("录屏采集已中止。".into())), Err(error) if error == "来源已断开"));
+    }
+
+    #[test]
+    fn normal_stop_and_explicit_cancel_keep_existing_result_semantics() {
+        let output = collection_result(Ok(()), Ok("complete.mp4".into())).unwrap();
+        assert_eq!(output, "complete.mp4");
+        assert!(matches!(collection_result(Ok(()), Err("已取消录屏。".into())), Err(error) if error == "已取消录屏。"));
+    }
+}

@@ -1,53 +1,10 @@
 //! OCR 配置与系统语言包查询；引擎选择独立于文本翻译设置，不做自动回退。
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use tauri::{AppHandle, WebviewWindow};
+/// 配置模型在 core，设置校验与识别调度共用。
+pub use snap_core::recognition::ocr_config::OcrSettings;
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields, default)]
-pub struct OcrSettings {
-    pub provider: String,
-    /// 空值保留旧本地配置；在线识别通过服务 ID 解析连接。
-    pub service_id: String,
-    /// auto 使用 Windows 用户语言优先级；其他值是系统已安装 OCR 语言的 BCP-47 标签。
-    pub language: String,
-    /// 识别完成后的整理动作由前端执行；这里只保存开关，随识别结果下发给截图和贴图窗口。
-    pub auto_copy: bool,
-    pub merge_lines: bool,
-}
-impl Default for OcrSettings {
-    fn default() -> Self {
-        Self {
-            provider: "local-ppocr".into(),
-            service_id: String::new(),
-            language: "auto".into(),
-            auto_copy: false,
-            merge_lines: false,
-        }
-    }
-}
-impl OcrSettings {
-    pub fn validate(&self) -> Result<(), String> {
-        if !["local-ppocr", "windows-media", "wechat-ocr", "service"].contains(&self.provider.as_str()) {
-            return Err("此 OCR 引擎尚未接入。".into());
-        }
-        if self.language.is_empty()
-            || self.language.len() > 85
-            || !self
-                .language
-                .bytes()
-                .all(|c| c.is_ascii_alphanumeric() || c == b'-')
-        {
-            return Err("OCR 语言标签无效。".into());
-        }
-        Ok(())
-    }
-}
-
-#[derive(Serialize)]
-pub struct OcrLanguage {
-    pub tag: String,
-    pub name: String,
-}
+pub use snap_core::recognition::ocr_config::OcrLanguage;
 
 /// supported 仅表示平台支持；语言查询失败不伪装成空语言包列表。
 #[derive(Serialize)]
@@ -97,10 +54,7 @@ pub fn snapshot(app: &AppHandle) -> Result<(OcrSettings, Option<super::services:
     use tauri::Manager;
     let state = app.state::<crate::settings::SettingsState>();
     let current = state.0.lock().map_err(|_| "无法读取 OCR 设置。")?;
-    let value = current.value.ocr.clone();
-    value.validate()?;
-    let service = if value.provider == "service" { Some(super::services::find(&current.value, &value.service_id)?.clone()) } else { None };
-    Ok((value, service))
+    snap_core::recognition::ocr_config::snapshot(&current.value)
 }
 
 #[cfg(test)]

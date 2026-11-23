@@ -1,8 +1,12 @@
 //! 单个透明窗口按鼠标所在显示器的物理坐标定位；宽高先按该显示器 DPI 换算。
 use super::ShelfState;
+use crate::shared::idle_release::{IdleSince, WINDOW_IDLE};
 use tauri::{
     AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindowBuilder,
 };
+
+/// 用户收起后开始计时；截图期间的临时隐藏不计时。
+static IDLE: IdleSince = IdleSince::new();
 
 pub(super) fn show(app: &AppHandle) -> Result<(), String> {
     if app
@@ -22,6 +26,7 @@ pub(super) fn show(app: &AppHandle) -> Result<(), String> {
     {
         return Ok(());
     }
+    IDLE.clear();
     let snapshot = state.snapshot(app)?;
     if !snapshot.settings.enabled {
         return Err("请先开启顶部暂存架。".into());
@@ -70,7 +75,7 @@ pub(super) fn show(app: &AppHandle) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
     let _ = app.emit_to("shelf", "shelf-changed", ());
     window.show().map_err(|e| e.to_string())?;
-    // 常驻 WebView 再次显示时不重新挂载；显式通知前端重播轻量入场并返回最近一组。
+    // 复用的 WebView 再次显示时不重新挂载；显式通知前端重播轻量入场并返回最近一组。
     let _ = app.emit_to("shelf", "shelf-revealed", ());
     Ok(())
 }
@@ -89,8 +94,40 @@ pub(super) fn hide(app: &AppHandle) -> Result<(), String> {
     }
     if let Some(window) = app.get_webview_window("shelf") {
         window.hide().map_err(|e| e.to_string())?;
+        IDLE.start();
     }
     Ok(())
+}
+
+/// 收起超过 WINDOW_IDLE 后销毁 WebView，释放渲染进程；下次展开按首次使用重新创建。
+/// 截图会话期间不销毁，保证“采集后恢复”仍能找到原窗口。
+pub(super) fn release_idle(app: &AppHandle) {
+    let Some(state) = app.try_state::<ShelfState>() else {
+        return;
+    };
+    let Ok(_gate) = state.window_gate.try_lock() else {
+        return;
+    };
+    let capturing = app
+        .state::<crate::capture::CaptureState>()
+        .active
+        .load(std::sync::atomic::Ordering::Acquire)
+        || state
+            .capture_visibility
+            .lock()
+            .map_or(true, |saved| saved.is_some());
+    if capturing || !IDLE.take_expired(WINDOW_IDLE) {
+        return;
+    }
+    if let Some(window) = app.get_webview_window("shelf") {
+        if window.is_visible().unwrap_or(true) {
+            return;
+        }
+        match window.destroy() {
+            Ok(()) => log::info!("event=shelf.window_released module=shelf reason=idle"),
+            Err(error) => log::warn!("event=shelf.window_release_failed module=shelf error={error}"),
+        }
+    }
 }
 
 /// 抓屏前临时隐藏；返回是否真正隐藏了窗口，供采集端决定是否等待桌面合成。

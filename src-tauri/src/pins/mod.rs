@@ -2,17 +2,17 @@
 //! 窗口标签由 Rust 生成；贴图窗口只能操作自身，主窗口只能执行明确的管理动作。
 #[cfg(test)]
 pub(crate) mod benchmarks;
-pub(crate) mod content;
+/// 图片文件解码与文字排版在 core（GPUI 版共用）。
+pub(crate) use snap_core::pins::content;
 pub(crate) mod drag;
 pub mod html;
-mod text;
+use snap_core::pins::text;
 
 use base64::{engine::general_purpose::STANDARD, Engine};
 use image::RgbaImage;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
-    io::Cursor,
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Mutex,
@@ -25,198 +25,30 @@ use tauri::{
 use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_dialog::DialogExt;
 
-const MAX_PINS: usize = 12;
-const MAX_IMAGE_PIXELS: u64 = 16_000_000;
-const MAX_TOTAL_PIXELS: u64 = 32_000_000;
 
-/// 与 Vue 共用同一份布局尺寸，单位均为逻辑像素。
-/// 窗口只包住图片；工具栏显示时才在图片上方或下方扩出一条，图片不让位、不被裁。
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct PinLayout {
-    padding: f64,
-    gap: f64,
-    border: f64,
-    min_visible_side: f64,
-    /// 工具栏单行加样式行的高度；显示时整体放在图片外侧。
-    toolbar_height: f64,
-    /// 工具栏完整显示所需宽度；仅在工具栏显示时撑宽窗口。
-    toolbar_width: f64,
-    /// 空闲窗口的透明下限，供右键菜单展开；多出的透明部分由 set_pin_region 裁掉。
-    min_window_width: f64,
-    min_window_height: f64,
-}
+use snap_core::pins::{
+    transform, transform_annotations, validate_capacity, PinLayout, Transform, WorkArea,
+    MAX_TOTAL_PIXELS,
+};
 
-/// 一次布局结果：窗口外框（物理像素）、图片首像素相对窗口的偏移、工具栏是否在图片上方。
-#[derive(Debug, PartialEq)]
-struct Placement {
-    position: PhysicalPosition<i32>,
-    size: PhysicalSize<u32>,
-    image: PhysicalPosition<i32>,
-    toolbar_above: bool,
-}
-
-/// 显示器工作区，物理像素。
-#[derive(Clone, Copy)]
-struct WorkArea {
-    x: i32,
-    y: i32,
-    width: i32,
-    height: i32,
-}
-impl From<&tauri::Monitor> for WorkArea {
-    fn from(monitor: &tauri::Monitor) -> Self {
-        let area = monitor.work_area();
-        Self {
-            x: area.position.x,
-            y: area.position.y,
-            width: area.size.width as i32,
-            height: area.size.height as i32,
-        }
+/// 显示器工作区（物理像素）；布局计算在 core。
+fn work_area(monitor: &tauri::Monitor) -> WorkArea {
+    let area = monitor.work_area();
+    WorkArea {
+        x: area.position.x,
+        y: area.position.y,
+        width: area.size.width as i32,
+        height: area.size.height as i32,
     }
 }
-
-impl PinLayout {
-    fn load() -> &'static Self {
-        // 编译时嵌入仓库内常量，不读取用户文件；前端直接导入相同 JSON。
-        // 内容在进程生命周期内不变，只解析一次；缩放、滚轮等高频命令直接复用。
-        static LAYOUT: std::sync::OnceLock<PinLayout> = std::sync::OnceLock::new();
-        LAYOUT.get_or_init(|| {
-            serde_json::from_str(include_str!("../../../src/features/pins/pin-layout.json"))
-                .expect("内置贴图布局配置无效")
-        })
-    }
-    /// 与前端使用相同短边下限，原生命令也不能把小图缩成不可见的小点。
-    fn minimum_zoom(&self, width: u32, height: u32, scale: f64) -> f64 {
-        (self.min_visible_side * scale / f64::from(width.min(height).max(1))).max(0.1)
-    }
-    /// 图片首像素到窗口原点的物理距离；与前端 padding 取整规则一致。
-    fn image_inset(&self, scale: f64) -> i32 {
-        ((self.padding + self.border) * scale).round() as i32
-    }
-    /// 已测得的工具栏宽度优先；未测量时按布局常量预留。
-    fn toolbar_width_for(&self, measured: f64) -> f64 {
-        if measured > 0.0 {
-            measured
-        } else {
-            self.toolbar_width
-        }
-    }
-    /// 工具栏占用的高度（含与图片的间隙），物理像素。
-    fn toolbar_band(&self, scale: f64) -> i32 {
-        ((self.gap + self.toolbar_height) * scale).ceil() as i32
-    }
-    /// 新贴图默认原尺寸；放不进工作区（含为工具栏预留的一条）时等比缩小到能完整显示。
-    fn fit_zoom(&self, width: u32, height: u32, scale: f64, work: WorkArea) -> f64 {
-        let inset = f64::from(self.image_inset(scale) * 2);
-        let room_width = f64::from(work.width) - inset;
-        let room_height = f64::from(work.height - self.toolbar_band(scale)) - inset;
-        let fit = (room_width / f64::from(width.max(1)))
-            .min(room_height / f64::from(height.max(1)))
-            .min(1.0);
-        // 保留两位小数，滚轮按 10% 步进时仍从可读的比例出发。
-        ((fit * 100.0).floor() / 100.0).max(self.minimum_zoom(width, height, scale))
-    }
-    /// 图片按缩放比例显示的物理尺寸。
-    fn displayed(&self, width: u32, height: u32, zoom: f64) -> (i32, i32) {
-        (
-            (f64::from(width) * zoom).round().max(1.0) as i32,
-            (f64::from(height) * zoom).round().max(1.0) as i32,
-        )
-    }
-
-    /// 原位贴图：图片首像素对准选区，不按工作区裁小窗口。
-    fn source_bounds(
-        &self,
-        origin: PhysicalPosition<i32>,
-        width: u32,
-        height: u32,
-        scale: f64,
-        zoom: f64,
-    ) -> (PhysicalPosition<i32>, PhysicalSize<u32>) {
-        let inset = self.image_inset(scale);
-        let (width, height) = self.displayed(width, height, zoom);
-        (
-            PhysicalPosition::new(origin.x - inset, origin.y - inset),
-            self.window_size(width, height, scale, None),
-        )
-    }
-
-    /// `toolbar` 为显示中的工具栏宽度（逻辑像素），`None` 表示工具栏隐藏。
-    fn window_size(
-        &self,
-        width: i32,
-        height: i32,
-        scale: f64,
-        toolbar: Option<f64>,
-    ) -> PhysicalSize<u32> {
-        let inset = self.image_inset(scale);
-        let content = if let Some(toolbar) = toolbar {
-            width.max((toolbar * scale).ceil() as i32)
-        } else {
-            width
-        };
-        let band = if toolbar.is_some() {
-            self.toolbar_band(scale)
-        } else {
-            0
-        };
-        PhysicalSize::new(
-            (content + inset * 2).max((self.min_window_width * scale).ceil() as i32) as u32,
-            (height + inset * 2 + band).max((self.min_window_height * scale).ceil() as i32) as u32,
-        )
-    }
-
-    /// 以图片当前屏幕位置为锚点重新布局：图片保持在工作区内，工具栏优先放下方，
-    /// 下方放不下放上方，两侧都放不下时才把图片上移；横向超出右缘时窗口向左展开。
-    /// `image` 为图片首像素的屏幕坐标，`width`/`height` 为图片显示尺寸。
-    fn place(
-        &self,
-        image: PhysicalPosition<i32>,
-        width: i32,
-        height: i32,
-        scale: f64,
-        work: WorkArea,
-        toolbar: Option<f64>,
-    ) -> Placement {
-        let inset = self.image_inset(scale);
-        let band = if toolbar.is_some() {
-            self.toolbar_band(scale)
-        } else {
-            0
-        };
-        let (left, top) = (work.x, work.y);
-        let (right, bottom) = (work.x + work.width, work.y + work.height);
-        // 超出工作区的大图由前端在边框内滚动，显示区域按工作区收窄。
-        let width = width.min(work.width - inset * 2).max(1);
-        let height = height.min(work.height - inset * 2 - band).max(1);
-        let x = image.x.clamp(left, left.max(right - width));
-        let mut y = image.y.clamp(top, top.max(bottom - height));
-        let size = self.window_size(width, height, scale, toolbar);
-        let mut toolbar_above = false;
-        if toolbar.is_some() && y + height + inset + band > bottom {
-            if y - inset - band >= top {
-                toolbar_above = true;
-            } else {
-                y = top.max(bottom - inset - band - height);
-            }
-        }
-        let window_y = if toolbar_above {
-            y - inset - band
-        } else {
-            y - inset
-        };
-        let mut window_x = x - inset;
-        if window_x + size.width as i32 > right {
-            window_x = window_x.min((left - inset).max(right - size.width as i32));
-        }
-        Placement {
-            position: PhysicalPosition::new(window_x, window_y),
-            size,
-            image: PhysicalPosition::new(x - window_x, y - window_y),
-            toolbar_above,
-        }
-    }
+fn physical(position: snap_core::pins::Position) -> PhysicalPosition<i32> {
+    PhysicalPosition::new(position.x, position.y)
+}
+fn physical_size(size: snap_core::pins::Size) -> PhysicalSize<u32> {
+    PhysicalSize::new(size.width, size.height)
+}
+fn core_position(position: PhysicalPosition<i32>) -> snap_core::pins::Position {
+    snap_core::pins::Position::new(position.x, position.y)
 }
 
 #[derive(Default)]
@@ -297,44 +129,8 @@ fn validate_transform_budget(
     Ok(())
 }
 
-/// 全局贴图外观只影响显示；阴影由 WebView 按尺寸和焦点计算，原图像素保持独立。
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields, default)]
-pub struct PinAppearance {
-    pub shadow: PinShadow,
-    pub corner_radius: u8,
-    /// 只接受 #RRGGBB，旧配置缺少字段时沿用默认中性灰。
-    pub border_color: String,
-}
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum PinShadow {
-    #[default]
-    Auto,
-    Soft,
-    None,
-}
-impl Default for PinAppearance {
-    fn default() -> Self {
-        Self {
-            shadow: PinShadow::Auto,
-            corner_radius: 8,
-            border_color: "#a1a1aa".into(),
-        }
-    }
-}
-impl PinAppearance {
-    pub fn validate(&self) -> Result<(), String> {
-        let color = self.border_color.as_bytes();
-        if color.len() != 7 || color[0] != b'#' || !color[1..].iter().all(u8::is_ascii_hexdigit) {
-            return Err("边框颜色需为六位十六进制颜色。".into());
-        }
-        if self.corner_radius > 24 {
-            return Err("贴图圆角需为 0～24 像素。".into());
-        }
-        Ok(())
-    }
-}
+/// 全局贴图外观（阴影、圆角、边框色）的配置模型在 core。
+pub use snap_core::pins::PinAppearance;
 fn appearance(app: &AppHandle) -> Result<PinAppearance, String> {
     let state = app.state::<crate::settings::SettingsState>();
     let current = state.0.lock().map_err(err)?;
@@ -551,19 +347,6 @@ fn commit_transformed_pin(
     *images.get_mut(label).ok_or("贴图已关闭。")? = pin;
     Ok(())
 }
-fn validate_capacity(width: u32, height: u32, count: usize, used: u64) -> Result<(), String> {
-    let pixels = u64::from(width) * u64::from(height);
-    if width == 0 || height == 0 || pixels > MAX_IMAGE_PIXELS {
-        return Err("图片为空或超过 1600 万像素限制。".into());
-    }
-    if count >= MAX_PINS || used.saturating_add(pixels) > MAX_TOTAL_PIXELS {
-        return Err(
-            "贴图最多 12 张，原图与处理图的独立缓存合计最多 3200 万像素；请先关闭部分贴图。".into(),
-        );
-    }
-    Ok(())
-}
-
 /// 必须从后台线程调用，避免 Windows WebView 创建阻塞 UI 线程。
 /// 先登记图片再创建窗口，保证页面首次请求能读到数据；失败时回收登记。
 pub fn create(
@@ -601,7 +384,7 @@ fn create_with_text(
     .ok_or("无法获取显示器信息。")?;
     let layout = PinLayout::load();
     let scale = monitor.scale_factor();
-    let work = WorkArea::from(&monitor);
+    let work = work_area(&monitor);
     // 原位贴图保持选区原尺寸；其他来源默认原尺寸，放不下工作区时等比缩小到完整可见。
     let zoom = match image_origin {
         Some(_) => 1.0_f64.max(layout.minimum_zoom(image.width(), image.height(), scale)),
@@ -610,7 +393,7 @@ fn create_with_text(
     let (shown_width, shown_height) = layout.displayed(image.width(), image.height(), zoom);
     // 非原位贴图在工作区居中；原位贴图建窗后按实际 DPI 重新对齐选区。
     let centered = layout.place(
-        PhysicalPosition::new(
+        snap_core::pins::Position::new(
             work.x + (work.width - shown_width) / 2,
             work.y + (work.height - shown_height) / 2,
         ),
@@ -669,15 +452,15 @@ fn create_with_text(
                     let images = state.images.lock().map_err(err)?;
                     let pin = images.get(&label).ok_or("贴图已关闭。")?;
                     let (position, size) = layout.source_bounds(
-                        origin,
+                        core_position(origin),
                         pin.image.width(),
                         pin.image.height(),
                         scale,
                         pin.view.zoom,
                     );
                     drop(images);
-                    window.set_position(position).map_err(err)?;
-                    window.set_size(size).map_err(err)?;
+                    window.set_position(physical(position)).map_err(err)?;
+                    window.set_size(physical_size(size)).map_err(err)?;
                     let inset = layout.image_inset(scale);
                     let mut images = state.images.lock().map_err(err)?;
                     let view = &mut images.get_mut(&label).ok_or("贴图已关闭。")?.view;
@@ -693,8 +476,8 @@ fn create_with_text(
             if image_origin.is_none() {
                 // 物理像素定位，避免逻辑尺寸取整后图片偏离预先计算的偏移。
                 let placed = window
-                    .set_size(centered.size)
-                    .and_then(|_| window.set_position(centered.position));
+                    .set_size(physical_size(centered.size))
+                    .and_then(|_| window.set_position(physical(centered.position)));
                 if let Err(error) = placed {
                     let _ = window.destroy();
                     state.images.lock().map_err(err)?.remove(&label);
@@ -810,7 +593,7 @@ pub fn clipboard_pin(app: &AppHandle) -> Result<(), String> {
                     app,
                     self::html::render(app, html)?,
                     vec![],
-                    text.map(|s| Arc::from(self::text::drag_text(&s))),
+                    text.map(|s| Arc::from(text::drag_text(&s))),
                 );
             }
             let text = app
@@ -834,9 +617,9 @@ pub fn clipboard_pin(app: &AppHandle) -> Result<(), String> {
 pub(crate) fn create_text_visible(app: &AppHandle, text: &str) -> Result<(), String> {
     create_content_visible(
         app,
-        self::text::render(app, text)?,
+        text::render(text, &text::font_bytes(crate::resources::font_bytes(app).ok())?)?,
         vec![],
-        Some(Arc::from(self::text::drag_text(text))),
+        Some(Arc::from(text::drag_text(text))),
     )
 }
 
@@ -1033,7 +816,7 @@ pub async fn set_pin_view(
         let inset = layout.image_inset(scale);
         let offset = |value: i32| if value > 0 { value } else { inset };
         // 以图片当前的屏幕位置为锚点，显示/隐藏工具栏和缩放都不挪动图片。
-        let anchor = PhysicalPosition::new(
+        let anchor = snap_core::pins::Position::new(
             old_position.x + offset(pin.view.image_x),
             old_position.y + offset(pin.view.image_y),
         );
@@ -1044,7 +827,7 @@ pub async fn set_pin_view(
             shown_width,
             shown_height,
             scale,
-            WorkArea::from(&monitor),
+            work_area(&monitor),
             view.toolbar_expanded
                 .then(|| layout.toolbar_width_for(view.toolbar_width)),
         );
@@ -1052,17 +835,18 @@ pub async fn set_pin_view(
         // 置顶、锁定和透明度不能顺带重排原位贴图；旋转改变图像宽高时仍需重新适配。
         let source_size = layout
             .source_bounds(
-                PhysicalPosition::new(0, 0),
+                snap_core::pins::Position::new(0, 0),
                 pin.image.width(),
                 pin.image.height(),
                 scale,
                 view.zoom,
             )
             .1;
+        let (placement_size, source_size) = (physical_size(placement.size), physical_size(source_size));
         let needs_resize = view.zoom != pin.view.zoom
             || view.toolbar_expanded != pin.view.toolbar_expanded
             || (view.toolbar_expanded && view.toolbar_width != pin.view.toolbar_width)
-            || (old_size != placement.size && old_size != source_size);
+            || (old_size != placement_size && old_size != source_size);
         (view.image_x, view.image_y, view.toolbar_above) =
             (pin.view.image_x, pin.view.image_y, pin.view.toolbar_above);
         let resized = if needs_resize {
@@ -1072,8 +856,8 @@ pub async fn set_pin_view(
                 placement.toolbar_above,
             );
             window
-                .set_size(placement.size)
-                .and_then(|_| window.set_position(placement.position))
+                .set_size(placement_size)
+                .and_then(|_| window.set_position(physical(placement.position)))
         } else {
             Ok(())
         };
@@ -1176,118 +960,6 @@ pub fn drag_pin(app: AppHandle, window: WebviewWindow) -> Result<(), String> {
         return Err("贴图已锁定。".into());
     }
     window.start_dragging().map_err(err)
-}
-
-#[derive(Clone, Copy, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum Transform {
-    RotateRight,
-    RotateLeft,
-    FlipHorizontal,
-    FlipVertical,
-    Grayscale,
-    Invert,
-    Reset,
-}
-/// 变换只作用于图片像素；反色保留 alpha，恢复原图会同时清除之前的全部变换。
-fn transform(image: &RgbaImage, original: &RgbaImage, action: Transform) -> RgbaImage {
-    match action {
-        Transform::RotateRight => image::imageops::rotate90(image),
-        Transform::RotateLeft => image::imageops::rotate270(image),
-        Transform::FlipHorizontal => image::imageops::flip_horizontal(image),
-        Transform::FlipVertical => image::imageops::flip_vertical(image),
-        Transform::Reset => original.clone(),
-        Transform::Grayscale | Transform::Invert => {
-            let mut result = image.clone();
-            for pixel in result.pixels_mut() {
-                if matches!(action, Transform::Invert) {
-                    for channel in &mut pixel.0[..3] {
-                        *channel = 255 - *channel;
-                    }
-                } else {
-                    let gray = ((u32::from(pixel[0]) * 299
-                        + u32::from(pixel[1]) * 587
-                        + u32::from(pixel[2]) * 114
-                        + 500)
-                        / 1000) as u8;
-                    pixel.0[..3].fill(gray);
-                }
-            }
-            result
-        }
-    }
-}
-/// 整图变换同步变换标注坐标及字形/滤镜像素，保留可编辑对象而不是合并图层。
-fn transform_annotations(
-    shapes: &[crate::shared::annotations::Annotation],
-    width: u32,
-    height: u32,
-    action: Transform,
-) -> Result<Vec<crate::shared::annotations::Annotation>, String> {
-    use crate::shared::annotations::{Kind, Point};
-    let map = |p: Point| -> Point {
-        match action {
-            Transform::RotateRight => Point {
-                x: f64::from(height) - p.y,
-                y: p.x,
-            },
-            Transform::RotateLeft => Point {
-                x: p.y,
-                y: f64::from(width) - p.x,
-            },
-            Transform::FlipHorizontal => Point {
-                x: f64::from(width) - p.x,
-                y: p.y,
-            },
-            Transform::FlipVertical => Point {
-                x: p.x,
-                y: f64::from(height) - p.y,
-            },
-            _ => p,
-        }
-    };
-    shapes
-        .iter()
-        .map(|source| {
-            let mut s = source.clone();
-            s.start = map(s.start);
-            s.end = map(s.end);
-            s.points = s.points.into_iter().map(map).collect();
-            if matches!(
-                s.kind,
-                Kind::Text | Kind::Number | Kind::Mosaic | Kind::Blur | Kind::Magnify
-            ) {
-                let a = s.start;
-                let b = s.end;
-                s.start = Point {
-                    x: a.x.min(b.x),
-                    y: a.y.min(b.y),
-                };
-                s.end = Point {
-                    x: a.x.max(b.x),
-                    y: a.y.max(b.y),
-                };
-                let raster = crate::shared::annotations::raster(source)?;
-                let mut png = Cursor::new(Vec::new());
-                transform(&raster, &raster, action)
-                    .write_to(&mut png, image::ImageFormat::Png)
-                    .map_err(err)?;
-                s.raster = Some(STANDARD.encode(png.into_inner()));
-            }
-            if matches!(action, Transform::Grayscale | Transform::Invert) {
-                let value = u32::from_str_radix(&s.color[1..], 16).map_err(err)?;
-                let pixel = RgbaImage::from_pixel(
-                    1,
-                    1,
-                    image::Rgba([(value >> 16) as u8, (value >> 8) as u8, value as u8, 255]),
-                );
-                let converted = transform(&pixel, &pixel, action);
-                let p = converted.get_pixel(0, 0);
-                s.color = format!("#{:02x}{:02x}{:02x}", p[0], p[1], p[2]);
-            }
-            Ok(s)
-        })
-        .collect()
 }
 
 #[tauri::command]
@@ -1455,30 +1127,6 @@ pub async fn pin_action(
 mod tests {
     use super::*;
     #[test]
-    fn capture_pin_keeps_image_origin_on_primary_negative_and_scaled_displays() {
-        let layout = PinLayout::load();
-        for scale in [1.0, 1.25, 1.5, 1.75, 2.0] {
-            for origin in [
-                PhysicalPosition::new(0, 0),
-                PhysicalPosition::new(320, 180),
-                PhysicalPosition::new(-1920, -600),
-            ] {
-                let inset = layout.image_inset(scale);
-                let (position, size) = layout.source_bounds(origin, 1233, 626, scale, 1.0);
-                assert_eq!(position.x + inset, origin.x);
-                assert_eq!(position.y + inset, origin.y);
-                // 空闲窗口只包住图片，不为工具栏预留宽度或高度。
-                assert_eq!(size.width as i32, 1233 + inset * 2);
-                assert_eq!(size.height as i32, 626 + inset * 2);
-            }
-        }
-        // 小图在最小窗口内也从左上角开始，不因原生最小尺寸额外居中。
-        let origin = PhysicalPosition::new(-10, 15);
-        let (position, _) = layout.source_bounds(origin, 60, 40, 1.5, 1.0);
-        assert_eq!(position.x + layout.image_inset(1.5), origin.x);
-        assert_eq!(position.y + layout.image_inset(1.5), origin.y);
-    }
-    #[test]
     fn frame_carries_metadata_only_and_encoding_is_cached_per_revision() {
         let pin = sample_pin();
         let json = serde_json::to_value(frame("pin-1", &pin)).unwrap();
@@ -1602,67 +1250,6 @@ mod tests {
         }
     }
     #[test]
-    fn effects_survive_pin_rotation_and_flip() {
-        let mut png = Cursor::new(Vec::new());
-        let pixels = RgbaImage::from_fn(2, 3, |x, y| {
-            image::Rgba([x as u8 * 80, y as u8 * 60, 20, 255])
-        });
-        pixels.write_to(&mut png, image::ImageFormat::Png).unwrap();
-        let lens: crate::shared::annotations::Annotation =
-            serde_json::from_value(serde_json::json!({
-                "kind":"magnify", "start":{"x":10,"y":5}, "end":{"x":30,"y":25},
-                "color":"#ff0000", "width":3, "magnification":3,
-                "raster":STANDARD.encode(png.into_inner())
-            }))
-            .unwrap();
-        let spotlight: crate::shared::annotations::Annotation =
-            serde_json::from_value(serde_json::json!({
-                "kind":"spotlight", "start":{"x":10,"y":5}, "end":{"x":30,"y":25},
-                "color":"#000000", "width":3, "opacity":0.7
-            }))
-            .unwrap();
-        let source = vec![lens, spotlight];
-        let rotated = transform_annotations(&source, 100, 50, Transform::RotateRight).unwrap();
-        crate::shared::annotations::validate(&rotated, 50, 100).unwrap();
-        assert_eq!(rotated[0].magnification, Some(3.0));
-        assert_eq!(
-            crate::shared::annotations::raster(&rotated[0]).unwrap(),
-            image::imageops::rotate90(&pixels)
-        );
-        assert_eq!(rotated[1].start.x, 45.0);
-        assert_eq!(rotated[1].end.x, 25.0);
-        let flipped = transform_annotations(&source, 100, 50, Transform::FlipHorizontal).unwrap();
-        crate::shared::annotations::validate(&flipped, 100, 50).unwrap();
-        assert_eq!(
-            crate::shared::annotations::raster(&flipped[0]).unwrap(),
-            image::imageops::flip_horizontal(&pixels)
-        );
-        assert!(flipped[1].raster.is_none());
-    }
-
-    #[test]
-    fn rotating_and_flipping_keep_annotations_editable_and_in_bounds() {
-        let s: crate::shared::annotations::Annotation = serde_json::from_value(serde_json::json!({
-            "kind":"pen", "start":{"x":10,"y":5}, "end":{"x":30,"y":20},
-            "color":"#ff0000", "width":3, "points":[{"x":10,"y":5},{"x":20,"y":25},{"x":30,"y":20}]
-        }))
-        .unwrap();
-        let source = vec![s];
-        let rotated = transform_annotations(&source, 100, 50, Transform::RotateRight).unwrap();
-        crate::shared::annotations::validate(&rotated, 50, 100).unwrap();
-        assert_eq!(rotated[0].start.x, 45.0);
-        assert_eq!(rotated[0].points[1].y, 20.0);
-        let restored = transform_annotations(&rotated, 50, 100, Transform::RotateLeft).unwrap();
-        assert_eq!(
-            serde_json::to_value(restored).unwrap(),
-            serde_json::to_value(&source).unwrap()
-        );
-        let flipped = transform_annotations(&source, 100, 50, Transform::FlipHorizontal).unwrap();
-        assert_eq!(flipped[0].start.x, 90.0);
-        let inverted = transform_annotations(&source, 100, 50, Transform::Invert).unwrap();
-        assert_eq!(inverted[0].color, "#00ffff");
-    }
-    #[test]
     fn exporting_annotations_does_not_flatten_the_editable_source() {
         let s: crate::shared::annotations::Annotation = serde_json::from_value(serde_json::json!({
             "kind":"line", "start":{"x":2,"y":10}, "end":{"x":25,"y":10}, "color":"#ff0000", "width":3
@@ -1684,105 +1271,6 @@ mod tests {
         assert_eq!(pin.image.get_pixel(10, 10)[3], 0);
         assert_eq!(pin.annotations.len(), 1);
     }
-    const WORK: WorkArea = WorkArea {
-        x: 0,
-        y: 0,
-        width: 1920,
-        height: 1040,
-    };
-    #[test]
-    fn toolbar_sits_outside_the_image_and_never_moves_it() {
-        let layout = PinLayout::load();
-        let inset = layout.image_inset(1.0);
-        let band = layout.toolbar_band(1.0);
-        let image = PhysicalPosition::new(300, 200);
-        let hidden = layout.place(image, 800, 400, 1.0, WORK, None);
-        assert_eq!(hidden.image, PhysicalPosition::new(inset, inset));
-        assert_eq!(
-            hidden.size,
-            PhysicalSize::new(800 + inset as u32 * 2, 400 + inset as u32 * 2)
-        );
-        // 下方放得下：窗口向下扩出一条，图片屏幕位置不变。
-        let below = layout.place(image, 800, 400, 1.0, WORK, Some(layout.toolbar_width));
-        assert!(!below.toolbar_above);
-        assert_eq!(below.position.x + below.image.x, 300);
-        assert_eq!(below.position.y + below.image.y, 200);
-        assert_eq!(below.size.height as i32, 400 + inset * 2 + band);
-        // 贴近底部：工具栏翻到上方，图片仍不动。
-        let low = PhysicalPosition::new(300, 1040 - 400 - 4);
-        let above = layout.place(low, 800, 400, 1.0, WORK, Some(layout.toolbar_width));
-        assert!(above.toolbar_above);
-        assert_eq!(above.position.y + above.image.y, low.y);
-        assert_eq!(above.image.y, inset + band);
-        // 小图靠右：窗口为工具栏向左展开，不越过工作区右缘。
-        let right = PhysicalPosition::new(1800, 200);
-        let narrow = layout.place(right, 100, 80, 1.0, WORK, Some(layout.toolbar_width));
-        assert_eq!(narrow.position.x + narrow.image.x, 1800);
-        assert!(narrow.position.x + narrow.size.width as i32 <= WORK.width);
-        assert!(narrow.size.width as i32 >= layout.toolbar_width as i32);
-    }
-    #[test]
-    fn tall_images_fit_the_work_area_with_room_for_the_toolbar() {
-        let layout = PinLayout::load();
-        for scale in [1.0, 1.25, 1.5] {
-            let zoom = layout.fit_zoom(640, 1340, scale, WORK);
-            assert!(zoom < 1.0);
-            let (width, height) = layout.displayed(640, 1340, zoom);
-            let inset = layout.image_inset(scale);
-            assert!(height + inset * 2 + layout.toolbar_band(scale) <= WORK.height);
-            // 显示工具栏时整张图仍完整可见，只把图片上移让出一条。
-            let top = PhysicalPosition::new(100, 0);
-            let shown = layout.place(top, width, height, scale, WORK, Some(layout.toolbar_width));
-            // 透明内边距允许越过屏幕边缘，图片和工具栏本身留在工作区内。
-            let image_top = shown.position.y + shown.image.y;
-            assert!(image_top >= 0);
-            assert!(image_top + height + layout.toolbar_band(scale) <= WORK.height);
-        }
-        assert_eq!(layout.fit_zoom(800, 600, 1.0, WORK), 1.0);
-        // 极细图片仍满足 20px 的可见下限。
-        assert!(layout.fit_zoom(2, 100_000, 1.0, WORK) >= layout.minimum_zoom(2, 100_000, 1.0));
-    }
-    #[test]
-    fn idle_window_keeps_room_for_the_context_menu() {
-        let layout = PinLayout::load();
-        let tiny = layout.place(PhysicalPosition::new(50, 50), 20, 20, 1.0, WORK, None);
-        assert_eq!(tiny.size.width, layout.min_window_width as u32);
-        assert_eq!(tiny.size.height, layout.min_window_height as u32);
-        assert_eq!(
-            tiny.image,
-            PhysicalPosition::new(layout.image_inset(1.0), layout.image_inset(1.0))
-        );
-    }
-    #[test]
-    fn rejects_empty_oversized_and_excess_pins() {
-        assert!(validate_capacity(0, 1, 0, 0).is_err());
-        assert!(validate_capacity(u32::MAX, u32::MAX, 0, 0).is_err());
-        assert!(validate_capacity(1, 1, MAX_PINS, 0).is_err());
-        assert!(validate_capacity(1, 1, 0, MAX_TOTAL_PIXELS).is_err());
-        assert!(validate_capacity(4000, 4000, 1, 16_000_000).is_ok());
-    }
-    #[test]
-    fn transformations_preserve_alpha_and_restore_original() {
-        let image = RgbaImage::from_raw(2, 1, vec![255, 0, 0, 7, 0, 100, 200, 99]).unwrap();
-        let flipped = transform(&image, &image, Transform::FlipHorizontal);
-        assert_eq!(flipped.get_pixel(0, 0), image.get_pixel(1, 0));
-        let rotated = transform(&image, &image, Transform::RotateRight);
-        assert_eq!(rotated.dimensions(), (1, 2));
-        assert_eq!(transform(&rotated, &image, Transform::RotateLeft), image);
-        assert_eq!(transform(&flipped, &image, Transform::Reset), image);
-        assert_eq!(
-            transform(&image, &image, Transform::Invert)
-                .get_pixel(0, 0)
-                .0,
-            [0, 255, 255, 7]
-        );
-        assert_eq!(
-            transform(&image, &image, Transform::Grayscale)
-                .get_pixel(0, 0)
-                .0,
-            [76, 76, 76, 7]
-        );
-    }
     #[test]
     fn rejects_invalid_display_values_and_releases_operation() {
         assert!(PinView {
@@ -1802,17 +1290,5 @@ mod tests {
         assert!(Operation::acquire(&state).is_err());
         drop(guard);
         assert!(Operation::acquire(&state).is_ok());
-    }
-    #[test]
-    fn pin_appearance_defaults_and_validation_keep_old_settings_compatible() {
-        let value: PinAppearance = serde_json::from_str("{}").unwrap();
-        assert_eq!(value, PinAppearance::default());
-        assert!(PinAppearance {
-            corner_radius: 25,
-            ..value
-        }
-        .validate()
-        .is_err());
-        assert!(serde_json::from_str::<PinAppearance>(r#"{"shadow":"unknown"}"#).is_err());
     }
 }

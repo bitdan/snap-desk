@@ -131,7 +131,11 @@
           "libgstreamer-plugins-base1.0-0",
           "gstreamer1.0-plugins-base",
           "gstreamer1.0-plugins-good",
-          "gstreamer1.0-pulseaudio"
+          "gstreamer1.0-pulseaudio",
+          "libxkbcommon0",
+          "libxkbcommon-x11-0",
+          "libfontconfig1",
+          "libvulkan1"
         ],
         "recommends": ["gstreamer1.0-pipewire", "gstreamer1.0-plugins-ugly", "gstreamer1.0-plugins-bad", "gstreamer1.0-libav"]
       }

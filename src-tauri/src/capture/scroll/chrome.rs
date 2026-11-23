@@ -1,6 +1,6 @@
 //! 滚动截图辅助窗口：边框放在选区外；预览优先右侧、空间不足时左侧，操作条独立显示。
 use super::super::{err, CaptureState, Rect};
-use super::session::Screen;
+use super::Screen;
 #[cfg(target_os = "windows")]
 use std::collections::BTreeMap;
 use std::{sync::Mutex, thread, time::Duration};
@@ -502,14 +502,14 @@ impl Drop for SampleGuard {
     fn drop(&mut self) {
         let state = self.app.state::<CaptureState>();
         // 取消已立即隐藏窗口，旧采样结束时不能再把窗口显示回来。
-        if state.scroll_stop.load(std::sync::atomic::Ordering::SeqCst)
-            || !state.scroll.lock().ok().is_some_and(|s| s.as_ref().is_some_and(|s| s.id == self.id)) {
+        if state.scroll.stop.load(std::sync::atomic::Ordering::SeqCst)
+            || !state.scroll.session.lock().ok().is_some_and(|s| s.as_ref().is_some_and(|s| s.id == self.id)) {
             return;
         }
         for w in &self.windows {
             let _ = show_window(w);
             // 取消可能发生在上面的检查和 show 之间；再次隐藏，消除采样恢复窗口的竞态。
-            if state.scroll_stop.load(std::sync::atomic::Ordering::SeqCst) {
+            if state.scroll.stop.load(std::sync::atomic::Ordering::SeqCst) {
                 let _ = w.hide();
             }
         }

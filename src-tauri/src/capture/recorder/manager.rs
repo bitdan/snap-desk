@@ -1,162 +1,25 @@
-//! 录屏会话管理：命令、UI、WGC 采集和有界编码线程的生命周期。
+//! 录屏会话管理：命令、控制条与实时标注窗口。会话状态机、采集/编码流水线与平台后端在 core
+//! （`snap_core::recording`，GPUI 版共用），这里通过 [`TauriHost`] 为流水线提供标注快照与收尾。
 use super::*;
-use std::{
-    fs,
-    path::PathBuf,
-    sync::mpsc::{self, TrySendError},
-};
-mod audio;
-mod annotation_track;
-mod annotation_layer;
-mod capture;
-mod compositor;
-mod config;
+use std::{path::Path, sync::mpsc};
 #[cfg(test)]
 #[path = "countdown_tests.rs"]
 mod countdown_tests;
-mod encoder;
-mod frame;
-mod gif;
-mod input;
 pub mod live_annotations;
 pub mod output;
 pub mod result;
-mod stats;
-mod timeline;
 mod lifecycle;
-mod pipeline;
 pub use lifecycle::{ExitState, request_exit, request_restart};
 use lifecycle::{progress, WorkerGuard};
-#[cfg(test)]
-use lifecycle::exit_timed_out;
-use pipeline::{collect, QUEUE_CAPACITY};
 use super::scroll::chrome;
-use config::{CaptureSource, RecorderCapabilities, RecorderConfig};
-use frame::QueuedFrame;
-use timeline::Timeline;
-
-#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub enum Phase {
-    Ready,
-    Countdown,
-    Recording,
-    Paused,
-    Encoding,
-    Completed,
-    Cancelled,
-    Failed,
-}
-
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RecordingView {
-    id: u64,
-    revision: u64,
-    phase: Phase,
-    seconds: f64,
-    frames: usize,
-    dropped_frames: usize,
-    target_fps: u32,
-    system_audio: bool,
-    microphone: bool,
-    /// push 的累计墙钟耗时，包含转换和同步提交，不代表 GPU 内部延迟。
-    encoding_millis: f64,
-    stats: stats::RecordingStats,
-    target_bitrate: u32,
-    encoder_kind: encoder::EncoderKind,
-    encoder_fallback: Option<String>,
-    countdown_remaining: u8,
-    message: String,
-    path: Option<String>,
-}
-
-/// 状态锁仅保护时间轴和帧提交；系统取样/编码在锁外进行，暂停通过代次淘汰旧帧。
-struct Session {
-    /// 在确认录制时固定；开始和继续共用，避免中途改变本次会话的窗口行为。
-    hide_main_window: bool,
-    view: RecordingView,
-    timeline: Timeline,
-    fps_window: stats::FpsWindow,
-    /// 与采集/编码线程共享，查询时刷新诊断中的队列水位，不参与命令裁决。
-    queue: std::sync::Arc<stats::QueueGauge>,
-    countdown_seconds: u8,
-    countdown_until: Option<i64>,
-    stop: bool,
-    cancel: bool,
-}
-impl Session {
-    fn elapsed(&self) -> Duration {
-        Duration::from_nanos(self.timeline.elapsed(capture::now()).max(0) as u64 * 100)
-    }
-    fn freeze(&mut self) {
-        self.countdown_until = None;
-        self.view.countdown_remaining = 0;
-        self.timeline.stop(capture::now());
-        self.view.seconds = self.elapsed().as_secs_f64();
-    }
-
-    /// 仅首次开始使用倒计时；恢复不延时。源时间轴在真正开始采集前保持停止。
-    fn begin(&mut self, now: i64, delay: u8) {
-        if delay == 0 {
-            self.countdown_until = None;
-            self.view.countdown_remaining = 0;
-            self.timeline.resume(now);
-            self.fps_window.reset(self.timeline.elapsed(now));
-            self.view.phase = Phase::Recording;
-            log::info!(
-                "event=recording.started module=recording op=rec-{} fps={}",
-                self.view.id,
-                self.view.target_fps
-            );
-            self.view.message = "录制中".into();
-        } else {
-            self.countdown_until = Some(now + i64::from(delay) * 10_000_000);
-            self.view.countdown_remaining = delay;
-            self.view.phase = Phase::Countdown;
-            self.view.message = format!("将在 {delay} 秒后开始录屏，可取消。");
-        }
-        self.view.revision += 1;
-    }
-
-    /// 工作线程短周期推进，不阻塞命令；停止/取消与到期转换在同一状态锁内裁决。
-    fn advance_countdown(&mut self, now: i64) {
-        if self.stop || self.cancel || self.view.phase != Phase::Countdown {
-            return;
-        }
-        let Some(deadline) = self.countdown_until else {
-            return;
-        };
-        if now >= deadline {
-            // 使用实际推进时刻而非计划到期时刻，线程调度延迟不计入视频。
-            self.begin(now, 0);
-        } else {
-            let remaining = ((deadline - now + 9_999_999) / 10_000_000) as u8;
-            if remaining != self.view.countdown_remaining {
-                self.view.countdown_remaining = remaining;
-                self.view.message = format!("将在 {remaining} 秒后开始录屏，可取消。");
-                self.view.revision += 1;
-            }
-        }
-    }
-
-    fn stop_requested(&mut self, cancel: bool) {
-        self.cancel |= cancel || matches!(self.view.phase, Phase::Ready | Phase::Countdown);
-        self.freeze();
-        self.stop = true;
-        self.view.phase = Phase::Encoding;
-        self.view.message = if self.cancel {
-            "正在取消录屏并释放设备…"
-        } else {
-            "已请求停止，正在排空编码队列并保存…"
-        }
-        .into();
-        self.view.revision += 1;
-    }
-}
-
-#[derive(Default)]
-pub struct RecordingState(Mutex<Option<Session>>, Mutex<()>);
+pub use snap_core::recording::{
+    annotation_layer, annotation_track, diagnostic_summary, Phase, RecordingAction, RecordingState,
+    RecordingView,
+};
+use snap_core::recording::{
+    audio, capture, collect, encoder, frame, stats, wayland_session, CaptureSource,
+    ControlOutcome, Host, RecorderCapabilities, RecorderConfig, Session, QUEUE_CAPACITY,
+};
 
 /// 阶段变化只发失效通知；各窗口按权限重新查询，统计数据仍由低频快照校准。
 fn notify_changed(app: &AppHandle) {
@@ -165,150 +28,70 @@ fn notify_changed(app: &AppHandle) {
     }
 }
 
-fn active(phase: Phase) -> bool {
-    matches!(
-        phase,
-        Phase::Ready | Phase::Countdown | Phase::Recording | Phase::Paused | Phase::Encoding
-    )
-}
-
 /// 是否存在未结束的录屏会话；截图蒙层兜底清理时用来避免误关录屏画布。
 pub fn is_active(app: &AppHandle) -> bool {
-    app.state::<RecordingState>()
-        .0
-        .lock()
-        .map(|guard| guard.as_ref().is_some_and(|s| active(s.view.phase)))
-        .unwrap_or(true)
+    app.state::<RecordingState>().is_active()
 }
 
 /// 托盘、录屏快捷键和退出入口只发停止信号，清理由录屏工作线程完成。
 pub fn request_stop(app: &AppHandle, cancel: bool) -> bool {
-    let state = app.state::<RecordingState>();
-    let Ok(mut guard) = state.0.lock() else {
+    if !app.state::<RecordingState>().request_stop(cancel) {
         return false;
-    };
-    let Some(s) = guard.as_mut().filter(|s| active(s.view.phase)) else {
-        return false;
-    };
-    s.stop_requested(cancel);
-    drop(guard);
+    }
     live_annotations::hide_interaction(app);
     notify_changed(app);
     true
 }
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum RecordingAction {
-    Start,
-    Pause,
-    Resume,
-    Stop,
-    Cancel,
-}
-
 /// Alt+F4 只关闭已经结束的控制条，不能意外中止仍在录制/封装的视频。
 pub fn dismiss_completed_controls(app: &AppHandle) {
     // 进入新框选前隐藏上一轮已经结束的控制条。
-    let state = app.state::<RecordingState>();
-    let completed = state.0.lock().ok().is_some_and(|guard| {
-        guard.as_ref().is_some_and(|s| !active(s.view.phase))
-    });
-    if completed { chrome::hide_recording(app); }
+    if app.state::<RecordingState>().completed_id().is_some() {
+        chrome::hide_recording(app);
+    }
 }
 
 /// Alt+F4 关闭已经结束的控制条，成品文件不受影响。
 pub fn close_completed_controls(app: &AppHandle) {
-    let id = app.state::<RecordingState>().0.lock().ok().and_then(|guard| {
-        guard.as_ref().filter(|s| !active(s.view.phase)).map(|s| s.view.id)
-    });
-    if let Some(id) = id { let _ = control(app, Some(id), RecordingAction::Cancel); }
+    if let Some(id) = app.state::<RecordingState>().completed_id() {
+        let _ = control(app, Some(id), RecordingAction::Cancel);
+    }
 }
 
 /// 暂停保留现场；开始和恢复按本次会话偏好处理主界面，边框和控制条不收起。
 pub fn control(app: &AppHandle, id: Option<u64>, action: RecordingAction) -> Result<(), String> {
     let state = app.state::<RecordingState>();
-    // 控制动作串行，但窗口操作不得持有状态锁，避免 UI 查询状态时相互等待。
-    let _control = state.1.lock().map_err(err)?;
-    let mut guard = state.0.lock().map_err(err)?;
-    let s = guard
-        .as_mut()
-        .filter(|s| id.is_none_or(|id| s.view.id == id))
-        .ok_or("录屏会话已过期。")?;
-    // 已完成/取消的同会话停止动作幂等；旧 ID 不能触及新会话。
-    if !active(s.view.phase) {
-        if matches!(action, RecordingAction::Cancel) {
-            // 完成后的关闭只收起控制条，不删除已保存的录像；旧会话 ID 仍在上方校验。
-            drop(guard);
+    let outcome = state.control(id, action, |hide_main_window| {
+        if hide_main_window {
+            if let Some(main) = app.get_webview_window("main") {
+                main.hide().map_err(err)?;
+            }
+            // 仅自动收起时等待桌面合成移除主窗口，再开启计时和取样。
+            std::thread::sleep(Duration::from_millis(250));
+        }
+        Ok(())
+    })?;
+    match outcome {
+        ControlOutcome::Closed => {
             chrome::hide_recording(app);
             chrome::release_recording(app);
-            return Ok(());
         }
-        return if matches!(action, RecordingAction::Stop | RecordingAction::Cancel) {
-            Ok(())
-        } else {
-            Err("录屏已结束。".into())
-        };
-    }
-    match action {
-        RecordingAction::Pause
-            if matches!(s.view.phase, Phase::Recording | Phase::Paused) && !s.stop =>
-        {
-            s.timeline.pause(capture::now());
-            s.view.seconds = s.elapsed().as_secs_f64();
-            s.view.phase = Phase::Paused;
-            s.view.message = "录屏已暂停，可恢复或停止导出。".into();
-            s.view.revision += 1;
-            drop(guard);
+        ControlOutcome::Unchanged => {}
+        ControlOutcome::Paused => {
             notify_changed(app);
             // 所有入口暂停都不展开主窗口，继续通过悬浮控制条恢复或停止。
             if id.is_none() {
                 let _ = app.emit_to("main", "capture-result", "录屏已暂停，可恢复或停止导出。");
             }
-            return Ok(());
         }
-        RecordingAction::Start | RecordingAction::Resume
-            if !s.stop
-                && ((matches!(action, RecordingAction::Start) && s.view.phase == Phase::Ready)
-                    || (matches!(action, RecordingAction::Resume)
-                        && s.view.phase == Phase::Paused)) =>
-        {
-            let session_id = s.view.id;
-            let expected_phase = s.view.phase;
-            let hide_main_window = s.hide_main_window;
-            drop(guard);
-            if hide_main_window {
-                if let Some(main) = app.get_webview_window("main") {
-                    main.hide().map_err(err)?;
-                }
-                // 仅自动收起时等待桌面合成移除主窗口，再开启计时和取样。
-                std::thread::sleep(Duration::from_millis(250));
-            }
-            let mut guard = state.0.lock().map_err(err)?;
-            let s = guard
-                .as_mut()
-                .filter(|s| s.view.id == session_id && s.view.phase == expected_phase && !s.stop)
-                .ok_or("录屏已停止。")?;
-            let delay = if expected_phase == Phase::Ready {
-                s.countdown_seconds
-            } else {
-                0
-            };
-            s.begin(capture::now(), delay);
-            drop(guard);
-            notify_changed(app);
-            return Ok(());
-        }
-        RecordingAction::Stop | RecordingAction::Cancel => {
-            s.stop_requested(matches!(action, RecordingAction::Cancel));
-            drop(guard);
+        ControlOutcome::Started => notify_changed(app),
+        ControlOutcome::Stopping => {
             live_annotations::hide_interaction(app);
             // 控制窗继续显示封装进度，完成后原位切换预览；停止请求不能迟到隐藏预览。
             notify_changed(app);
-            return Ok(());
         }
-        _ => return Err("当前录屏状态不支持此操作。".into()),
     }
+    Ok(())
 }
 
 #[tauri::command]
@@ -330,22 +113,7 @@ pub fn current_recording(
     window: WebviewWindow,
 ) -> Result<Option<RecordingView>, String> {
     require_control_window(&window)?;
-    let state = app.state::<RecordingState>();
-    let guard = state.0.lock().map_err(err)?;
-    Ok(guard.as_ref().map(|s| {
-        let mut view = s.view.clone();
-        view.seconds = s.elapsed().as_secs_f64();
-        view.stats.recent_fps =
-            if matches!(view.phase, Phase::Ready | Phase::Countdown | Phase::Paused) {
-                0.0
-            } else {
-                s.fps_window.fps(s.timeline.elapsed(capture::now()))
-            };
-        // 水位直接读取无锁计数；阶段切换期间队列可能仍在排空，保留真实值。
-        view.stats.queue_depth = s.queue.depth();
-        view.stats.queue_peak = s.queue.peak();
-        view
-    }))
+    app.state::<RecordingState>().current()
 }
 
 fn require_control_window(window: &WebviewWindow) -> Result<(), String> {
@@ -388,7 +156,7 @@ pub async fn start_recording(
         progress(&app, "preparing", None);
         let state = app.state::<CaptureState>();
         let _operation = Operation::acquire(&state.operation)?;
-        if state.scroll.lock().map_err(err)?.is_some() {
+        if state.scroll.session.lock().map_err(err)?.is_some() {
             return Err("请先结束滚动截图。".into());
         }
         let size = state
@@ -519,35 +287,13 @@ pub async fn start_recording(
         // 峰值同时持有底图、两帧队列和正在合成的帧；多留一帧减少分配抖动。
         let pool = frame::FramePool::new(QUEUE_CAPACITY + 2);
         let recording = app.state::<RecordingState>();
-        *recording.0.lock().map_err(err)? = Some(Session {
-            hide_main_window: config.hide_main_window,
-            view: RecordingView {
-                id,
-                revision: 1,
-                phase: Phase::Ready,
-                seconds: 0.0,
-                frames: 0,
-                dropped_frames: 0,
-                target_fps: config.fps,
-                system_audio: config.system_audio,
-                microphone: config.microphone,
-                encoding_millis: 0.0,
-                stats: stats::RecordingStats::default(),
-                target_bitrate: config.target_bitrate(),
-                encoder_kind,
-                encoder_fallback,
-                countdown_remaining: 0,
-                message: "录屏选区已准备，请点击下方“开始录制”。".into(),
-                path: None,
-            },
-            timeline: Timeline::default(),
-            fps_window: stats::FpsWindow::default(),
-            queue: queue.clone(),
-            countdown_seconds: config.countdown_seconds,
-            countdown_until: None,
-            stop: false,
-            cancel: false,
-        });
+        *recording.0.lock().map_err(err)? = Some(Session::prepared(
+            id,
+            &config,
+            encoder_kind,
+            encoder_fallback,
+            queue.clone(),
+        ));
         // WGC 必须在所属线程初始化/释放。握手成功后由原选区页接管，等待明确开始。
         let (ready_tx, ready_rx) = mpsc::sync_channel(1);
         let (go_tx, go_rx) = mpsc::sync_channel(1);
@@ -573,22 +319,7 @@ pub async fn start_recording(
                         Some(audio::Worker::start(
                             config.system_audio,
                             config.microphone,
-                            move || {
-                                audio_app
-                                    .state::<RecordingState>()
-                                    .0
-                                    .lock()
-                                    .ok()
-                                    .and_then(|guard| {
-                                        guard.as_ref().map(|s| {
-                                            s.view.id == id
-                                                && s.view.phase == Phase::Recording
-                                                && !s.stop
-                                                && !s.cancel
-                                        })
-                                    })
-                                    .unwrap_or(false)
-                            },
+                            move || audio_app.state::<RecordingState>().recording(id),
                         )?)
                     } else {
                         None
@@ -598,7 +329,9 @@ pub async fn start_recording(
                 match prepared {
                     Ok((backend, audio)) => {
                         if ready_tx.send(Ok(())).is_ok() && go_rx.recv().unwrap_or(false) {
-                            collect(worker_app, id, config, screen, root, backend, audio, queue, pool);
+                            let origin = (screen.x, screen.y);
+                            let host = Arc::new(TauriHost { app: worker_app, screen });
+                            collect(host, id, config, origin, root, backend, audio, queue, pool);
                         }
                     }
                     Err(e) => {
@@ -633,98 +366,55 @@ pub async fn start_recording(
     .map_err(err)?
 }
 
-/// 诊断不触发试录/编码器探测，不采集视频或音频。
-/// 声音分三层报告：后端是否内置（audioBackend）、系统授权（*Permission）、设备是否实际可用
-/// （audioProbed=false 表示未打开设备检测，不能据此认为设备不可用）。
-pub(crate) fn diagnostic_summary() -> serde_json::Value {
-    let (system_audio_permission, microphone_permission) = audio_permissions();
-    serde_json::json!({
-        "backend": std::env::consts::OS,
-        "captureSupported": capture::supported().is_ok(),
-        "encoderProbed": false,
-        "audioBackend": audio_backend(),
-        "audioBackendSupported": audio_backend() != "unsupported",
-        "systemAudioPermission": system_audio_permission,
-        "microphonePermission": microphone_permission,
-        "audioProbed": false,
-    })
+/// Tauri 外壳为流水线提供的能力：实时标注来自录制浮层，终态收起控制条并通知主界面。
+struct TauriHost {
+    app: AppHandle,
+    screen: super::scroll::Screen,
 }
 
-/// 与 `audio::Worker` 的编译目标一一对应。
-fn audio_backend() -> &'static str {
-    if cfg!(target_os = "windows") {
-        "wasapi"
-    } else if cfg!(target_os = "linux") {
-        "pulseaudio"
-    } else if cfg!(target_os = "macos") {
-        // 系统声音走 ScreenCaptureKit 音频流，麦克风走 AVCaptureSession。
-        "screencapturekit+avfoundation"
-    } else {
-        "unsupported"
+impl Host for TauriHost {
+    fn state(&self) -> &RecordingState {
+        self.app.state::<RecordingState>().inner()
     }
-}
-
-/// 只读系统授权状态，不弹出授权框；不需要应用内授权的平台报告 not_required。
-fn audio_permissions() -> (&'static str, &'static str) {
-    #[cfg(target_os = "macos")]
-    {
-        let system = if crate::shared::macos::screen_capture_granted() { "granted" } else { "not_granted" };
-        (system, audio::microphone_status())
+    fn annotations(&self, id: u64) -> (u64, Option<Arc<annotation_layer::Layer>>) {
+        live_annotations::snapshot(&self.app, id)
     }
-    #[cfg(not(target_os = "macos"))]
-    {
-        ("not_required", "not_required")
+    fn annotation_editing(&self, id: u64) -> bool {
+        live_annotations::editing(&self.app, id)
     }
-}
-
-/// 单次取样在状态锁外计时；空取样也统计耗时，不包含 wait_for_frame 的空闲等待。
-fn measured_capture(
-    state: &RecordingState,
-    id: u64,
-    backend: &mut dyn capture::CaptureBackend,
-) -> Result<Option<frame::VideoFrame>, String> {
-    let started = Instant::now();
-    let result = backend.next_frame();
-    let millis = started.elapsed().as_secs_f64() * 1000.0;
-    let mut guard = state.0.lock().map_err(err)?;
-    let s = guard
-        .as_mut()
-        .filter(|s| s.view.id == id)
-        .ok_or("录屏会话已过期。")?;
-    s.view.stats.capture_polls += 1;
-    s.view.stats.capture_millis += millis;
-    if let Ok(Some(frame)) = &result {
-        s.view.stats.captured_frames += 1;
-        s.view.stats.capture_copy_bytes += frame.image.data.len() as u64;
+    fn timed_annotations(&self, id: u64) -> bool {
+        live_annotations::has_timed_annotations(&self.app, id)
     }
-    s.view.revision += 1;
-    result
-}
-
-fn wayland_session() -> bool {
-    #[cfg(target_os = "linux")]
-    return crate::shared::x11::wayland();
-    #[cfg(not(target_os = "linux"))]
-    false
-}
-
-
-#[cfg(test)]
-mod diagnostic_tests {
-    #[test]
-    fn audio_backend_reflects_compiled_worker() {
-        let summary = super::diagnostic_summary();
-        let expected = if cfg!(target_os = "windows") {
-            "wasapi"
-        } else if cfg!(target_os = "macos") {
-            "screencapturekit+avfoundation"
-        } else {
-            "pulseaudio"
-        };
-        assert_eq!(summary["audioBackend"], expected);
-        assert_eq!(summary["audioBackendSupported"], true);
-        // 未打开设备检测时不能把设备报告成不可用。
-        assert_eq!(summary["audioProbed"], false);
-        assert!(summary["microphonePermission"].is_string());
+    fn update_origin(&self, id: u64, origin: (i32, i32)) {
+        live_annotations::update_origin(&self.app, id, origin);
+    }
+    fn screen_changed(&self) -> Result<bool, String> {
+        Ok(super::scroll::session::screen_at(&self.app, self.screen.x, self.screen.y)? != self.screen)
+    }
+    fn export_settings(&self) -> Result<crate::settings::RecordingExportSettings, String> {
+        output::preferences(&self.app)
+    }
+    fn progress(&self, stage: &'static str, path: Option<&Path>) {
+        progress(&self.app, stage, path);
+    }
+    fn published(&self, path: &Path) {
+        result::remember(&self.app, path);
+    }
+    fn release_annotations(&self, id: u64) {
+        live_annotations::clear(&self.app, id);
+    }
+    fn changed(&self) {
+        notify_changed(&self.app);
+    }
+    fn finished(&self, _id: u64, message: &str) {
+        // 成功后直接保留已经发布的成品，所有终态都收起录制交互窗口。
+        chrome::release_recording(&self.app);
+        self.app
+            .state::<CaptureState>()
+            .active
+            .store(false, Ordering::SeqCst);
+        crate::shelf::resume_after_capture(&self.app);
+        let _ = self.app.emit_to("main", "capture-result", message);
+        // 不主动改变主界面的显示状态；成功路径已在结果消息和原生成品状态中发布。
     }
 }

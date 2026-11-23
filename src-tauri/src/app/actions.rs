@@ -16,37 +16,8 @@ pub(super) fn run(app: &AppHandle, action: ShortcutAction) {
     }
 }
 
-/// 命令行 `--action <名称>`、`--action=<名称>` 或简写 `--<名称>`（名称同设置字段，如 `--capture`）。
-/// 应用无法注册全局快捷键时（如 Linux Wayland），用户可把系统快捷键或 macOS 快捷指令绑定到这条命令；
-/// 已有实例运行时由单实例插件转交参数，不会启动第二个进程。
-pub(super) fn from_args<I, S>(args: I) -> Option<ShortcutAction>
-where
-    I: IntoIterator<Item = S>,
-    S: AsRef<std::ffi::OsStr>,
-{
-    let args: Vec<String> = args
-        .into_iter()
-        .map(|arg| arg.as_ref().to_string_lossy().into_owned())
-        .collect();
-    // 简写只接受已知动作名，`--autostart` 等其他开关不受影响。
-    if let Some(action) = args.iter().find_map(|arg| {
-        arg.strip_prefix("--").and_then(ShortcutAction::from_id)
-    }) {
-        return Some(action);
-    }
-    let name = args.iter().enumerate().find_map(|(index, arg)| {
-        if arg == "--action" {
-            args.get(index + 1).cloned()
-        } else {
-            arg.strip_prefix("--action=").map(str::to_owned)
-        }
-    })?;
-    let action = ShortcutAction::from_id(&name);
-    if action.is_none() {
-        log::warn!("event=app.cli_action_unknown module=app");
-    }
-    action
-}
+/// 命令行动作解析在 core，GPUI 版共用同一套参数格式。
+pub(super) use snap_core::settings::action_from_args as from_args;
 
 pub(super) fn trigger(app: &AppHandle) {
     // 倒计时内再次按截图键代表取消；真正截图开始后不重复创建会话。
@@ -117,23 +88,4 @@ pub(super) fn trigger_recording(app: &AppHandle) {
             capture::report_error(&app, error);
         }
     });
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn command_line_actions_accept_both_forms_and_ignore_unknown_names() {
-        assert_eq!(from_args(["snap-desk", "--action", "capture"]), Some(ShortcutAction::Capture));
-        assert_eq!(from_args(["snap-desk", "--action=ocr"]), Some(ShortcutAction::Ocr));
-        assert_eq!(from_args(["snap-desk", "--autostart"]), None);
-        assert_eq!(from_args(["snap-desk", "--capture"]), Some(ShortcutAction::Capture));
-        assert_eq!(from_args(["snap-desk", "--record"]), Some(ShortcutAction::Record));
-        assert_eq!(from_args(["snap-desk", "--autostart", "--history"]), Some(ShortcutAction::History));
-        assert_eq!(from_args(["snap-desk", "capture"]), None);
-        assert_eq!(from_args(["snap-desk", "--update-failed"]), None);
-        assert_eq!(from_args(["snap-desk", "--action"]), None);
-        assert_eq!(from_args(["snap-desk", "--action", "rm"]), None);
-    }
 }

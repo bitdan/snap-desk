@@ -1,184 +1,24 @@
-//! 截图文字识别：复用 OAR-OCR 的检测、透视裁剪及 CTC 解码，通过 ort 在 CPU 上推理。
-use crate::recognition::{OcrLine, OcrResult, PolygonPoint};
-use oar_ocr::core::config::OrtSessionConfig;
-use oar_ocr::prelude::*;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, Instant};
-use std::{path::Path, sync::Mutex};
+//! 截图文字识别：本地 PP-OCR 引擎在 core（`snap_core::recognition::ocr::LocalOcr`），
+//! 这里持有应用级引擎状态，并保留复制识别结果的 IPC 命令。
 use tauri::{AppHandle, Manager, WebviewWindow};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
-static REQUEST_SEQUENCE: AtomicU64 = AtomicU64::new(1);
-
-/// OCR 引擎共用递增编号，切换引擎后日志与结果仍能唯一关联。
-pub(super) fn next_request() -> u64 { REQUEST_SEQUENCE.fetch_add(1, Ordering::Relaxed) }
-
-/// 模型首次使用时加载；识别和回收共用锁，避免卸载正在推理的会话。
+/// 模型首次使用时加载；空闲五分钟后释放（见 `LocalOcr`）。
 #[derive(Default)]
-pub struct OcrState(Mutex<Option<CachedEngine>>);
+pub struct OcrState(pub snap_core::recognition::ocr::LocalOcr);
 
-struct CachedEngine {
-    engine: OAROCR,
-    /// 从最后一次推理结束计时，失败的推理也会刷新空闲时间。
-    last_used: Instant,
-}
-
-/// 空闲五分钟后释放会话；运行库及分配器是否归还内存需通过实机采样判断。
 pub fn release_idle(app: &AppHandle) {
-    let state = app.state::<OcrState>();
-    if let Ok(mut slot) = state.0.try_lock() {
-        if slot
-            .as_ref()
-            .is_some_and(|cached| cached.last_used.elapsed() >= Duration::from_secs(300))
-        {
-            // 在持锁期间完成析构，避免旧模型尚未释放时又初始化另一份模型。
-            drop(slot.take());
-            log::info!("event=ocr.engine_unloaded module=ocr engine=local-ppocr reason=idle");
-        }
-    };
-}
-
-/// 离线引擎共用输入边界，先检查原图大小再进行缩放或分配像素缓冲区。
-pub(super) fn validate_image(image: &image::RgbaImage) -> Result<(), String> {
-    if image.width() == 0 || image.height() == 0 { return Err("OCR 选区不能为空。".into()); }
-    if u64::from(image.width()) * u64::from(image.height()) > 16_000_000 {
-        return Err("OCR 选区超过 1600 万像素，请缩小范围。".into());
-    }
-    Ok(())
+    app.state::<OcrState>().0.release_idle();
 }
 
 /// 新旧入口共享模型锁与过滤规则，结构化识别不会额外加载模型。
 pub fn recognize_structured(
     app: &AppHandle,
     image: &image::RgbaImage,
-) -> Result<OcrResult, String> {
-    let started = Instant::now();
-    let op = next_request();
-    let mut code = "OCR_INVALID_REGION";
-    let result = (|| {
-        validate_image(image)?;
-        code = "OCR_BUSY";
-        let state = app.state::<OcrState>();
-        let mut engine = state.0.try_lock().map_err(|_| "已有文字识别正在进行。")?;
-        if engine.is_none() {
-            code = "OCR_RESOURCES_UNAVAILABLE";
-            let dir = crate::resources::ocr_paths(app)?;
-            code = "OCR_ENGINE_INIT_FAILED";
-            let loading = Instant::now();
-            *engine = Some(CachedEngine {
-                engine: build_engine(&dir)?,
-                last_used: Instant::now(),
-            });
-            log::info!(
-                "event=ocr.engine_ready module=ocr engine=local-ppocr op=ocr-{op} duration_ms={}",
-                loading.elapsed().as_millis()
-            );
-        }
-        code = "OCR_INFERENCE_FAILED";
-        let inference = Instant::now();
-        let cached = engine.as_mut().ok_or("OCR 未初始化。")?;
-        let result = recognize_regions(&cached.engine, image);
-        cached.last_used = Instant::now();
-        let mut result = result?;
-        result.request_id = format!("ocr-{op}");
-        result.elapsed_ms = started.elapsed().as_millis() as u64;
-        log::info!(
-            "event=ocr.finished module=ocr engine=local-ppocr op=ocr-{op} duration_ms={} inference_ms={} lines={}",
-            result.elapsed_ms,
-            inference.elapsed().as_millis(),
-            result.lines.len()
-        );
-        Ok(result)
-    })();
-    if result.is_err() {
-        log::error!(
-            "event=ocr.failed module=ocr engine=local-ppocr op=ocr-{op} code={code} duration_ms={}",
-            started.elapsed().as_millis()
-        );
-    }
-    result
-}
-
-/// 与性能测试共用模型加载和推理路径，避免基准只测到与产品不同的代码。
-fn build_engine(dir: &Path) -> Result<OAROCR, String> {
-    // 必须先显式加载可信路径，防止 ort 回退到 PATH/环境变量搜索并在缺少 DLL 时 panic。
-    #[cfg(windows)]
-    crate::recognition::ocr_runtime::initialize(dir)?;
-    // 检测与识别各有会话；默认线程数会争抢 CPU，默认整页批次还会放大张量内存。
-    // 桌面交互优先：每次最多识别 8 行，每个会话最多使用两个推理线程。
-    let threads = std::thread::available_parallelism()
-        .map(|n| n.get().min(2))
-        .unwrap_or(1);
-    OAROCRBuilder::new(
-        dir.join("pp-ocrv6_small_det.onnx"),
-        dir.join("pp-ocrv6_small_rec.onnx"),
-        dir.join("ppocrv6_dict.txt"),
-    )
-    .region_batch_size(8)
-    .ort_session(
-        OrtSessionConfig::new()
-            .with_intra_threads(threads)
-            .with_inter_threads(1),
-    )
-    .build()
-    .map_err(|e| format!("OCR 模型加载失败：{e}"))
-}
-
-fn recognize_regions(engine: &OAROCR, image: &image::RgbaImage) -> Result<OcrResult, String> {
-    let rgb = crate::shared::image_io::white_background(image);
-    let results = engine
-        .predict(vec![rgb])
-        .map_err(|e| format!("文字识别失败：{e}"))?;
-    let lines: Vec<OcrLine> = results
-        .iter()
-        .flat_map(|r| r.text_regions.iter())
-        .filter_map(|region| {
-            let (text, confidence) = region.text_with_confidence()?;
-            if text.trim().is_empty() || !confidence.is_finite() || confidence < 0.5 {
-                return None;
-            }
-            // OAR 已将检测坐标还原至输入图像；不再乘检测网络的缩放比例。
-            let points = &region.bounding_box.points;
-            let polygon = (points.len() == 4
-                && points.iter().all(|p| p.x.is_finite() && p.y.is_finite()))
-            .then(|| {
-                points
-                    .iter()
-                    .map(|p| PolygonPoint {
-                        x: p.x.clamp(0.0, image.width() as f32),
-                        y: p.y.clamp(0.0, image.height() as f32),
-                    })
-                    .collect()
-            });
-            Some((text.to_string(), confidence, polygon))
-        })
-        .enumerate()
-        .map(|(order, (text, confidence, polygon))| OcrLine {
-            id: format!("line-{:04}", order + 1),
-            text,
-            confidence: Some(confidence),
-            polygon,
-            language: None,
-            order,
-            paragraph_id: None,
-        })
-        .collect();
-    Ok(OcrResult {
-        request_id: String::new(), // 外层在识别完成后统一填入本次任务编号。
-        provider: "local-ppocr".into(),
-        image_width: image.width(),
-        image_height: image.height(),
-        full_text: lines
-            .iter()
-            .map(|line| line.text.as_str())
-            .collect::<Vec<_>>()
-            .join("\n"),
-        lines,
-        elapsed_ms: 0,
-        warnings: Vec::new(),
-        auto_copy: false,
-        merge_lines: false,
-    })
+) -> Result<super::OcrResult, String> {
+    app.state::<OcrState>()
+        .0
+        .recognize(image, || crate::resources::ocr_paths(app))
 }
 
 /// 结果允许用户编辑；主窗口、翻译、截图或仍存在的贴图可复制文字，且限制消息大小。

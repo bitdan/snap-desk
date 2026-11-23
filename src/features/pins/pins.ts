@@ -53,7 +53,7 @@ export function canEditPin(view: PinView | undefined, busy: boolean): boolean {
   return !!view && !view.locked && !view.clickThrough && !busy
 }
 
-export function defaultPinAppearance(): PinAppearance { return { shadow: 'auto', cornerRadius: 8, borderColor: '#a1a1aa' } }
+export function defaultPinAppearance(): PinAppearance { return { shadow: 'auto', cornerRadius: 8, borderColor: '#a1a1aa', shadowColor: '#3b5bdb' } }
 export function validatePinAppearance(value: PinAppearance): string | null {
   if (!/^#[0-9a-f]{6}$/i.test(value.borderColor)) return '边框颜色需为六位十六进制颜色。'
   return !['auto', 'soft', 'none'].includes(value.shadow) || !Number.isInteger(value.cornerRadius) || value.cornerRadius < 0 || value.cornerRadius > 24

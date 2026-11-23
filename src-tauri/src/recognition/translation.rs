@@ -1,6 +1,6 @@
 //! 翻译路由：默认本地 CTranslate2，仅在线文本服务需要上传授权。
 use super::providers::{self, TranslationRequest};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::{
     collections::VecDeque,
     sync::{Arc, Mutex},
@@ -8,180 +8,14 @@ use std::{
 };
 use tauri::{AppHandle, Manager, WebviewWindow};
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", from = "AiSettingsWire")]
-pub struct AiSettings {
-    /// 新配置默认本地；旧在线配置保留服务选择，发送前仍需单次授权。
-    pub provider: String,
-    /// 服务管理连接；空字符串兼容旧的地址配置和凭据。
-    pub service_id: String,
-    /// 完整接口地址；DeepL 仅允许官方 Free/Pro 翻译接口。
-    pub endpoint: String,
-    pub model: String,
-    pub target_language: String,
-    pub timeout_seconds: u64,
-    /// 本地进程空闲回收秒数；0 保持缓存，旧配置默认五分钟。
-    pub local_idle_seconds: u64,
-    /// 翻译完成后自动复制译文；由翻译界面执行。
-    pub auto_copy: bool,
-    /// 截图翻译按段落翻译，并把译文覆盖在原图对应位置；由识别工作区执行。
-    pub overlay: bool,
-}
-/// 区分旧字段缺失与显式选择，避免旧日语目标因本地只支持中英而使整个设置失效。
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields, default)]
-struct AiSettingsWire {
-    provider: Option<String>,
-    service_id: String,
-    endpoint: String,
-    model: String,
-    target_language: String,
-    timeout_seconds: u64,
-    local_idle_seconds: u64,
-    auto_copy: bool,
-    overlay: bool,
-    /// 兼容旧配置，右键翻译入口已移除，不再保存此字段。
-    #[serde(rename = "selectionContextMenu")]
-    _selection_context_menu: bool,
-}
-impl Default for AiSettingsWire {
-    fn default() -> Self {
-        let value = AiSettings::default();
-        Self {
-            provider: None,
-            service_id: String::new(),
-            endpoint: value.endpoint,
-            model: value.model,
-            target_language: value.target_language,
-            timeout_seconds: value.timeout_seconds,
-            local_idle_seconds: value.local_idle_seconds,
-            auto_copy: value.auto_copy,
-            overlay: value.overlay,
-            _selection_context_menu: false,
-        }
-    }
-}
-impl From<AiSettingsWire> for AiSettings {
-    fn from(wire: AiSettingsWire) -> Self {
-        let provider = wire.provider.unwrap_or_else(|| {
-            if !wire.endpoint.is_empty()
-                || !["zh-CN", "en"].contains(&wire.target_language.as_str())
-            {
-                "online-llm".into()
-            } else {
-                "local-ctranslate2".into()
-            }
-        });
-        Self {
-            provider,
-            service_id: wire.service_id,
-            endpoint: wire.endpoint,
-            model: wire.model,
-            target_language: wire.target_language,
-            timeout_seconds: wire.timeout_seconds,
-            local_idle_seconds: wire.local_idle_seconds,
-            auto_copy: wire.auto_copy,
-            overlay: wire.overlay,
-        }
-    }
-}
-impl Default for AiSettings {
-    fn default() -> Self {
-        Self {
-            provider: "local-ctranslate2".into(),
-            service_id: String::new(),
-            endpoint: String::new(),
-            model: String::new(),
-            target_language: "zh-CN".into(),
-            timeout_seconds: 45,
-            local_idle_seconds: 300,
-            auto_copy: false,
-            overlay: false,
-        }
-    }
-}
-impl AiSettings {
-    pub fn validate(&self) -> Result<(), String> {
-        if !["local-ctranslate2", "online-llm", "deepl"].contains(&self.provider.as_str()) {
-            return Err("不支持此翻译引擎。".into());
-        }
-        if self.provider == "local-ctranslate2" {
-            crate::recognition::translation_models::model_id(&self.target_language)?;
-        }
-        if !self.endpoint.is_empty() {
-            if self.provider == "deepl" {
-                providers::deepl::endpoint(&self.endpoint)?;
-            } else {
-                endpoint_url(&self.endpoint)?;
-            }
-        }
-        if self.model.len() > 200 || self.model.chars().any(char::is_control) {
-            return Err("模型名称无效。".into());
-        }
-        if !["zh-CN", "en", "ja", "ko", "fr", "de"].contains(&self.target_language.as_str()) {
-            return Err("不支持该目标语言。".into());
-        }
-        if !(5..=120).contains(&self.timeout_seconds) {
-            return Err("超时必须为 5～120 秒。".into());
-        }
-        if self.local_idle_seconds != 0 && !(30..=3600).contains(&self.local_idle_seconds) {
-            return Err("闲置回收必须为 0 或 30～3600 秒。".into());
-        }
-        Ok(())
-    }
-    fn ready(&self) -> Result<(), String> {
-        self.validate()?;
-        if self.provider == "local-ctranslate2" {
-            return Ok(());
-        }
-        if self.endpoint.is_empty()
-            || (self.provider == "online-llm" && self.model.trim().is_empty())
-        {
-            return Err("请先在主窗口的翻译页选择服务，或在服务管理中添加服务。".into());
-        }
-        Ok(())
-    }
-}
+/// 配置模型与地址校验在 core；这里保留原路径供翻译调度和服务管理使用。
+pub use snap_core::recognition::translation::AiSettings;
+#[cfg(test)]
+use snap_core::recognition::translation::endpoint_url;
 
-/// 禁止 URL 内嵌密码、查询参数和重定向；允许 HTTP 以适配内网自建服务（明文传输由用户自行承担）。
-pub(super) fn endpoint_url(value: &str) -> Result<reqwest::Url, String> {
-    let url = reqwest::Url::parse(value).map_err(|_| "服务地址无效。")?;
-    if value.len() > 2048
-        || !url.username().is_empty()
-        || url.password().is_some()
-        || url.query().is_some()
-        || url.fragment().is_some()
-        || url.host_str().is_none()
-        || !matches!(url.scheme(), "https" | "http")
-    {
-        return Err("请使用不含凭证、查询参数的 HTTP / HTTPS 完整接口地址。".into());
-    }
-    Ok(url)
-}
-
-/// OpenAI 兼容服务的 Chat Completions 地址。很多服务与网关只给出基础地址（如 `https://host/v1`、
-/// 火山方舟的 `/api/v3`、Gemini 的 `/v1beta/openai`），这里补上 `/chat/completions`；
-/// 只有主机名时按 `/v1/chat/completions`。其他自定义路径原样使用，已保存的地址与密钥索引不变。
-pub(super) fn chat_endpoint(value: &str) -> Result<reqwest::Url, String> {
-    let mut url = endpoint_url(value)?;
-    let path = url.path().trim_end_matches('/').to_string();
-    let last = path.rsplit('/').next().unwrap_or_default();
-    let version = last.len() > 1
-        && last.starts_with('v')
-        && last[1..].starts_with(|c: char| c.is_ascii_digit())
-        && last[1..].chars().all(|c| c.is_ascii_alphanumeric());
-    let next = if path.ends_with("/chat/completions") {
-        return Ok(url);
-    } else if path.is_empty() {
-        "/v1/chat/completions".to_string()
-    } else if version || last == "openai" {
-        format!("{path}/chat/completions")
-    } else {
-        return Ok(url);
-    };
-    url.set_path(&next);
-    Ok(url)
-}
+/// Chat Completions 地址补全在 core（在线 OCR 与翻译共用）。
+#[cfg(test)]
+use snap_core::recognition::translation::chat_endpoint;
 
 /// 全应用最多一个翻译请求；请求 ID 加入原生窗口归属，窗口间不能互相取消。Notify 的 permit 保留取消信号，避免开始前取消丢失。
 #[derive(Default)]

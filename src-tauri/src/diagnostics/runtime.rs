@@ -1,29 +1,12 @@
-//! 运行时日志阈值：本机持久化、立即切换；高频调试采样使用独立单调时钟。
-use super::logs::Level;
-use std::sync::{
-    atomic::{AtomicU64, AtomicU8, Ordering},
-    OnceLock,
+//! 运行时日志阈值：本机持久化、立即切换（滚动截图的高频调试采样在 core `scroll`）。
+use snap_core::diagnostics::{
+    level::{allows, code, persist as persist_level, read as read_level},
+    logs::Level,
 };
-use std::time::Instant;
-use std::{fs, io::Write, path::Path};
+use std::sync::atomic::{AtomicU8, Ordering};
 use tauri::Manager;
 
-static CLOCK: OnceLock<Instant> = OnceLock::new();
 static LEVEL: AtomicU8 = AtomicU8::new(2);
-static LAST_SAMPLE: AtomicU64 = AtomicU64::new(0);
-
-fn millis() -> u64 {
-    CLOCK.get_or_init(Instant::now).elapsed().as_millis() as u64 + 1
-}
-
-fn code(level: Level) -> u8 {
-    match level {
-        Level::Error => 0,
-        Level::Warn => 1,
-        Level::Info => 2,
-        Level::Debug => 3,
-    }
-}
 
 /// 返回当前实际生效阈值，供状态页与诊断包使用。
 pub fn level() -> Level {
@@ -33,30 +16,6 @@ pub fn level() -> Level {
         3 => Level::Debug,
         _ => Level::Info,
     }
-}
-
-fn read_level(path: &Path) -> Result<Level, String> {
-    if !path.exists() {
-        return Ok(Level::Info);
-    }
-    if fs::metadata(path).map_err(|e| e.to_string())?.len() > 64 {
-        return Err("日志级别配置无效。".into());
-    }
-    serde_json::from_slice(&fs::read(path).map_err(|e| e.to_string())?)
-        .map_err(|_| "日志级别配置无效。".into())
-}
-
-/// 独立保存本机排错偏好，不混入可跨机器导入的业务配置；落盘失败保留当前阈值。
-fn persist_level(path: &Path, level: Level) -> Result<(), String> {
-    let parent = path.parent().ok_or("日志级别配置路径无效。")?;
-    fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    let mut temporary = tempfile::NamedTempFile::new_in(parent).map_err(|e| e.to_string())?;
-    temporary
-        .write_all(&serde_json::to_vec(&level).map_err(|e| e.to_string())?)
-        .map_err(|e| e.to_string())?;
-    temporary.as_file().sync_all().map_err(|e| e.to_string())?;
-    temporary.persist(path).map_err(|e| e.to_string())?;
-    Ok(())
 }
 
 /// 启动时恢复本机偏好，配置缺失默认 INFO，损坏时保留默认并记录告警。
@@ -84,34 +43,15 @@ pub fn set_level(app: &tauri::AppHandle, value: Level) -> Result<(), String> {
     Ok(())
 }
 
-fn allows(threshold: Level, value: log::Level) -> bool {
-    let limit = match threshold {
-        Level::Error => log::Level::Error,
-        Level::Warn => log::Level::Warn,
-        Level::Info => log::Level::Info,
-        Level::Debug => log::Level::Debug,
-    };
-    value <= limit
-}
-
 /// 插件上限保持 Debug，原生与前端日志统一按当前阈值过滤。
 pub fn enabled(metadata: &log::Metadata<'_>) -> bool {
     allows(level(), metadata.level())
 }
 
-/// 高频匹配细节每 500ms 最多一条；只限制 Debug，不丢弃故障与生命周期事件。
-pub fn sample_debug() -> bool {
-    let now = millis();
-    let previous = LAST_SAMPLE.load(Ordering::Relaxed);
-    now.saturating_sub(previous) >= 500
-        && LAST_SAMPLE
-            .compare_exchange(previous, now, Ordering::Relaxed, Ordering::Relaxed)
-            .is_ok()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
     #[test]
     fn thresholds_include_severity_and_never_trace() {
         for threshold in [Level::Error, Level::Warn, Level::Info, Level::Debug] {

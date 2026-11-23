@@ -1,0 +1,58 @@
+[package]
+name = "snap-desk-gpui"
+version = "0.0.0"
+license = "GPL-3.0-only"
+description = "Snap Desk desktop app on GPUI (packaged by scripts/package-gpui.mjs with the Tauri bundler)"
+# gpui-kit 与 gpui-pre 使用 2024 edition。
+edition = "2024"
+rust-version = "1.95"
+publish = false
+# workspace 根在 src-tauri（共用 Cargo.lock 与 target 目录）。
+workspace = "../../src-tauri"
+
+[[bin]]
+name = "snap-desk-gpui"
+path = "src/main.rs"
+
+[dependencies]
+snap-core = { path = "../../crates/snap-core" }
+gpui-kit = "0.10.0"
+# 托盘与全局快捷键都要在 GPUI 主线程创建：Windows 上它们依赖创建线程的消息循环。
+tray-icon = "0.25.1"
+# 与 Tauri 全局快捷键插件同一版本，按键类型（HotKey）与 core 中的解析结果一致。
+global-hotkey = "0.8.0"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "bmp"] }
+# 校验用户导出字体能否用于文字贴图；版本与 core 一致。
+ab_glyph = "=0.2.32"
+log = "0.4"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+futures = "0.3"
+# 剪贴板分类顺序等小偏好的读写。
+serde_json = "1"
+# 保存对话框（异步：在独立线程弹出，不阻塞 GPUI 主线程）；与 Tauri dialog 插件同一版本。
+rfd = "0.16"
+# 取浮层窗口的原生句柄，作为 Windows 剪贴板所有者。
+raw-window-handle = "0.6"
+# 在线翻译的异步 HTTP 请求在后台线程的单线程运行时上执行（GPUI 执行器不是 tokio）；版本与 Tauri 一致。
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "net", "time"] }
+# 结果窗口显示翻译服务主机名。
+url = "2"
+# 关于页比较产品版本（与 core 一致）。
+semver = "1"
+# 独立 EXE 更新：暂存目录、更新助手脚本编码与暂存包摘要（版本与 core 一致）。
+tempfile = "3"
+base64 = "0.22"
+sha2 = "0.10"
+
+# macOS .app.tar.gz 与 Linux AppImage 更新包解压（版本与 tauri-plugin-updater 锁定的一致）。
+[build-dependencies]
+# 程序图标资源（版本与 Tauri 依赖树中锁定的一致）。
+embed-resource = "3"
+
+[target.'cfg(unix)'.dependencies]
+tar = "0.4"
+flate2 = "1"
+
+[target.'cfg(windows)'.dependencies]
+# 单实例：命名互斥量判断首个实例，命名管道把第二次启动的参数转交过来。
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Pipes", "Win32_System_Threading", "Win32_System_IO", "Win32_UI_WindowsAndMessaging", "Win32_UI_Shell", "Win32_UI_Input_KeyboardAndMouse", "Win32_Graphics_Dwm", "Win32_Graphics_Gdi", "Win32_UI_HiDpi"] }

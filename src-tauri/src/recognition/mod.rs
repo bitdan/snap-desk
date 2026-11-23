@@ -1,27 +1,23 @@
 //! OCR 的稳定 IPC 契约。坐标始终相对裁剪原图，单位为像素，不能当作屏幕 CSS 坐标。
 pub(crate) mod services;
-mod online_ocr;
-mod paddle_ocr;
 pub(crate) mod ocr;
 pub(crate) mod ocr_config;
-#[cfg(windows)]
-mod windows_ocr;
-#[cfg(target_os = "macos")]
-mod vision_ocr;
 pub(crate) mod wechat_ocr;
 pub(crate) mod qr;
 pub(crate) mod translation;
 pub(crate) mod text_input;
 mod selected_text;
-mod providers;
 pub(crate) mod local_translation;
 pub(crate) mod translation_models;
 pub(crate) mod translation_runtime;
-pub(crate) mod ai_credentials;
-#[cfg(windows)]
-pub(crate) mod ocr_runtime;
 
-use serde::Serialize;
+/// 引擎、网络服务、凭据与运行库在 core（GPUI 版共用）；这里保留原路径与 Tauri 命令、窗口状态。
+pub(crate) use snap_core::recognition::{ai_credentials, online_ocr, providers};
+#[cfg(windows)]
+pub(crate) use snap_core::recognition::windows_ocr;
+#[cfg(target_os = "macos")]
+pub(crate) use snap_core::recognition::vision_ocr;
+pub use snap_core::recognition::ocr::OcrResult;
 
 /// 引擎共享结果契约；严格使用已保存配置，不跨引擎重试或自动联网。
 pub trait OcrProvider {
@@ -46,13 +42,8 @@ impl OcrProvider for LocalOcrProvider {
 pub struct WindowsOcrProvider;
 impl OcrProvider for WindowsOcrProvider {
     fn recognize(&self, _app: &tauri::AppHandle, image: &image::RgbaImage, settings: &ocr_config::OcrSettings) -> Result<OcrResult, String> {
-        #[cfg(windows)]
-        return windows_ocr::recognize(image, &settings.language);
         // macOS 的“系统 OCR”由 Apple Vision 提供，沿用同一提供方标识。
-        #[cfg(target_os = "macos")]
-        return vision_ocr::recognize(image, &settings.language);
-        #[cfg(not(any(windows, target_os = "macos")))]
-        { let _ = (image, settings); Err("Windows 系统 OCR 仅支持 Windows。".into()) }
+        snap_core::recognition::system_ocr(image, &settings.language)
     }
 }
 
@@ -82,41 +73,6 @@ pub fn provider(id: &str) -> Result<&'static dyn OcrProvider, String> {
         "wechat-ocr" => Ok(&WechatOcrProvider),
         _ => Err("此 OCR 引擎尚未接入。".into()),
     }
-}
-
-#[derive(Debug, Serialize)]
-pub struct PolygonPoint {
-    pub x: f32,
-    pub y: f32,
-}
-
-/// 保留引擎阅读顺序；没有可靠坐标或语言判断时返回 null。
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct OcrLine {
-    pub id: String,
-    pub text: String,
-    pub confidence: Option<f32>,
-    pub polygon: Option<Vec<PolygonPoint>>,
-    pub language: Option<String>,
-    pub order: usize,
-    pub paragraph_id: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct OcrResult {
-    pub request_id: String,
-    pub provider: String,
-    pub image_width: u32,
-    pub image_height: u32,
-    pub full_text: String,
-    pub lines: Vec<OcrLine>,
-    pub elapsed_ms: u64,
-    pub warnings: Vec<String>,
-    /// 由 recognize_selected 按当前设置填入，各引擎构造时一律为 false。
-    pub auto_copy: bool,
-    pub merge_lines: bool,
 }
 
 #[cfg(test)]

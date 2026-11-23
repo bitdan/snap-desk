@@ -5,12 +5,8 @@ use std::sync::Mutex;
 use tauri::{AppHandle, Manager, WebviewWindow};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct QrItem {
-    text: String,
-    url: Option<String>,
-}
+/// 解码在 core（GPUI 版共用）。
+pub use snap_core::recognition::qr::QrItem;
 
 #[derive(Clone, Default, Serialize)]
 pub struct QrResult {
@@ -22,38 +18,10 @@ pub struct QrResult {
 #[derive(Default)]
 pub struct QrState(Mutex<QrResult>);
 
-fn web_url(text: &str) -> Option<String> {
-    let url = tauri::Url::parse(text.trim()).ok()?;
-    (matches!(url.scheme(), "http" | "https") && url.host_str().is_some()).then(|| url.to_string())
-}
-
-fn decode(image: &RgbaImage) -> Vec<QrItem> {
-    let gray = image::imageops::grayscale(image);
-    let mut prepared = rqrr::PreparedImage::prepare_from_greyscale(
-        gray.width() as usize,
-        gray.height() as usize,
-        |x, y| gray.get_pixel(x as u32, y as u32)[0],
-    );
-    let mut items: Vec<QrItem> = Vec::new();
-    for grid in prepared.detect_grids() {
-        // 单个码损坏不影响其他码；空内容和同文重复码不重复提示。
-        if let Ok((_, text)) = grid.decode() {
-            if !text.is_empty() && !items.iter().any(|item| item.text == text) {
-                items.push(QrItem {
-                    url: web_url(&text),
-                    text,
-                });
-            }
-        }
-    }
-    items
-}
-
 impl QrResult {
     /// 供截图与贴图共用；不读取文件、不联网，调用方负责结果归属与过期检查。
     pub(crate) fn from_image(id: u64, image: &RgbaImage) -> Result<Self, String> {
-        let items = std::panic::catch_unwind(|| decode(image))
-            .map_err(|_| "二维码识别失败，请重试。".to_string())?;
+        let items = snap_core::recognition::qr::decode(image)?;
         Ok(Self { id, items })
     }
 
@@ -124,6 +92,11 @@ pub async fn qr_action(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use snap_core::recognition::qr::web_url;
+
+    fn decode(image: &RgbaImage) -> Vec<QrItem> {
+        snap_core::recognition::qr::decode(image).unwrap()
+    }
 
     /// 使用独立编码器生成带静区的码图，覆盖真实定位、解码、多码及去重。
     fn code_image(text: &str) -> RgbaImage {

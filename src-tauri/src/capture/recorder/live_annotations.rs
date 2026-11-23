@@ -4,6 +4,7 @@
 mod input_regions;
 use super::annotation_track::TimedAnnotation;
 use super::{annotation_layer::Layer, Phase, RecordingState};
+use snap_core::recording::live::Live;
 use crate::{
     capture::{scroll::Screen, Rect},
     shared::annotations::{self, Annotation, Point},
@@ -66,9 +67,8 @@ struct Session {
     view: AnnotationView,
     screen: Screen,
     region: Rect,
-    layer: Arc<Layer>,
-    history: Vec<TimedAnnotation>,
-    current_ids: Vec<String>,
+    /// 时间轨对账与编码标注层（与 GPUI 版共用 core）。
+    live: Live,
 }
 /// 共享截图工具栏的只读状态；撤销栈和选中图形仍只由画布中的 useAnnotations 持有。
 #[derive(Clone, Serialize, Deserialize)]
@@ -223,42 +223,11 @@ pub(super) fn initialize(
     screen: &Screen,
     region: Rect,
     origin: (i32, i32),
-    mut shapes: Vec<Annotation>,
+    shapes: Vec<Annotation>,
     annotation_origin: Point,
 ) -> Result<(), String> {
-    for shape in &mut shapes {
-        for point in std::iter::once(&mut shape.start)
-            .chain(std::iter::once(&mut shape.end))
-            .chain(shape.points.iter_mut())
-        {
-            point.x = (point.x - annotation_origin.x).clamp(0.0, f64::from(region.width));
-            point.y = (point.y - annotation_origin.y).clamp(0.0, f64::from(region.height));
-        }
-    }
-    // 完全在录制区域外的面状标注没有可绘制像素。
-    shapes.retain(|s| {
-        !matches!(
-            s.kind,
-            annotations::Kind::Text
-                | annotations::Kind::Number
-                | annotations::Kind::Mosaic
-                | annotations::Kind::Blur
-                | annotations::Kind::Magnify
-                | annotations::Kind::Spotlight
-        ) || ((s.end.x - s.start.x).abs() >= 1.0 && (s.end.y - s.start.y).abs() >= 1.0)
-    });
-    annotations::validate_live(&shapes, region.width, region.height)?;
-    if shapes
-        .iter()
-        .filter(|s| annotations::dynamic_filter(s))
-        .count()
-        > 8
-    {
-        return Err("录制中最多支持 8 个实时滤镜。".into());
-    }
-    let mut history = Vec::new();
-    let current_ids = super::annotation_track::reconcile(&mut history, &[], &shapes, 0, 0, 0)?;
-    let layer = Arc::new(Layer::timed(history.clone(), region.width, region.height)?);
+    let shapes = super::annotation_layer::region_shapes(shapes, annotation_origin, region.width, region.height)?;
+    let live = Live::new(id, shapes.clone(), region.width, region.height)?;
     let state = app.state::<LiveAnnotationState>();
     *state.session.lock().map_err(|e| e.to_string())? = Some(Session {
         view: AnnotationView {
@@ -274,14 +243,12 @@ pub(super) fn initialize(
             media_time_ms: 0,
             tools: AnnotationTools::default(),
             editor: AnnotationEditorStatus::default(),
-            tracks: history.clone(),
+            tracks: live.tracks.clone(),
             shapes,
         },
         screen: screen.clone(),
         region,
-        layer,
-        history,
-        current_ids,
+        live,
     });
     Ok(())
 }
@@ -292,13 +259,9 @@ pub(super) fn has_timed_annotations(app: &AppHandle, id: u64) -> bool {
         .lock()
         .ok()
         .is_some_and(|current| {
-            current.as_ref().is_some_and(|s| {
-                s.view.id == id
-                    && s.view
-                        .tracks
-                        .iter()
-                        .any(|t| t.end_ms.is_some_and(|end| ms <= end.saturating_add(100)))
-            })
+            current
+                .as_ref()
+                .is_some_and(|s| s.view.id == id && s.live.has_timed(ms))
         })
 }
 pub(super) fn snapshot(app: &AppHandle, id: u64) -> (u64, Option<Arc<Layer>>) {
@@ -309,7 +272,10 @@ pub(super) fn snapshot(app: &AppHandle, id: u64) -> (u64, Option<Arc<Layer>>) {
         .and_then(|s| {
             s.as_ref()
                 .filter(|s| s.view.id == id)
-                .map(|s| (s.view.revision, Some(s.layer.clone())))
+                .map(|s| {
+                    let (revision, layer) = s.live.snapshot();
+                    (revision, Some(layer))
+                })
         })
         .unwrap_or((0, None))
 }
@@ -904,14 +870,6 @@ pub async fn update_recording_annotations(
             (s.view.width, s.view.height)
         };
         annotations::validate_live(&shapes, width, height)?;
-        if shapes
-            .iter()
-            .filter(|s| annotations::dynamic_filter(s))
-            .count()
-            > 8
-        {
-            return Err("录制中最多支持 8 个实时滤镜。".into());
-        }
         let ms = media_time(&app)?;
         require_editing(&app, id)?;
         let mut current = state.session.lock().map_err(|e| e.to_string())?;
@@ -922,26 +880,16 @@ pub async fn update_recording_annotations(
         if known_revision.is_some_and(|revision| revision != s.view.revision) {
             return Err("标注已在另一窗口更新，请等待同步后重试。".into());
         }
-        let ids = super::annotation_track::reconcile(
-            &mut s.history,
-            &s.current_ids,
-            &shapes,
+        s.live.commit(
+            shapes.clone(),
             ms,
             s.view.tools.lifetime_ms,
             s.view.tools.fade_out_ms,
         )?;
-        s.current_ids = ids;
-        s.view.tracks = s
-            .history
-            .iter()
-            .filter(|t| s.current_ids.contains(&t.id))
-            .cloned()
-            .collect();
-        s.view.tracks.sort_by_key(|track| track.order);
+        s.view.tracks = s.live.tracks.clone();
         s.view.shapes = shapes;
         s.view.media_time_ms = ms;
-        s.view.revision += 1;
-        s.layer = Arc::new(Layer::timed(s.view.tracks.clone(), width, height)?);
+        s.view.revision = s.live.revision;
         let mut view = s.view.status(false);
         view.tracks = s.view.tracks.clone();
         drop(current);

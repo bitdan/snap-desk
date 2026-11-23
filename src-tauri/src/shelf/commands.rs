@@ -62,14 +62,7 @@ pub async fn shelf_visibility(
     .map_err(|e| e.to_string())?
 }
 
-#[derive(serde::Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum ShelfAction {
-    Keep,
-    Unkeep,
-    Remove,
-    Restore,
-}
+pub use snap_core::shelf::ShelfAction;
 
 #[tauri::command]
 pub async fn shelf_item_action(
@@ -87,30 +80,7 @@ pub async fn shelf_item_action(
         let data = clipboard.data()?;
         data.repo.get(id)?;
         app.state::<ShelfState>().update(&app, |prefs| {
-            // 清理已被历史删除的引用，避免失效固定项占满 30 个位置。
-            prefs.kept_ids.retain(|value| data.repo.get(*value).is_ok());
-            match action {
-                ShelfAction::Keep => {
-                    if !prefs.kept_ids.contains(&id) {
-                        if prefs.kept_ids.len() >= 30 {
-                            return Err("暂存架最多固定 30 项。".into());
-                        }
-                        prefs.kept_ids.push(id);
-                    }
-                    prefs.hidden_ids.retain(|value| *value != id);
-                }
-                ShelfAction::Unkeep => prefs.kept_ids.retain(|value| *value != id),
-                ShelfAction::Remove => {
-                    prefs.kept_ids.retain(|value| *value != id);
-                    prefs.hidden_ids.retain(|value| *value != id);
-                    prefs.hidden_ids.push(id);
-                    if prefs.hidden_ids.len() > 1000 {
-                        prefs.hidden_ids.remove(0);
-                    }
-                }
-                ShelfAction::Restore => prefs.hidden_ids.retain(|value| *value != id),
-            }
-            Ok(())
+            prefs.apply(id, action, |value| data.repo.get(value).is_ok())
         })
     })
     .await

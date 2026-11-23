@@ -135,9 +135,13 @@ jobs:
       # 测试失败时停止发布；Rust 默认跳过需要实机桌面或模型资源的 ignored 测试。
       - name: Test native library
         working-directory: src-tauri
-        run: cargo test --locked --lib
+        run: cargo test --locked --lib -p snap-desk -p snap-core
 
-      # 复用本地脚本的 --ci、--locked 和 src-tauri/target 输出目录。
+      - name: Test GPUI shell
+        working-directory: src-tauri
+        run: cargo test --locked -p snap-desk-gpui
+
+      # 构建 GPUI 主程序，再用 Tauri 打包器生成同一标识的安装包（scripts/package-gpui.mjs）。
       - name: Build application and installers
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
