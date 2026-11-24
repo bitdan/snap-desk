@@ -163,6 +163,22 @@ pub fn open(cx: &mut App) {
     }
 }
 
+/// 打开设置并切到“通用”页（macOS 系统权限卡片所在页），供截图缺少授权时引导用户。
+#[cfg(target_os = "macos")]
+pub fn open_permissions(cx: &mut App) {
+    open(cx);
+    let handle = cx
+        .try_global::<SettingsState>()
+        .and_then(|s| s.window)
+        .and_then(|w| w.downcast::<SettingsView>());
+    if let Some(handle) = handle {
+        let _ = handle.update(cx, |view, _, cx| {
+            view.page = Page::General;
+            cx.notify();
+        });
+    }
+}
+
 #[path = "settings_about.rs"]
 mod about_page;
 #[path = "settings_local.rs"]
