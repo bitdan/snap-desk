@@ -78,7 +78,8 @@ pub struct Session {
     /// 选择了标注工具：选区内的按下交给编辑器；否则为调整选区模式。
     annotating: bool,
     /// 文字输入框所在的浮层与输入状态。
-    text_input: Option<(usize, Entity<TextareaState>)>,
+    /// 文字输入框：所在浮层、所属文字草稿编号（TextDraft::id）与输入状态。
+    text_input: Option<(usize, u64, Entity<TextareaState>)>,
     picker: Picker,
     /// 最近一次成功导出的选区（R 恢复；设置“沿用上次选区”时打开即预选）与当前显示器布局键。
     recent: Option<RecentSelection>,
@@ -144,9 +145,11 @@ impl Session {
         self.layers.update(&self.editor);
     }
 
-    /// 取色放大镜只在调整选区模式、没有标注且不在导出时显示。
+    /// 取色放大镜只在框出选区之前（含拖出新选区的过程中）显示，选区确定后隐藏；
+    /// 标注、导出时也不显示。取色快捷键同样只在此时有效。
     fn picking(&self) -> bool {
-        !self.busy && !self.annotating && self.editor.shapes().is_empty() && !self.editor.interacting()
+        let choosing = self.selection.is_none() || matches!(self.drag, Some(Drag::Create { .. }));
+        choosing && !self.busy && !self.annotating && self.editor.shapes().is_empty() && !self.editor.interacting()
     }
 
     /// 复制光标处色值；保留截图会话，可继续取色或框选。
@@ -1320,17 +1323,17 @@ impl Overlay {
     /// 编辑器状态变化后：释放旧纹理，按需创建或移除文字输入框。
     fn after_edit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         flush(&self.session, Some(window), cx);
-        let (wanted, has, initial) = {
+        let (wanted, has) = {
             let s = self.session.read(cx);
             (
-                s.editor.text.as_ref().map(|t| t.shape.text.clone().unwrap_or_default()),
-                s.text_input.is_some(),
-                (),
+                s.editor.text.as_ref().map(|t| (t.id, t.shape.text.clone().unwrap_or_default())),
+                s.text_input.as_ref().map(|(_, id, _)| *id),
             )
         };
-        let _ = initial;
+        // 文字提交后要等栅格化完成才结束草稿，期间输入框不会被移除；
+        // 因此按草稿编号判断，下一段文字总是换一个新的空输入框，而不是沿用上一段的内容。
         match (wanted, has) {
-            (Some(value), false) => {
+            (Some((id, value)), has) if has != Some(id) => {
                 let state = cx.new(|cx| {
                     let mut state = TextareaState::new(window, cx);
                     state.set_auto_grow(1, 20, cx);
@@ -1338,10 +1341,12 @@ impl Overlay {
                     state
                 });
                 state.update(cx, |state, cx| state.focus(window, cx));
+                // 输入框在按下鼠标时创建；阻止 GPUI 随后把焦点交还给浮层，否则还要再点一次输入框才能打字。
+                window.prevent_default();
                 let index = self.index;
-                self.session.update(cx, |s, _| s.text_input = Some((index, state)));
+                self.session.update(cx, |s, _| s.text_input = Some((index, id, state)));
             }
-            (None, true) => {
+            (None, Some(_)) => {
                 self.session.update(cx, |s, _| s.text_input = None);
                 window.focus(&self.focus, cx);
             }
@@ -1362,7 +1367,7 @@ impl Overlay {
             .read(cx)
             .text_input
             .as_ref()
-            .map(|(_, state)| state.read(cx).value().to_string())
+            .map(|(_, _, state)| state.read(cx).value().to_string())
             .unwrap_or_default();
         let job = self.session.update(cx, |s, cx| {
             let job = s.editor.finish_text(&value);
@@ -2097,8 +2102,8 @@ impl Render for Overlay {
             }
         }
         // 文字输入框：放在文字起点，宽度到选区右边缘，与最终排版的换行宽度一致。
-        if let (Some(text), Some((owner, state))) = (s.editor.text.as_ref(), s.text_input.as_ref()) {
-            if *owner == self.index {
+        if let (Some(text), Some((owner, id, state))) = (s.editor.text.as_ref(), s.text_input.as_ref()) {
+            if *owner == self.index && *id == text.id {
                 let at = map(text.shape.start);
                 let crop = s.editor.crop;
                 let width = ((crop.x + crop.width - text.shape.start.x).min(2048.0) as f32 / scale).max(40.0);

@@ -267,6 +267,8 @@ struct Gesture {
 /// 正在输入的文字。`shape.start` 为输入框左上角；`index` 为重新编辑的已有文字。
 #[derive(Clone)]
 pub struct TextDraft {
+    /// 每次开始输入递增；界面据此判断现有输入框是否属于当前草稿，避免沿用上一段文字的输入框。
+    pub id: u64,
     pub shape: Annotation,
     pub index: Option<usize>,
     /// 箭头文字：先画箭头，再输入文字，两层一起提交。
@@ -327,6 +329,8 @@ pub struct Editor {
     /// 正在绘制或编辑的图形（预览用）。
     pub draft: Option<Annotation>,
     pub text: Option<TextDraft>,
+    /// 最近一次文字草稿的编号（见 TextDraft::id）。
+    text_serial: u64,
     gesture: Option<Gesture>,
     pub crop: Bounds,
     pub pending: bool,
@@ -359,6 +363,7 @@ impl Editor {
             version: 0,
             draft_version: 0,
             generation: 0,
+            text_serial: 0,
             open_group: None,
             group_tools: GROUPS.map(|(_, tools)| tools[0]),
         }
@@ -620,7 +625,9 @@ impl Editor {
             x: p.x.min(c.x + (c.width - 120.0).max(0.0)),
             y: p.y.min(c.y + (c.height - line).max(0.0)),
         };
+        self.text_serial += 1;
         self.text = Some(TextDraft {
+            id: self.text_serial,
             shape: Annotation {
                 kind: Kind::Text,
                 start,
@@ -651,7 +658,9 @@ impl Editor {
             return;
         };
         self.select(Some(index));
+        self.text_serial += 1;
         self.text = Some(TextDraft {
+            id: self.text_serial,
             shape: Annotation { raster: None, ..shape },
             index: Some(index),
             arrow: None,
@@ -1467,7 +1476,10 @@ pub fn tool_row<T: 'static>(
                             .child(div().text_xs().text_color(rgb(text())).whitespace_nowrap().child((props.text)(tool.label())));
                         menu = menu.child(on(item, Action::Tool(tool), true, host));
                     }
-                    group = group.child(menu);
+                    // 下拉向下展开时会盖住紧随其后绘制的样式栏：延后绘制并遮挡下层，保证菜单在最上层且能点到。
+                    // 菜单项在松开时触发；按下必须在菜单内截住，否则落到截图浮层上，在选区外会开始重新框选。
+                    let menu = menu.occlude().on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation());
+                    group = group.child(deferred(menu).with_priority(1));
                 }
             }
             row = row.child(group);
@@ -1938,5 +1950,22 @@ mod tests {
         e.ui(UiAction::OpenGroup(1));
         e.begin(p(5.0, 5.0), 6.0, None, false);
         assert_eq!(e.open_group, None, "在画布上按下关闭下拉");
+    }
+
+    #[test]
+    fn each_text_draft_gets_a_new_id_even_before_the_previous_one_is_rasterized() {
+        let mut e = Editor::new(CROP, vec![]);
+        e.set_tool(Tool::Text);
+        e.begin(p(10.0, 10.0), 6.0, None, false);
+        let first = e.text.as_ref().expect("text draft").id;
+        // 提交后栅格化尚未完成，草稿仍在；完成后结束草稿。
+        let job = e.finish_text("123").expect("raster job");
+        assert_eq!(e.text.as_ref().map(|t| t.id), Some(first));
+        let shape = job.shape.clone();
+        e.complete(job, Ok(shape));
+        assert!(e.text.is_none());        e.begin(p(40.0, 40.0), 6.0, None, false);
+        let second = e.text.as_ref().expect("second text draft");
+        assert_ne!(second.id, first, "新文字草稿必须换新输入框");
+        assert_eq!(second.shape.text.as_deref(), Some(""));
     }
 }
