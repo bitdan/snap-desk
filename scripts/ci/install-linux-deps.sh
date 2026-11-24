@@ -12,6 +12,11 @@ if [ -n "$archives" ]; then
 fi
 
 sudo apt-get "${options[@]}" update
+# GitHub 的 ubuntu-22.04 镜像预装 clang 带来的 libunwind-14-dev，它与 GStreamer 开发包依赖的
+# libunwind-dev 冲突（apt 报 held broken packages）；构建不需要它，安装前先卸载。
+if dpkg -s libunwind-14-dev > /dev/null 2>&1; then
+  sudo apt-get "${options[@]}" remove -y libunwind-14-dev
+fi
 # 第一组是 Tauri（WebKitGTK、托盘、打包 AppImage）的要求；
 # 第二组是截图库 xcap 的要求：X11 抓屏、Wayland / PipeWire 接口及其绑定生成所需的 libclang；
 # 第三组是录屏：MIT-SHM 抓屏、XInput2 键鼠事件和 GStreamer 编码 / 声音采集的开发库；
