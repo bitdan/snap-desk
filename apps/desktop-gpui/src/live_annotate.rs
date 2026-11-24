@@ -106,7 +106,8 @@ pub struct Annotator {
     toolbar: Anchor,
     editor: Editor,
     layers: Layers,
-    text_input: Option<Entity<TextareaState>>,
+    /// 文字输入框与所属文字草稿编号（TextDraft::id）。
+    text_input: Option<(u64, Entity<TextareaState>)>,
     focus: FocusHandle,
     pub editing: bool,
     /// 已提交给 core 的编辑器历史版本。
@@ -290,8 +291,9 @@ impl Annotator {
         if let Some(error) = self.editor.error.take() {
             self.error = Some(error);
         }
-        match (self.editor.text.as_ref(), self.text_input.is_some()) {
-            (Some(text), false) => {
+        // 按草稿编号判断：提交后栅格化期间输入框仍在，下一段文字要换新的空输入框（见 TextDraft::id）。
+        match (self.editor.text.as_ref(), self.text_input.as_ref().map(|(id, _)| *id)) {
+            (Some(text), has) if has != Some(text.id) => {
                 let value = text.shape.text.clone().unwrap_or_default();
                 let state = cx.new(|cx| {
                     let mut state = TextareaState::new(window, cx);
@@ -300,9 +302,11 @@ impl Annotator {
                     state
                 });
                 state.update(cx, |state, cx| state.focus(window, cx));
-                self.text_input = Some(state);
+                // 输入框在按下鼠标时创建；阻止 GPUI 随后把焦点交还给标注层，否则还要再点一次输入框才能打字。
+                window.prevent_default();
+                self.text_input = Some((text.id, state));
             }
-            (None, true) => {
+            (None, Some(_)) => {
                 self.text_input = None;
                 window.focus(&self.focus, cx);
             }
@@ -408,7 +412,7 @@ impl Annotator {
         let value = self
             .text_input
             .as_ref()
-            .map(|state| state.read(cx).value().to_string())
+            .map(|(_, state)| state.read(cx).value().to_string())
             .unwrap_or_default();
         let job = self.editor.finish_text(&value);
         self.run(job, cx);
@@ -634,7 +638,7 @@ impl Annotator {
             compact: false,
             grouped: true,
             collapsible: false,
-            popover_up: false,
+            popover_up: self.toolbar.popover_up,
             text: &text,
         };
         let host = annotate::Host {
@@ -690,29 +694,41 @@ struct Anchor {
     top: Pixels,
     left: Pixels,
     right: Option<Pixels>,
-    /// 放在选区内顶部（上方放不下或控制条在上方）。
+    /// 放在选区内顶部（选区外都放不下）。
     inside: bool,
+    /// 分组下拉在下方放不下时向上弹出。
+    popover_up: bool,
 }
 
-/// 控制条不在选区上方且上方放得下时放在选区上方，否则放在选区内顶部；
+/// 工具栏与截图时一样统一放在下方：控制条在选区下方时紧贴控制条下面，否则紧贴选区下面；
+/// 下方放不下时放到选区上方（控制条占着上方时除外），再不行放在选区内顶部。
 /// 从选区左边起放不下时改为与选区右边对齐。
 fn toolbar_anchor(screen: Size<Pixels>, region: Bounds<Pixels>, bar: Bounds<Pixels>) -> Anchor {
+    let region_bottom = region.origin.y + region.size.height;
+    let bar_bottom = bar.origin.y + bar.size.height;
+    let bar_below = bar.origin.y >= region_bottom;
+    let bar_above = bar_bottom <= region.origin.y;
+    let below = if bar_below { bar_bottom } else { region_bottom } + px(GAP);
     let above = region.origin.y - px(GAP + TOOLBAR_HEIGHT);
-    let bar_above = bar.origin.y + bar.size.height <= region.origin.y;
-    let inside = above < px(0.0) || bar_above;
+    let top = if below + px(TOOLBAR_HEIGHT) <= screen.height {
+        Some(below)
+    } else if above >= px(0.0) && !bar_above {
+        Some(above)
+    } else {
+        None
+    };
+    let inside = top.is_none();
     let indent = if inside { px(GAP) } else { px(0.0) };
     let left = (region.origin.x + indent).max(px(GAP));
     let right = (left + px(TOOLBAR_WIDTH) > screen.width - px(GAP))
         .then(|| (screen.width - (region.origin.x + region.size.width) + indent).max(px(GAP)));
+    let top = top.unwrap_or(region.origin.y + px(GAP));
     Anchor {
-        top: if inside {
-            region.origin.y + px(GAP)
-        } else {
-            above
-        },
+        top,
         left,
         right,
         inside,
+        popover_up: top + px(annotate::ROW_HEIGHT + 6.0 + 150.0) > screen.height,
     }
 }
 
@@ -779,7 +795,9 @@ impl Render for Annotator {
         }
         let map = |p: RegionPoint| self.map(p);
         root = root.children(annotate::selection_overlay(&self.editor, &map));
-        if let (Some(text), Some(state)) = (self.editor.text.as_ref(), self.text_input.as_ref()) {
+        let current = self.editor.text.as_ref().map(|t| t.id);
+        let input = self.text_input.as_ref().filter(|(id, _)| Some(*id) == current);
+        if let (Some(text), Some((_, state))) = (self.editor.text.as_ref(), input) {
             let at = self.map(text.shape.start);
             let width = ((self.editor.crop.width - text.shape.start.x).min(2048.0) as f32 / scale)
                 .max(40.0);
@@ -818,23 +836,29 @@ mod tests {
     use gpui_kit::{point, px, size, Bounds};
 
     #[test]
-    fn toolbar_goes_above_unless_bar_or_screen_edge_is_there() {
+    fn toolbar_goes_below_the_bar_then_above_then_inside() {
         let screen = size(px(1920.0), px(1080.0));
         let region = Bounds::new(point(px(400.0), px(300.0)), size(px(600.0), px(400.0)));
+        // 控制条在选区下方：紧贴控制条下面。
         let below = Bounds::new(point(px(470.0), px(708.0)), size(px(460.0), px(44.0)));
         let at = toolbar_anchor(screen, region, below);
         assert_eq!(
             (at.top, at.left, at.right, at.inside),
-            (px(300.0 - GAP - TOOLBAR_HEIGHT), px(400.0), None, false)
+            (px(752.0 + GAP), px(400.0), None, false)
         );
+        // 控制条在选区上方：紧贴选区下面。
         let above = Bounds::new(point(px(470.0), px(248.0)), size(px(460.0), px(44.0)));
-        assert!(toolbar_anchor(screen, region, above).inside);
-        let top = Bounds::new(point(px(0.0), px(20.0)), region.size);
-        let at = toolbar_anchor(screen, top, below);
-        assert_eq!(
-            (at.top, at.left, at.inside),
-            (px(20.0 + GAP), px(GAP), true)
-        );
+        let at = toolbar_anchor(screen, region, above);
+        assert_eq!((at.top, at.inside), (px(700.0 + GAP), false));
+        // 选区贴近屏幕底部、控制条下方放不下：放到选区上方。
+        let low = Bounds::new(point(px(400.0), px(500.0)), size(px(600.0), px(500.0)));
+        let bar = Bounds::new(point(px(470.0), px(1008.0)), size(px(460.0), px(44.0)));
+        let at = toolbar_anchor(screen, low, bar);
+        assert_eq!((at.top, at.inside), (px(500.0 - GAP - TOOLBAR_HEIGHT), false));
+        // 上下都放不下（接近全屏）：放在选区内顶部。
+        let full = Bounds::new(point(px(0.0), px(20.0)), size(px(1920.0), px(1000.0)));
+        let at = toolbar_anchor(screen, full, bar);
+        assert_eq!((at.top, at.left, at.inside), (px(20.0 + GAP), px(GAP), true));
     }
 
     #[test]

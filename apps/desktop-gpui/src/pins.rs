@@ -145,11 +145,15 @@ pub fn create(
     let handle = cx
         .open_window(options, |window, cx| {
             let crop = image_bounds(&image);
+            let editor = Editor::new(crop, annotations.clone());
+            // 截图时画的标注随贴图带过来：创建时就画出图层，否则要等下一次编辑才显示。
+            let mut layers = Layers::default();
+            layers.update(&editor);
             let pin = cx.new(|cx| Pin {
                 original: image.clone(),
-                editor: Editor::new(crop, annotations.clone()),
+                editor,
                 original_annotations: annotations,
-                layers: Layers::default(),
+                layers,
                 annotating: false,
                 toolbar: false,
                 drag_text: drag_text.clone(),
@@ -664,7 +668,8 @@ pub struct Pin {
     hidden: bool,
     /// 文字/文件路径贴图拖出时提供的文字（颜色值规范化为 HEX，见 core `drag_text`）。
     drag_text: Option<String>,
-    text_input: Option<Entity<TextareaState>>,
+    /// 文字输入框与所属文字草稿编号（TextDraft::id）。
+    text_input: Option<(u64, Entity<TextareaState>)>,
     image: Arc<RgbaImage>,
     frame: Arc<RenderImage>,
     zoom: f64,
@@ -1085,8 +1090,9 @@ impl Pin {
         if let Some(error) = self.editor.error.take() {
             self.flash(error, cx);
         }
-        match (self.editor.text.as_ref(), self.text_input.is_some()) {
-            (Some(text), false) => {
+        // 按草稿编号判断：提交后栅格化期间输入框仍在，下一段文字要换新的空输入框（见 TextDraft::id）。
+        match (self.editor.text.as_ref(), self.text_input.as_ref().map(|(id, _)| *id)) {
+            (Some(text), has) if has != Some(text.id) => {
                 let value = text.shape.text.clone().unwrap_or_default();
                 let state = cx.new(|cx| {
                     let mut state = TextareaState::new(window, cx);
@@ -1095,9 +1101,11 @@ impl Pin {
                     state
                 });
                 state.update(cx, |state, cx| state.focus(window, cx));
-                self.text_input = Some(state);
+                // 输入框在按下鼠标时创建；阻止 GPUI 随后把焦点交还给贴图，否则还要再点一次输入框才能打字。
+                window.prevent_default();
+                self.text_input = Some((text.id, state));
             }
-            (None, true) => {
+            (None, Some(_)) => {
                 self.text_input = None;
                 window.focus(&self.focus, cx);
             }
@@ -1137,7 +1145,7 @@ impl Pin {
     }
 
     fn commit_text(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let value = self.text_input.as_ref().map(|state| state.read(cx).value().to_string()).unwrap_or_default();
+        let value = self.text_input.as_ref().map(|(_, state)| state.read(cx).value().to_string()).unwrap_or_default();
         let job = self.editor.finish_text(&value);
         self.run(job, cx);
         self.after_edit(window, cx);
@@ -1548,10 +1556,11 @@ impl Render for Pin {
         let radius = (self.appearance.corner_radius as f32).min(w.min(h) / 2.0);
         // 图片像素 → 图片内容区内的逻辑坐标（标注图层、选中框、输入框共用）。
         let (kx, ky) = (w / self.image.width() as f32, h / self.image.height() as f32);
+        // GPUI 的 overflow_hidden 只按矩形裁剪子元素，圆角必须设在图片本身上才会生效。
         let mut content = div()
             .relative()
             .size_full()
-            .child(img(self.frame.clone()).absolute().size_full().object_fit(ObjectFit::Fill));
+            .child(img(self.frame.clone()).absolute().size_full().rounded(px(radius)).object_fit(ObjectFit::Fill));
         for layer in [self.layers.base(), self.layers.draft()].into_iter().flatten() {
             content = content.child(
                 img(layer.image.clone())
@@ -1611,7 +1620,9 @@ impl Render for Pin {
             root = root.cursor_crosshair();
         }
         // 文字输入框：放在文字起点，宽度到图片右边缘，与最终排版的换行宽度一致。
-        if let (Some(text), Some(state)) = (self.editor.text.as_ref(), self.text_input.as_ref()) {
+        let current = self.editor.text.as_ref().map(|t| t.id);
+        let input = self.text_input.as_ref().filter(|(id, _)| Some(*id) == current);
+        if let (Some(text), Some((_, state))) = (self.editor.text.as_ref(), input) {
             let at = map(text.shape.start);
             let width = ((self.image.width() as f64 - text.shape.start.x).min(2048.0) as f32 * kx).max(40.0);
             let font = (text.shape.font_size.unwrap_or(24.0) as f32 * ky).max(8.0);
