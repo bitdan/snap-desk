@@ -38,6 +38,18 @@ if ! pkg-config --atleast-version=0.3.65 libpipewire-0.3; then
   fi
 fi
 
+# glibc 2.38 之前的系统链接 ort 预编译库时缺少新符号：静态链接 GCC 13 的 libstdc++ 并补上 C23 转发函数
+# （详见 glibc-compat.sh），通过 RUSTFLAGS 交给后续的 cargo 步骤。
+glibc="$(ldd --version | head -n1 | grep -o '[0-9]*\.[0-9]*$')"
+if [ "$(printf '%s\n2.38\n' "$glibc" | sort -V | head -n1)" != 2.38 ]; then
+  rustflags="$(bash "$(dirname "$0")/glibc-compat.sh" "$HOME/.cache/snap-desk-glibc-compat")"
+  if [ -n "${GITHUB_ENV:-}" ]; then
+    echo "RUSTFLAGS=${RUSTFLAGS:+$RUSTFLAGS }$rustflags" >> "$GITHUB_ENV"
+  else
+    echo "构建前执行：export RUSTFLAGS=\"$rustflags\""
+  fi
+fi
+
 if [ -n "$archives" ]; then
   # 删除镜像上已不存在的旧版本，避免缓存随包升级不断变大；
   # apt 以 root 写入，交还给当前用户，缓存步骤才能读取并打包。

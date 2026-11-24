@@ -29,6 +29,9 @@ fi
 sort -V -r "$report" | head -n 10
 max="$(sort -V "$report" | tail -n1 | cut -d' ' -f1)"
 echo "最高 glibc 要求：GLIBC_$max（上限 GLIBC_$limit）"
+# libstdc++ 由系统提供时同样不能高于 22.04（GLIBCXX_3.4.30）；这里只打印，便于排查。
+glibcxx="$(find "$work/squashfs-root" -type f -exec objdump -T {} \; 2>/dev/null | grep -o 'GLIBCXX_[0-9.]*' | sort -V | tail -n1 || true)"
+echo "最高 libstdc++ 要求：${glibcxx:-无}"
 if [ "$(printf '%s\n%s\n' "$max" "$limit" | sort -V | tail -n1)" != "$limit" ]; then
   echo "安装包要求的 glibc 高于 $limit，旧发行版无法运行。" >&2
   exit 1
