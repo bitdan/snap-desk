@@ -100,7 +100,7 @@ Linux 另需截图库的系统依赖，Debian / Ubuntu 可执行 `bash scripts/c
 - 更新签名由 `tools/release-sign`（minisign）生成，可信注释写入 `version:<版本>`，客户端据此拒绝版本不符的包；私钥经 `SNAP_DESK_SIGNING_PRIVATE_KEY`（及可选的 `SNAP_DESK_SIGNING_PRIVATE_KEY_PASSWORD`）传入，CI 中取自 `TAURI_SIGNING_PRIVATE_KEY` Secret，公钥为 `SNAP_DESK_UPDATER_PUBLIC_KEY` Variable，编译时嵌入程序。
 - 发布流水线分三段：校验标签 / 更新说明 / 签名配置 → 三个平台各自测试、打包并上传附件 → 汇总签名、生成 `updater.json` 并公开。任一平台失败都不会创建 Release。
 - macOS 使用固定的自签名证书签名（`.github/actions/macos-signing`，证书由 `scripts/macos-signing-cert.sh` 生成一次：公钥 `resources/macos-signing.pem` 随仓库提交，`.p12` 与密码存入 `MACOS_SIGNING_CERTIFICATE` / `MACOS_SIGNING_CERTIFICATE_PASSWORD` secrets），签名身份跨版本不变，“屏幕录制”等系统授权在更新后仍然有效；未经公证，首次打开仍需在系统设置中放行。未配置 secrets 时回退到临时签名（ad-hoc），每次构建签名都会变化，更新后需重新授权。ONNX Runtime 不提供 Intel Mac 预编译库，因此不构建 macOS x64。
-- Linux 在 Ubuntu 24.04 上构建（截图库的 PipeWire 绑定要求 0.3.65 以上），生成的程序需要 glibc 2.39 及以上的发行版；截图依赖 X11，Wayland 会话会给出提示。
+- Linux 在 Ubuntu 22.04 上构建，生成的程序与 AppImage 内置库最高要求 glibc 2.35（发布流水线用 `scripts/ci/check-glibc.sh` 检查），可在 Ubuntu 22.04 及同期以后的发行版运行；截图依赖 X11，Wayland 会话会给出提示。
 
 - AppImage 由 linuxdeploy 把主程序依赖的系统库一并打包；deb 依赖系统安装的库，因此小得多。
 - 正式版公开后，`distribute.yml` 把安装描述推送到包管理器（测试版不分发）；清单由 `scripts/distribution.mjs` 按附件实际哈希生成，也可 `gh workflow run distribute.yml -f tag=v<版本>` 补发。对应 secret 未配置的渠道会跳过：

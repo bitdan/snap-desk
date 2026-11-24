@@ -14,12 +14,20 @@ import { readVersion, syncVersion } from './sync-version.mjs'
 
 export const PACKAGER_VERSION = '0.11.8'
 
-/** Linux deb 的运行依赖：录屏（PipeWire/GStreamer）、X11 截图与输入、密钥存储、GPUI 渲染（Vulkan、字体）。 */
+/** Linux deb 的运行依赖：录屏（PipeWire/GStreamer）、X11 截图与输入、密钥存储、GPUI 渲染（Vulkan、字体）、托盘（AppIndicator）。 */
 const DEB_DEPENDS = [
   'libpipewire-0.3-0', 'libxcb1', 'libxcb-shm0', 'libxcb-xinput0', 'libxrandr2', 'libdbus-1-3',
   'libgstreamer1.0-0', 'libgstreamer-plugins-base1.0-0', 'gstreamer1.0-plugins-base', 'gstreamer1.0-plugins-good',
   'gstreamer1.0-pulseaudio', 'libxkbcommon0', 'libxkbcommon-x11-0', 'libfontconfig1', 'libvulkan1',
+  'libayatana-appindicator3-1',
 ]
+
+/**
+ * AppImage 额外打包的库：托盘（tray-icon）运行时以 dlopen 加载 Ayatana AppIndicator，
+ * linuxdeploy 只按链接关系收集依赖，看不到它；缺少时程序启动即退出。其余依赖由 linuxdeploy 自动收集。
+ */
+const APPIMAGE_LIBS = ['libayatana-appindicator3.so.1', 'libayatana-indicator3.so.7', 'libayatana-ido3-0.4.so.0',
+  'libdbusmenu-glib.so.4', 'libdbusmenu-gtk3.so.4']
 
 /** 构建产物名与交给打包器的主程序名。 */
 export function executableNames(platform) {
@@ -61,7 +69,10 @@ export function packagerConfig({ platform, root, releaseDirectory, version, env 
     config.macos = { minimumSystemVersion: '13.3', entitlements: path('resources', 'Entitlements.plist'),
       infoPlistPath: path('resources', 'Info.plist'), signingIdentity: env.APPLE_SIGNING_IDENTITY || '-' }
   }
-  if (platform === 'linux') config.deb = { depends: DEB_DEPENDS }
+  if (platform === 'linux') {
+    config.deb = { depends: DEB_DEPENDS }
+    config.appimage = { libs: APPIMAGE_LIBS }
+  }
   return config
 }
 
