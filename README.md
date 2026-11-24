@@ -159,15 +159,15 @@ Rust 原生实现，不内置浏览器内核。以下为 release 构建的实测
 | 平台 | 文件 | 状态 |
 | --- | --- | --- |
 | Windows x64 | `-setup.exe` 安装包 / `-standalone.exe` 独立 EXE | 功能完整 |
-| macOS Apple 芯片 | `-macos-arm64.dmg` | 预览，需 macOS 13.3+ |
+| macOS Apple 芯片 | `-macos-arm64.dmg` | 功能完整，需 macOS 13.3+ |
 | Linux x64 | `-linux-x64.AppImage` / `-linux-x64.deb` | 预览，需 glibc 2.39+（Ubuntu 24.04 同期） |
 
 <details>
 <summary><strong>macOS 与 Linux 说明</strong></summary>
 <br />
 
-- macOS 与 Linux 版目前仅通过 CI 构建和自动化测试，尚未实机验证，遇到问题欢迎提交 Issue。
-- **macOS**：未经 Apple 公证，首次打开需在“系统设置 → 隐私与安全性”中放行，并在“隐私与安全性 → 录屏与系统录音”中允许 Snap Desk（macOS 14 及更早叫“屏幕录制”）。暂不支持跨屏框选、本地翻译引擎和本地 PaddleOCR。
+- **macOS**：已在 Apple 芯片 Mac 上实机验证，功能与 Windows 版一致。未经 Apple 公证，首次打开需在“系统设置 → 隐私与安全性”中放行，并在“隐私与安全性 → 录屏与系统录音”中允许 Snap Desk（macOS 14 及更早叫“屏幕录制”）；应用使用固定签名，更新后无需重新授权。离线文字识别使用系统自带的 Apple Vision；PaddleOCR、WeChat OCR 与离线翻译引擎仅限 Windows，可改用在线服务。
+- Linux 版目前仅通过 CI 构建和自动化测试，尚未实机验证，遇到问题欢迎提交 Issue。
 - **Linux**：AppImage 约 100 MB，自带依赖并支持在线更新；deb 约 20 MB，升级需覆盖安装。Wayland 下仅支持单显示器截图，录屏经屏幕共享门户，暂停 / 恢复、键鼠特效与录制中标注仅 X11 可用，剪贴板历史与划词翻译经 Xwayland，直接粘贴退化为只复制。
 
 </details>
