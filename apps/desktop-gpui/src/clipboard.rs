@@ -397,10 +397,25 @@ enum Confirm {
 }
 
 /// 颜色文本的色块（#RGB/#RRGGBB 等，经 core 的贴图拖出规范化为 HEX）。
-fn swatch(text: &str) -> Option<u32> {
+pub(crate) fn swatch(text: &str) -> Option<u32> {
     let hex = snap_core::pins::text::drag_text(text.trim());
     let hex = hex.strip_prefix('#')?;
-    (hex.len() >= 6).then(|| u32::from_str_radix(&hex[..6], 16).ok()).flatten()
+    // 只取前 6 个 ASCII 十六进制位；按字节切片遇到“#查找…”这类中文文本会落在字符中间而 panic。
+    let digits = hex.get(..6).filter(|d| d.bytes().all(|b| b.is_ascii_hexdigit()))?;
+    u32::from_str_radix(digits, 16).ok()
+}
+
+#[cfg(test)]
+mod swatch_tests {
+    use super::swatch;
+
+    #[test]
+    fn reads_hex_colors_and_ignores_non_ascii_text() {
+        assert_eq!(swatch("#ff8800"), Some(0xff8800));
+        assert_eq!(swatch("#查找替换功能"), None);
+        assert_eq!(swatch("#ab查cd"), None);
+        assert_eq!(swatch("#12"), None);
+    }
 }
 
 struct HistoryView {

@@ -221,11 +221,7 @@ impl Render for Preview {
             Body::Text { lines, truncated, link, path } => {
                 let joined = lines.join("\n");
                 let color = (classification::classify(&joined) == Some(TextCategory::Color))
-                    .then(|| {
-                        let hex = snap_core::pins::text::drag_text(joined.trim());
-                        let hex = hex.strip_prefix('#')?;
-                        (hex.len() >= 6).then(|| u32::from_str_radix(&hex[..6], 16).ok()).flatten()
-                    })
+                    .then(|| crate::clipboard::swatch(&joined))
                     .flatten();
                 if let Some(value) = color {
                     div()
