@@ -1,0 +1,167 @@
+name: Distribute to package managers
+run-name: 包管理器分发 · ${{ inputs.tag }}
+
+# 正式版发布后把安装描述推送到 Scoop / Homebrew（同一个 tap 仓库）、WinGet 与 AUR。
+# 由 release.yml 在 Release 公开后调用（GITHUB_TOKEN 创建的 Release 不会触发 release 事件），也可手动补发。
+# 清单由 scripts/distribution.mjs 按附件实际哈希生成；某个渠道的 secret 未配置时跳过该渠道。
+#
+# secrets：
+#   TAP_TOKEN            对 bitdan/homebrew-snap-desk 有写权限的 PAT（Scoop bucket 与 Homebrew Cask）
+#   WINGET_TOKEN         classic PAT（public_repo），wingetcreate 用它 fork microsoft/winget-pkgs 并提交 PR
+#   AUR_SSH_PRIVATE_KEY  已添加到 AUR 账号的 SSH 私钥（推送 snap-desk-bin）
+on:
+  workflow_call:
+    inputs:
+      tag:
+        type: string
+        required: true
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 要分发的正式版标签，如 v0.3.0
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: distribute-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  manifests:
+    name: Generate manifests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      - name: Download release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir assets \
+            --pattern '*-windows-x64-standalone.exe' --pattern '*-windows-x64-setup.exe' \
+            --pattern '*-macos-arm64.dmg' --pattern '*-linux-x64.deb'
+
+      - name: Generate manifests
+        env:
+          TAG: ${{ inputs.tag }}
+        run: node scripts/distribution.mjs "${TAG#v}" assets distribution
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: distribution
+          path: distribution/
+          include-hidden-files: true
+          if-no-files-found: error
+
+  tap:
+    name: Scoop bucket and Homebrew tap
+    needs: manifests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      TAP_TOKEN: ${{ secrets.TAP_TOKEN }}
+    steps:
+      - uses: actions/download-artifact@v4
+        if: env.TAP_TOKEN != ''
+        with:
+          name: distribution
+          path: distribution
+
+      - name: Push to bitdan/homebrew-snap-desk
+        if: env.TAP_TOKEN != ''
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          git clone "https://x-access-token:${TAP_TOKEN}@github.com/bitdan/homebrew-snap-desk.git" tap
+          mkdir -p tap/bucket tap/Casks
+          cp distribution/scoop/snap-desk.json tap/bucket/
+          cp distribution/homebrew/snap-desk.rb tap/Casks/
+          cd tap
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add bucket Casks
+          git diff --cached --quiet && { echo '清单没有变化'; exit 0; }
+          git commit -m "snap-desk ${TAG#v}"
+          git push
+
+      - name: Skip
+        if: env.TAP_TOKEN == ''
+        run: echo '未配置 TAP_TOKEN，跳过 Scoop 与 Homebrew。'
+
+  winget:
+    name: WinGet
+    needs: manifests
+    runs-on: windows-2022
+    timeout-minutes: 15
+    env:
+      WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/download-artifact@v4
+        if: env.WINGET_TOKEN != ''
+        with:
+          name: distribution
+          path: distribution
+
+      # wingetcreate submit 用给定清单向 microsoft/winget-pkgs 提 PR，首次提交与后续更新相同。
+      - name: Submit to winget-pkgs
+        if: env.WINGET_TOKEN != ''
+        run: |
+          Invoke-WebRequest https://aka.ms/wingetcreate/latest -OutFile wingetcreate.exe
+          ./wingetcreate.exe submit --token $env:WINGET_TOKEN distribution/winget
+
+      - name: Skip
+        if: env.WINGET_TOKEN == ''
+        run: echo '未配置 WINGET_TOKEN，跳过 WinGet。'
+
+  aur:
+    name: AUR
+    needs: manifests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+    steps:
+      - uses: actions/download-artifact@v4
+        if: env.AUR_SSH_PRIVATE_KEY != ''
+        with:
+          name: distribution
+          path: distribution
+
+      # PKGBUILD 与 .SRCINFO 都由 scripts/distribution.mjs 生成，不需要 Arch 环境里的 makepkg。
+      - name: Push snap-desk-bin
+        if: env.AUR_SSH_PRIVATE_KEY != ''
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$AUR_SSH_PRIVATE_KEY" > ~/.ssh/aur
+          chmod 600 ~/.ssh/aur
+          ssh-keyscan -t ed25519 aur.archlinux.org >> ~/.ssh/known_hosts
+          export GIT_SSH_COMMAND='ssh -i ~/.ssh/aur -o IdentitiesOnly=yes'
+          git clone ssh://aur@aur.archlinux.org/snap-desk-bin.git aur
+          cp distribution/aur/PKGBUILD distribution/aur/.SRCINFO aur/
+          cd aur
+          git config user.name 'bitdan'
+          git config user.email 'bitdan@users.noreply.github.com'
+          git add PKGBUILD .SRCINFO
+          git diff --cached --quiet && { echo 'PKGBUILD 没有变化'; exit 0; }
+          git commit -m "Update to ${TAG#v}"
+          git push origin HEAD:master
+
+      - name: Skip
+        if: env.AUR_SSH_PRIVATE_KEY == ''
+        run: echo '未配置 AUR_SSH_PRIVATE_KEY，跳过 AUR。'

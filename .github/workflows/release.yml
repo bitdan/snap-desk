@@ -138,8 +138,15 @@ jobs:
       - name: Install cargo-packager
         run: cargo install cargo-packager --version 0.11.8 --locked
 
+      # macOS 代码签名用固定的自签名证书：签名身份不变，更新后“屏幕录制”等系统授权仍然有效。
+      - name: Configure macOS signing
+        uses: ./.github/actions/macos-signing
+        with:
+          certificate: ${{ secrets.MACOS_SIGNING_CERTIFICATE }}
+          password: ${{ secrets.MACOS_SIGNING_CERTIFICATE_PASSWORD }}
+
       # 构建 GPUI 主程序（编译时嵌入更新公钥），再用 cargo-packager 生成安装包（scripts/package-gpui.mjs）。
-      # 这里不签名：发布任务对最终附件统一签名。
+      # 这里不做更新签名：发布任务对最终附件统一签名。
       - name: Build application and installers
         env:
           SNAP_DESK_UPDATER_PUBLIC_KEY: ${{ vars.SNAP_DESK_UPDATER_PUBLIC_KEY }}
@@ -213,3 +220,13 @@ jobs:
           SNAP_DESK_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           SNAP_DESK_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: ./scripts/publish-release.ps1 -Tag $env:GITHUB_REF_NAME -NotesFile "$env:RUNNER_TEMP/snap-desk-release-notes.md"
+
+  # 正式版公开后推送到 Scoop、Homebrew、WinGet 与 AUR；测试版（标签含连字符）不进入包管理器。
+  distribute:
+    name: Package managers
+    needs: publish
+    if: ${{ !contains(github.ref_name, '-') }}
+    uses: ./.github/workflows/distribute.yml
+    with:
+      tag: ${{ github.ref_name }}
+    secrets: inherit
