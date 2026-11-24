@@ -62,13 +62,23 @@ pub fn start(
     receiver: mpsc::UnboundedReceiver<ShellEvent>,
 ) -> Result<(), String> {
     let path = settings_path();
-    let (settings, warning) = match &path {
+    // 还没有设置文件：全新安装，界面语言按系统语言选择（已保存的语言设置不受影响）。
+    let fresh = path.as_ref().is_some_and(|path| !path.exists());
+    let (mut settings, warning) = match &path {
         Some(path) => settings::load(path),
         None => (Settings::default(), Some("无法定位设置目录，使用默认设置。".into())),
     };
     // 首次启动（引导版本未记录）时打开主界面：纯托盘程序启动后没有窗口，新用户找不到入口。
     // 配置读取失败时不算首次启动，避免已有用户因为配置损坏反复看到。
     let first_launch = warning.is_none() && settings.onboarding_version < ONBOARDING_VERSION;
+    let system_language = fresh.then(|| {
+        let locale = sys_locale::get_locale();
+        log::info!("event=gpui.system_locale locale={}", locale.as_deref().unwrap_or(""));
+        settings::Language::from_locale(locale.as_deref())
+    });
+    if let Some(language) = &system_language {
+        settings.appearance.language = language.clone();
+    }
     if let Some(warning) = warning {
         log::warn!("event=gpui.settings_warning message={warning}");
     }
@@ -114,11 +124,18 @@ pub fn start(
     crate::shelf::init(cx);
     crate::local_translate::init(cx);
     if first_launch {
-        crate::settings_window::open(cx);
-        match update_settings(cx, |s| s.onboarding_version = s.onboarding_version.max(ONBOARDING_VERSION)) {
+        // 先保存再开窗口：保存时从磁盘重新读取，全新安装要把按系统选出的语言一并写入。
+        let saved = update_settings(cx, |s| {
+            s.onboarding_version = s.onboarding_version.max(ONBOARDING_VERSION);
+            if let Some(language) = system_language {
+                s.appearance.language = language;
+            }
+        });
+        match saved {
             Ok(_) => log::info!("event=gpui.first_launch version={ONBOARDING_VERSION}"),
             Err(error) => log::warn!("event=gpui.first_launch_save_failed message={error}"),
         }
+        crate::settings_window::open(cx);
     }
 
     cx.spawn(async move |cx| {

@@ -393,6 +393,16 @@ pub enum Language {
     #[serde(rename = "en")]
     English,
 }
+impl Language {
+    /// 首次启动按系统语言选择界面语言：中文系统（zh、zh-CN、zh-Hans-CN、zh_TW.UTF-8 等）用中文，
+    /// 其他语言或无法识别时用英文。
+    pub fn from_locale(locale: Option<&str>) -> Self {
+        match locale {
+            Some(tag) if tag.get(..2).is_some_and(|p| p.eq_ignore_ascii_case("zh")) => Self::Chinese,
+            _ => Self::English,
+        }
+    }
+}
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields, default)]
 pub struct Appearance {
@@ -880,6 +890,17 @@ pub fn unavailable_actions(current: &RuntimeSettings) -> Vec<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn first_launch_language_follows_system_locale() {
+        for tag in ["zh", "zh-CN", "zh-Hans-CN", "zh_TW.UTF-8", "ZH-cn"] {
+            assert_eq!(Language::from_locale(Some(tag)), Language::Chinese, "{tag}");
+        }
+        for tag in ["en-US", "C.UTF-8", "ja-JP", "z", ""] {
+            assert_eq!(Language::from_locale(Some(tag)), Language::English, "{tag}");
+        }
+        assert_eq!(Language::from_locale(None), Language::English);
+    }
 
     #[test]
     fn update_network_defaults_empty_and_validates_mirror_and_proxy() {

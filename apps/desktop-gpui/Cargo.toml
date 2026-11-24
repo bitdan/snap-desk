@@ -37,6 +37,8 @@ tokio = { version = "1", features = ["rt", "rt-multi-thread", "net", "time"] }
 url = "2"
 # 关于页比较产品版本（与 core 一致）。
 semver = "1"
+# 首次启动按系统语言选择界面语言（版本与依赖树中已有的一致）。
+sys-locale = "0.3.2"
 # 独立 EXE 更新：暂存目录、更新助手脚本编码与暂存包摘要（版本与 core 一致）。
 tempfile = "3"
 base64 = "0.22"
