@@ -15,7 +15,8 @@
   <a href="#features">Features</a> ·
   <a href="#quick-start">Quick Start</a> ·
   <a href="TECHNICAL.md">Technical Guide (Chinese)</a> ·
-  <a href="Snap_Desk_TODO.md">Roadmap (Chinese)</a>
+  <a href="Snap_Desk_TODO.md">Roadmap (Chinese)</a> ·
+  <a href="docs/performance/README.md">Performance test (Chinese)</a>
 </p>
 
 <p align="center"><a href="README.md">简体中文</a> · English</p>
@@ -25,6 +26,12 @@
 | ![Main window capture page, light theme](docs/assets/screenshots/main-light.png) | ![Main window capture page, dark theme](docs/assets/screenshots/main-dark.png) |
 
 Screenshots show the Simplified Chinese interface; the app also ships an English UI.
+
+## Performance
+
+Native Rust, no embedded browser engine. Measured on a release build; full data in the [performance test](docs/performance/README.md) (Chinese).
+
+<p align="center"><img src="docs/assets/performance.en.svg" alt="Measured performance: 7 MB in the tray, capture overlay opens in 0.12 s, offline OCR of a screen in 0.94 s, DeepL translation in 1.59 s; memory over 13 minutes of use settles at 67 MB when idle; per-run response times" width="960" /></p>
 
 ## Features
 
