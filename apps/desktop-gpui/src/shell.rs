@@ -36,6 +36,8 @@ const SHORTCUTS_ID: &str = "shortcuts";
 const SETTINGS_ID: &str = "settings";
 const RESTART_ID: &str = "restart";
 const QUIT_ID: &str = "quit";
+/// 引导版本：与旧版相同从 1 开始，只在需要重新展示首次启动界面时递增，与应用版本号无关。
+const ONBOARDING_VERSION: u32 = 1;
 
 /// 主线程独占的外壳状态。托盘与快捷键管理器必须活到进程结束，析构即注销。
 struct Shell {
@@ -64,6 +66,9 @@ pub fn start(
         Some(path) => settings::load(path),
         None => (Settings::default(), Some("无法定位设置目录，使用默认设置。".into())),
     };
+    // 首次启动（引导版本未记录）时打开主界面：纯托盘程序启动后没有窗口，新用户找不到入口。
+    // 配置读取失败时不算首次启动，避免已有用户因为配置损坏反复看到。
+    let first_launch = warning.is_none() && settings.onboarding_version < ONBOARDING_VERSION;
     if let Some(warning) = warning {
         log::warn!("event=gpui.settings_warning message={warning}");
     }
@@ -108,6 +113,13 @@ pub fn start(
     crate::clipboard::init(cx, &clipboard);
     crate::shelf::init(cx);
     crate::local_translate::init(cx);
+    if first_launch {
+        crate::settings_window::open(cx);
+        match update_settings(cx, |s| s.onboarding_version = s.onboarding_version.max(ONBOARDING_VERSION)) {
+            Ok(_) => log::info!("event=gpui.first_launch version={ONBOARDING_VERSION}"),
+            Err(error) => log::warn!("event=gpui.first_launch_save_failed message={error}"),
+        }
+    }
 
     cx.spawn(async move |cx| {
         let mut receiver = receiver;
