@@ -8246,6 +8246,7 @@ dependencies = [
  "futures",
  "global-hotkey",
  "gpui-kit",
+ "gtk",
  "image",
  "log",
  "raw-window-handle",

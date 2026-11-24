@@ -46,10 +46,10 @@ struct Shell {
     registered: Vec<Shortcut>,
     /// 快捷键 id → 动作，由当前设置推导；收到事件时据此分发。
     bindings: HashMap<u32, ShortcutAction>,
-    shortcuts_item: CheckMenuItem,
+    /// 托盘图标与菜单（含“启用全局快捷键”勾选项）。
+    tray: Tray,
     /// 设置界面正在录入快捷键：已注销全部全局快捷键，按键直接送到设置窗口。
     suspended: bool,
-    _tray: TrayIcon,
 }
 impl Global for Shell {}
 
@@ -87,36 +87,7 @@ pub fn start(
         let _ = tx.unbounded_send(ShellEvent::HotKey(event));
     }));
 
-    let language = settings.appearance.language.clone();
-    let text = |message: &'static str| snap_core::i18n::for_language(&language, message).to_owned();
-    let menu = Menu::new();
-    for (id, label, _) in ACTIONS {
-        menu.append(&MenuItem::with_id(id, text(label), true, None))
-            .map_err(|e| e.to_string())?;
-    }
-    let shortcuts_item = CheckMenuItem::with_id(
-        SHORTCUTS_ID,
-        text("启用全局快捷键"),
-        true,
-        settings.shortcuts_enabled,
-        None,
-    );
-    // 托盘菜单：五个动作、打开主界面（设置窗口）、全局快捷键开关、重启、退出。
-    menu.append_items(&[
-        &MenuItem::with_id(SETTINGS_ID, text("打开 Snap Desk"), true, None),
-        &shortcuts_item,
-        &MenuItem::with_id(RESTART_ID, text("重启"), true, None),
-        &MenuItem::with_id(QUIT_ID, text("退出"), true, None),
-    ])
-    .map_err(|e| e.to_string())?;
-    let tray = TrayIconBuilder::new()
-        .with_menu(Box::new(menu))
-        // 左键单击截图，右键弹菜单。
-        .with_menu_on_left_click(false)
-        .with_tooltip(text("Snap Desk · 截图工具"))
-        .with_icon(tray_icon()?)
-        .build()
-        .map_err(|e| e.to_string())?;
+    let tray = Tray::start(settings.appearance.language.clone(), settings.shortcuts_enabled)?;
 
     let hotkeys = GlobalHotKeyManager::new().map_err(|e| e.to_string())?;
     let mut shell = Shell {
@@ -125,9 +96,8 @@ pub fn start(
         path,
         hotkeys,
         registered: Vec::new(),
-        shortcuts_item,
+        tray,
         suspended: false,
-        _tray: tray,
     };
     shell.register_startup();
     let clipboard = shell.settings.clipboard.clone();
@@ -197,7 +167,7 @@ impl Shell {
         }
         self.bindings = bindings(&next);
         self.settings = next;
-        self.shortcuts_item.set_checked(self.settings.shortcuts_enabled);
+        self.tray.set_checked(self.settings.shortcuts_enabled);
         log::info!("event=gpui.settings_saved registered={}", self.registered.len());
         Ok(self.settings.clone())
     }
@@ -228,7 +198,7 @@ impl Shell {
             Err(error) => log::error!("event=gpui.shortcuts_toggle_failed message={error}"),
         }
         // 原生勾选菜单点击时已自行切换外观；以实际生效的设置为准纠正。
-        self.shortcuts_item.set_checked(self.settings.shortcuts_enabled);
+        self.tray.set_checked(self.settings.shortcuts_enabled);
     }
 }
 
@@ -407,7 +377,7 @@ pub fn import_backup(cx: &mut App, mut backup: snap_core::settings::backup::Back
                 }
                 shell.bindings = bindings(&next);
                 shell.settings = next.clone();
-                shell.shortcuts_item.set_checked(next.shortcuts_enabled);
+                shell.tray.set_checked(next.shortcuts_enabled);
                 Ok(())
             }
             Err(error) => {
@@ -614,6 +584,107 @@ pub fn run_action(cx: &mut App, action: ShortcutAction, source: &str) {
 }
 
 /// 托盘图标（32×32，与安装包同一张）。
+/// 创建托盘图标与菜单，返回托盘和“启用全局快捷键”勾选项。必须在托盘所属的线程调用：
+/// Windows/macOS 是 GPUI 主线程，Linux 是 GTK 线程。
+fn build_tray(language: &settings::Language, checked: bool, icon: tray_icon::Icon) -> Result<(TrayIcon, CheckMenuItem), String> {
+    let text = |message: &'static str| snap_core::i18n::for_language(language, message).to_owned();
+    let menu = Menu::new();
+    for (id, label, _) in ACTIONS {
+        menu.append(&MenuItem::with_id(id, text(label), true, None))
+            .map_err(|e| e.to_string())?;
+    }
+    let shortcuts_item = CheckMenuItem::with_id(SHORTCUTS_ID, text("启用全局快捷键"), true, checked, None);
+    // 托盘菜单：五个动作、打开主界面（设置窗口）、全局快捷键开关、重启、退出。
+    menu.append_items(&[
+        &MenuItem::with_id(SETTINGS_ID, text("打开 Snap Desk"), true, None),
+        &shortcuts_item,
+        &MenuItem::with_id(RESTART_ID, text("重启"), true, None),
+        &MenuItem::with_id(QUIT_ID, text("退出"), true, None),
+    ])
+    .map_err(|e| e.to_string())?;
+    let tray = TrayIconBuilder::new()
+        .with_menu(Box::new(menu))
+        // 左键单击截图，右键弹菜单。
+        .with_menu_on_left_click(false)
+        .with_tooltip(text("Snap Desk · 截图工具"))
+        .with_icon(icon)
+        .build()
+        .map_err(|e| e.to_string())?;
+    Ok((tray, shortcuts_item))
+}
+
+/// Windows/macOS：托盘依赖创建线程的消息循环，直接在 GPUI 主线程创建并持有。
+#[cfg(not(target_os = "linux"))]
+struct Tray {
+    shortcuts_item: CheckMenuItem,
+    _icon: TrayIcon,
+}
+
+#[cfg(not(target_os = "linux"))]
+impl Tray {
+    fn start(language: settings::Language, checked: bool) -> Result<Self, String> {
+        let (icon, shortcuts_item) = build_tray(&language, checked, tray_icon()?)?;
+        Ok(Self { shortcuts_item, _icon: icon })
+    }
+
+    fn set_checked(&self, checked: bool) {
+        self.shortcuts_item.set_checked(checked);
+    }
+}
+
+/// Linux：tray-icon/muda 基于 GTK，需要 `gtk::init` 与 GTK 主循环，而 GPUI 占用主线程的事件循环。
+/// 托盘放在专用的 GTK 线程上创建并运行 `gtk::main`；GTK 对象不能跨线程，留在该线程的
+/// thread-local 里，GPUI 侧只持有这个空句柄，更新通过 `idle_add_once` 投递到 GTK 线程执行。
+/// 菜单与托盘事件仍由 `MenuEvent`/`TrayIconEvent` 回调送入通道，与其他平台相同。
+#[cfg(target_os = "linux")]
+struct Tray;
+
+#[cfg(target_os = "linux")]
+thread_local! {
+    static GTK_TRAY: std::cell::RefCell<Option<(TrayIcon, CheckMenuItem)>> = const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(target_os = "linux")]
+impl Tray {
+    fn start(language: settings::Language, checked: bool) -> Result<Self, String> {
+        let icon = tray_icon()?;
+        let (ready, started) = std::sync::mpsc::sync_channel::<Result<(), String>>(1);
+        std::thread::Builder::new()
+            .name("snap-desk-tray".into())
+            .spawn(move || {
+                if let Err(error) = gtk::init() {
+                    let _ = ready.send(Err(format!("GTK 初始化失败：{error}")));
+                    return;
+                }
+                match build_tray(&language, checked, icon) {
+                    Ok(tray) => {
+                        GTK_TRAY.with(|slot| *slot.borrow_mut() = Some(tray));
+                        let _ = ready.send(Ok(()));
+                        gtk::main();
+                    }
+                    Err(error) => {
+                        let _ = ready.send(Err(error));
+                    }
+                }
+            })
+            .map_err(|e| e.to_string())?;
+        started.recv().map_err(|_| "托盘线程意外退出。".to_string())??;
+        log::info!("event=gpui.tray_started thread=gtk");
+        Ok(Self)
+    }
+
+    fn set_checked(&self, checked: bool) {
+        // 默认 MainContext 由调用 gtk::init 的托盘线程持有，回调在该线程执行。
+        gtk::glib::idle_add_once(move || {
+            GTK_TRAY.with(|slot| {
+                if let Some((_, item)) = &*slot.borrow() {
+                    item.set_checked(checked);
+                }
+            });
+        });
+    }
+}
+
 fn tray_icon() -> Result<tray_icon::Icon, String> {
     let image = image::load_from_memory_with_format(
         include_bytes!("../../../resources/icons/32x32.png"),
