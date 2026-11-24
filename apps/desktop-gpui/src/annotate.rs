@@ -1953,6 +1953,23 @@ mod tests {
     }
 
     #[test]
+    fn spotlight_previews_while_dragging() {
+        let mut e = Editor::new(Bounds { x: 0.0, y: 0.0, width: 200.0, height: 100.0 }, vec![]);
+        let mut layers = Layers::default();
+        e.set_tool(Tool::Spotlight);
+        e.begin(p(20.0, 20.0), 6.0, None, false);
+        e.drag(p(80.0, 60.0));
+        layers.update(&e);
+        let base = layers.base().expect("拖动中应有聚光灯预览");
+        assert_eq!((base.width, base.height), (200, 100));
+        // 继续拖动时预览跟着更新。
+        let before = std::sync::Arc::as_ptr(&base.image);
+        e.drag(p(120.0, 80.0));
+        layers.update(&e);
+        assert_ne!(std::sync::Arc::as_ptr(&layers.base().expect("预览").image), before);
+    }
+
+    #[test]
     fn each_text_draft_gets_a_new_id_even_before_the_previous_one_is_rasterized() {
         let mut e = Editor::new(CROP, vec![]);
         e.set_tool(Tool::Text);

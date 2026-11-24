@@ -194,7 +194,8 @@ pub fn sample_colors(image: &RgbaImage, rect: Rect) -> Colors {
 }
 
 fn is_cjk(c: char) -> bool {
-    matches!(c as u32, 0x2e80..=0x9fff | 0xac00..=0xd7af | 0xff00..=0xffef | 0x3000..=0x303f)
+    // 0x2e80..=0x9fff 已包含 CJK 标点（0x3000..=0x303f）。
+    matches!(c as u32, 0x2e80..=0x9fff | 0xac00..=0xd7af | 0xff00..=0xffef)
 }
 
 /// 中日韩逐字断行，其他文字按单词（含尾随空格）断行。

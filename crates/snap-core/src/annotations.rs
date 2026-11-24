@@ -394,8 +394,24 @@ fn render_layer(
                 }
             }
             let rgb = color(&s.color)?;
+            // 遮罩覆盖整个选区，拖动时每次移动都要重画：透明像素的混色结果只取决于覆盖率，
+            // 先算好 256 种结果直接查表，完全亮区跳过，只有已画过其他标注的像素才逐个混色。
+            let fresh: Vec<image::Rgba<u8>> = (0..=255u8)
+                .map(|coverage| {
+                    let mut pixel = image::Rgba([0, 0, 0, 0]);
+                    blend(&mut pixel, rgb, (1.0 - f64::from(coverage) / 255.0) * s.opacity);
+                    pixel
+                })
+                .collect();
             for (pixel, coverage) in image.pixels_mut().zip(bright) {
-                blend(pixel, rgb, (1.0 - f64::from(coverage) / 255.0) * s.opacity);
+                if coverage == 255 {
+                    continue;
+                }
+                if pixel[3] == 0 {
+                    *pixel = fresh[usize::from(coverage)];
+                } else {
+                    blend(pixel, rgb, (1.0 - f64::from(coverage) / 255.0) * s.opacity);
+                }
             }
             continue;
         }
