@@ -36,7 +36,8 @@ EOF
 
 openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 7300 \
   -config "$work/cert.cnf" -keyout "$work/key.pem" -out "$root/resources/macos-signing.pem"
-openssl rand -base64 24 | tr -d '\n' > "$out/macos-signing.password"
+# Windows 上的 openssl 输出 CRLF；回车必须一起去掉，否则它会成为 .p12 密码的一部分，CI 中解不开证书。
+openssl rand -base64 24 | tr -d '\r\n' > "$out/macos-signing.password"
 # macOS 的 security import 读不了 OpenSSL 3 默认的 AES 加密 .p12，改用 3DES + SHA1 MAC。
 openssl pkcs12 -export -name "$name" -inkey "$work/key.pem" -in "$root/resources/macos-signing.pem" \
   -keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES -macalg sha1 \
