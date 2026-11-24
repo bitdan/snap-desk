@@ -241,6 +241,10 @@ impl Panel {
         let target = snap_core::recognition::services::translation_config(&settings)
             .map(|ai| ai.target_language)
             .unwrap_or_else(|_| "zh-CN".into());
+        // 新窗口没有任何元素持有焦点时按键无处投递，Esc 关不掉窗口；先聚焦面板根节点，
+        // 按键沿焦点路径冒泡到 `key`。点进文本框后焦点移入文本框，Esc 仍会冒泡上来。
+        let focus = cx.focus_handle();
+        focus.focus(window, cx);
         Self {
             image,
             preview,
@@ -256,7 +260,7 @@ impl Panel {
             busy: None,
             error: None,
             message: None,
-            focus: cx.focus_handle(),
+            focus,
             fill: None,
             fill_translation: None,
             pinned: false,
