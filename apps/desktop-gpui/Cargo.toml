@@ -1,6 +1,6 @@
 [package]
 name = "snap-desk-gpui"
-version = "0.2.6-beta.3"
+version = "0.3.0-beta.1"
 license = "GPL-3.0-only"
 description = "Snap Desk desktop app on GPUI (packaged by scripts/package-gpui.mjs with cargo-packager)"
 # gpui-kit 与 gpui-pre 使用 2024 edition。
