@@ -191,6 +191,14 @@ For development, builds, and service integrations, see the [technical guide (Chi
 
 **A shortcut does nothing?** Check whether it is marked in use on the Shortcuts page and run the shortcut test; meanwhile use the tray menu or a command-line action.
 
+**Black screenshots or “no permission” when recording on macOS?** macOS ties the Screen & System Audio Recording grant to the app's signature, so a build with a different signature invalidates the old grant even though the switch still looks on. Clear Snap Desk's old grants in Terminal, quit and reopen Snap Desk, allow access when prompted on the next capture, then restart the app once more:
+
+```bash
+tccutil reset All io.snapdesk.app
+```
+
+You can also remove Snap Desk manually under System Settings → Privacy & Security → Screen & System Audio Recording with the “−” button. The command also clears Accessibility and Input Monitoring grants; allow them again when prompted.
+
 ## Feedback
 
 Use the [issue forms](https://github.com/bitdan/snap-desk/issues/new/choose); Chinese and English are welcome. Include the version, OS, and steps to reproduce, and remove secrets and personal data before sharing screenshots, logs, or diagnostics bundles.
