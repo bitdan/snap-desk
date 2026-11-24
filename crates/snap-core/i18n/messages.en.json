@@ -1242,6 +1242,8 @@
   "还原识别结果": "Restore recognized text",
   "隐藏原图": "Hide original image",
   "显示原图": "Show original image",
+  "展开翻译面板": "Show translation panel",
+  "收起翻译面板": "Hide translation panel",
   "{0} 行 · {1} 字": "{0} lines · {1} characters",
   "正在识别二维码…": "Recognizing QR codes…",
   "正在识别文字…": "Recognizing text…",
