@@ -29,7 +29,8 @@ export function executableNames(platform) {
 
 /**
  * cargo-packager 配置（JSON 字段为 camelCase）；不在发布范围内的平台返回 null。
- * Apple 芯片拒绝运行未签名的应用；未提供 APPLE_SIGNING_IDENTITY 时使用临时签名（ad-hoc），
+ * Apple 芯片拒绝运行未签名的应用。CI 用固定的自签名证书（.github/actions/macos-signing 设置 APPLE_SIGNING_IDENTITY），
+ * 未提供 APPLE_SIGNING_IDENTITY 时使用临时签名（ad-hoc），
  * 用户首次打开仍需在系统设置中放行。
  */
 export function packagerConfig({ platform, root, releaseDirectory, version, env = process.env }) {
