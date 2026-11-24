@@ -168,7 +168,7 @@ Rust 原生实现，不内置浏览器内核。以下为 release 构建的实测
 | --- | --- | --- |
 | Windows x64 | `-setup.exe` 安装包 / `-standalone.exe` 独立 EXE | 功能完整 |
 | macOS Apple 芯片 | `-macos-arm64.dmg` | 功能完整，需 macOS 13.3+ |
-| Linux x64 | `-linux-x64.AppImage` / `-linux-x64.deb` | 预览，需 glibc 2.39+（Ubuntu 24.04 同期） |
+| Linux x64 | `-linux-x64.AppImage` / `-linux-x64.deb` | 预览，需 glibc 2.35+（Ubuntu 22.04 同期） |
 
 <details>
 <summary><strong>macOS 与 Linux 说明</strong></summary>

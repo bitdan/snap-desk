@@ -170,7 +170,7 @@ Download from [Releases](https://github.com/bitdan/snap-desk/releases).
 | --- | --- | --- |
 | Windows x64 | `-setup.exe` installer / `-standalone.exe` standalone EXE | Full feature set |
 | macOS Apple silicon | `-macos-arm64.dmg` | Full feature set, macOS 13.3+ |
-| Linux x64 | `-linux-x64.AppImage` / `-linux-x64.deb` | Preview, glibc 2.39+ (Ubuntu 24.04 era) |
+| Linux x64 | `-linux-x64.AppImage` / `-linux-x64.deb` | Preview, glibc 2.35+ (Ubuntu 22.04 era) |
 
 <details>
 <summary><strong>macOS and Linux notes</strong></summary>

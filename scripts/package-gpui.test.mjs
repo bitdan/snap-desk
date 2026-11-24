@@ -20,6 +20,10 @@ test('按发布清单选择 cargo-packager 格式，主程序与输出目录固�
   assert.deepEqual(config('darwin').formats, ['dmg', 'app'])
   assert.deepEqual(config('linux').formats, ['appimage', 'deb'])
   assert.ok(config('linux').deb.depends.includes('libvulkan1'))
+  // 托盘以 dlopen 加载 AppIndicator：deb 声明依赖，AppImage 显式打包。
+  assert.ok(config('linux').deb.depends.includes('libayatana-appindicator3-1'))
+  assert.ok(config('linux').appimage.libs.includes('libayatana-appindicator3.so.1'))
+  assert.equal(config('win32').appimage, undefined)
   assert.equal(config('freebsd'), null)
 })
 
