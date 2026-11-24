@@ -78,7 +78,7 @@
     </section>
 
     <section class="container" id="download">
-      <div class="plaque"><h2>下载与平台</h2><p>Windows 版功能完整；macOS 与 Linux 的主要功能已适配，目前仅通过 CI 构建和自动化测试，尚未实机验证，欢迎反馈问题。</p></div>
+      <div class="plaque"><h2>下载与平台</h2><p>Windows 与 macOS 版功能完整，macOS 已在 Apple 芯片 Mac 上实机验证；Linux 的主要功能已适配，目前仅通过 CI 构建和自动化测试，尚未实机验证，欢迎反馈问题。</p></div>
       <div class="platforms">
         <article class="platform">
           <span class="status full">功能完整</span>
@@ -88,10 +88,10 @@
           <a class="mlink " href="https://github.com/bitdan/snap-desk/releases">下载<span class="arrow" aria-hidden="true">→</span></a>
         </article>
         <article class="platform">
-          <span class="status preview">预览版</span>
+          <span class="status full">功能完整</span>
           <h3>macOS</h3>
           <p class="arch">Apple 芯片 · macOS 13.3+</p>
-          <ul><li><code>.dmg</code> 磁盘映像</li><li>未经 Apple 公证，首次打开需在“隐私与安全性”中放行</li><li>截图前需授予屏幕录制权限</li><li>尚未实机验证</li></ul>
+          <ul><li><code>.dmg</code> 磁盘映像，支持在线更新</li><li>未经 Apple 公证，首次打开需在“隐私与安全性”中放行</li><li>截图前需在“录屏与系统录音”中授权，更新后无需重新授权</li><li>已实机验证</li></ul>
           <a class="mlink " href="https://github.com/bitdan/snap-desk/releases">下载<span class="arrow" aria-hidden="true">→</span></a>
         </article>
         <article class="platform">
@@ -106,9 +106,9 @@
         <table class="matrix">
           <thead><tr><th scope="col">功能</th><th scope="col">Windows</th><th scope="col">macOS</th><th scope="col">Linux</th></tr></thead>
           <tbody>
-            <tr><th scope="row">截图与标注</th><td class="yes" aria-label="支持">✓</td><td class="yes">✓<small>暂不支持跨屏框选</small></td><td class="yes">✓<small>Wayland 仅单屏</small></td></tr>
+            <tr><th scope="row">截图与标注</th><td class="yes" aria-label="支持">✓</td><td class="yes" aria-label="支持">✓</td><td class="yes">✓<small>Wayland 仅单屏</small></td></tr>
             <tr><th scope="row">桌面贴图</th><td class="yes" aria-label="支持">✓</td><td class="yes" aria-label="支持">✓</td><td class="yes" aria-label="支持">✓</td></tr>
-            <tr><th scope="row">识别与翻译</th><td class="yes" aria-label="支持">✓</td><td class="yes" aria-label="支持">✓</td><td class="yes" aria-label="支持">✓</td></tr>
+            <tr><th scope="row">识别与翻译</th><td class="yes" aria-label="支持">✓</td><td class="yes">✓<small>离线识别用 Apple Vision</small></td><td class="yes" aria-label="支持">✓</td></tr>
             <tr><th scope="row">滚动截图</th><td class="yes" aria-label="支持">✓</td><td class="yes" aria-label="支持">✓</td><td class="yes">✓<small>X11</small></td></tr>
             <tr><th scope="row">录屏</th><td class="yes" aria-label="支持">✓</td><td class="yes" aria-label="支持">✓</td><td class="yes">✓<small>Wayland 经屏幕共享门户</small></td></tr>
             <tr><th scope="row">剪贴板历史</th><td class="yes" aria-label="支持">✓</td><td class="yes" aria-label="支持">✓</td><td class="yes">✓<small>Wayland 经 Xwayland</small></td></tr>

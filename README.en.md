@@ -161,15 +161,15 @@ Download from [Releases](https://github.com/bitdan/snap-desk/releases).
 | Platform | File | Status |
 | --- | --- | --- |
 | Windows x64 | `-setup.exe` installer / `-standalone.exe` standalone EXE | Full feature set |
-| macOS Apple silicon | `-macos-arm64.dmg` | Preview, macOS 13.3+ |
+| macOS Apple silicon | `-macos-arm64.dmg` | Full feature set, macOS 13.3+ |
 | Linux x64 | `-linux-x64.AppImage` / `-linux-x64.deb` | Preview, glibc 2.39+ (Ubuntu 24.04 era) |
 
 <details>
 <summary><strong>macOS and Linux notes</strong></summary>
 <br />
 
-- The macOS and Linux builds have only passed CI builds and automated tests and have not been tested on real hardware; please open an issue if something does not work.
-- **macOS**: not notarized by Apple. On first launch, allow it in System Settings → Privacy & Security, then allow Snap Desk under Privacy & Security → Screen & System Audio Recording (called Screen Recording on macOS 14 and earlier). Selecting across screens, the local translation engine, and local PaddleOCR are not available yet.
+- **macOS**: tested on an Apple silicon Mac, with the same features as the Windows version. Not notarized by Apple: on first launch, allow it in System Settings → Privacy & Security, then allow Snap Desk under Privacy & Security → Screen & System Audio Recording (called Screen Recording on macOS 14 and earlier). The app is signed with a fixed certificate, so updates keep the permission. Offline text recognition uses the built-in Apple Vision; PaddleOCR, WeChat OCR, and the offline translation engine are Windows-only, so use an online service instead.
+- The Linux build has only passed CI builds and automated tests and has not been tested on real hardware; please open an issue if something does not work.
 - **Linux**: the AppImage (about 100 MB) bundles its dependencies and updates online; the deb (about 20 MB) is upgraded by installing the new package. On Wayland, capture is single-display, recording goes through the ScreenCast portal, pause/resume, input effects, and live annotation are X11-only, clipboard history and selected-text translation go through Xwayland, and direct paste falls back to copy only.
 
 </details>
