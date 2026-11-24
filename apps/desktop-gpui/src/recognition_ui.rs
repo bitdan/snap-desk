@@ -1,7 +1,9 @@
 //! 截图识别结果窗口的界面：文字识别、翻译与二维码结果。
 //!
 //! 文字识别：左侧浅底原图（识别框描边），右侧整理工具条与可编辑文字，底栏为行数/字数与“翻译文字”“复制文字”。
-//! 截图翻译：右侧为浅底上的原文卡片、语言条与译文卡片，底栏“返回识别”。二维码：结果卡片列表与底栏。
+//! 截图翻译：右侧为浅底上的原文卡片、语言条与译文卡片，底栏“返回识别”。开启“覆盖原文”时只显示原图一栏
+//! （译文画在图上），底栏提供显示原文/译文与“复制译文”；出错或隐藏原图时恢复右侧面板。
+//! 二维码：结果卡片列表与底栏。
 use super::{Mode, Panel, TARGETS};
 use crate::theme;
 use gpui_kit::{
@@ -934,19 +936,27 @@ impl Render for Panel {
                 (self.qr_body(cx, &c).into_any_element(), footer)
             }
             mode => {
-                let main_width = (width * 0.45).max(320.0).min(width);
-                let image = self.image_pane((width - main_width).max(0.0), height - 52.0, &c);
-                let main = if mode == Mode::Ocr {
-                    self.ocr_main(cx, &c)
+                // 覆盖原文时只留原图一栏（译文画在图上），右侧面板不渲染。
+                let only = self.overlay_only();
+                let main_width = if only {
+                    0.0
                 } else {
-                    self.translate_main(cx, &c)
+                    (width * 0.45).max(320.0).min(width)
                 };
+                let image = self.image_pane((width - main_width).max(0.0), height - 52.0, &c);
+                let main = (!only).then(|| {
+                    if mode == Mode::Ocr {
+                        self.ocr_main(cx, &c)
+                    } else {
+                        self.translate_main(cx, &c)
+                    }
+                });
                 let content = div()
                     .flex_1()
                     .min_h_0()
                     .flex()
                     .children(image)
-                    .child(main)
+                    .children(main)
                     .into_any_element();
                 let mut footer = div()
                     .flex()
@@ -1092,7 +1102,23 @@ impl Render for Panel {
                                     cx.notify();
                                 },
                             )),
-                        );
+                        )
+                        // 只显示原图时右侧面板的复制按钮不在，底栏补上主操作。
+                        .children(only.then(|| {
+                            let translated = !self.translated.read(cx).value().trim().is_empty();
+                            footer_button(
+                                "translate-copy-overlay",
+                                Some(icons::COPY),
+                                self.t("复制译文"),
+                                true,
+                                translated && self.busy.is_none(),
+                                &c,
+                            )
+                            .on_click(cx.listener(|p, _: &ClickEvent, _, cx| {
+                                let value = p.translated.read(cx).value().to_string();
+                                p.copy(value, "译文已复制。", cx);
+                            }))
+                        }));
                 }
                 (content, footer)
             }

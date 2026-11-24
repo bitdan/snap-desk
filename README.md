@@ -15,7 +15,8 @@
   <a href="#功能">功能</a> ·
   <a href="#开始使用">开始使用</a> ·
   <a href="TECHNICAL.md">技术说明</a> ·
-  <a href="Snap_Desk_TODO.md">开发进度</a>
+  <a href="Snap_Desk_TODO.md">开发进度</a> ·
+  <a href="docs/performance/README.md">性能测试</a>
 </p>
 
 <p align="center">简体中文 · <a href="README.en.md">English</a></p>
@@ -23,6 +24,12 @@
 | 浅色主题 | 深色主题 |
 | :---: | :---: |
 | ![主窗口截图页，浅色主题](docs/assets/screenshots/main-light.png) | ![主窗口截图页，深色主题](docs/assets/screenshots/main-dark.png) |
+
+## 性能
+
+Rust 原生实现，不内置浏览器内核。以下为 release 构建的实测数据，完整数据见 [性能测试](docs/performance/README.md)。
+
+<p align="center"><img src="docs/assets/performance.svg" alt="实测性能：托盘常驻内存 7 MB，截图浮层 0.12 秒弹出，离线识别一屏文字 0.94 秒，DeepL 翻译 1.59 秒；连续使用 13 分钟内存曲线，空闲回落到 67 MB 并保持；各操作每次耗时分布" width="960" /></p>
 
 ## 功能
 

@@ -1,0 +1,4 @@
+# GitHub Pages（传统模式，从 master 的 /docs 用 Jekyll 构建）发布配置。
+# performance/ 是项目内部的性能测试脚本与结果，只在仓库中查看，不发布到官网。
+exclude:
+  - performance
