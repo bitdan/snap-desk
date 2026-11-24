@@ -1319,7 +1319,7 @@
   "已安装": "Installed",
   "未安装": "Not installed",
   "系统权限": "System permissions",
-  "屏幕录制": "Screen Recording",
+  "录屏与系统录音": "Screen & System Audio Recording",
   "辅助功能": "Accessibility",
   "已授权": "Granted",
   "未授权": "Not granted",
@@ -1383,5 +1383,5 @@
   "保存后可测试。": "Save the service to test it.",
   "测试连接": "Test connection",
   "密钥不存在。": "Key not found.",
-  "若系统设置中已开启“屏幕录制”但这里仍显示未授权，通常是应用更新后旧授权记录失效：请在系统设置中移除 Snap Desk 后重新添加并重启应用。": "If Screen Recording is enabled in System Settings but still shows as not granted here, the old permission entry usually stopped matching after an update. Remove Snap Desk in System Settings, add it again, then restart the app."
+  "若“系统设置 → 隐私与安全性 → 录屏与系统录音”中已开启 Snap Desk，这里仍显示未授权，通常是应用更新后旧授权记录失效：在该列表中选中 Snap Desk，点“−”移除，退出并重新打开 Snap Desk 后按提示重新授权。": "If Snap Desk is enabled in System Settings → Privacy & Security → Screen & System Audio Recording but still shows as not granted here, the old permission entry stopped matching after an update. Select Snap Desk in that list, click “−” to remove it, quit and reopen Snap Desk, then grant the permission again when prompted."
 }

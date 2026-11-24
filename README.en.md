@@ -169,7 +169,7 @@ Download from [Releases](https://github.com/bitdan/snap-desk/releases).
 <br />
 
 - The macOS and Linux builds have only passed CI builds and automated tests and have not been tested on real hardware; please open an issue if something does not work.
-- **macOS**: not notarized by Apple. On first launch, allow it in System Settings → Privacy & Security and grant Screen Recording permission. Selecting across screens, the local translation engine, and local PaddleOCR are not available yet.
+- **macOS**: not notarized by Apple. On first launch, allow it in System Settings → Privacy & Security, then allow Snap Desk under Privacy & Security → Screen & System Audio Recording (called Screen Recording on macOS 14 and earlier). Selecting across screens, the local translation engine, and local PaddleOCR are not available yet.
 - **Linux**: the AppImage (about 100 MB) bundles its dependencies and updates online; the deb (about 20 MB) is upgraded by installing the new package. On Wayland, capture is single-display, recording goes through the ScreenCast portal, pause/resume, input effects, and live annotation are X11-only, clipboard history and selected-text translation go through Xwayland, and direct paste falls back to copy only.
 
 </details>

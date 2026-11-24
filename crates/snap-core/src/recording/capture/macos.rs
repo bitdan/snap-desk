@@ -26,7 +26,7 @@ pub fn now() -> i64 {
 /// 录屏需要“屏幕录制”授权；未授权时系统只返回桌面壁纸，必须提前拒绝而不是录出空白视频。
 pub fn supported() -> Result<(), String> {
     if !crate::macos::screen_capture_granted() {
-        return Err("录屏需要“屏幕录制”权限，请在“设置 → 通用 → 系统权限”中授权后重启应用。".into());
+        return Err("录屏需要“录屏与系统录音”权限，请在“系统设置 → 隐私与安全性 → 录屏与系统录音”中允许 Snap Desk 后退出并重新打开应用。".into());
     }
     Ok(())
 }

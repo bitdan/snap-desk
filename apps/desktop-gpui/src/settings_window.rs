@@ -1547,7 +1547,7 @@ impl SettingsView {
             let screen = macos::screen_capture_granted();
             let input = macos::input_monitoring_granted();
             let rows = [
-                ("屏幕录制", screen, PrivacyPane::ScreenCapture),
+                ("录屏与系统录音", screen, PrivacyPane::ScreenCapture),
                 ("辅助功能", macos::accessibility_trusted(), PrivacyPane::Accessibility),
                 ("输入监控", input, PrivacyPane::InputMonitoring),
             ]
@@ -1585,7 +1585,7 @@ impl SettingsView {
             let mut elements = vec![heading(t("系统权限")).into_any_element(), card(rows).into_any_element()];
             if !screen {
                 elements.push(
-                    note(t("若系统设置中已开启“屏幕录制”但这里仍显示未授权，通常是应用更新后旧授权记录失效：请在系统设置中移除 Snap Desk 后重新添加并重启应用。"))
+                    note(t("若“系统设置 → 隐私与安全性 → 录屏与系统录音”中已开启 Snap Desk，这里仍显示未授权，通常是应用更新后旧授权记录失效：在该列表中选中 Snap Desk，点“−”移除，退出并重新打开 Snap Desk 后按提示重新授权。"))
                         .into_any_element(),
                 );
             }
