@@ -89,9 +89,10 @@ jobs:
           - name: macOS arm64
             os: macos-15
             artifact: release-macos-arm64
-          # 截图库的 PipeWire 绑定要求 0.3.65 以上，Ubuntu 22.04 自带的版本过旧，无法编译。
+          # 在 Ubuntu 22.04（glibc 2.35）上构建：二进制和 AppImage 内置的库只要求构建机的 glibc，
+          # 22.04 及之后的发行版都能运行（AppImage 目录的测试环境 glibc 低于 2.38）。
           - name: Linux x64
-            os: ubuntu-24.04
+            os: ubuntu-22.04
             artifact: release-linux-x64
     defaults:
       run:
@@ -128,6 +129,8 @@ jobs:
         with:
           workspaces: ". -> target"
           shared-key: native
+          # 按 runner 镜像区分：不同 Ubuntu 版本的 glibc 不同，旧镜像不能运行新镜像编译的构建脚本。
+          key: ${{ matrix.os }}
           save-if: false
 
       # 测试失败时停止发布；Rust 默认跳过需要实机桌面或模型资源的 ignored 测试。
@@ -156,6 +159,11 @@ jobs:
             exit 1
           fi
           npm run desktop:package
+
+      # 旧发行版兼容：AppImage 内全部 ELF 文件要求的 glibc 不得高于 22.04 的 2.35。
+      - name: Check Linux glibc requirement
+        if: runner.os == 'Linux'
+        run: bash scripts/ci/check-glibc.sh "$(ls target/release/packages/*.AppImage | head -n1)" 2.35
 
       # 统一文件名后交给发布任务；此处不签名，签名私钥只在构建和最终发布步骤使用。
       - name: Collect release assets

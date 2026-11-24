@@ -8,17 +8,20 @@ runs:
     - name: Compute apt cache key
       id: key
       shell: bash
-      run: echo "week=$(date -u +%G-%V)" >> "$GITHUB_OUTPUT"
+      # ImageOS 区分 runner 镜像（如 ubuntu22），不同 Ubuntu 版本的 deb 包不能混用。
+      run: |
+        echo "week=$(date -u +%G-%V)" >> "$GITHUB_OUTPUT"
+        echo "image=${ImageOS:-unknown}" >> "$GITHUB_OUTPUT"
 
     - name: Restore apt packages
       id: restore
       uses: actions/cache/restore@v4
       with:
         path: ~/.cache/snap-desk-apt
-        key: apt-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/ci/install-linux-deps.sh') }}-${{ steps.key.outputs.week }}
+        key: apt-${{ runner.os }}-${{ steps.key.outputs.image }}-${{ runner.arch }}-${{ hashFiles('scripts/ci/install-linux-deps.sh') }}-${{ steps.key.outputs.week }}
         restore-keys: |
-          apt-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/ci/install-linux-deps.sh') }}-
-          apt-${{ runner.os }}-${{ runner.arch }}-
+          apt-${{ runner.os }}-${{ steps.key.outputs.image }}-${{ runner.arch }}-${{ hashFiles('scripts/ci/install-linux-deps.sh') }}-
+          apt-${{ runner.os }}-${{ steps.key.outputs.image }}-${{ runner.arch }}-
 
     - name: Install packages
       shell: bash

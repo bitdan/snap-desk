@@ -77,8 +77,9 @@ jobs:
             os: windows-2022
           - name: macOS arm64
             os: macos-15
+          # 与发布流水线一致在 22.04 上构建测试，标签构建才能复用这里的缓存。
           - name: Linux x64
-            os: ubuntu-24.04
+            os: ubuntu-22.04
     defaults:
       run:
         shell: bash
@@ -100,6 +101,8 @@ jobs:
         with:
           workspaces: ". -> target"
           shared-key: native
+          # 与发布流水线相同的镜像区分键：不同 Ubuntu 版本的构建脚本不能混用。
+          key: ${{ matrix.os }}
           save-if: ${{ github.ref == 'refs/heads/master' }}
       # 与发布流水线使用同一条命令（snap-core、GPUI 应用与签名工具）；单元测试不打开窗口，
       # 默认跳过需要实机桌面或模型资源的 ignored 测试。
