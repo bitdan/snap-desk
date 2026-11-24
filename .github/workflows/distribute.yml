@@ -117,11 +117,15 @@ jobs:
           path: distribution
 
       # wingetcreate submit 用给定清单向 microsoft/winget-pkgs 提 PR，首次提交与后续更新相同。
+      # 令牌经 WINGET_CREATE_GITHUB_TOKEN 传入：--token 参数可能被写进日志。
       - name: Submit to winget-pkgs
         if: env.WINGET_TOKEN != ''
+        env:
+          WINGET_CREATE_GITHUB_TOKEN: ${{ secrets.WINGET_TOKEN }}
         run: |
+          Get-ChildItem -Recurse distribution | Select-Object -ExpandProperty FullName
           Invoke-WebRequest https://aka.ms/wingetcreate/latest -OutFile wingetcreate.exe
-          ./wingetcreate.exe submit --token $env:WINGET_TOKEN distribution/winget
+          ./wingetcreate.exe submit (Resolve-Path distribution/winget).Path
 
       - name: Skip
         if: env.WINGET_TOKEN == ''

@@ -17,6 +17,7 @@ import { RELEASE_ASSETS } from './release-assets.mjs'
 
 export const REPOSITORY = 'bitdan/snap-desk'
 export const WINGET_ID = 'bitdan.SnapDesk'
+const WINGET_MANIFEST_VERSION = '1.9.0'
 const HOMEPAGE = `https://github.com/${REPOSITORY}`
 const DESCRIPTION = 'Screenshot, pin, OCR and translation tool'
 
@@ -95,13 +96,15 @@ end
 `
 }
 
-/** WinGet 多文件清单（version / installer / defaultLocale），由 wingetcreate submit 提交到 winget-pkgs。 */
+/** WinGet 多文件清单（version / installer / defaultLocale），由 wingetcreate submit 提交到 winget-pkgs。
+ *  每个文件必须以 yaml-language-server 的 schema 注释开头，否则 wingetcreate 校验报“Schema header not found”。 */
 export function wingetManifests(version, hashes) {
+  const schema = (type) => `# yaml-language-server: $schema=https://aka.ms/winget-manifest.${type}.${WINGET_MANIFEST_VERSION}.schema.json\n\n`
   const head = `PackageIdentifier: ${WINGET_ID}\nPackageVersion: ${version}\n`
-  const tail = 'ManifestVersion: 1.9.0\n'
+  const tail = `ManifestVersion: ${WINGET_MANIFEST_VERSION}\n`
   return {
-    [`${WINGET_ID}.yaml`]: `${head}DefaultLocale: en-US\nManifestType: version\n${tail}`,
-    [`${WINGET_ID}.installer.yaml`]: `${head}InstallerType: nullsoft
+    [`${WINGET_ID}.yaml`]: `${schema('version')}${head}DefaultLocale: en-US\nManifestType: version\n${tail}`,
+    [`${WINGET_ID}.installer.yaml`]: `${schema('installer')}${head}InstallerType: nullsoft
 Scope: user
 InstallModes:
 - interactive
@@ -113,7 +116,7 @@ Installers:
   InstallerSha256: ${hashes.setup.toUpperCase()}
 ManifestType: installer
 ${tail}`,
-    [`${WINGET_ID}.locale.en-US.yaml`]: `${head}PackageLocale: en-US
+    [`${WINGET_ID}.locale.en-US.yaml`]: `${schema('defaultLocale')}${head}PackageLocale: en-US
 Publisher: bitdan
 PublisherUrl: https://github.com/bitdan
 PackageName: Snap Desk

@@ -36,6 +36,14 @@ test('WinGet 清单包含三个文件且哈希为大写', () => {
   assert.match(files[`${WINGET_ID}.installer.yaml`], new RegExp(`InstallerSha256: ${hashes.setup.toUpperCase()}`))
 })
 
+test('WinGet 清单以对应类型的 schema 注释开头', () => {
+  const files = wingetManifests('1.2.3', hashes)
+  const header = (type) => new RegExp(`^# yaml-language-server: \\$schema=https://aka\\.ms/winget-manifest\\.${type}\\.1\\.9\\.0\\.schema\\.json\\n`)
+  assert.match(files[`${WINGET_ID}.yaml`], header('version'))
+  assert.match(files[`${WINGET_ID}.installer.yaml`], header('installer'))
+  assert.match(files[`${WINGET_ID}.locale.en-US.yaml`], header('defaultLocale'))
+})
+
 test('AUR PKGBUILD 与 .SRCINFO 版本和哈希一致', () => {
   const pkg = aurPackage('1.2.3', hashes)
   assert.match(pkg.PKGBUILD, /pkgver=1\.2\.3/)
