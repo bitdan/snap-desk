@@ -21,6 +21,14 @@
 
 <p align="center"><a href="README.md">简体中文</a> · English</p>
 
+<p align="center">
+  <a href="https://github.com/bitdan/snap-desk/releases/latest"><img src="https://img.shields.io/github/v/release/bitdan/snap-desk?logo=github&label=release" alt="Latest release" /></a>
+  <a href="https://github.com/bitdan/snap-desk/releases"><img src="https://img.shields.io/github/downloads/bitdan/snap-desk/total?label=downloads" alt="Downloads" /></a>
+  <img src="https://img.shields.io/badge/language-Rust-dea584?logo=rust" alt="Language: Rust" />
+  <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-1f9ad6" alt="Platforms: Windows, macOS, Linux" />
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/bitdan/snap-desk" alt="License: GPL-3.0" /></a>
+</p>
+
 | Light theme | Dark theme |
 | :---: | :---: |
 | ![Main window capture page, light theme](docs/assets/screenshots/main-light.png) | ![Main window capture page, dark theme](docs/assets/screenshots/main-dark.png) |
