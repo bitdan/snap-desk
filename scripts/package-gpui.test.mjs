@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { resolve } from 'node:path'
-import { executableNames, packagerConfig } from './package-gpui.mjs'
+import { appRunPath, executableNames, packagerConfig } from './package-gpui.mjs'
 
 const root = resolve('/repo')
 const releaseDirectory = resolve(root, 'target/release')
@@ -43,4 +43,11 @@ test('图标与随附许可证取自 resources/', () => {
 test('构建产物复制为主程序名交给打包器', () => {
   assert.deepEqual(executableNames('win32'), { built: 'snap-desk-gpui.exe', bundled: 'snap-desk.exe' })
   assert.deepEqual(executableNames('linux'), { built: 'snap-desk-gpui', bundled: 'snap-desk' })
+})
+
+test('AppRun 放在 cargo-packager 的 Linux 工具缓存里', () => {
+  assert.equal(appRunPath({}, '/home/runner'), resolve('/home/runner/.cache/.cargo-packager/AppImage/AppRun-x86_64'))
+  assert.equal(appRunPath({ XDG_CACHE_HOME: '/var/cache/ci' }, '/home/runner'), resolve('/var/cache/ci/.cargo-packager/AppImage/AppRun-x86_64'))
+  // 与 dirs::cache_dir 一致：相对路径的 XDG_CACHE_HOME 无效，回退到 ~/.cache。
+  assert.equal(appRunPath({ XDG_CACHE_HOME: 'cache' }, '/home/runner'), resolve('/home/runner/.cache/.cargo-packager/AppImage/AppRun-x86_64'))
 })

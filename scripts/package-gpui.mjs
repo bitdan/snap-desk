@@ -5,14 +5,39 @@
 // 需要先安装 cargo-packager：cargo install cargo-packager --version 0.11.8 --locked
 // 用法：node scripts/package-gpui.mjs [--debug]
 import { spawnSync } from 'node:child_process'
-import { copyFileSync, existsSync, mkdirSync, rmSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { chmodSync, copyFileSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { PACKAGES_DIRECTORY, packageFormats } from './release-assets.mjs'
 import { rustEnvironment } from './rust-env.mjs'
 import { readVersion, syncVersion } from './sync-version.mjs'
 
 export const PACKAGER_VERSION = '0.11.8'
+
+/** cargo-packager 0.11.8 打包 AppImage 时使用的 AppRun（x86_64），与它内置的下载地址相同。 */
+export const APPRUN_URL = 'https://github.com/tauri-apps/binary-releases/releases/download/apprun-old/AppRun-x86_64'
+
+/**
+ * cargo-packager 在 Linux 上的工具缓存里的 AppRun 路径（dirs::cache_dir()/.cargo-packager/AppImage）。
+ * cargo-packager 下载时把 AppRun 设为 0764 并原样复制进 AppImage，只有属主能执行：AppImage 目录测试以普通用户
+ * 在 firejail 中启动，得到 “AppRun: Permission denied”。打包前放好 0755 的 AppRun，cargo-packager 见文件已存在便不再下载。
+ */
+export function appRunPath(env = process.env, home = homedir()) {
+  const cache = env.XDG_CACHE_HOME?.startsWith('/') ? env.XDG_CACHE_HOME : resolve(home, '.cache')
+  return resolve(cache, '.cargo-packager', 'AppImage', 'AppRun-x86_64')
+}
+
+async function prepareAppRun(path) {
+  if (!existsSync(path)) {
+    const response = await fetch(APPRUN_URL)
+    if (!response.ok) throw new Error(`下载 AppRun 失败：HTTP ${response.status}`)
+    mkdirSync(dirname(path), { recursive: true })
+    writeFileSync(path, Buffer.from(await response.arrayBuffer()))
+  }
+  chmodSync(path, 0o755)
+  console.log(`AppRun（0755）：${path}`)
+}
 
 /** Linux deb 的运行依赖：录屏（PipeWire/GStreamer）、X11 截图与输入、密钥存储、GPUI 渲染（Vulkan、字体）、托盘（AppIndicator）。 */
 const DEB_DEPENDS = [
@@ -116,6 +141,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   if (packager.status !== 0 || !packager.stdout.includes(PACKAGER_VERSION)) {
     throw new Error(`需要 cargo-packager ${PACKAGER_VERSION}：cargo install cargo-packager --version ${PACKAGER_VERSION} --locked`)
   }
+  if (process.platform === 'linux') await prepareAppRun(appRunPath())
   // 以 JSON 字符串传入配置：传文件路径时 cargo-packager 会切换到文件所在目录，Windows 上对规范化路径会失败。
   run('cargo', ['packager', '--config', JSON.stringify(config)], { cwd: root, env })
 
