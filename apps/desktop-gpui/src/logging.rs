@@ -122,6 +122,14 @@ pub fn init() -> Option<PathBuf> {
     if log::set_boxed_logger(Box::new(logger)).is_ok() {
         log::set_max_level(level);
     }
+    // release 版是 windows 子系统，没有控制台；panic 信息默认写 stderr 会丢失，
+    // 窗口回调里的 panic 还会直接中止进程（0xc0000409）。先把位置与调用栈写进日志，再交给默认处理。
+    let default = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let backtrace = std::backtrace::Backtrace::force_capture();
+        log::error!("event=gpui.panic message={info}\n{backtrace}");
+        default(info);
+    }));
     path
 }
 

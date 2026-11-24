@@ -1,0 +1,37 @@
+name: macOS self-signed code signing
+description: >-
+  用固定的自签名证书给 macOS 应用签名，代替每次构建都会变化的 ad-hoc 签名。
+  系统“屏幕录制”等隐私授权按签名身份记录，身份不变，应用更新后授权仍然有效。
+  未配置证书（如来自 fork 的 PR）时什么都不做，打包脚本回退到 ad-hoc 签名。
+inputs:
+  certificate:
+    description: 自签名证书与私钥的 .p12，base64 编码（secrets.MACOS_SIGNING_CERTIFICATE）
+    required: false
+  password:
+    description: .p12 的密码（secrets.MACOS_SIGNING_CERTIFICATE_PASSWORD）
+    required: false
+runs:
+  using: composite
+  steps:
+    - name: Trust certificate and export signing identity
+      if: runner.os == 'macOS'
+      shell: bash
+      env:
+        CERTIFICATE: ${{ inputs.certificate }}
+        PASSWORD: ${{ inputs.password }}
+      run: |
+        if [ -z "$CERTIFICATE" ] || [ -z "$PASSWORD" ]; then
+          echo '未配置 macOS 签名证书，使用 ad-hoc 签名。'
+          exit 0
+        fi
+        # 自签名证书默认不受信任，codesign 找不到可用身份；在 runner 的系统钥匙串里把它设为代码签名可信。
+        # 公钥证书随仓库提交（resources/macos-signing.pem），私钥只在 secrets 中。
+        sudo security add-trusted-cert -d -r trustRoot -p codeSign \
+          -k /Library/Keychains/System.keychain resources/macos-signing.pem
+        # cargo-packager 读取 APPLE_CERTIFICATE / APPLE_CERTIFICATE_PASSWORD 导入临时钥匙串后签名；
+        # scripts/package-gpui.mjs 读取 APPLE_SIGNING_IDENTITY 作为签名身份（证书通用名）。
+        {
+          echo "APPLE_CERTIFICATE=$CERTIFICATE"
+          echo "APPLE_CERTIFICATE_PASSWORD=$PASSWORD"
+          echo 'APPLE_SIGNING_IDENTITY=Snap Desk Self-Signed'
+        } >> "$GITHUB_ENV"

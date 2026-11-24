@@ -2,7 +2,7 @@
 //!
 //! 文字识别：左侧浅底原图（识别框描边），右侧整理工具条与可编辑文字，底栏为行数/字数与“翻译文字”“复制文字”。
 //! 截图翻译：右侧为浅底上的原文卡片、语言条与译文卡片，底栏“返回识别”。开启“覆盖原文”时只显示原图一栏
-//! （译文画在图上），底栏提供显示原文/译文与“复制译文”；出错或隐藏原图时恢复右侧面板。
+//! （译文画在图上），底栏提供显示原文/译文、展开 / 收起翻译面板与“复制译文”；出错或隐藏原图时恢复右侧面板。
 //! 二维码：结果卡片列表与底栏。
 use super::{Mode, Panel, TARGETS};
 use crate::theme;
@@ -33,6 +33,7 @@ mod icons {
     icon!(TYPE, "type");
     icon!(RETRY, "rotate-ccw");
     icon!(EYE, "eye");
+    icon!(PANEL, "panel-right");
 }
 
 /// `--ocr-*` 与 `--qr-*` 色值。
@@ -1082,6 +1083,21 @@ impl Render for Panel {
                                 }))
                             }),
                         )
+                        .children(self.panel_collapsible().then(|| {
+                            let open = self.show_panel;
+                            tool_button(
+                                "translate-panel",
+                                icons::PANEL,
+                                self.t(if open { "收起翻译面板" } else { "展开翻译面板" }),
+                                open,
+                                true,
+                                &c,
+                            )
+                            .on_click(cx.listener(|p, _: &ClickEvent, _, cx| {
+                                p.show_panel = !p.show_panel;
+                                cx.notify();
+                            }))
+                        }))
                         .child(pin)
                         .child(
                             tool_button(

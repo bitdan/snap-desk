@@ -169,7 +169,7 @@ Download from [Releases](https://github.com/bitdan/snap-desk/releases).
 <br />
 
 - The macOS and Linux builds have only passed CI builds and automated tests and have not been tested on real hardware; please open an issue if something does not work.
-- **macOS**: not notarized by Apple. On first launch, allow it in System Settings → Privacy & Security and grant Screen Recording permission. Selecting across screens, the local translation engine, and local PaddleOCR are not available yet.
+- **macOS**: not notarized by Apple. On first launch, allow it in System Settings → Privacy & Security, then allow Snap Desk under Privacy & Security → Screen & System Audio Recording (called Screen Recording on macOS 14 and earlier). Selecting across screens, the local translation engine, and local PaddleOCR are not available yet.
 - **Linux**: the AppImage (about 100 MB) bundles its dependencies and updates online; the deb (about 20 MB) is upgraded by installing the new package. On Wayland, capture is single-display, recording goes through the ScreenCast portal, pause/resume, input effects, and live annotation are X11-only, clipboard history and selected-text translation go through Xwayland, and direct paste falls back to copy only.
 
 </details>
@@ -190,6 +190,14 @@ For development, builds, and service integrations, see the [technical guide (Chi
 **Is it free?** Yes, free and open source (GPL-3.0-only). Third-party online services may charge.
 
 **A shortcut does nothing?** Check whether it is marked in use on the Shortcuts page and run the shortcut test; meanwhile use the tray menu or a command-line action.
+
+**Black screenshots or “no permission” when recording on macOS?** macOS ties the Screen & System Audio Recording grant to the app's signature, so a build with a different signature invalidates the old grant even though the switch still looks on. Clear Snap Desk's old grants in Terminal, quit and reopen Snap Desk, allow access when prompted on the next capture, then restart the app once more:
+
+```bash
+tccutil reset All io.snapdesk.app
+```
+
+You can also remove Snap Desk manually under System Settings → Privacy & Security → Screen & System Audio Recording with the “−” button. The command also clears Accessibility and Input Monitoring grants; allow them again when prompted.
 
 ## Feedback
 

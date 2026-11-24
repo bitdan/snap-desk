@@ -99,17 +99,21 @@ Linux 另需截图库的系统依赖，Debian / Ubuntu 可执行 `bash scripts/c
 - 安装包由 [cargo-packager](https://github.com/crabnebula-dev/cargo-packager) 生成（`scripts/package-gpui.mjs`，需先 `cargo install cargo-packager --version 0.11.8 --locked`），产物在 `target/release/packages/`；macOS 的 `.app.tar.gz` 由该脚本压缩 `.app` 得到。Windows 安装包默认装到当前用户目录，不需要管理员权限，也不再检查 WebView2。
 - 更新签名由 `tools/release-sign`（minisign）生成，可信注释写入 `version:<版本>`，客户端据此拒绝版本不符的包；私钥经 `SNAP_DESK_SIGNING_PRIVATE_KEY`（及可选的 `SNAP_DESK_SIGNING_PRIVATE_KEY_PASSWORD`）传入，CI 中取自 `TAURI_SIGNING_PRIVATE_KEY` Secret，公钥为 `SNAP_DESK_UPDATER_PUBLIC_KEY` Variable，编译时嵌入程序。
 - 发布流水线分三段：校验标签 / 更新说明 / 签名配置 → 三个平台各自测试、打包并上传附件 → 汇总签名、生成 `updater.json` 并公开。任一平台失败都不会创建 Release。
-- macOS 默认使用临时签名（ad-hoc），未经公证；在流水线中配置 `APPLE_SIGNING_IDENTITY` 后改用开发者证书。ONNX Runtime 不提供 Intel Mac 预编译库，因此不构建 macOS x64。
+- macOS 使用固定的自签名证书签名（`.github/actions/macos-signing`，证书由 `scripts/macos-signing-cert.sh` 生成一次：公钥 `resources/macos-signing.pem` 随仓库提交，`.p12` 与密码存入 `MACOS_SIGNING_CERTIFICATE` / `MACOS_SIGNING_CERTIFICATE_PASSWORD` secrets），签名身份跨版本不变，“屏幕录制”等系统授权在更新后仍然有效；未经公证，首次打开仍需在系统设置中放行。未配置 secrets 时回退到临时签名（ad-hoc），每次构建签名都会变化，更新后需重新授权。ONNX Runtime 不提供 Intel Mac 预编译库，因此不构建 macOS x64。
 - Linux 在 Ubuntu 24.04 上构建（截图库的 PipeWire 绑定要求 0.3.65 以上），生成的程序需要 glibc 2.39 及以上的发行版；截图依赖 X11，Wayland 会话会给出提示。
 
 - AppImage 由 linuxdeploy 把主程序依赖的系统库一并打包；deb 依赖系统安装的库，因此小得多。
+- 正式版公开后，`distribute.yml` 把安装描述推送到包管理器（测试版不分发）；清单由 `scripts/distribution.mjs` 按附件实际哈希生成，也可 `gh workflow run distribute.yml -f tag=v<版本>` 补发。对应 secret 未配置的渠道会跳过：
+  - Scoop（独立 EXE）与 Homebrew Cask（DMG）共用 tap 仓库 `bitdan/homebrew-snap-desk`（`bucket/`、`Casks/`），需 `TAP_TOKEN`。安装：`scoop bucket add snap-desk https://github.com/bitdan/homebrew-snap-desk`、`brew install --cask bitdan/snap-desk/snap-desk`。
+  - WinGet（NSIS 安装包，`bitdan.SnapDesk`）由 wingetcreate 向 `microsoft/winget-pkgs` 提 PR，需 `WINGET_TOKEN`（classic PAT，`public_repo`），合并要等社区审核。
+  - AUR `snap-desk-bin`（解包 deb），需 `AUR_SSH_PRIVATE_KEY`，且包名需先在 AUR 网站登录账号后由首次推送创建。
 
 ### 持续集成
 
 - 推送到 `master` 和 PR 触发脚本检查 / 测试，以及 Windows、macOS、Linux 三个平台的 `cargo test --workspace`；非 Windows 的平台分支只在这里被编译。
 - 只改 `*.md`、`docs/` 或 `LICENSE` 的提交不触发 CI；测试与构建不读取这些文件，同时改了代码的提交照常运行。`legal/` 下的许可文本由校验脚本按字节审核，不在跳过范围内。
 - 提交信息以 `chore(release):` 开头的发版准备提交跳过测试，随后推送的标签会在发布流水线里运行同一套测试。
-- 测试包（`test-build.yml`）为任意分支构建安装包，不发布 Release、不签名、不生成更新清单：在 Actions 中手动运行并选择平台（`gh workflow run test-build.yml --ref <分支> -f platform=windows|macos|linux|all`），或给 PR 加 `test-build`（全部平台）/ `mac-build`（仅 macOS）标签。安装包作为 Actions 附件保留 7 天；测试包没有内置更新公钥，不能检查更新，macOS 为 ad-hoc 签名。
+- 测试包（`test-build.yml`）为任意分支构建安装包，不发布 Release、不签名、不生成更新清单：在 Actions 中手动运行并选择平台（`gh workflow run test-build.yml --ref <分支> -f platform=windows|macos|linux|all`），或给 PR 加 `test-build`（全部平台）/ `mac-build`（仅 macOS）标签。安装包作为 Actions 附件保留 7 天；测试包没有内置更新公钥，不能检查更新；macOS 与正式版使用同一张自签名证书。
 
 发布以 `package.json` 为版本来源，修改后运行 `npm run version:sync`。使用同版本附注标签 `v<version>`，标签注释填写中文更新内容；流水线同步到 Releases 和更新清单，缺少内容时停止发布。
 

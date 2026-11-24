@@ -241,7 +241,7 @@ unsafe fn shareable_window(id: u32) -> Result<Retained<AnyObject>, String> {
     Ok(content
         .recv_timeout(Duration::from_secs(10))
         .map_err(|_| "读取可录制窗口超时。".to_string())?
-        .map_err(|e| format!("无法读取可录制窗口，请确认已授予“屏幕录制”权限：{e}"))?
+        .map_err(|e| format!("无法读取可录制窗口，请确认已在“系统设置 → 隐私与安全性 → 录屏与系统录音”中允许 Snap Desk：{e}"))?
         .0)
 }
 

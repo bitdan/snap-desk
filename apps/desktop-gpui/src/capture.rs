@@ -342,6 +342,16 @@ fn begin(cx: &mut App, settings: &Settings, delay: Duration, purpose: Option<Rec
         log::info!("event=gpui.capture_ignored reason=scroll");
         return;
     }
+    // macOS 未授权“屏幕录制”时系统只返回壁纸和本应用窗口，浮层会是一片黑；先拒绝并引导授权。
+    // 首次调用会弹出系统授权框；已拒绝或授权记录失效（ad-hoc 签名的应用更新后常见）时打开设置的系统权限卡片。
+    #[cfg(target_os = "macos")]
+    if !snap_core::macos::screen_capture_granted() {
+        log::warn!("event=gpui.capture_refused reason=screen_capture_permission");
+        if !snap_core::macos::request_screen_capture() {
+            crate::settings_window::open_permissions(cx);
+        }
+        return;
+    }
     cx.default_global::<CaptureState>().starting = true;
     let include_cursor = settings.screenshot_cursor;
     let snap = settings.screenshot_snap;

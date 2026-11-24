@@ -85,7 +85,14 @@ jobs:
       - name: Install cargo-packager
         run: cargo install cargo-packager --version 0.11.8 --locked
 
-      # 不注入更新公钥与开发者证书：测试包不能检查更新，macOS 使用 ad-hoc 签名。
+      # macOS 用与正式版相同的自签名证书，测试包和正式版之间切换不用重新授权“屏幕录制”。
+      - name: Configure macOS signing
+        uses: ./.github/actions/macos-signing
+        with:
+          certificate: ${{ secrets.MACOS_SIGNING_CERTIFICATE }}
+          password: ${{ secrets.MACOS_SIGNING_CERTIFICATE_PASSWORD }}
+
+      # 不注入更新公钥：测试包不能检查更新。
       - name: Build application and installers
         run: npm run desktop:package
 

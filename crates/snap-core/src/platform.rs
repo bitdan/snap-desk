@@ -95,5 +95,5 @@ pub fn reveal_path(path: &std::path::Path) -> Result<(), String> {
 
 #[cfg(target_os = "macos")]
 pub fn capture_error(error: impl std::fmt::Display) -> String {
-    format!("截图失败：{error}。请在系统设置 → 隐私与安全性 → 屏幕录制中授权后重启应用。")
+    format!("截图失败：{error}。请在“系统设置 → 隐私与安全性 → 录屏与系统录音”中允许 Snap Desk 后退出并重新打开应用。")
 }
