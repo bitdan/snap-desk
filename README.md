@@ -12,6 +12,7 @@
 <p align="center">
   <a href="https://github.com/bitdan/snap-desk/releases">下载</a> ·
   <a href="https://bitdan.github.io/snap-desk/">项目官网</a> ·
+  <a href="https://bitdan.github.io/snap-desk/guide/">使用手册</a> ·
   <a href="#功能">功能</a> ·
   <a href="#开始使用">开始使用</a> ·
   <a href="TECHNICAL.md">技术说明</a> ·

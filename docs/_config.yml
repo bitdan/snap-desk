@@ -2,3 +2,19 @@
 # performance/ 是项目内部的性能测试脚本与结果，只在仓库中查看，不发布到官网。
 exclude:
   - performance
+
+# 项目页挂在 /snap-desk 下；显式写出，本地预览与线上链接一致。
+baseurl: /snap-desk
+url: https://bitdan.github.io
+title: Snap Desk
+
+# 使用手册：guide/ 下的 Markdown 页面统一套用 guide 布局，侧边栏目录见 _data/guide.yml。
+markdown: kramdown
+kramdown:
+  input: GFM
+  hard_wrap: false
+defaults:
+  - scope:
+      path: guide
+    values:
+      layout: guide

@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="{{ page.description | default: 'Snap Desk 使用手册：截图、标注、贴图、录屏、剪贴板历史、文字识别与翻译的操作说明。' | escape }}">
+  <meta name="theme-color" content="#f8f7f2" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#171714" media="(prefers-color-scheme: dark)">
+  <title>{{ page.title }} · Snap Desk 使用手册</title>
+  <link rel="canonical" href="{{ page.url | absolute_url }}">
+  <link rel="icon" type="image/png" href="https://raw.githubusercontent.com/bitdan/snap-desk/master/resources/icons/32x32.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Hedvig+Letters+Serif:opsz@12..24&family=IBM+Plex+Mono:wght@400;500&family=Noto+Serif+SC:wght@500&display=swap">
+  <link rel="stylesheet" href="{{ '/assets/site.css' | relative_url }}">
+  <link rel="stylesheet" href="{{ '/assets/guide.css' | relative_url }}">
+  <meta property="og:type" content="article">
+  <meta property="og:site_name" content="Snap Desk">
+  <meta property="og:title" content="{{ page.title }} · Snap Desk 使用手册">
+  <meta property="og:url" content="{{ page.url | absolute_url }}">
+  <meta property="og:image" content="https://raw.githubusercontent.com/bitdan/snap-desk/master/resources/icons/128x128@2x.png">
+</head>
+<body class="guide-page">
+  <a class="skip" href="#content">跳到正文</a>
+  <header class="bar">
+    <div class="container bar-inner">
+      <a class="wordmark" href="{{ '/' | relative_url }}">Snap Desk</a>
+      <nav aria-label="主导航">
+        <a class="mlink plain wide" href="{{ '/' | relative_url }}">首页</a>
+        <a class="mlink plain wide" href="{{ '/guide/' | relative_url }}" aria-current="page">使用手册</a>
+        <a class="mlink plain wide" href="https://github.com/bitdan/snap-desk">源码</a>
+        <a class="mlink" href="https://github.com/bitdan/snap-desk/releases">下载<span class="arrow" aria-hidden="true">→</span></a>
+      </nav>
+    </div>
+  </header>
+
+  {%- comment -%} 把分组目录摊平，找出当前页的上一篇与下一篇。 {%- endcomment -%}
+  {%- assign prev = nil -%}
+  {%- assign next = nil -%}
+  {%- assign last = nil -%}
+  {%- assign found = false -%}
+  {%- for group in site.data.guide -%}
+    {%- for item in group.pages -%}
+      {%- if found and next == nil -%}{%- assign next = item -%}{%- endif -%}
+      {%- if item.url == page.url -%}{%- assign prev = last -%}{%- assign found = true -%}{%- endif -%}
+      {%- assign last = item -%}
+    {%- endfor -%}
+  {%- endfor -%}
+
+  <div class="container guide">
+    <details class="guide-nav" open>
+      <summary>手册目录</summary>
+      <nav aria-label="手册目录">
+        {%- for group in site.data.guide %}
+        <p class="guide-group">{{ group.group }}</p>
+        <ul>
+          {%- for item in group.pages %}
+          <li><a href="{{ item.url | relative_url }}"{% if item.url == page.url %} aria-current="page"{% endif %}>{{ item.title }}</a></li>
+          {%- endfor %}
+        </ul>
+        {%- endfor %}
+      </nav>
+    </details>
+
+    <main id="content" class="guide-body">
+      <article class="prose">
+        <h1>{{ page.title }}</h1>
+        {% if page.lead %}<p class="guide-lead">{{ page.lead }}</p>{% endif %}
+        {{ content }}
+      </article>
+
+      <nav class="pager" aria-label="上一篇与下一篇">
+        {%- if prev %}
+        <a class="pager-link" href="{{ prev.url | relative_url }}"><span>上一篇</span>{{ prev.title }}</a>
+        {%- else %}<span></span>{% endif %}
+        {%- if next %}
+        <a class="pager-link next" href="{{ next.url | relative_url }}"><span>下一篇</span>{{ next.title }}</a>
+        {%- endif %}
+      </nav>
+      <p class="guide-edit">
+        内容有误或没写清楚？<a href="https://github.com/bitdan/snap-desk/edit/master/docs/{{ page.path }}">在 GitHub 上修改这一页</a>，或<a href="https://github.com/bitdan/snap-desk/issues/new">提交 Issue</a>。
+      </p>
+    </main>
+  </div>
+
+  <footer><div class="container footer-inner"><span>© Snap Desk · GPL-3.0-only</span><nav aria-label="页脚链接"><a class="mlink plain" href="https://github.com/bitdan/snap-desk">GitHub</a><a class="mlink plain" href="https://github.com/bitdan/snap-desk/releases">下载</a><a class="mlink plain" href="https://bitdan.github.io/">作者主页</a></nav></div></footer>
+  <script>
+    // 窄屏默认收起目录，宽屏始终展开。
+    (function () {
+      var d = document.querySelector(".guide-nav");
+      if (d && matchMedia("(max-width: 900px)").matches) d.removeAttribute("open");
+    })();
+  </script>
+</body>
+</html>

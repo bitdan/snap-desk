@@ -1,0 +1,33 @@
+# 使用手册侧边栏：分组与页面顺序，也决定页面底部的上一篇 / 下一篇。
+- group: 开始
+  pages:
+    - title: 快速上手
+      url: /guide/
+    - title: 快捷键速查
+      url: /guide/shortcuts/
+- group: 截图
+  pages:
+    - title: 截图与标注
+      url: /guide/capture/
+    - title: 滚动截图
+      url: /guide/scroll/
+    - title: 录屏
+      url: /guide/recording/
+- group: 贴图与剪贴板
+  pages:
+    - title: 桌面贴图
+      url: /guide/pin/
+    - title: 剪贴板历史
+      url: /guide/clipboard/
+    - title: 顶部暂存架
+      url: /guide/shelf/
+- group: 识别与翻译
+  pages:
+    - title: 文字识别与二维码
+      url: /guide/ocr/
+    - title: 翻译
+      url: /guide/translate/
+- group: 帮助
+  pages:
+    - title: 常见问题
+      url: /guide/faq/
