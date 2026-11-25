@@ -8,6 +8,16 @@ use crate::updater::{self, Phase};
 use gpui_kit::*;
 use snap_core::settings::UPDATE_CHECK_MINUTES;
 
+/// 当前平台录屏的最低系统要求，与各平台采集后端的检查一致。
+#[cfg(windows)]
+const RECORDING_REQUIREMENT: &str = "Windows 10 2004 或更新版本";
+#[cfg(target_os = "macos")]
+const RECORDING_REQUIREMENT: &str = "macOS 13.3 或更新版本";
+#[cfg(target_os = "linux")]
+const RECORDING_REQUIREMENT: &str = "X11，或带屏幕共享门户与 PipeWire 的 Wayland";
+#[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
+const RECORDING_REQUIREMENT: &str = "当前平台暂不支持录屏";
+
 /// 带红点的描边按钮（“有更新”）。
 pub(super) fn dot_button(id: &'static str, label: String, enabled: bool) -> Stateful<Div> {
     let button = div()
@@ -292,7 +302,7 @@ impl SettingsView {
             heading(t("应用信息")).into_any_element(),
             card(vec![
                 row(t("开源许可"), None, div().text_color(rgb(col::muted())).child("GPL-3.0-only")),
-                row(t("录屏系统要求"), None, div().text_color(rgb(col::muted())).child("Windows 10 2004+")),
+                row(t("录屏系统要求"), None, div().text_color(rgb(col::muted())).child(t(RECORDING_REQUIREMENT))),
                 row(
                     t("项目主页"),
                     Some("github.com/bitdan/snap-desk".into()),
