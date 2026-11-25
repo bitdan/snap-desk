@@ -381,10 +381,49 @@ fn photo_size(width: Option<u32>, height: Option<u32>) -> (f32, f32) {
     }
 }
 
-/// 卡片沿下垂绳索的纵向位置：抛物线，最大下垂 min(20, 宽度×2.4%)。
+/// 绳子两端的高度。
+const ROPE_TOP: f32 = 12.0;
+
+/// 绳子最大下垂：min(20, 宽度×2.4%)。
+fn rope_sag(width: f32) -> f32 {
+    (width * 0.024).min(20.0)
+}
+
+/// 卡片沿下垂绳索的纵向位置：抛物线。
 fn rope_y(x: f32, width: f32) -> f32 {
-    let sag = (width * 0.024).min(20.0);
-    12.0 + 4.0 * sag * (x / width) * (1.0 - x / width)
+    ROPE_TOP + 4.0 * rope_sag(width) * (x / width) * (1.0 - x / width)
+}
+
+/// 画出 `rope_y` 那条抛物线：两端点在 ROPE_TOP，控制点在中央、下垂两倍，
+/// 二次贝塞尔与抛物线完全重合；矢量描边抗锯齿，不会出现短线段拼接的台阶。
+fn rope(width: f32) -> impl IntoElement {
+    canvas(
+        |_, _, _| {},
+        move |bounds, _, window, _| {
+            let o = bounds.origin;
+            let at = |x: f32, y: f32| o + point(px(x), px(y));
+            let stroke = |offset: f32, thickness: f32| {
+                let mut path = PathBuilder::stroke(px(thickness));
+                path.move_to(at(0.0, ROPE_TOP + offset));
+                path.curve_to(
+                    at(width, ROPE_TOP + offset),
+                    at(width / 2.0, ROPE_TOP + offset + 2.0 * rope_sag(width)),
+                );
+                path.build().ok()
+            };
+            // 先画柔和的投影，再画绳子本身。
+            if let Some(shadow) = stroke(1.5, 2.0) {
+                window.paint_path(shadow, rgba(0x00000018));
+            }
+            if let Some(line) = stroke(0.0, 1.2) {
+                window.paint_path(line, rgb(0x888b8e));
+            }
+        },
+    )
+    .absolute()
+    .top_0()
+    .left_0()
+    .size_full()
 }
 
 struct ShelfView {
@@ -874,17 +913,6 @@ impl Render for ShelfView {
                     .child(text("暂无匹配内容")),
             )
         });
-        // 下垂的绳子：沿 `rope_y` 的抛物线用短线段拼出。
-        let mut rope = div().absolute().top_0().left_0().size_full();
-        let step = 4.0;
-        let mut x = 0.0;
-        while x < width {
-            let y = rope_y(x + step / 2.0, width);
-            rope = rope
-                .child(div().absolute().left(px(x)).top(px(y + 1.0)).w(px(step)).h(px(2.0)).bg(rgba(0x00000018)))
-                .child(div().absolute().left(px(x)).top(px(y)).w(px(step)).h(px(1.0)).bg(rgb(0x888b8e)));
-            x += step;
-        }
         div()
             .id("shelf")
             .size_full()
@@ -913,7 +941,7 @@ impl Render for ShelfView {
                     view.turn(if value > px(0.0) { -1 } else { 1 }, cx);
                 }
             }))
-            .child(rope)
+            .child(rope(width))
             .child(cards)
             .children(empty)
             .child(controls)
