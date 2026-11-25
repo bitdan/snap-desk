@@ -38,7 +38,7 @@ tccutil reset All io.snapdesk.app
 
 ## 识别和翻译可以离线用吗？ {#offline}
 
-可以。文字识别有 PaddleOCR、Windows OCR、Apple Vision 三种离线引擎，翻译有 CTranslate2 离线中英互译。PaddleOCR 和离线翻译目前仅 Windows 可用，macOS 和 Linux 可以改用在线服务。详见[文字识别](../ocr/#engines)和[翻译](../translate/#services)。
+可以。文字识别有 PaddleOCR、Windows OCR、Apple Vision 和实验性的 WeChat OCR 四种离线引擎，翻译有 CTranslate2 离线中英互译。PaddleOCR、WeChat OCR 和离线翻译目前仅 Windows 可用，macOS 和 Linux 可以改用在线服务。详见[文字识别](../ocr/#engines)和[翻译](../translate/#services)。
 
 ## 收费吗？ {#price}
 
