@@ -10,7 +10,7 @@ use std::{
     ffi::{c_char, c_void, CString},
     sync::{
         atomic::{AtomicBool, Ordering},
-        mpsc, Arc,
+        mpsc, Arc, Mutex,
     },
     time::{Duration, Instant},
 };
@@ -48,6 +48,7 @@ const UTF8: u32 = 0x0800_0100;
 #[link(name = "ApplicationServices", kind = "framework")]
 extern "C" {
     fn AXUIElementCreateApplication(pid: i32) -> CFTypeRef;
+    fn AXUIElementCopyElementAtPosition(application: CFTypeRef, x: f32, y: f32, element: *mut CFTypeRef) -> i32;
     fn AXUIElementSetMessagingTimeout(element: CFTypeRef, seconds: f32) -> i32;
     fn AXUIElementCopyAttributeValue(element: CFTypeRef, attribute: CFTypeRef, value: *mut CFTypeRef) -> i32;
     fn AXUIElementCopyMultipleAttributeValues(
@@ -57,6 +58,7 @@ extern "C" {
         values: *mut CFTypeRef,
     ) -> i32;
     fn AXValueGetTypeID() -> usize;
+    fn AXUIElementGetTypeID() -> usize;
     fn AXValueGetType(value: CFTypeRef) -> u32;
     fn AXValueGetValue(value: CFTypeRef, kind: u32, out: *mut c_void) -> bool;
 }
@@ -66,6 +68,7 @@ extern "C" {
     fn CFRetain(value: CFTypeRef) -> CFTypeRef;
     fn CFRelease(value: CFTypeRef);
     fn CFGetTypeID(value: CFTypeRef) -> usize;
+    fn CFEqual(a: CFTypeRef, b: CFTypeRef) -> u8;
     fn CFArrayGetTypeID() -> usize;
     fn CFArrayGetCount(array: CFTypeRef) -> isize;
     fn CFArrayGetValueAtIndex(array: CFTypeRef, index: isize) -> CFTypeRef;
@@ -351,4 +354,187 @@ fn scan(
             }
         }
     }
+}
+
+/// 悬停探测所需的窗口身份：只含进程与几何，可跨线程。
+#[derive(Clone, Debug)]
+pub struct Probe {
+    roots: Vec<(i32, usize, Rect)>,
+    origin: (i32, i32),
+    size: (u32, u32),
+    scale: f64,
+}
+
+/// 由已识别的窗口候选生成悬停探测请求；未授予“辅助功能”权限时没有请求。
+pub(super) fn probe_request(
+    windows: &[NativeWindow],
+    targets: &[Target],
+    origin: (i32, i32),
+    size: (u32, u32),
+    scale: f64,
+) -> Option<Probe> {
+    if !crate::macos::accessibility_trusted() {
+        return None;
+    }
+    let roots: Vec<_> = targets
+        .iter()
+        .filter(|target| target.kind == "window")
+        .filter_map(|target| {
+            let pid = i32::try_from(windows.get(target.window_index)?.pid().ok()?).ok()?;
+            Some((pid, target.window_index, target.rect))
+        })
+        .collect();
+    (!roots.is_empty()).then_some(Probe { roots, origin, size, scale })
+}
+
+const PROBE_BUDGET: Duration = Duration::from_millis(150);
+const PROBE_DEPTH: usize = 32;
+const PROBE_IDLE: Duration = Duration::from_secs(30);
+
+struct ProbeJob {
+    pid: i32,
+    index: usize,
+    parent: Rect,
+    /// 鼠标的全局点坐标。
+    point: (f64, f64),
+    origin: (i32, i32),
+    size: (u32, u32),
+    scale: f64,
+    reply: mpsc::Sender<Vec<Target>>,
+}
+
+/// 常驻探测线程（空闲 30 秒退出，下次探测再启动）。
+static PROBER: Mutex<Option<mpsc::Sender<ProbeJob>>> = Mutex::new(None);
+
+impl Probe {
+    /// 截图像素 `point` 处、属于 `window_index` 窗口的控件链：系统按位置直接给出最内层控件，
+    /// 再沿 AXParent 向外走到窗口为止。只命中该应用自己的界面，不受截图浮层遮挡。
+    pub fn probe(&self, window_index: usize, point: (u32, u32)) -> Vec<Target> {
+        let Some(&(pid, index, parent)) = self.roots.iter().find(|(_, index, _)| *index == window_index) else {
+            return Vec::new();
+        };
+        let global = (
+            (f64::from(self.origin.0) + f64::from(point.0) + 0.5) / self.scale,
+            (f64::from(self.origin.1) + f64::from(point.1) + 0.5) / self.scale,
+        );
+        let (reply, result) = mpsc::channel();
+        let job = ProbeJob {
+            pid,
+            index,
+            parent,
+            point: global,
+            origin: self.origin,
+            size: self.size,
+            scale: self.scale,
+            reply,
+        };
+        {
+            let mut prober = PROBER.lock().unwrap_or_else(|e| e.into_inner());
+            let job = match prober.as_ref() {
+                Some(sender) => sender.send(job).err().map(|mpsc::SendError(job)| job),
+                None => Some(job),
+            };
+            if let Some(job) = job {
+                let (sender, jobs) = mpsc::channel();
+                if std::thread::Builder::new()
+                    .name("capture-accessibility-probe".into())
+                    .spawn(move || prober_loop(jobs))
+                    .is_err()
+                {
+                    return Vec::new();
+                }
+                let _ = sender.send(job);
+                *prober = Some(sender);
+            }
+        }
+        result
+            .recv_timeout(PROBE_BUDGET + Duration::from_millis(100))
+            .unwrap_or_default()
+    }
+}
+
+/// [AXPosition, AXSize, AXParent, AXRole] 与用于比较的 "AXWindow"。
+struct ChainAttributes {
+    _names: [Cf; 4],
+    query: Cf,
+    window_role: Cf,
+}
+impl ChainAttributes {
+    fn new() -> Option<Self> {
+        let names = [
+            Cf::string("AXPosition")?,
+            Cf::string("AXSize")?,
+            Cf::string("AXParent")?,
+            Cf::string("AXRole")?,
+        ];
+        let values = [names[0].0, names[1].0, names[2].0, names[3].0];
+        let query = Cf::owned(unsafe { CFArrayCreate(std::ptr::null(), values.as_ptr(), 4, std::ptr::null()) })?;
+        Some(Self { _names: names, query, window_role: Cf::string("AXWindow")? })
+    }
+}
+
+fn prober_loop(jobs: mpsc::Receiver<ProbeJob>) {
+    let Some(attributes) = ChainAttributes::new() else {
+        return;
+    };
+    while let Ok(mut job) = jobs.recv_timeout(PROBE_IDLE) {
+        // 鼠标移动快于探测时只处理最新一次。
+        while let Ok(newer) = jobs.try_recv() {
+            let _ = job.reply.send(Vec::new());
+            job = newer;
+        }
+        let found = chain(&job, &attributes);
+        let _ = job.reply.send(found);
+    }
+}
+
+fn chain(job: &ProbeJob, attributes: &ChainAttributes) -> Vec<Target> {
+    let deadline = Instant::now() + PROBE_BUDGET;
+    let Some(app) = Cf::owned(unsafe { AXUIElementCreateApplication(job.pid) }) else {
+        return Vec::new();
+    };
+    unsafe {
+        AXUIElementSetMessagingTimeout(app.0, MESSAGING_TIMEOUT);
+    }
+    let mut hit: CFTypeRef = std::ptr::null();
+    let status =
+        unsafe { AXUIElementCopyElementAtPosition(app.0, job.point.0 as f32, job.point.1 as f32, &mut hit) };
+    let Some(mut node) = (status == 0).then(|| Cf::owned(hit)).flatten() else {
+        return Vec::new();
+    };
+    let px = |value: f64| (value * job.scale).round().clamp(i32::MIN as f64, i32::MAX as f64) as i32;
+    let mut state = Elements { targets: Vec::new(), index: job.index, parent: job.parent, origin: job.origin, size: job.size };
+    for _ in 0..PROBE_DEPTH {
+        if Instant::now() >= deadline {
+            break;
+        }
+        let mut values: CFTypeRef = std::ptr::null();
+        let status = unsafe { AXUIElementCopyMultipleAttributeValues(node.0, attributes.query.0, 0, &mut values) };
+        let Some(values) = (status == 0).then(|| Cf::owned(values)).flatten() else {
+            break;
+        };
+        let item = |index| unsafe {
+            (CFArrayGetCount(values.0) > index)
+                .then(|| CFArrayGetValueAtIndex(values.0, index))
+                .filter(|value| !value.is_null())
+        };
+        // 走到窗口即停：窗口本身已是一级吸附候选。
+        if item(3).is_some_and(|role| unsafe { CFEqual(role, attributes.window_role.0) } != 0) {
+            break;
+        }
+        let mut point = CGPoint::default();
+        let mut size = CGSize::default();
+        if ax_value(item(0), AX_POINT, &mut point) && ax_value(item(1), AX_SIZE, &mut size) {
+            state.push_edges(px(point.x), px(point.y), px(point.x + size.width), px(point.y + size.height));
+        }
+        // AXParent 读取失败时是错误值而不是元素，类型不对就停止。
+        let Some(parent) = item(2)
+            .filter(|value| unsafe { CFGetTypeID(*value) == AXUIElementGetTypeID() })
+            .and_then(Cf::retained)
+        else {
+            break;
+        };
+        node = parent;
+    }
+    state.targets
 }

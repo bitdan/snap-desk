@@ -41,7 +41,7 @@ struct Snapshot {
 struct Live {
     frame: Frame,
     image: Arc<RgbaImage>,
-    targets: Vec<Rect>,
+    targets: Vec<crate::selection::Snap>,
     window_targets: Vec<crate::recording::WindowTarget>,
     selection: Option<Rect>,
     shapes: Vec<Annotation>,
@@ -265,7 +265,7 @@ fn apply(
     session: &Entity<Session>,
     frame: Frame,
     image: Arc<RgbaImage>,
-    targets: Vec<Rect>,
+    targets: Vec<crate::selection::Snap>,
     window_targets: Vec<crate::recording::WindowTarget>,
     selection: Option<Rect>,
     shapes: Vec<Annotation>,

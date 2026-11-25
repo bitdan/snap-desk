@@ -5,7 +5,7 @@ use std::{
     collections::VecDeque,
     sync::{
         atomic::{AtomicBool, Ordering},
-        mpsc, Arc,
+        mpsc, Arc, Mutex,
     },
     time::{Duration, Instant},
 };
@@ -201,4 +201,144 @@ fn scan(
         }
     }
     Ok(())
+}
+
+const PROBE_BUDGET: Duration = Duration::from_millis(150);
+const PROBE_DEPTH: usize = 32;
+const PROBE_IDLE: Duration = Duration::from_secs(30);
+
+/// 一次悬停探测：窗口身份与几何、鼠标的全局物理坐标；结果经 `reply` 返回。
+struct ProbeJob {
+    root: (u32, usize, Rect),
+    point: (i32, i32),
+    origin: (i32, i32),
+    size: (u32, u32),
+    reply: mpsc::Sender<Vec<Target>>,
+}
+
+/// 常驻的探测线程（空闲 30 秒退出，下次探测再启动），复用同一个 UI Automation 实例。
+static PROBER: Mutex<Option<mpsc::Sender<ProbeJob>>> = Mutex::new(None);
+
+/// 鼠标所在处从外到内的控件链：从窗口根节点起，每层只进入包含鼠标的子控件。
+/// 不遍历整棵树，复杂网页也只需十几次跨进程调用；超过预算返回已找到的部分。
+pub(super) fn probe(
+    root: (u32, usize, Rect),
+    point: (i32, i32),
+    origin: (i32, i32),
+    size: (u32, u32),
+) -> Vec<Target> {
+    let (reply, result) = mpsc::channel();
+    let job = ProbeJob { root, point, origin, size, reply };
+    {
+        let mut prober = PROBER.lock().unwrap_or_else(|e| e.into_inner());
+        let job = match prober.as_ref() {
+            Some(sender) => sender.send(job).err().map(|mpsc::SendError(job)| job),
+            None => Some(job),
+        };
+        if let Some(job) = job {
+            let (sender, jobs) = mpsc::channel();
+            if std::thread::Builder::new()
+                .name("capture-accessibility-probe".into())
+                .spawn(move || prober_loop(jobs))
+                .is_err()
+            {
+                return Vec::new();
+            }
+            let _ = sender.send(job);
+            *prober = Some(sender);
+        }
+    }
+    result
+        .recv_timeout(PROBE_BUDGET + Duration::from_millis(100))
+        .unwrap_or_default()
+}
+
+fn prober_loop(jobs: mpsc::Receiver<ProbeJob>) {
+    if unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) }.is_err() {
+        return;
+    }
+    let _apartment = Apartment;
+    let Ok(_dpi) = super::PhysicalDpi::enter() else {
+        return;
+    };
+    let Ok(walker) = Walker::new() else {
+        return;
+    };
+    while let Ok(mut job) = jobs.recv_timeout(PROBE_IDLE) {
+        // 鼠标移动快于探测时只处理最新一次，旧请求直接返回空结果。
+        while let Ok(newer) = jobs.try_recv() {
+            let _ = job.reply.send(Vec::new());
+            job = newer;
+        }
+        let found = walker.walk(&job).unwrap_or_default();
+        let _ = job.reply.send(found);
+    }
+}
+
+struct Walker {
+    automation: IUIAutomation2,
+    cache: IUIAutomationCacheRequest,
+    condition: IUIAutomationCondition,
+}
+
+impl Walker {
+    fn new() -> windows::core::Result<Self> {
+        let automation: IUIAutomation2 =
+            unsafe { CoCreateInstance(&CUIAutomation8, None, CLSCTX_INPROC_SERVER)? };
+        unsafe {
+            automation.SetConnectionTimeout(80)?;
+            automation.SetTransactionTimeout(80)?;
+        }
+        let cache = unsafe { automation.CreateCacheRequest()? };
+        let condition = unsafe { automation.CreateTrueCondition()? };
+        unsafe {
+            cache.SetTreeScope(TreeScope_Element)?;
+            cache.SetTreeFilter(&condition)?;
+            cache.AddProperty(UIA_BoundingRectanglePropertyId)?;
+            cache.AddProperty(UIA_IsOffscreenPropertyId)?;
+        }
+        Ok(Self { automation, cache, condition })
+    }
+
+    fn walk(&self, job: &ProbeJob) -> windows::core::Result<Vec<Target>> {
+        let deadline = Instant::now() + PROBE_BUDGET;
+        let (id, index, parent) = job.root;
+        let (x, y) = job.point;
+        let mut state = Elements { targets: Vec::new(), index, parent, origin: job.origin, size: job.size };
+        let mut node = unsafe { self.automation.ElementFromHandle(HWND(id as usize as *mut _))? };
+        for _ in 0..PROBE_DEPTH {
+            if Instant::now() >= deadline {
+                break;
+            }
+            let children =
+                unsafe { node.FindAllBuildCache(TreeScope_Children, &self.condition, &self.cache)? };
+            let length = unsafe { children.Length()? }.clamp(0, 512);
+            // 重叠的兄弟节点取面积最小的那个，通常是浮在上面的具体控件。
+            let mut best: Option<(i64, IUIAutomationElement, windows::Win32::Foundation::RECT)> = None;
+            for i in 0..length {
+                let Ok(child) = (unsafe { children.GetElement(i) }) else {
+                    continue;
+                };
+                if unsafe { child.CachedIsOffscreen() }.is_ok_and(|value| value.as_bool()) {
+                    continue;
+                }
+                let Ok(r) = (unsafe { child.CachedBoundingRectangle() }) else {
+                    continue;
+                };
+                if x < r.left || x >= r.right || y < r.top || y >= r.bottom {
+                    continue;
+                }
+                let area = i64::from(r.right - r.left) * i64::from(r.bottom - r.top);
+                if best.as_ref().is_none_or(|(smallest, _, _)| area < *smallest) {
+                    best = Some((area, child, r));
+                }
+            }
+            let Some((_, child, bounds)) = best else {
+                break;
+            };
+            state.push(bounds);
+            node = child;
+        }
+        Ok(state.targets)
+    }
 }

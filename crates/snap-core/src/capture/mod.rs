@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 #[path = "desktop_windows.rs"]
 pub mod windows;
 pub mod recent;
+pub mod regions;
 #[cfg(windows)]
 pub use windows::{AppWindow as NativeWindow, PhysicalDpi};
 #[cfg(not(windows))]
@@ -141,8 +142,7 @@ pub fn clipped(
 }
 
 /// 某个窗口内的控件候选：边界先换算为截图像素，再裁剪到父窗口并去重。
-/// Windows（Win32 子窗口、UIA）与 macOS（辅助功能）共用这套规则。
-#[cfg(any(windows, target_os = "macos"))]
+/// Windows（Win32 子窗口、UIA）、macOS（辅助功能）与 Linux（AT-SPI）共用这套规则。
 pub struct Elements {
     pub targets: Vec<Target>,
     pub index: usize,
@@ -150,7 +150,6 @@ pub struct Elements {
     pub origin: (i32, i32),
     pub size: (u32, u32),
 }
-#[cfg(any(windows, target_os = "macos"))]
 impl Elements {
     /// 参数为截图所用的全局像素坐标（右、下边界不含）。
     pub fn push_edges(&mut self, left: i32, top: i32, right: i32, bottom: i32) {
@@ -197,6 +196,48 @@ impl Elements {
             icon: None,
         });
     }
+}
+
+/// 悬停时按鼠标位置补全控件链的请求：只含窗口身份与几何，可跨线程、可反复使用。
+/// 一次性枚举控件有时间上限，复杂网页与深层界面常来不及覆盖，悬停探测只查鼠标处这一条链。
+/// Windows 用 UI Automation，macOS 用辅助功能（需已授权），Linux X11 用 AT-SPI（需开启无障碍服务）；
+/// Wayland 没有全局坐标，不提供。
+#[derive(Clone, Debug)]
+pub struct HoverProbe {
+    #[cfg(windows)]
+    inner: windows::AccessibilityRequest,
+    #[cfg(target_os = "macos")]
+    inner: accessibility::Probe,
+    #[cfg(not(any(windows, target_os = "macos")))]
+    inner: accessibility_linux::Probe,
+}
+
+impl HoverProbe {
+    /// 截图像素 `point` 处、属于 `window_index` 窗口的控件候选（阻塞，通常几十毫秒，上限约 250 毫秒，
+    /// 应在后台线程调用）；查不到时为空。
+    pub fn probe(&self, window_index: usize, point: (u32, u32)) -> Vec<Target> {
+        self.inner.probe(window_index, point)
+    }
+}
+
+/// 为一次截图生成悬停探测请求；没有窗口候选或平台不支持时为 None。
+pub fn hover_probe(desktop: &Desktop) -> Option<HoverProbe> {
+    let origin = (desktop.x, desktop.y);
+    let size = desktop.image.dimensions();
+    #[cfg(windows)]
+    let inner = Some(windows::accessibility_request(&desktop.windows, &desktop.targets, origin, size))
+        .filter(|request| request.has_roots());
+    #[cfg(target_os = "macos")]
+    let inner = accessibility::probe_request(
+        &desktop.windows,
+        &desktop.targets,
+        origin,
+        size,
+        desktop.displays.first().map_or(1.0, |d| d.scale),
+    );
+    #[cfg(not(any(windows, target_os = "macos")))]
+    let inner = accessibility_linux::probe_request(&desktop.windows, &desktop.targets, origin, size);
+    inner.map(|inner| HoverProbe { inner })
 }
 
 pub fn same_bounds(a: Rect, b: Rect) -> bool {
@@ -423,6 +464,9 @@ mod accessibility;
 mod linux;
 #[cfg(not(any(windows, target_os = "macos")))]
 pub use linux::capture;
+#[cfg(not(any(windows, target_os = "macos")))]
+#[path = "desktop_accessibility_linux.rs"]
+mod accessibility_linux;
 #[cfg(target_os = "linux")]
 #[path = "wayland/mod.rs"]
 pub mod wayland;

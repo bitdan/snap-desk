@@ -27,6 +27,8 @@ lead: 全局快捷键可以在主界面“快捷键”页修改；窗口内的�
 | 在选区内双击 | 复制图片并结束 |
 | <kbd>Ctrl</kbd>+<kbd>S</kbd> | 保存图片 |
 | <kbd>F2</kbd> | 把选区贴到桌面 |
+| 滚轮 / <kbd>Tab</kbd> / <kbd>Shift</kbd>+<kbd>Tab</kbd> | 未框选时切换吸附层级：控件 → 面板 → 整个窗口 → 整个屏幕 |
+| 按住 <kbd>Alt</kbd> | 未框选时直接吸附整个窗口 |
 | <kbd>Ctrl</kbd>+<kbd>A</kbd> | 选中整个屏幕 |
 | <kbd>R</kbd> | 恢复上一次的选区 |
 | <kbd>,</kbd> / <kbd>.</kbd> | 截图历史：上一张 / 下一张（最近 20 次） |
