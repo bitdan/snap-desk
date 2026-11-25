@@ -44,6 +44,8 @@ pub enum Placement {
     /// `origin` 为图片首像素的全局物理坐标，`scale` 为所在屏缩放。
     Source { origin: (i32, i32), scale: f64, display: Option<DisplayId> },
     Centered,
+    /// 从贴图历史恢复：回到关闭时的位置与缩放，不透明度与锁定一并恢复。
+    Restored(core_pins::history::State),
 }
 
 /// 所有贴图窗口；窗口关闭后弱引用失效，访问时顺手清理。
@@ -84,6 +86,11 @@ fn render_image(image: &RgbaImage) -> Arc<RenderImage> {
     Arc::new(RenderImage::new(vec![image::Frame::new(frame)]))
 }
 
+/// 正在退出：贴图随进程关闭，不记入“已关闭”历史（仍打开的贴图另存为“上次退出”）。
+#[derive(Default)]
+struct Quitting(bool);
+impl Global for Quitting {}
+
 /// 新建贴图。容量不足、窗口创建失败时返回错误，不留下半个窗口。
 pub fn create(
     cx: &mut App,
@@ -99,7 +106,27 @@ pub fn create(
     let settings = crate::shell::settings(cx);
     let layout = PinLayout::load();
     let (width, height) = image.dimensions();
+    let mut restored = None;
     let (bounds, display, zoom, scale) = match placement {
+        Placement::Restored(state) => {
+            let scale = if state.scale.is_finite() && state.scale > 0.0 { state.scale } else { 1.0 };
+            let minimum = layout.minimum_zoom(width, height, scale);
+            let zoom = if state.zoom.is_finite() && state.zoom > 0.0 { state.zoom.max(minimum) } else { 1.0_f64.max(minimum) };
+            let inset = image_inset(&settings.pin_appearance.shadow, scale);
+            let size = window_size(width, height, zoom, scale, &settings.pin_appearance.shadow);
+            let origin = point(
+                px((state.origin.0 - inset) as f32 / scale as f32),
+                px((state.origin.1 - inset) as f32 / scale as f32),
+            );
+            let mut bounds = Bounds::new(origin, size);
+            // 显示器布局变了、位置已不在任何屏幕上：改为在主屏居中。
+            let visible = cx.displays().iter().any(|d| d.bounds().intersects(&bounds));
+            if !visible {
+                bounds = Bounds::centered(cx.primary_display().map(|d| d.id()), size, cx);
+            }
+            restored = Some((state.opacity.clamp(0.1, 1.0), state.locked));
+            (bounds, None, zoom, scale)
+        }
         Placement::Source { origin, scale, display } => {
             let zoom = 1.0_f64.max(layout.minimum_zoom(width, height, scale));
             let inset = image_inset(&settings.pin_appearance.shadow, scale);
@@ -151,7 +178,15 @@ pub fn create(
             // 截图时画的标注随贴图带过来：创建时就画出图层，否则要等下一次编辑才显示。
             let mut layers = Layers::default();
             layers.update(&editor);
-            let pin = cx.new(|cx| Pin {
+            let pin = cx.new(|cx| {
+                // 关闭（非退出）时存入“已关闭”历史，供“恢复上次关闭的贴图”与贴图历史使用。
+                cx.on_release(|pin: &mut Pin, cx| {
+                    if !cx.default_global::<Quitting>().0 {
+                        remember_closed(pin, cx);
+                    }
+                })
+                .detach();
+                Pin {
                 original: image.clone(),
                 editor,
                 original_annotations: annotations,
@@ -164,8 +199,9 @@ pub fn create(
                 image,
                 frame,
                 zoom,
-                opacity: 1.0,
-                locked: false,
+                opacity: restored.map_or(1.0, |(opacity, _)| opacity),
+                locked: restored.is_some_and(|(_, locked)| locked),
+                placed: None,
                 topmost: true,
                 click_through: false,
                 appearance: settings.pin_appearance.clone(),
@@ -180,11 +216,15 @@ pub fn create(
                 own: None,
                 toolbar_window: None,
                 _bounds: None,
-            });
+            }});
             // 贴图移动或缩放时，工具栏窗口跟着重新定位。
             crate::native::frameless(window);
             pin.update(cx, |pin, cx| {
-                pin._bounds = Some(cx.observe_window_bounds(window, |pin: &mut Pin, window, cx| pin.place_toolbar(window, cx)));
+                pin.remember_place(window);
+                pin._bounds = Some(cx.observe_window_bounds(window, |pin: &mut Pin, window, cx| {
+                    pin.remember_place(window);
+                    pin.place_toolbar(window, cx);
+                }));
             });
             // 实际所在屏的缩放与预估不同（多屏混合 DPI）时，按实际缩放修正窗口尺寸。
             if (f64::from(window.scale_factor()) - scale).abs() > 0.01 {
@@ -316,6 +356,152 @@ pub fn restore_click_through(cx: &mut App) -> bool {
         log::info!("event=gpui.pins_click_through_restored count={restored}");
     }
     restored > 0
+}
+
+/// “已关闭”贴图历史的列表缓存；磁盘写入完成后刷新，设置窗口观察它重绘。
+#[derive(Default)]
+pub struct HistoryList(pub Vec<core_pins::history::Entry>);
+impl Global for HistoryList {}
+
+/// 启动时调用：读取贴图历史列表；开启“启动时恢复贴图”时重新贴出上次退出时打开的贴图。
+pub fn init(cx: &mut App, restore_session: bool) {
+    refresh_history(cx);
+    let Some(session) = core_pins::history::Store::session() else {
+        return;
+    };
+    if !restore_session {
+        // 关闭了该选项：不保留旧的退出现场，免得以后再开启时恢复很久以前的贴图。
+        let _ = session.clear();
+        return;
+    }
+    cx.spawn(async move |cx| {
+        let records = cx
+            .background_executor()
+            .spawn(async move {
+                let records: Vec<_> = session.list().iter().rev().filter_map(|entry| session.load(&entry.id).ok()).collect();
+                let _ = session.clear();
+                records
+            })
+            .await;
+        cx.update(|cx| {
+            let count = records.len();
+            for (image, state) in records {
+                if let Err(error) = create(cx, image, state.annotations.clone(), Placement::Restored(state.clone()), state.drag_text) {
+                    log::warn!("event=gpui.pin_session_restore_failed message={error}");
+                }
+            }
+            if count > 0 {
+                log::info!("event=gpui.pins_session_restored count={count}");
+            }
+        });
+    })
+    .detach();
+}
+
+fn refresh_history(cx: &mut App) {
+    let entries = core_pins::history::Store::closed().map(|store| store.list()).unwrap_or_default();
+    cx.set_global(HistoryList(entries));
+}
+
+/// 贴图关闭：后台把当前底图与标注写入“已关闭”历史。
+fn remember_closed(pin: &Pin, cx: &mut App) {
+    let Some(store) = core_pins::history::Store::closed() else {
+        return;
+    };
+    let image = pin.image.clone();
+    let state = pin.history_state(core_pins::history::now_millis());
+    cx.spawn(async move |cx| {
+        let result = cx.background_executor().spawn(async move { store.push(&image, &state) }).await;
+        cx.update(|cx| match result {
+            Ok(_) => refresh_history(cx),
+            Err(error) => log::warn!("event=gpui.pin_history_save_failed message={error}"),
+        });
+    })
+    .detach();
+}
+
+/// 退出前调用：开启“启动时恢复贴图”时保存仍打开的贴图；之后关闭的窗口不再记入“已关闭”历史。
+pub fn save_session(cx: &mut App) {
+    cx.set_global(Quitting(true));
+    if !crate::shell::settings(cx).pin_restore_on_startup {
+        return;
+    }
+    let Some(session) = core_pins::history::Store::session() else {
+        return;
+    };
+    let now = core_pins::history::now_millis();
+    // 按创建顺序编号，恢复时保持原来的叠放次序。
+    let records: Vec<_> = alive(cx)
+        .iter()
+        .enumerate()
+        .map(|(index, (_, pin))| {
+            let pin = pin.read(cx);
+            (pin.image.clone(), pin.history_state(now + index as i64))
+        })
+        .collect();
+    let refs: Vec<_> = records.iter().map(|(image, state)| (image.as_ref(), state)).collect();
+    match session.replace(&refs) {
+        Ok(()) => log::info!("event=gpui.pins_session_saved count={}", refs.len()),
+        Err(error) => log::warn!("event=gpui.pins_session_save_failed message={error}"),
+    }
+}
+
+/// 重新贴出一条“已关闭”历史；贴出后从历史移除（再次关闭时重新记入）。
+pub fn restore(cx: &mut App, id: String) {
+    let Some(store) = core_pins::history::Store::closed() else {
+        return;
+    };
+    cx.spawn(async move |cx| {
+        let loaded = cx
+            .background_executor()
+            .spawn(async move {
+                let loaded = store.load(&id);
+                if loaded.is_ok() {
+                    let _ = store.remove(&id);
+                }
+                loaded
+            })
+            .await;
+        cx.update(|cx| {
+            let result = loaded.and_then(|(image, state)| {
+                create(cx, image, state.annotations.clone(), Placement::Restored(state.clone()), state.drag_text)
+            });
+            match result {
+                Ok(()) => log::info!("event=gpui.pin_created source=history"),
+                Err(error) => log::error!("event=gpui.pin_failed source=history message={error}"),
+            }
+            refresh_history(cx);
+        });
+    })
+    .detach();
+}
+
+/// 恢复最近关闭的一张贴图；没有历史时返回 false。
+pub fn restore_last(cx: &mut App) -> bool {
+    let Some(id) = cx.default_global::<HistoryList>().0.first().map(|entry| entry.id.clone()) else {
+        log::info!("event=gpui.pin_history_empty");
+        return false;
+    };
+    restore(cx, id);
+    true
+}
+
+pub fn remove_history(cx: &mut App, id: &str) {
+    if let Some(store) = core_pins::history::Store::closed() {
+        if let Err(error) = store.remove(id) {
+            log::warn!("event=gpui.pin_history_remove_failed message={error}");
+        }
+    }
+    refresh_history(cx);
+}
+
+pub fn clear_history(cx: &mut App) {
+    if let Some(store) = core_pins::history::Store::closed() {
+        if let Err(error) = store.clear() {
+            log::warn!("event=gpui.pin_history_clear_failed message={error}");
+        }
+    }
+    refresh_history(cx);
 }
 
 /// 剪贴板贴图：图片优先，其次文件路径、文字（排成图片）。解码与排版在后台线程进行。
@@ -693,6 +879,8 @@ pub struct Pin {
     focused: bool,
     /// 自身窗口（工具栏窗口里的操作转回这里执行）。
     own: Option<AnyWindowHandle>,
+    /// 图片首像素的全局物理坐标与所在屏缩放；随窗口移动更新，存入贴图历史。
+    placed: Option<((i32, i32), f64)>,
     /// 空格展开的工具栏：独立的弹出窗口，跟随贴图移动。
     toolbar_window: Option<AnyWindowHandle>,
     _bounds: Option<Subscription>,
@@ -707,6 +895,30 @@ impl Pin {
     fn image_top(&self, scale: f32) -> f32 {
         let inset = image_inset(&self.appearance.shadow, f64::from(scale)) as f32 / scale;
         inset
+    }
+
+    fn remember_place(&mut self, window: &Window) {
+        let scale = f64::from(window.scale_factor());
+        let origin = window.bounds().origin;
+        let inset = image_inset(&self.appearance.shadow, scale);
+        let x = (f64::from(f32::from(origin.x)) * scale).round() as i32 + inset;
+        let y = (f64::from(f32::from(origin.y)) * scale).round() as i32 + inset;
+        self.placed = Some(((x, y), scale));
+    }
+
+    /// 重新贴出所需的状态：当前底图之外的部分。
+    fn history_state(&self, closed_at: i64) -> core_pins::history::State {
+        let (origin, scale) = self.placed.unwrap_or(((0, 0), 1.0));
+        core_pins::history::State {
+            annotations: self.editor.shapes().to_vec(),
+            drag_text: self.drag_text.clone(),
+            origin,
+            scale,
+            zoom: self.zoom,
+            opacity: self.opacity,
+            locked: self.locked,
+            closed_at,
+        }
     }
 
     fn base_size(&self, scale: f32) -> Size<Pixels> {

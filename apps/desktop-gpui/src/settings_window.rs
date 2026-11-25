@@ -235,7 +235,7 @@ impl Page {
         match self {
             Page::Capture => "区域 延时 光标 吸附 保存 格式 文件名 capture screenshot delay format",
             Page::Recording => "mp4 gif 帧率 画质 码率 编码 倒计时 键鼠 特效 record video fps",
-            Page::Pins => "阴影 边框 圆角 外观 pin shadow border",
+            Page::Pins => "阴影 边框 圆角 外观 历史 恢复 pin shadow border history restore",
             Page::Clipboard => "历史 记录 清理 粘贴 排除 暂存架 clipboard history shelf",
             Page::General => {
                 "外观 主题 深色 语言 开机 自启 字体 目录 导入 导出 配置 备份 theme language startup font directory import export"
@@ -482,6 +482,7 @@ impl SettingsView {
             cx.new(|cx| InputState::new(window, cx).placeholder(placeholder))
         };
         let mut subscriptions = Vec::new();
+        subscriptions.push(cx.observe_global::<crate::pins::HistoryList>(|_, cx| cx.notify()));
         let numbers: Vec<(Number, Entity<InputState>)> = Number::ALL
             .into_iter()
             .map(|number| {
@@ -1013,6 +1014,19 @@ fn shortcut_label(value: &str) -> String {
 // ---- 控件 ----
 
 /// 设置行（`.setting-row`）：左侧标签与一行说明，右侧控件；最小高 44，行间细分隔线（最后一行由卡片裁掉）。
+/// 贴图关闭时间：当天只显示时刻，更早的带“月/日”。
+fn closed_label(millis: i64) -> String {
+    use chrono::{Local, TimeZone};
+    let Some(date) = Local.timestamp_millis_opt(millis).single() else {
+        return String::new();
+    };
+    if date.date_naive() == Local::now().date_naive() {
+        date.format("%H:%M").to_string()
+    } else {
+        date.format("%-m/%-d %H:%M").to_string()
+    }
+}
+
 fn row(label: String, hint: Option<String>, control: impl IntoElement) -> Div {
     div()
         .flex()
@@ -2114,6 +2128,42 @@ impl SettingsView {
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
         let a = &s.pin_appearance;
+        let history = cx.try_global::<crate::pins::HistoryList>().map(|list| list.0.clone()).unwrap_or_default();
+        let mut history_rows = vec![row(
+            t("启动时恢复贴图"),
+            Some(t("退出时仍打开的贴图，下次启动时原位贴回")),
+            self.toggle("pin-restore-startup", s.pin_restore_on_startup, cx, |s, v| s.pin_restore_on_startup = v),
+        )];
+        for entry in &history {
+            let (restore_id, remove_id) = (entry.id.clone(), entry.id.clone());
+            history_rows.push(row(
+                format!("{} × {}", entry.width, entry.height),
+                Some(closed_label(entry.closed_at)),
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(8.0))
+                    .child(
+                        img(entry.image.clone())
+                            .w(px(72.0))
+                            .h(px(40.0))
+                            .rounded(px(4.0))
+                            .object_fit(ObjectFit::Contain),
+                    )
+                    .child(
+                        button(SharedString::from(format!("pin-history-restore-{}", entry.id)), t("贴图"), ButtonKind::Outline, true)
+                            .on_click(move |_, _, cx| crate::pins::restore(cx, restore_id.clone())),
+                    )
+                    .child(
+                        button(SharedString::from(format!("pin-history-remove-{}", entry.id)), t("删除"), ButtonKind::Outline, true)
+                            .on_click(move |_, _, cx| crate::pins::remove_history(cx, &remove_id)),
+                    ),
+            ));
+        }
+        let clear = (!history.is_empty()).then(|| {
+            button("pin-history-clear", t("清空"), ButtonKind::Outline, true)
+                .on_click(|_, _, cx| crate::pins::clear_history(cx))
+        });
         vec![
             hero(
                 icons::PIN,
@@ -2129,6 +2179,11 @@ impl SettingsView {
                     )
                     .on_click(|_, _, cx| crate::pins::open_file(cx))
                     .into_any_element(),
+                    button("hero-pin-restore", t("恢复关闭的贴图"), ButtonKind::Outline, !history.is_empty())
+                        .on_click(|_, _, cx| {
+                            crate::pins::restore_last(cx);
+                        })
+                        .into_any_element(),
                     button("hero-pin", t("剪贴板贴图"), ButtonKind::Primary, true)
                         .on_click(|_, _, cx| {
                             crate::shell::run_action(cx, ShortcutAction::Pin, "settings")
@@ -2161,6 +2216,14 @@ impl SettingsView {
                     self.number(Number::PinRadius, t),
                 ),
             ])
+            .into_any_element(),
+            heading(t("贴图历史")).children(clear).into_any_element(),
+            card(history_rows).into_any_element(),
+            note(if history.is_empty() {
+                t("关闭的贴图会出现在这里，最多保留 20 张")
+            } else {
+                t("最多保留最近关闭的 20 张；重新贴出后从列表移除")
+            })
             .into_any_element(),
         ]
     }

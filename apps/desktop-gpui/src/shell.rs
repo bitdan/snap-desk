@@ -32,6 +32,8 @@ const ACTIONS: [(&str, &str, ShortcutAction); 5] = [
     ("history", "剪贴板", ShortcutAction::History),
     ("translation", "翻译", ShortcutAction::Translate),
 ];
+/// 托盘“恢复关闭的贴图”：重新贴出最近关闭的一张。
+const PIN_RESTORE_ID: &str = "pin_restore";
 const SHORTCUTS_ID: &str = "shortcuts";
 const SETTINGS_ID: &str = "settings";
 const RESTART_ID: &str = "restart";
@@ -116,6 +118,7 @@ pub fn start(
     };
     shell.register_startup();
     let clipboard = shell.settings.clipboard.clone();
+    let restore_pins = shell.settings.pin_restore_on_startup;
     cx.set_global(shell);
     // 按主题设置与系统外观选定调色板（窗口尚未打开，不需要重绘）。
     crate::theme::refresh(cx);
@@ -123,6 +126,7 @@ pub fn start(
     crate::clipboard::init(cx, &clipboard);
     crate::shelf::init(cx);
     crate::local_translate::init(cx);
+    crate::pins::init(cx, restore_pins);
     if first_launch {
         // 先保存再开窗口：保存时从磁盘重新读取，全新安装要把按系统选出的语言一并写入。
         let saved = update_settings(cx, |s| {
@@ -279,6 +283,9 @@ fn handle(cx: &mut App, event: ShellEvent) {
             RESTART_ID => restart(cx),
             SHORTCUTS_ID => cx.update_global::<Shell, _>(|shell, _| shell.toggle_shortcuts()),
             SETTINGS_ID => crate::settings_window::open(cx),
+            PIN_RESTORE_ID => {
+                crate::pins::restore_last(cx);
+            }
             id => {
                 if let Some((_, _, action)) = ACTIONS.iter().find(|(item, _, _)| *item == id) {
                     run_action(cx, *action, "menu");
@@ -621,9 +628,13 @@ fn build_tray(language: &settings::Language, checked: bool, icon: tray_icon::Ico
     for (id, label, _) in ACTIONS {
         menu.append(&MenuItem::with_id(id, text(label), true, None))
             .map_err(|e| e.to_string())?;
+        if id == "pin" {
+            menu.append(&MenuItem::with_id(PIN_RESTORE_ID, text("恢复关闭的贴图"), true, None))
+                .map_err(|e| e.to_string())?;
+        }
     }
     let shortcuts_item = CheckMenuItem::with_id(SHORTCUTS_ID, text("启用全局快捷键"), true, checked, None);
-    // 托盘菜单：五个动作、打开主界面（设置窗口）、全局快捷键开关、重启、退出。
+    // 托盘菜单：五个动作（贴图后接“恢复关闭的贴图”）、打开主界面（设置窗口）、全局快捷键开关、重启、退出。
     menu.append_items(&[
         &MenuItem::with_id(SETTINGS_ID, text("打开 Snap Desk"), true, None),
         &shortcuts_item,
@@ -727,6 +738,7 @@ fn tray_icon() -> Result<tray_icon::Icon, String> {
 
 /// 退出前的资源收尾（本地翻译进程、剪贴板监听）后结束事件循环。
 fn finish(cx: &mut App) {
+    crate::pins::save_session(cx);
     crate::local_translate::shutdown();
     crate::clipboard::shutdown(cx);
     cx.quit();
