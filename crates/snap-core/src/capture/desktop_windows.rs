@@ -155,6 +155,11 @@ unsafe extern "system" fn application_window(hwnd: HWND, context: LPARAM) -> BOO
     {
         return BOOL(1);
     }
+    // 鼠标点击会穿透的窗口是全屏标注、提示条、屏幕录制指示框之类的覆盖层，不是用户要截的窗口；
+    // 若保留，它们会盖在所有窗口之上，吸附只能选中整个屏幕。
+    if style.contains(WS_EX_TRANSPARENT) {
+        return BOOL(1);
+    }
     // 有标题的隐藏窗口同样保留，不按 owner 一刀切，兼容 Qt / 微信的窗口所有者结构。
     let mut class = [0u16; 128];
     let length = unsafe { GetClassNameW(hwnd, &mut class) }.max(0) as usize;
@@ -383,6 +388,23 @@ impl AccessibilityRequest {
     /// 枚举控件（较慢，通常数百毫秒）；结果用 [`merge_accessibility`] 合并进已有候选。
     pub fn collect(self) -> Vec<Target> {
         accessibility::collect(self.roots, self.origin, self.size)
+    }
+
+    pub(crate) fn has_roots(&self) -> bool {
+        !self.roots.is_empty()
+    }
+
+    /// 截图像素 `point` 处、属于 `window_index` 窗口的由外到内控件链（阻塞，通常几十毫秒，
+    /// 上限约 250 毫秒）；用于悬停时补全一次性枚举来不及覆盖的深层控件。
+    pub fn probe(&self, window_index: usize, point: (u32, u32)) -> Vec<Target> {
+        let Some(root) = self.roots.iter().find(|(_, index, _)| *index == window_index).copied() else {
+            return Vec::new();
+        };
+        let global = (
+            self.origin.0.saturating_add(point.0 as i32),
+            self.origin.1.saturating_add(point.1 as i32),
+        );
+        accessibility::probe(root, global, self.origin, self.size)
     }
 }
 

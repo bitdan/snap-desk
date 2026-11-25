@@ -18,7 +18,7 @@
 use crate::annotate::{self, Action, Editor, Job, Layers, Tool, ToolbarProps};
 use crate::magnifier::{self, Picker};
 use crate::recognition::Mode as RecognitionMode;
-use crate::selection::{self, Handle};
+use crate::selection::{self, Handle, Snap, SnapKind};
 use gpui_kit::{
     component::input::{Textarea, TextareaState},
     *,
@@ -62,9 +62,24 @@ pub struct Session {
     origin: (i32, i32),
     displays: Vec<Display>,
     /// 可吸附的窗口与控件（截图物理像素），顺序为系统前后层次。
-    targets: Vec<Rect>,
+    targets: Vec<Snap>,
     selection: Option<Rect>,
+    /// 当前高亮的吸附区域，即 `levels[level]` 的矩形。
     hover: Option<Rect>,
+    /// 鼠标下可切换的吸附层级（从内到外，最外层可能是整个屏幕）与当前所选层级。
+    levels: Vec<Snap>,
+    level: usize,
+    /// 触控板滚动的累计量，满一格才切换一次层级。
+    wheel: f32,
+    /// 用户用滚轮 / Tab / Alt 选过层级时，当时鼠标下最内层目标的区域；鼠标仍在同一个目标上时
+    /// 保持所选层级（也不被新探测结果改回），移到别的控件上就回到最内层。
+    level_manual: Option<Rect>,
+    /// 悬停探测鼠标处的深层控件（一次性枚举有时间上限，深层网页常来不及覆盖）；Wayland 等不支持时为空。
+    probe: Option<Arc<snap_core::capture::HoverProbe>>,
+    /// 最近一次悬停探测的序号；鼠标继续移动后旧结果只合并候选，不再改动高亮。
+    probe_seq: u64,
+    /// 最近一次按画面识别的窗口及其区域划分；同一窗口内移动鼠标直接复用。
+    regions: Option<(usize, Arc<snap_core::capture::regions::Regions>)>,
     drag: Option<Drag>,
     export: ExportSettings,
     /// 设置“框选完成后的动作”：none / copy / save / pin。
@@ -114,6 +129,62 @@ impl Session {
 }
 
 impl Session {
+    /// 按鼠标位置重算吸附层级。用户手动选过层级且鼠标仍在该区域内时保持（例如切到整个窗口后
+    /// 在窗口内移动），否则回到最内层；按住 Alt 时直接选整个窗口。返回高亮是否变化。
+    fn hover_at(&mut self, p: selection::Point, alt: bool) -> bool {
+        let mut levels = selection::snap_levels(&self.targets, p);
+        if !self.targets.is_empty() {
+            let screen = (0..self.displays.len()).map(|i| self.region(i)).find(|r| selection::contains(*r, p));
+            if let Some(rect) = screen.filter(|r| levels.last().is_none_or(|last| last.rect != *r)) {
+                levels.push(Snap { rect, kind: SnapKind::Screen, window: usize::MAX, name: None });
+            }
+        }
+        let inner = levels.first().map(|l| l.rect);
+        let kept = self
+            .hover
+            .filter(|_| self.level_manual.is_some() && self.level_manual == inner)
+            .and_then(|rect| levels.iter().position(|l| l.rect == rect));
+        let level = if alt { window_level(&levels).or(kept) } else { kept };
+        self.level_manual = level.and(inner);
+        self.set_levels(levels, level.unwrap_or(0))
+    }
+
+    /// Tab / 滚轮切换层级：正数向外（更大），负数向内；`wrap` 时到头后从另一端继续。
+    fn step_level(&mut self, delta: i32, wrap: bool) -> bool {
+        let count = self.levels.len() as i32;
+        if self.hover.is_none() || count < 2 {
+            return false;
+        }
+        let next = self.level as i32 + delta;
+        let next = if wrap { next.rem_euclid(count) } else { next.clamp(0, count - 1) };
+        let levels = std::mem::take(&mut self.levels);
+        self.level_manual = levels.first().map(|l| l.rect);
+        self.set_levels(levels, next as usize)
+    }
+
+    /// 追加吸附候选，跳过与已有候选重合的，总数不超过 4096；返回是否有新增。
+    fn merge_targets(&mut self, found: Vec<Snap>) -> bool {
+        let before = self.targets.len();
+        for target in found {
+            if self.targets.len() >= 4096 {
+                break;
+            }
+            if !self.targets.iter().any(|existing| snap_core::capture::same_bounds(existing.rect, target.rect)) {
+                self.targets.push(target);
+            }
+        }
+        self.targets.len() > before
+    }
+
+    fn set_levels(&mut self, levels: Vec<Snap>, level: usize) -> bool {
+        let hover = levels.get(level).map(|l| l.rect);
+        let changed = hover != self.hover || level != self.level || levels.len() != self.levels.len();
+        self.levels = levels;
+        self.level = level;
+        self.hover = hover;
+        changed
+    }
+
     fn area(&self) -> Rect {
         Rect { x: 0, y: 0, width: self.image.width(), height: self.image.height() }
     }
@@ -230,12 +301,13 @@ struct Grabbed {
     image: RgbaImage,
     origin: (i32, i32),
     displays: Vec<Display>,
-    targets: Vec<Rect>,
+    targets: Vec<Snap>,
     windows: Vec<crate::recording::WindowTarget>,
     natives: Vec<(Rect, snap_core::capture::NativeWindow)>,
     include_cursor: bool,
     /// Windows：UI Automation 控件候选在浮层显示后再后台补充（控件枚举占拍屏耗时大半）。
     deferred: Option<Deferred>,
+    probe: Option<snap_core::capture::HoverProbe>,
 }
 
 #[cfg(windows)]
@@ -243,8 +315,38 @@ type Deferred = snap_core::capture::windows::AccessibilityRequest;
 #[cfg(not(windows))]
 type Deferred = std::convert::Infallible;
 
-fn snap_rects(targets: &[snap_core::capture::Target]) -> Vec<Rect> {
-    targets.iter().filter(|target| !target.recording_only).map(|target| target.rect).collect()
+fn snap_targets(targets: &[snap_core::capture::Target]) -> Vec<Snap> {
+    targets
+        .iter()
+        .filter(|target| !target.recording_only)
+        .map(|target| {
+            let window = target.kind == "window";
+            Snap {
+                rect: target.rect,
+                kind: if window { SnapKind::Window } else { SnapKind::Element },
+                window: target.window_index,
+                name: window.then(|| window_name(&target.title, &target.app_name)).flatten(),
+            }
+        })
+        .collect()
+}
+
+/// 层级中“整个窗口”的位置。
+fn window_level(levels: &[Snap]) -> Option<usize> {
+    levels.iter().position(|l| l.kind == SnapKind::Window)
+}
+
+/// 层级标签上的窗口名：优先标题，过长时截断；没有标题时用应用名。
+fn window_name(title: &str, app: &str) -> Option<Arc<str>> {
+    let source = if title.trim().is_empty() { app.trim() } else { title.trim() };
+    if source.is_empty() {
+        return None;
+    }
+    let mut name: String = source.chars().take(40).collect();
+    if source.chars().nth(40).is_some() {
+        name.push('…');
+    }
+    Some(name.into())
 }
 
 /// 可吸附的顶层窗口及其原生身份（录屏“整个窗口”来源）；读取失败的窗口跳过。
@@ -265,6 +367,7 @@ fn grab(include_cursor: bool, snap: bool) -> Result<Grabbed, String> {
     let (desktop, deferred) = snap_core::capture::capture_deferred(false, include_cursor, snap)?;
     #[cfg(not(windows))]
     let (desktop, deferred) = (snap_core::capture::capture(false, include_cursor, snap)?, None);
+    let probe = snap_core::capture::hover_probe(&desktop);
     let natives = desktop
         .targets
         .iter()
@@ -275,12 +378,111 @@ fn grab(include_cursor: bool, snap: bool) -> Result<Grabbed, String> {
         natives,
         include_cursor: desktop.include_cursor,
         windows: window_targets(&desktop),
-        targets: snap_rects(&desktop.targets),
+        targets: snap_targets(&desktop.targets),
         image: desktop.image,
         origin: (desktop.x, desktop.y),
         displays: desktop.displays,
         deferred,
+        probe,
     })
+}
+
+/// 鼠标停稳后再探测，移动中不发起跨进程调用。
+const PROBE_DELAY: Duration = Duration::from_millis(60);
+
+/// 悬停探测：鼠标停稳后在后台补全鼠标处的层级，鼠标仍停在原处时立即刷新高亮。
+/// 先用系统辅助功能查出由外到内的控件链（Windows、macOS、Linux X11）；鼠标处仍没有控件时按画面识别界面区域，
+/// 照顾 Java / Compose、Qt、游戏等不提供控件信息的应用。回放历史截图时不探测。
+fn schedule_probe(session: &Entity<Session>, p: selection::Point, cx: &mut App) {
+    if history::position(cx).is_some() || p.0 < 0 || p.1 < 0 {
+        return;
+    }
+    let job = session.update(cx, |s, _| {
+        let window = s.levels.iter().find(|l| l.kind == SnapKind::Window)?.clone();
+        s.probe_seq += 1;
+        Some((s.probe.clone(), window, s.probe_seq))
+    });
+    let Some((request, window, seq)) = job else {
+        return;
+    };
+    let session = session.clone();
+    let point = (p.0 as u32, p.1 as u32);
+    cx.spawn(async move |cx| {
+        cx.background_executor().timer(PROBE_DELAY).await;
+        if cx.update(|cx| session.read(cx).probe_seq != seq) {
+            return;
+        }
+        let probe_started = Instant::now();
+        let found = match request {
+            Some(request) => {
+                let index = window.window;
+                cx.background_executor().spawn(async move { request.probe(index, point) }).await
+            }
+            None => Vec::new(),
+        };
+        log::info!(
+            "event=gpui.capture_probe found={} elapsed_ms={}",
+            found.len(),
+            probe_started.elapsed().as_millis()
+        );
+        let visual = cx.update(|cx| {
+            session.update(cx, |s, cx| {
+                let added = s.merge_targets(snap_targets(&found));
+                let fresh = s.probe_seq == seq && s.selection.is_none() && s.drag.is_none();
+                if added && fresh && s.hover_at(p, false) {
+                    cx.notify();
+                }
+                // 鼠标处没有真正的控件时按画面识别；已有的区域可能只是别处算出的外层，
+                // 每个位置都要算出自己的内层链（同一窗口复用划分，单次查询只需微秒）。
+                let bare = !selection::snap_levels(&s.targets, p).iter().any(|l| l.kind == SnapKind::Element);
+                (fresh && bare).then(|| {
+                    let cached = s.regions.as_ref().filter(|(index, _)| *index == window.window).map(|(_, r)| r.clone());
+                    // 挡在这个窗口上面的窗口（前后层次靠前），它们的画面不属于这个窗口。
+                    let covered: Vec<Rect> = s
+                        .targets
+                        .iter()
+                        .filter(|t| t.kind == SnapKind::Window && t.window < window.window)
+                        .filter_map(|t| selection::intersect(t.rect, window.rect))
+                        .collect();
+                    (s.image.clone(), cached, covered)
+                })
+            })
+        });
+        let Some((image, cached, covered)) = visual else {
+            return;
+        };
+        let rect = window.rect;
+        let (regions, levels) = cx
+            .background_executor()
+            .spawn(async move {
+                let started = Instant::now();
+                let regions = cached
+                    .unwrap_or_else(|| Arc::new(snap_core::capture::regions::Regions::build(&image, rect, &covered)));
+                let levels = regions.levels(point);
+                log::info!(
+                    "event=gpui.capture_regions levels={} covered={} elapsed_ms={}",
+                    levels.len(),
+                    covered.len(),
+                    started.elapsed().as_millis()
+                );
+                (regions, levels)
+            })
+            .await;
+        cx.update(|cx| {
+            session.update(cx, |s, cx| {
+                s.regions = Some((window.window, regions));
+                let snaps = levels
+                    .into_iter()
+                    .map(|rect| Snap { rect, kind: SnapKind::Region, window: window.window, name: None });
+                let added = s.merge_targets(snaps.collect());
+                let fresh = s.probe_seq == seq && s.selection.is_none() && s.drag.is_none();
+                if added && fresh && s.hover_at(p, false) {
+                    cx.notify();
+                }
+            });
+        });
+    })
+    .detach();
 }
 
 /// 浮层显示后在后台补充控件候选，追加到吸附列表（窗口候选之后，与一次性采集的顺序一致）。
@@ -291,14 +493,7 @@ async fn complete_targets(cx: &mut AsyncApp, session: Entity<Session>, request: 
     cx.update(|cx| {
         session.update(cx, |s, cx| {
             let before = s.targets.len();
-            for rect in snap_rects(&found) {
-                if s.targets.len() >= 4096 {
-                    break;
-                }
-                if !s.targets.iter().any(|existing| snap_core::capture::same_bounds(*existing, rect)) {
-                    s.targets.push(rect);
-                }
-            }
+            s.merge_targets(snap_targets(&found));
             log::info!(
                 "event=gpui.capture_targets_completed added={} elements_ms={}",
                 s.targets.len() - before,
@@ -419,6 +614,13 @@ fn begin(cx: &mut App, settings: &Settings, delay: Duration, purpose: Option<Rec
                         targets: grabbed.targets,
                         selection: None,
                         hover: None,
+                        levels: Vec::new(),
+                        level: 0,
+                        wheel: 0.0,
+                        level_manual: None,
+                        probe: grabbed.probe.take().map(Arc::new),
+                        probe_seq: 0,
+                        regions: None,
                         drag: None,
                         export,
                         after,
@@ -1254,7 +1456,7 @@ fn capture_tip(s: &Session) -> Div {
     let (main, keys) = if s.recording {
         ("拖动选择录屏范围", "Esc 退出 · Ctrl / ⌘ + A 全屏 · R 最近选区")
     } else if !s.targets.is_empty() {
-        ("点击吸附 · Tab 切换层级 · 拖动框选 · Alt 选窗口 · Shift 自由框选", "C 取色 · Esc 取消 · Ctrl / ⌘ + A 全屏 · R 最近选区")
+        ("点击吸附 · 滚轮 / Tab 切换层级 · Alt 整个窗口 · 拖动框选", "C 取色 · Esc 取消 · Ctrl / ⌘ + A 全屏 · R 最近选区")
     } else {
         ("拖动框选屏幕", "C 取色 · Esc 取消 · Ctrl / ⌘ + A 全屏 · R 最近选区")
     };
@@ -1281,6 +1483,48 @@ fn capture_tip(s: &Session) -> Div {
                 .child(s.text(main))
                 .child(div().text_xs().text_color(rgb(0xb7b4c8)).child(s.text(keys))),
         )
+}
+
+/// 高亮区域左上角的层级标签：种类、窗口名、物理尺寸与“当前层 / 总层数”，
+/// 让用户知道吸附到了什么、还能不能用滚轮或 Tab 换一层。
+fn level_label(s: &Session, b: Bounds<Pixels>, viewport: Size<Pixels>) -> Div {
+    const HEIGHT: f32 = 22.0;
+    let Some(snap) = s.levels.get(s.level) else {
+        return div();
+    };
+    let kind = match snap.kind {
+        SnapKind::Element => s.text("控件"),
+        SnapKind::Region => s.text("区域"),
+        SnapKind::Window => s.text("窗口"),
+        SnapKind::Screen => s.text("整个屏幕"),
+    };
+    let mut parts = vec![kind];
+    if let Some(name) = &snap.name {
+        parts.push(name.to_string());
+    }
+    parts.push(format!("{} × {}", snap.rect.width, snap.rect.height));
+    if s.levels.len() > 1 {
+        parts.push(format!("{} / {}", s.level + 1, s.levels.len()));
+    }
+    // 上方放得下就贴在边框外，否则放进区域内左上角；水平方向不超出屏幕右侧。
+    let top = if f32::from(b.origin.y) >= HEIGHT + 2.0 { b.origin.y - px(HEIGHT + 2.0) } else { b.origin.y + px(4.0) };
+    let left = b.origin.x.max(px(0.0)).min((viewport.width - px(320.0)).max(px(0.0)));
+    div()
+        .absolute()
+        .left(left)
+        .top(top)
+        .h(px(HEIGHT))
+        .max_w(px(480.0))
+        .px(px(8.0))
+        .flex()
+        .items_center()
+        .rounded(px(4.0))
+        .bg(rgba(0x242330ed))
+        .text_size(px(12.0))
+        .text_color(rgb(0xffffff))
+        .whitespace_nowrap()
+        .overflow_hidden()
+        .child(parts.join(" · "))
 }
 
 /// 单个显示器上的浮层视图。
@@ -1481,6 +1725,7 @@ impl Overlay {
                 }
             }
         });
+        let mut probe_at = None;
         let edited = self.session.update(cx, |s, cx| {
             let pressed = event.pressed_button == Some(MouseButton::Left);
             if pressed && s.drag.is_none() && s.editor.draft.is_some() {
@@ -1508,11 +1753,10 @@ impl Overlay {
                     }
                 }
                 _ if s.selection.is_none() => {
-                    let hover = selection::snap_target(&s.targets, p);
-                    if hover == s.hover {
+                    probe_at = Some(p);
+                    if !s.hover_at(p, event.modifiers.alt) {
                         return false;
                     }
-                    s.hover = hover;
                 }
                 _ => return false,
             }
@@ -1522,6 +1766,9 @@ impl Overlay {
         });
         if edited {
             flush(&self.session, Some(window), cx);
+        }
+        if let Some(p) = probe_at {
+            schedule_probe(&self.session, p, cx);
         }
     }
 
@@ -1639,6 +1886,17 @@ impl Overlay {
             history::replay(cx, direction);
             return;
         }
+        // Tab / Shift+Tab：在鼠标下的吸附层级间向外 / 向内循环。
+        if key == "tab" && !command && !keystroke.modifiers.alt {
+            let delta = if keystroke.modifiers.shift { -1 } else { 1 };
+            self.session.update(cx, |s, cx| {
+                if s.selection.is_none() && s.drag.is_none() && s.step_level(delta, true) {
+                    cx.notify();
+                }
+            });
+            cx.stop_propagation();
+            return;
+        }
         if key == "a" && command && !keystroke.modifiers.alt {
             select_screen(cx, 0);
             return;
@@ -1729,7 +1987,7 @@ impl Overlay {
         }
     }
 
-    /// 单独按下 Shift 切换色值格式。
+    /// 单独按下 Shift 切换色值格式；按下 Alt 时吸附切到整个窗口。
     fn modifiers(&mut self, event: &ModifiersChangedEvent, _: &mut Window, cx: &mut Context<Self>) {
         let shift = event.modifiers.shift;
         let only_shift = shift && !event.modifiers.control && !event.modifiers.alt && !event.modifiers.platform;
@@ -1737,6 +1995,44 @@ impl Overlay {
             if only_shift && s.picking() && s.drag.is_none() {
                 s.picker.hex = !s.picker.hex;
                 s.picker.copied = false;
+                cx.notify();
+            }
+            if event.modifiers.alt
+                && s.selection.is_none()
+                && s.drag.is_none()
+                && let Some(level) = window_level(&s.levels).filter(|&level| level != s.level)
+            {
+                let levels = std::mem::take(&mut s.levels);
+                s.level_manual = levels.first().map(|l| l.rect);
+                s.set_levels(levels, level);
+                cx.notify();
+            }
+        });
+    }
+
+    /// 未框选时滚轮切换吸附层级：向上滚向外（更大），向下滚向内。
+    /// 鼠标滚轮（按行滚动）每格一个事件，每个事件切一级，不管系统设置一格滚几行；
+    /// 触控板（按像素滚动）累计满一格的距离切一级。
+    fn wheel(&mut self, event: &ScrollEvent, _: &mut Window, cx: &mut Context<Self>) {
+        const NOTCH: f32 = 40.0;
+        self.session.update(cx, |s, cx| {
+            if s.selection.is_some() || s.drag.is_some() || s.hover.is_none() {
+                s.wheel = 0.0;
+                return;
+            }
+            let step = match event.delta {
+                ScrollDelta::Lines(lines) => {
+                    s.wheel = 0.0;
+                    if lines.y == 0.0 { 0 } else { lines.y.signum() as i32 }
+                }
+                ScrollDelta::Pixels(pixels) => {
+                    s.wheel += f32::from(pixels.y);
+                    let steps = (s.wheel / NOTCH).trunc();
+                    s.wheel -= steps * NOTCH;
+                    steps.clamp(-8.0, 8.0) as i32
+                }
+            };
+            if step != 0 && s.step_level(step, false) {
                 cx.notify();
             }
         });
@@ -1967,6 +2263,7 @@ impl Render for Overlay {
             .cursor_crosshair()
             .on_key_down(cx.listener(Self::key))
             .on_modifiers_changed(cx.listener(Self::modifiers))
+            .on_scroll(cx.listener(Self::wheel))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::press))
             .on_mouse_move(cx.listener(Self::motion))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::release))
@@ -2001,6 +2298,9 @@ impl Render for Overlay {
                         .border_2()
                         .border_color(rgb(ACCENT)),
                 );
+                if !dragging {
+                    root = root.child(level_label(s, b, viewport));
+                }
             }
         }
 

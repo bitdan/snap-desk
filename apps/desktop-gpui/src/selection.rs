@@ -1,4 +1,4 @@
-//! 截图选区几何：新建、移动、八向缩放、手柄命中与窗口吸附。
+//! 截图选区几何：新建、移动、八向缩放、手柄命中与窗口吸附层级。
 //!
 //! 全部使用虚拟桌面截图内的物理像素（与 `snap_core::capture::Rect` 同一坐标系），
 //! 中间计算用 i64，避免负坐标与 u32 溢出。界面的逻辑像素换算由浮层负责，这里不涉及 DPI。
@@ -127,13 +127,43 @@ pub fn intersect(a: Rect, b: Rect) -> Option<Rect> {
     from_edges(al.max(bl), at.max(bt), ar.min(br), ab.min(bb), a)
 }
 
-/// 鼠标下的吸附候选：包含该点的最小矩形，使控件优先于所在窗口、前景窗口的控件优先于大面板。
-pub fn snap_target(targets: &[Rect], p: Point) -> Option<Rect> {
-    targets
-        .iter()
-        .copied()
-        .filter(|rect| contains(*rect, p))
-        .min_by_key(|rect| u64::from(rect.width) * u64::from(rect.height))
+/// 吸附候选的种类；决定层级标签上的文字。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SnapKind {
+    /// 系统辅助功能提供的控件。
+    Element,
+    /// 按画面识别出的界面区域（应用不提供控件信息时的补充）。
+    Region,
+    Window,
+    Screen,
+}
+
+/// 一个吸附候选。`window` 是所属顶层窗口在系统前后层次中的序号（越小越靠上），
+/// `name` 只在本机浮层的层级标签上显示，不写日志。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Snap {
+    pub rect: Rect,
+    pub kind: SnapKind,
+    pub window: usize,
+    pub name: Option<std::sync::Arc<str>>,
+}
+
+fn area(rect: Rect) -> u64 {
+    u64::from(rect.width) * u64::from(rect.height)
+}
+
+/// 鼠标下可切换的吸附层级，从内到外（面积从小到大）：只取包含该点的最上层窗口
+/// 及其控件，被它挡住的下层窗口与控件不参与；默认层级是第一项（最内层控件）。
+pub fn snap_levels(targets: &[Snap], p: Point) -> Vec<Snap> {
+    let Some(top) = targets.iter().filter(|t| contains(t.rect, p)).map(|t| t.window).min() else {
+        return Vec::new();
+    };
+    let mut levels: Vec<Snap> =
+        targets.iter().filter(|t| t.window == top && contains(t.rect, p)).cloned().collect();
+    // 同面积时控件在前、窗口在后，保证窗口始终是最外层。
+    levels.sort_by_key(|t| (area(t.rect), t.kind == SnapKind::Window));
+    levels.dedup_by(|a, b| a.rect == b.rect);
+    levels
 }
 
 #[cfg(test)]
@@ -173,17 +203,34 @@ mod tests {
         assert_eq!(resized(start, Handle::S, 0, -20, AREA), None);
     }
 
+    fn snap(rect: Rect, kind: SnapKind, window: usize) -> Snap {
+        Snap { rect, kind, window, name: None }
+    }
+
     #[test]
-    fn handles_hit_within_tolerance_and_snap_prefers_smallest_target() {
+    fn snap_levels_go_from_inner_control_to_window_and_skip_covered_windows() {
+        let front = snap(rect(0, 0, 100, 80), SnapKind::Window, 0);
+        let panel = snap(rect(10, 10, 60, 50), SnapKind::Element, 0);
+        let button = snap(rect(20, 20, 10, 10), SnapKind::Element, 0);
+        // 被前景窗口挡住的小窗口与它的控件：面积更小也不能被选中。
+        let behind = snap(rect(15, 15, 30, 30), SnapKind::Window, 1);
+        let hidden = snap(rect(22, 22, 5, 5), SnapKind::Element, 1);
+        let targets = [front.clone(), behind.clone(), panel.clone(), button.clone(), hidden];
+        assert_eq!(snap_levels(&targets, (24, 24)), vec![button, panel.clone(), front.clone()]);
+        assert_eq!(snap_levels(&targets, (50, 50)), vec![panel, front]);
+        // 前景窗口之外，下层窗口重新可选。
+        let outside = snap(rect(200, 0, 50, 50), SnapKind::Window, 1);
+        assert_eq!(snap_levels(std::slice::from_ref(&outside), (210, 10)), vec![outside]);
+        assert!(snap_levels(&targets, (150, 150)).is_empty());
+    }
+
+    #[test]
+    fn handles_hit_within_tolerance_and_rects_intersect() {
         let selection = rect(10, 10, 30, 20);
         assert_eq!(handle_at(selection, (11, 9), 3), Some(Handle::NW));
         assert_eq!(handle_at(selection, (25, 30), 3), Some(Handle::S));
         assert_eq!(handle_at(selection, (25, 20), 3), None);
         let window = rect(0, 0, 60, 60);
-        let button = rect(20, 20, 10, 10);
-        assert_eq!(snap_target(&[window, button], (25, 25)), Some(button));
-        assert_eq!(snap_target(&[window, button], (5, 5)), Some(window));
-        assert_eq!(snap_target(&[window, button], (70, 70)), None);
         assert_eq!(intersect(window, rect(50, 50, 30, 30)), Some(rect(50, 50, 10, 10)));
         assert_eq!(intersect(window, rect(70, 0, 5, 5)), None);
     }
