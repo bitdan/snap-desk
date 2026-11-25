@@ -1,0 +1,81 @@
+/* 使用手册：沿用官网的纸面、衬线标题与手绘波浪链接，左侧分组目录，正文控制在易读宽度。 */
+.skip { position: absolute; left: -9999px; top: 8px; z-index: 20; padding: 8px 12px; background: var(--ink); color: var(--paper); font: 500 13px/1 var(--mono); }
+.skip:focus { left: 12px; }
+.bar nav a[aria-current="page"] { color: var(--ink); }
+
+.guide { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 64px; align-items: start; padding-top: 40px; }
+
+/* 目录 */
+.guide-nav { position: sticky; top: 88px; max-height: calc(100vh - 108px); overflow-y: auto; padding-right: 8px; }
+.guide-nav summary { display: none; }
+.guide-group { margin: 26px 0 8px; font: 500 11px/1.4 var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
+.guide-group:first-child { margin-top: 0; }
+.guide-nav ul { list-style: none; margin: 0; padding: 0; }
+.guide-nav li a { display: block; padding: 5px 0 5px 12px; border-left: 2px solid var(--rule); color: var(--muted); font-size: 15px; text-decoration: none; }
+.guide-nav li a:hover { color: var(--ink); border-left-color: var(--muted); }
+.guide-nav li a[aria-current="page"] { color: var(--ink); border-left-color: var(--red); font-weight: 600; }
+
+/* 正文 */
+.guide-body { min-width: 0; max-width: 46em; }
+.prose h1 { margin: 0; font-size: clamp(34px, 4vw, 48px); line-height: 1.12; letter-spacing: -.02em; }
+.guide-lead { margin: 18px 0 0; color: var(--muted); font-size: 17px; line-height: 1.75; }
+.prose h2 { margin: 56px 0 14px; padding-top: 14px; border-top: 1px solid var(--rule); font-size: 28px; line-height: 1.25; }
+.prose h3 { margin: 34px 0 10px; font-size: 21px; line-height: 1.3; }
+.prose p, .prose li { line-height: 1.8; }
+.prose p { margin: 14px 0; }
+.prose ul, .prose ol { margin: 14px 0; padding-left: 1.4em; }
+.prose li + li { margin-top: 6px; }
+.prose li::marker { color: var(--muted); }
+.prose a { text-decoration-color: color-mix(in srgb, var(--blue) 55%, transparent); text-underline-offset: 3px; }
+.prose a:hover { color: var(--blue); }
+.prose strong { font-weight: 650; }
+.prose code { padding: 1px 5px; border-radius: 4px; background: color-mix(in srgb, var(--ink) 7%, transparent); font: 400 .88em/1.5 var(--mono); }
+.prose pre { overflow-x: auto; padding: 14px 16px; border: 1px solid var(--rule); border-radius: 6px; font: 400 14px/1.6 var(--mono); }
+.prose pre code { padding: 0; background: none; }
+.prose img { display: block; max-width: 100%; height: auto; margin: 22px 0 6px; border: 1px solid var(--rule); border-radius: 6px; }
+.prose img + em { display: block; color: var(--muted); font-size: 14px; font-style: normal; }
+
+/* 按键：等宽小方块 */
+kbd { display: inline-block; min-width: 1.6em; padding: 1px 6px; border: 1px solid var(--rule); border-bottom-width: 2px; border-radius: 5px; background: color-mix(in srgb, var(--paper) 70%, var(--ink) 4%); font: 500 .82em/1.5 var(--mono); text-align: center; white-space: nowrap; }
+
+/* 表格：与首页对照表同一风格 */
+.prose table { display: block; width: 100%; overflow-x: auto; margin: 20px 0; border-collapse: collapse; font-size: 15px; }
+.prose th, .prose td { padding: 11px 14px 11px 0; text-align: left; vertical-align: top; border-bottom: 1px solid var(--rule); }
+.prose thead th { font: 500 11px/1.4 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); border-bottom-color: var(--ink); }
+.prose td:first-child { white-space: nowrap; }
+
+/* 提示：左侧色条，不用卡片阴影 */
+.prose blockquote { margin: 22px 0; padding: 4px 0 4px 18px; border-left: 3px solid var(--yellow); color: var(--ink); }
+.prose blockquote p { margin: 8px 0; }
+.prose blockquote.note { border-left-color: var(--blue); }
+.prose blockquote.warn { border-left-color: var(--red); }
+
+/* 快速入口卡片（快速上手页） */
+.cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 32px; margin: 22px 0; padding: 0; list-style: none; border-top: 1px solid var(--rule); }
+.cards li { margin: 0; padding: 16px 0; border-bottom: 1px solid var(--rule); }
+.cards a { font-family: var(--serif); font-size: 19px; text-decoration: none; }
+.cards a::after { content: " →"; color: var(--muted); }
+.cards span { display: block; color: var(--muted); font-size: 14.5px; line-height: 1.6; }
+
+/* 上一篇 / 下一篇 */
+.pager { display: flex; justify-content: space-between; gap: 24px; margin-top: 72px; padding-top: 22px; border-top: 1px solid var(--rule); }
+.pager-link { display: flex; flex-direction: column; gap: 4px; font-family: var(--serif); font-size: 19px; text-decoration: none; }
+.pager-link span { font: 500 11px/1.4 var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
+.pager-link.next { text-align: right; margin-left: auto; }
+.pager-link:hover { color: var(--blue); }
+.guide-edit { margin-top: 28px; color: var(--muted); font-size: 13.5px; }
+.guide-edit a { color: inherit; text-underline-offset: 3px; }
+
+@media (max-width: 900px) {
+  .guide { grid-template-columns: 1fr; gap: 24px; padding-top: 20px; }
+  .guide-nav { position: static; max-height: none; padding: 0; border-bottom: 1px solid var(--rule); }
+  .guide-nav summary { display: block; padding: 12px 0; cursor: pointer; font: 500 12px/1.4 var(--mono); letter-spacing: .14em; text-transform: uppercase; }
+  .guide-nav nav { padding-bottom: 18px; }
+  .cards { grid-template-columns: 1fr; }
+}
+@media (max-width: 600px) {
+  .prose table { font-size: 14px; }
+  .prose th, .prose td { padding-right: 10px; }
+  .prose thead th { letter-spacing: .06em; }
+  .prose td:first-child { white-space: normal; min-width: 4.5em; }
+}
