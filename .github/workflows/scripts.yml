@@ -1,0 +1,62 @@
+name: Scripts
+
+# 发版与打包脚本（scripts/*.mjs）的测试，只在它们可能受影响时运行；纯 Rust 改动不触发。
+# release-signing 测试经 cargo 调用 tools/release-sign，因此签名工具与 Cargo.lock 也算在内。
+# snap-core 边界与内嵌资源检查读取 Rust 源码，已放在 CI 流水线的 native 任务里随 Rust 改动执行。
+# 发布流水线在打标签时仍会完整运行 npm test。
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'scripts/*.mjs'
+      - 'scripts/ci/translation-engine.json'
+      - 'tools/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'Cargo.lock'
+      - '.github/workflows/scripts.yml'
+  pull_request:
+    paths:
+      - 'scripts/*.mjs'
+      - 'scripts/ci/translation-engine.json'
+      - 'tools/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'Cargo.lock'
+      - '.github/workflows/scripts.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scripts-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  scripts:
+    name: Script checks and tests
+    # 发版准备只改版本号，随后推送的标签会在发布流水线里跑同一套测试，这里不重复。
+    # master 只接受 PR，因此三种情况都要跳过：标题为 chore(release): 的发版 PR、
+    # 合并它产生的合并提交（正文带 PR 标题），以及直接以该前缀开头的提交。
+    if: >-
+      ${{ !(startsWith(github.event.pull_request.title, 'chore(release):')
+      || startsWith(github.event.head_commit.message, 'chore(release):')
+      || (startsWith(github.event.head_commit.message, 'Merge pull request ')
+      && contains(github.event.head_commit.message, 'chore(release):'))) }}
+    runs-on: windows-2022
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          # release-notes 测试会读取已有附注标签；默认浅克隆没有标签，必须取完整历史。
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      # 发版脚本没有 npm 依赖；test 覆盖 snap-core 边界与内嵌资源检查，以及打包、签名、版本同步等脚本测试。
+      - name: Script tests
+        run: npm test
