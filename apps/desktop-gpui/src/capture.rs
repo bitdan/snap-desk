@@ -1703,6 +1703,8 @@ impl Overlay {
             "enter" => copy(cx, crate::native::hwnd(window)),
             "c" if command => copy(cx, crate::native::hwnd(window)),
             "s" if command => save(cx),
+            // 与工具栏“贴图 Ctrl/⌘+P”提示一致；录屏选区没有贴图按钮。
+            "p" if command && !recording => pin(cx),
             // 方向键微调选区 1 像素，Shift 为 10 像素（已有标注时选区固定）。
             "left" | "right" | "up" | "down" => {
                 let step = if keystroke.modifiers.shift { 10 } else { 1 };
