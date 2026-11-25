@@ -40,6 +40,7 @@ lead: 图片里的文字不用再手打。框选一块区域，几秒钟就能�
 | 离线 | PaddleOCR（PP-OCRv6） | 中英文效果好；首次使用按提示下载模型（仅 Windows） |
 | 离线 | Windows OCR | 系统自带，无需下载；需要安装对应的系统语言包 |
 | 离线 | Apple Vision | macOS 自带，无需下载 |
+| 离线 | WeChat OCR（实验性） | 调用本机微信自带的识别组件，需已安装微信（仅 Windows） |
 | 在线 | OCR.space、Paddle API、Groq Vision、DeepSeek、自定义视觉服务 | 需要在“服务管理”中填写你自己的 API Key |
 
 > 离线引擎在本机识别，图片不会离开你的电脑。选择在线服务时，截图会发送给该服务商，可能产生费用。
