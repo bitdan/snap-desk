@@ -15,8 +15,21 @@ prefix="$(realpath -m "$1")"
 gcc_version=13
 
 if ! [ -f "/usr/lib/gcc/x86_64-linux-gnu/$gcc_version/libstdc++.a" ]; then
-  sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test >&2
-  sudo apt-get -o Acquire::Retries=3 install -y --no-install-recommends "libstdc++-$gcc_version-dev" >&2
+  # Launchpad PPA 时常返回 503：索引下载失败时 apt 只报错并跳过，随后找不到包。
+  # 整体重试“更新索引 + 安装”，间隔逐次加长。
+  sudo add-apt-repository -y --no-update ppa:ubuntu-toolchain-r/test >&2
+  for attempt in 1 2 3 4 5; do
+    if sudo apt-get -o Acquire::Retries=3 update >&2 \
+      && sudo apt-get -o Acquire::Retries=3 install -y --no-install-recommends "libstdc++-$gcc_version-dev" >&2; then
+      break
+    fi
+    if [ "$attempt" = 5 ]; then
+      echo "无法从 ubuntu-toolchain-r PPA 安装 libstdc++-$gcc_version-dev。" >&2
+      exit 1
+    fi
+    echo "PPA 暂时不可用，$((attempt * 30)) 秒后重试（第 $attempt 次）。" >&2
+    sleep $((attempt * 30))
+  done
 fi
 
 rm -rf "$prefix"

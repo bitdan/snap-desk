@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::io::Cursor;
 
 pub mod content;
+pub mod history;
 pub mod html;
 pub mod text;
 

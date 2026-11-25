@@ -512,6 +512,8 @@ pub struct Settings {
     pub export: ExportSettings,
     pub recording_export: RecordingExportSettings,
     pub pin_appearance: crate::pins::PinAppearance,
+    /// 退出时保存仍打开的贴图，下次启动时恢复。
+    pub pin_restore_on_startup: bool,
     pub clipboard: crate::clipboard::model::ClipboardSettings,
     /// 只在首次或引导大版本变化时展示，与应用版本号无关。
     pub onboarding_version: u32,
@@ -556,6 +558,8 @@ struct SettingsWire {
     #[serde(default)]
     pin_appearance: crate::pins::PinAppearance,
     #[serde(default)]
+    pin_restore_on_startup: bool,
+    #[serde(default)]
     clipboard: crate::clipboard::model::ClipboardSettings,
     #[serde(default)]
     onboarding_version: u32,
@@ -588,6 +592,7 @@ impl TryFrom<SettingsWire> for Settings {
             export: wire.export,
             recording_export: wire.recording_export,
             pin_appearance: wire.pin_appearance,
+            pin_restore_on_startup: wire.pin_restore_on_startup,
             clipboard: wire.clipboard,
             onboarding_version: wire.onboarding_version,
             recognition_services: wire.recognition_services,
@@ -624,6 +629,7 @@ impl Default for Settings {
             export: ExportSettings::default(),
             recording_export: RecordingExportSettings::default(),
             pin_appearance: crate::pins::PinAppearance::default(),
+            pin_restore_on_startup: false,
             clipboard: crate::clipboard::model::ClipboardSettings::default(),
             onboarding_version: 0,
             recognition_services: Vec::new(),
