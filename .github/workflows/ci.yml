@@ -3,6 +3,7 @@ name: CI
 # 分支推送与 PR 跑检查；标签推送交给发布流水线，避免同一标签重复执行。
 # 只改文档、官网页面或许可文本的提交不影响构建和测试，整条流水线不触发；
 # 测试与构建都不读取这些文件，同时改了代码的提交仍会照常运行。
+# 只改发版脚本（scripts/*.mjs、package.json）也不需要编译 Rust，由 scripts.yml 负责测试。
 on:
   push:
     branches: [master]
@@ -10,11 +11,17 @@ on:
       - '**/*.md'
       - 'docs/**'
       - 'LICENSE'
+      - 'scripts/*.mjs'
+      - 'package.json'
+      - 'package-lock.json'
   pull_request:
     paths-ignore:
       - '**/*.md'
       - 'docs/**'
       - 'LICENSE'
+      - 'scripts/*.mjs'
+      - 'package.json'
+      - 'package-lock.json'
 
 permissions:
   contents: read
@@ -28,34 +35,7 @@ env:
   PYTHONIOENCODING: utf-8
 
 jobs:
-  scripts:
-    name: Script checks and tests
-    # 发版准备只改版本号，随后推送的标签会在发布流水线里跑同一套测试，这里不重复。
-    # master 只接受 PR，因此三种情况都要跳过：标题为 chore(release): 的发版 PR、
-    # 合并它产生的合并提交（正文带 PR 标题），以及直接以该前缀开头的提交。
-    if: >-
-      ${{ !(startsWith(github.event.pull_request.title, 'chore(release):')
-      || startsWith(github.event.head_commit.message, 'chore(release):')
-      || (startsWith(github.event.head_commit.message, 'Merge pull request ')
-      && contains(github.event.head_commit.message, 'chore(release):'))) }}
-    runs-on: windows-2022
-    timeout-minutes: 20
-    defaults:
-      run:
-        shell: pwsh
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          persist-credentials: false
-          # release-notes 测试会读取已有附注标签；默认浅克隆没有标签，必须取完整历史。
-          fetch-depth: 0
-      - uses: actions/setup-node@v6
-        with:
-          node-version: '22'
-      # 发版脚本没有 npm 依赖；test 覆盖 snap-core 边界与内嵌资源检查，以及打包、签名、版本同步等脚本测试。
-      - name: Script tests
-        run: npm test
-
+  # 发版与打包脚本的测试在 scripts.yml，按路径单独触发。
   # 三个发布平台都编译并跑单元测试；非 Windows 的平台分支只有在这里才会被编译到。
   native:
     name: Native library tests (${{ matrix.name }})
@@ -87,6 +67,10 @@ jobs:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
+      # 只读源码、不编译，放在最前面尽早失败；平台无关，Linux 跑一次即可。runner 自带 Node。
+      - name: Check snap-core boundary and embedded resources
+        if: runner.os == 'Linux'
+        run: node scripts/check-architecture.mjs
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
         uses: ./.github/actions/linux-deps
