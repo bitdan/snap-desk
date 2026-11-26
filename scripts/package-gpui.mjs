@@ -6,7 +6,7 @@
 // 用法：node scripts/package-gpui.mjs [--debug] [--standalone]
 //   --standalone：只构建并生成 Windows 独立 EXE，不生成安装包，也不需要 cargo-packager（npm run desktop:standalone）。
 import { spawnSync } from 'node:child_process'
-import { chmodSync, copyFileSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -112,6 +112,43 @@ export function packagerConfig({ platform, root, releaseDirectory, version, env 
   return config
 }
 
+/**
+ * 读取 64 位 PE 文件导入表里的 DLL 名（转为小写）。只看普通导入表：Rust 不会延迟加载 C 运行库。
+ * 偏移按 PE32+ 布局：COFF 头紧跟 “PE\0\0” 签名，可选头的数据目录从第 112 字节开始，导入表是第 2 项。
+ */
+export function importedLibraries(image) {
+  const pe = image.readUInt32LE(0x3c)
+  if (image.toString('latin1', pe, pe + 4) !== 'PE\0\0') throw new Error('不是 PE 文件')
+  const optional = pe + 24
+  if (image.readUInt16LE(optional) !== 0x20b) throw new Error('只支持 64 位 PE 文件')
+  const sections = optional + image.readUInt16LE(pe + 20)
+  const sectionCount = image.readUInt16LE(pe + 6)
+  // 导入表里记录的是内存地址（RVA），按节表换算成文件偏移。
+  const fileOffset = rva => {
+    for (let index = 0; index < sectionCount; index++) {
+      const section = sections + index * 40
+      const address = image.readUInt32LE(section + 12)
+      const size = Math.max(image.readUInt32LE(section + 8), image.readUInt32LE(section + 16))
+      if (rva >= address && rva < address + size) return rva - address + image.readUInt32LE(section + 20)
+    }
+    throw new Error(`导入表地址 0x${rva.toString(16)} 不在任何节内`)
+  }
+  const importTable = image.readUInt32LE(optional + 120)
+  if (!importTable) return []
+  const names = []
+  // 每个导入描述符 20 字节，第 12 字节是 DLL 名的地址；全零描述符表示结束。
+  for (let entry = fileOffset(importTable); image.readUInt32LE(entry + 12); entry += 20) {
+    const start = fileOffset(image.readUInt32LE(entry + 12))
+    names.push(image.toString('latin1', start, image.indexOf(0, start)).toLowerCase())
+  }
+  return names
+}
+
+/** 需要另装 Visual C++ 运行库的导入；api-ms-win-crt-* 属于系统自带的 UCRT，不算在内。 */
+export function vcRuntimeImports(libraries) {
+  return libraries.filter(name => /^(vcruntime|msvcp)\d/.test(name))
+}
+
 function run(command, args, options) {
   const result = spawnSync(command, args, { stdio: 'inherit', windowsHide: true, ...options })
   if (result.error) throw result.error
@@ -133,6 +170,13 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   const names = executableNames(process.platform)
   const built = resolve(releaseDirectory, names.built)
   if (!existsSync(built)) throw new Error(`未找到构建产物：${built}`)
+  if (process.platform === 'win32') {
+    // 开发机通常装有 VC++ 运行库，缺少静态链接也能正常启动，只能在打包时检查导入表发现。
+    const runtime = vcRuntimeImports(importedLibraries(readFileSync(built)))
+    if (runtime.length) {
+      throw new Error(`主程序依赖 ${runtime.join('、')}，未装 Visual C++ 运行库的电脑无法启动；检查 .cargo/config.toml 的 crt-static 设置，并确认没有设置 RUSTFLAGS`)
+    }
+  }
   copyFileSync(built, resolve(releaseDirectory, names.bundled))
   if (process.platform === 'win32') {
     const standalone = resolve(releaseDirectory, standaloneName(version))
