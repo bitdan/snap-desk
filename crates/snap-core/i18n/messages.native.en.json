@@ -71,6 +71,8 @@
   "此标注类型不接受放大倍数。": "This annotation type does not accept magnification.",
   "序号须为 1～999。": "Number must be 1–999.",
   "文字或字体参数无效。": "Invalid text or font parameters.",
+  "此标注类型不支持所选样式。": "This annotation type does not support the selected style.",
+  "圆角半径无效。": "Invalid corner radius.",
   "标注颜色必须为 #RRGGBB。": "Annotation color must use #RRGGBB.",
   "读取开机自启状态失败：{0}": "Could not read launch-at-login status: {0}",
   "设置开机自启失败：{0}": "Could not change launch-at-login settings: {0}",

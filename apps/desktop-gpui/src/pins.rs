@@ -1389,7 +1389,12 @@ impl Pin {
         let extra = if self.editor.open_group.is_some() { TOOLBAR_POPOVER } else { 0.0 };
         // 窗口贴合工具栏：工具行 40 + 上下边距；选了标注工具时多一行样式条（行距 6）。
         let options = self.annotating && !(self.editor.tool == Tool::Edit && self.editor.selected.is_none());
-        let width = if options { TOOLBAR_WIDTH + 72.0 } else { TOOLBAR_WIDTH + 32.0 };
+        // 文字、矩形、箭头的样式条比工具行宽，按样式条估算宽度加宽；工具栏随贴图状态变化重新定位时一并更新。
+        let width = if options {
+            (TOOLBAR_WIDTH + 72.0).max(annotate::options_width(&self.editor) + 32.0)
+        } else {
+            TOOLBAR_WIDTH + 32.0
+        };
         let height = 40.0 + if options { 46.0 } else { 0.0 } + extra;
         // 窗口比工具条大一圈透明边距放阴影；定位按工具条本身计算。
         let margin = px(TOOLBAR_SHADOW);
@@ -1838,7 +1843,7 @@ impl Render for Pin {
             let at = map(text.shape.start);
             let width = ((self.image.width() as f64 - text.shape.start.x).min(2048.0) as f32 * kx).max(40.0);
             let font = (text.shape.font_size.unwrap_or(24.0) as f32 * ky).max(8.0);
-            let color = u32::from_str_radix(text.shape.color.trim_start_matches('#'), 16).unwrap_or(0xef4444);
+            let (color, background) = annotate::text_input_colors(&text.shape);
             root = root.child(
                 div()
                     .absolute()
@@ -1848,7 +1853,7 @@ impl Render for Pin {
                     .border_1()
                     .border_dashed()
                     .border_color(rgb(0x2f80ff))
-                    .bg(rgba(0xffffff18))
+                    .bg(rgba(background))
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .child(Textarea::new(state).appearance(false).text_size(px(font)).text_color(rgb(color))),
             );

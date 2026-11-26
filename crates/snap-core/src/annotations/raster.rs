@@ -18,6 +18,48 @@ const MAX_RASTER_CHARS: usize = 2_000_000;
 /// 行高系数与内边距，与前端 `annotationTextLayout` 一致。
 const LINE_HEIGHT: f64 = 1.3;
 const PADDING: f64 = 2.0;
+/// 文字背景框的水平 / 垂直内边距与圆角半径（单位：字号 em）。行高本身已在字形上下各留约 0.15 em，
+/// 垂直内边距因此比水平小。
+const BOX_PAD_X: f64 = 0.35;
+const BOX_PAD_Y: f64 = 0.15;
+const BOX_RADIUS: f64 = 0.25;
+/// 描边宽度上限（em）：再粗字形内部的空隙会被填满，文字认不出来。
+const MAX_OUTLINE: f64 = 0.3;
+
+/// 有背景框或描边的文字：字形、描边与底色叠在同一张 PNG 里，改色时不能只替换颜色。
+pub fn decorated(shape: &Annotation) -> bool {
+    shape.background.is_some() || shape.outline.is_some()
+}
+
+/// 描边实际宽度（原图像素）：`width` 限制在字号的 [`MAX_OUTLINE`] 以内。
+fn outline_width(shape: &Annotation) -> f64 {
+    let size = shape.font_size.unwrap_or(24.0);
+    shape.width.min(size * MAX_OUTLINE).max(0.5)
+}
+
+/// 文字图片四周留白（原图像素，水平、垂直）：基础 2 像素；描边向外扩出描边宽度；
+/// 背景框按字号留内边距，内边距不小于描边宽度，描边不会画出框外。
+pub fn text_inset(shape: &Annotation) -> (f64, f64) {
+    let size = shape.font_size.unwrap_or(24.0);
+    let outline = if shape.outline.is_some() {
+        outline_width(shape)
+    } else {
+        0.0
+    };
+    let (x, y) = if shape.background.is_some() {
+        (size * BOX_PAD_X, size * BOX_PAD_Y)
+    } else {
+        (0.0, 0.0)
+    };
+    (PADDING + outline.max(x), PADDING + outline.max(y))
+}
+
+/// 背景框与描边让字形比无装饰文字向右下多偏移的距离（原图像素）。输入框按无装饰文字摆放，
+/// 编辑器提交、重新编辑和切换装饰时用它换算起点，字形停在输入时的位置，框和描边向四周展开。
+pub fn decoration_offset(shape: &Annotation) -> (f64, f64) {
+    let (x, y) = text_inset(shape);
+    (x - PADDING, y - PADDING)
+}
 
 /// 一组可用字体（原始字节）。`sans` 必须可用，其余缺失时回退 `sans`。
 pub struct Fonts {
@@ -144,12 +186,14 @@ pub struct TextLayout {
 }
 
 /// 按字换行（中英文一致），保留空行；宽度上限 2048，规则与前端 `annotationTextLayout` 相同。
+/// `inset` 为四周留白（见 [`text_inset`]），无装饰文字为 2 像素。
 pub fn text_layout(
     text: &str,
     size: f64,
     available_width: f64,
     fonts: &Fonts,
     family: &str,
+    inset: (f64, f64),
 ) -> Result<TextLayout, String> {
     let stack = fonts.stack(family)?;
     let max_width = available_width.floor().clamp(1.0, 2048.0);
@@ -160,7 +204,7 @@ pub fn text_layout(
         let (mut line, mut used) = (String::new(), 0.0);
         for c in paragraph.chars() {
             let width = advance(&stack, c, size)?;
-            if !line.is_empty() && used + width > max_width - PADDING * 2.0 {
+            if !line.is_empty() && used + width > max_width - inset.0 * 2.0 {
                 widest = widest.max(used);
                 lines.push(std::mem::take(&mut line));
                 used = 0.0;
@@ -172,8 +216,8 @@ pub fn text_layout(
         lines.push(line);
     }
     Ok(TextLayout {
-        width: max_width.min((widest + PADDING * 2.0).ceil().max(1.0)),
-        height: (lines.len() as f64 * size * LINE_HEIGHT + PADDING * 2.0)
+        width: max_width.min((widest + inset.0 * 2.0).ceil().max(1.0)),
+        height: (lines.len() as f64 * size * LINE_HEIGHT + inset.1 * 2.0)
             .ceil()
             .max(1.0),
         lines,
@@ -268,13 +312,7 @@ fn number_image(shape: &Annotation, fonts: &Fonts) -> Result<RgbaImage, String> 
             *pixel = Rgba([rgb[0], rgb[1], rgb[2], (coverage * 255.0).round() as u8]);
         }
     }
-    let luminance =
-        f64::from(rgb[0]) * 0.299 + f64::from(rgb[1]) * 0.587 + f64::from(rgb[2]) * 0.114;
-    let ink = if luminance > 160.0 {
-        [0x11, 0x18, 0x27]
-    } else {
-        [0xff, 0xff, 0xff]
-    };
+    let ink = super::contrast_ink(rgb);
     let size = if text.len() == 3 { 60.0 } else { 76.0 };
     let stack = fonts.stack("bold")?;
     let width: f64 = text
@@ -323,7 +361,8 @@ fn text_image(
         return Err("文字或字体参数无效。".into());
     }
     let family = shape.font_family.as_deref().unwrap_or("sans");
-    let layout = text_layout(text, size, crop.width, fonts, family)?;
+    let inset = text_inset(shape);
+    let layout = text_layout(text, size, crop.width, fonts, family, inset)?;
     if layout.height > crop.height + 0.5 {
         return Err("文字超出区域，请减少文字、缩小字号或扩大选区。".into());
     }
@@ -337,15 +376,18 @@ fn text_image(
     let mut image = RgbaImage::new(width, height);
     let offset = line_offset(&stack, size);
     for (index, line) in layout.lines.iter().enumerate() {
-        let top = PADDING + index as f64 * size * LINE_HEIGHT + offset;
+        let top = inset.1 + index as f64 * size * LINE_HEIGHT + offset;
         draw_text(
             &mut image,
             &stack,
             line,
             size * scale,
-            (PADDING * scale, top * scale),
+            (inset.0 * scale, top * scale),
             rgb,
         )?;
+    }
+    if decorated(shape) {
+        image = decorate(&image, shape, scale)?;
     }
     let b = bounds(shape);
     let placed = Bounds {
@@ -355,6 +397,112 @@ fn text_image(
         height: layout.height,
     };
     Ok((image, placed))
+}
+
+/// 在单色字形层下垫背景框与描边，自下而上：圆角背景框 → 描边 → 字形，三层按覆盖率依次混色。
+/// `scale` 为 PNG 相对原图的采样比例，描边宽度与圆角都按它换算到 PNG 像素。
+fn decorate(glyphs: &RgbaImage, shape: &Annotation, scale: f64) -> Result<RgbaImage, String> {
+    let size = shape.font_size.unwrap_or(24.0);
+    let (w, h) = (f64::from(glyphs.width()), f64::from(glyphs.height()));
+    let mut image = RgbaImage::new(glyphs.width(), glyphs.height());
+    if let Some(background) = &shape.background {
+        let rgb = parse_color(background)?;
+        let radius = (size * BOX_RADIUS * scale).min(w / 2.0).min(h / 2.0);
+        for (x, y, pixel) in image.enumerate_pixels_mut() {
+            let coverage = super::rounded_rect_coverage(
+                f64::from(x) + 0.5,
+                f64::from(y) + 0.5,
+                0.0,
+                0.0,
+                w,
+                h,
+                radius,
+            );
+            super::blend(pixel, rgb, coverage);
+        }
+    }
+    if let Some(outline) = &shape.outline {
+        let rgb = parse_color(outline)?;
+        let radius = outline_width(shape) * scale;
+        let distance = glyph_distance(glyphs);
+        // 距离按像素中心计；字形实际边缘约在半像素外，覆盖率在 radius～radius+1 之间过渡，外缘保持抗锯齿。
+        for (pixel, d) in image.pixels_mut().zip(distance) {
+            super::blend(pixel, rgb, (radius + 1.0 - f64::from(d)).clamp(0.0, 1.0));
+        }
+    }
+    for (pixel, glyph) in image.pixels_mut().zip(glyphs.pixels()) {
+        super::blend(
+            pixel,
+            [glyph[0], glyph[1], glyph[2]],
+            f64::from(glyph[3]) / 255.0,
+        );
+    }
+    Ok(image)
+}
+
+/// 每个像素中心到最近字形像素（覆盖率不低于一半）中心的欧氏距离。
+/// 用 Felzenszwalb–Huttenlocher 平方距离变换：先逐列、再逐行求一维下包络，耗时只与像素数成正比，
+/// 描边加粗也不会变慢（逐像素按半径搜索在 1024×1024 的大字上会慢到秒级）。
+fn glyph_distance(glyphs: &RgbaImage) -> Vec<f32> {
+    // 有限的“无穷远”：参与抛物线交点运算时不会出现 INF - INF。
+    const FAR: f64 = 1e20;
+    let (w, h) = (glyphs.width() as usize, glyphs.height() as usize);
+    let mut grid: Vec<f64> = glyphs
+        .pixels()
+        .map(|p| if p[3] >= 128 { 0.0 } else { FAR })
+        .collect();
+    let n = w.max(h);
+    let (mut f, mut d) = (vec![0.0; n], vec![0.0; n]);
+    let (mut v, mut z) = (vec![0usize; n], vec![0.0; n + 1]);
+    for x in 0..w {
+        for y in 0..h {
+            f[y] = grid[y * w + x];
+        }
+        squared_distance_1d(&f[..h], &mut d[..h], &mut v, &mut z);
+        for y in 0..h {
+            grid[y * w + x] = d[y];
+        }
+    }
+    for y in 0..h {
+        f[..w].copy_from_slice(&grid[y * w..(y + 1) * w]);
+        squared_distance_1d(&f[..w], &mut d[..w], &mut v, &mut z);
+        grid[y * w..(y + 1) * w].copy_from_slice(&d[..w]);
+    }
+    grid.into_iter().map(|value| value.sqrt() as f32).collect()
+}
+
+/// 一维平方距离变换：`d[q] = min_p (q - p)² + f[p]`。`v`、`z` 为下包络抛物线的顶点与分界，由调用方复用。
+fn squared_distance_1d(f: &[f64], d: &mut [f64], v: &mut [usize], z: &mut [f64]) {
+    if f.is_empty() {
+        return;
+    }
+    let parabola = |q: usize, p: usize| {
+        ((f[q] + (q * q) as f64) - (f[p] + (p * p) as f64)) / (2.0 * (q as f64 - p as f64))
+    };
+    let mut k = 0;
+    v[0] = 0;
+    z[0] = f64::NEG_INFINITY;
+    z[1] = f64::INFINITY;
+    for q in 1..f.len() {
+        let mut s = parabola(q, v[k]);
+        // z[0] 为负无穷，k 回退到 0 时循环必然结束。
+        while s <= z[k] {
+            k -= 1;
+            s = parabola(q, v[k]);
+        }
+        k += 1;
+        v[k] = q;
+        z[k] = s;
+        z[k + 1] = f64::INFINITY;
+    }
+    k = 0;
+    for (q, out) in d.iter_mut().enumerate() {
+        while z[k + 1] < q as f64 {
+            k += 1;
+        }
+        let offset = q as f64 - v[k] as f64;
+        *out = offset * offset + f[v[k]];
+    }
 }
 
 /// 已有字形改色：保留覆盖率（alpha），只替换颜色；旋转/翻转后的文字不会被重新排成水平行。
@@ -372,6 +520,8 @@ fn recolor(shape: &Annotation) -> Result<RgbaImage, String> {
 /// - `source`：标注坐标所在的原图（截图为整张虚拟桌面截图，贴图为贴图当前图像）。
 /// - `crop`：允许放置的范围；文字按其宽度换行并被平移回范围内。
 /// - `preserve_geometry`：只改样式（颜色/透明度）时为真，文字复用已有字形只换色、不重新排版。
+///   有背景框或描边的文字三层颜色叠在一张 PNG 里，无法只换色，总是按当前字号与装饰重新排版；
+///   因此这类文字在贴图旋转 / 翻转后改样式会回到水平排列。调用方切换装饰前后都须要求重新排版。
 pub fn rasterize(
     shape: &Annotation,
     source: &RgbaImage,
@@ -384,7 +534,7 @@ pub fn rasterize(
     }
     let (image, placed) = match shape.kind {
         Kind::Number => (number_image(shape, fonts)?, bounds(shape)),
-        Kind::Text if preserve_geometry && shape.raster.is_some() => {
+        Kind::Text if preserve_geometry && shape.raster.is_some() && !decorated(shape) => {
             (recolor(shape)?, bounds(shape))
         }
         Kind::Text => text_image(shape, crop, fonts)?,
@@ -451,6 +601,12 @@ mod tests {
             font_size: None,
             font_family: None,
             raster: None,
+            line_style: Default::default(),
+            arrow_heads: Default::default(),
+            fill: Default::default(),
+            corner_radius: 0.0,
+            background: None,
+            outline: None,
         }
     }
     const CROP: Bounds = Bounds {
@@ -496,9 +652,75 @@ mod tests {
     }
 
     #[test]
+    fn text_background_and_outline_grow_the_box_and_bake_three_layers() {
+        let fonts = fonts();
+        let none = RgbaImage::new(1, 1);
+        let near = |a: f64, b: f64| (a - b).abs() < 1e-9;
+        let mut plain = shape(Kind::Text, (20.0, 20.0), (20.0, 20.0));
+        plain.text = Some("Ab 中".into());
+        plain.font_size = Some(20.0);
+        plain.font_family = Some("sans".into());
+        plain.opacity = 1.0;
+        let base = rasterize(&plain, &none, CROP, &fonts, false).unwrap();
+        let size = |s: &Annotation| (s.end.x - s.start.x, s.end.y - s.start.y);
+        assert_eq!(decoration_offset(&plain), (0.0, 0.0));
+        // 背景框：左右各多 0.35 em、上下各多 0.15 em（向上取整最多差 1 像素）；
+        // 框内是背景色，圆角外透明，字形为字色。
+        let mut boxed = plain.clone();
+        boxed.color = "#ffffff".into();
+        boxed.background = Some("#ef4444".into());
+        let (dx, dy) = decoration_offset(&boxed);
+        assert!(near(dx, 7.0) && near(dy, 3.0));
+        let out = rasterize(&boxed, &none, CROP, &fonts, false).unwrap();
+        validate(std::slice::from_ref(&out), 200, 120).unwrap();
+        assert!((size(&out).0 - size(&base).0 - 14.0).abs() <= 1.0);
+        assert!((size(&out).1 - size(&base).1 - 6.0).abs() <= 1.0);
+        assert_eq!((out.start.x, out.start.y), (20.0, 20.0));
+        let image = crate::annotations::raster(&out).unwrap();
+        assert_eq!(image.get_pixel(0, 0)[3], 0);
+        assert_eq!(image.get_pixel(1, image.height() / 2).0, [0xef, 0x44, 0x44, 255]);
+        assert!(image.pixels().any(|p| p.0 == [255, 255, 255, 255]));
+        // 有装饰时不能只换色（背景会被染成字色），即使要求保留几何也重新排版。
+        let mut blue = out.clone();
+        blue.background = Some("#3b82f6".into());
+        let restyled = rasterize(&blue, &none, CROP, &fonts, true).unwrap();
+        let image = crate::annotations::raster(&restyled).unwrap();
+        assert_eq!(image.get_pixel(1, image.height() / 2).0, [0x3b, 0x82, 0xf6, 255]);
+        assert!(image.pixels().any(|p| p.0 == [255, 255, 255, 255]));
+        // 描边：四周各多出描边宽度；字形外圈为描边色，字形本身仍是字色。
+        let mut outlined = plain.clone();
+        outlined.width = 3.0;
+        outlined.outline = Some("#ffffff".into());
+        assert_eq!(decoration_offset(&outlined), (3.0, 3.0));
+        let out = rasterize(&outlined, &none, CROP, &fonts, false).unwrap();
+        validate(std::slice::from_ref(&out), 200, 120).unwrap();
+        assert!((size(&out).0 - size(&base).0 - 6.0).abs() <= 1.0);
+        let image = crate::annotations::raster(&out).unwrap();
+        let white = image.pixels().filter(|p| p.0 == [255, 255, 255, 255]).count();
+        let red = image.pixels().filter(|p| p.0 == [255, 0, 0, 255]).count();
+        assert!(white > red && red > 0, "white={white} red={red}");
+        // 描边宽度不超过 0.3 em，避免把字形内部的空隙填满。
+        outlined.width = 64.0;
+        let (dx, dy) = decoration_offset(&outlined);
+        assert!(near(dx, 6.0) && near(dy, 6.0));
+    }
+
+    #[test]
+    fn glyph_distance_is_euclidean_and_ignores_faint_fringe() {
+        let mut glyphs = RgbaImage::new(12, 12);
+        glyphs.put_pixel(2, 3, Rgba([0, 0, 0, 255]));
+        // 覆盖率不足一半的抗锯齿边缘不算字形。
+        glyphs.put_pixel(9, 9, Rgba([0, 0, 0, 100]));
+        let distance = glyph_distance(&glyphs);
+        assert_eq!(distance[3 * 12 + 2], 0.0);
+        assert_eq!(distance[7 * 12 + 5], 5.0);
+        assert!((distance[9 * 12 + 9] - 85f32.sqrt()).abs() < 1e-4);
+    }
+
+    #[test]
     fn text_wraps_and_rejects_overflow_empty_and_missing_glyphs() {
         let fonts = fonts();
-        let layout = text_layout(&"word ".repeat(40), 16.0, 120.0, &fonts, "sans").unwrap();
+        let layout = text_layout(&"word ".repeat(40), 16.0, 120.0, &fonts, "sans", (PADDING, PADDING)).unwrap();
         assert!(layout.lines.len() > 3 && layout.width <= 120.0);
         let mut s = shape(Kind::Text, (0.0, 0.0), (0.0, 0.0));
         s.text = Some("x\n".repeat(30));
@@ -590,6 +812,12 @@ mod system_tests {
                 font_size: Some(24.0),
                 font_family: Some(family.into()),
                 raster: None,
+                line_style: Default::default(),
+                arrow_heads: Default::default(),
+                fill: Default::default(),
+                corner_radius: 0.0,
+                background: None,
+                outline: None,
             };
             let crop = Bounds {
                 x: 0.0,
