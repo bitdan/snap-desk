@@ -1,5 +1,6 @@
 //! 截图会话回放：只在内存保留成功截图的压缩底图、选区和标注，
 //! 独立于剪贴板历史。`,` 回到上一张、`.` 前往下一张，越过最新一张时回到本次现场，不重新抓屏。
+//! F5 刷新（[`refresh`]）则重新抓屏替换现场画面，与回放共用换图逻辑。
 //!
 //! 回放的画面没有吸附候选与窗口来源（历史 HWND 已失效），不执行“截图后动作”，也不再计入历史。
 use super::{current, display_frame, open_overlays, Overlay, Session};
@@ -256,6 +257,90 @@ fn show_live(cx: &mut App, session: &Entity<Session>) {
         live.selection,
         live.shapes,
     );
+}
+
+/// 刷新截图（F5）：隐藏浮层重新拍屏，换上最新画面，保留选区与标注；显示器布局变了则清空重选。
+/// 回放历史、录屏框选、导出中、正在绘制或输入时忽略。
+pub fn refresh(cx: &mut App) {
+    let Some(session) = current(cx) else {
+        return;
+    };
+    {
+        let s = session.read(cx);
+        if s.recording || s.busy || s.drag.is_some() || s.editor.pending || s.editor.interacting() || s.editor.text.is_some() {
+            return;
+        }
+    }
+    if position(cx).is_some() {
+        return;
+    }
+    let include_cursor = session.read(cx).include_cursor;
+    let snap = crate::shell::settings(cx).screenshot_snap;
+    let windows = session.update(cx, |s, _| {
+        s.busy = true;
+        s.windows.clone()
+    });
+    for handle in &windows {
+        let _ = handle.update(cx, |_, window, _| crate::native::set_visible(window, false));
+    }
+    cx.spawn(async move |cx| {
+        // 等桌面合成去掉浮层再拍屏，与开始截图时收起暂存架的等待相同。
+        cx.background_executor().timer(std::time::Duration::from_millis(150)).await;
+        let started = std::time::Instant::now();
+        let result = cx.background_executor().spawn(async move { super::grab(include_cursor, snap) }).await;
+        let deferred = cx.update(|cx| {
+            session.update(cx, |s, _| s.busy = false);
+            // 拍屏期间会话可能已被取消。
+            if current(cx).is_none_or(|active| active != session) {
+                return None;
+            }
+            let deferred = match result {
+                Ok(mut grabbed) => {
+                    let deferred = grabbed.deferred.take();
+                    let layout_key = super::recent::layout_key(&grabbed.displays);
+                    let (selection, shapes) = {
+                        let s = session.read(cx);
+                        let same = s.layout_key == layout_key && s.origin == grabbed.origin && s.displays.len() == grabbed.displays.len();
+                        if same { (s.selection, s.editor.shapes().to_vec()) } else { (None, Vec::new()) }
+                    };
+                    log::info!(
+                        "event=gpui.capture_refreshed width={} height={} kept_selection={} capture_ms={}",
+                        grabbed.image.width(),
+                        grabbed.image.height(),
+                        selection.is_some(),
+                        started.elapsed().as_millis()
+                    );
+                    let frame = Frame { origin: grabbed.origin, displays: grabbed.displays, layout_key };
+                    session.update(cx, |s, _| {
+                        s.natives = grabbed.natives;
+                        s.include_cursor = grabbed.include_cursor;
+                        s.probe = grabbed.probe.take().map(Arc::new);
+                        s.probe_seq += 1;
+                        s.regions = None;
+                    });
+                    apply(cx, &session, frame, Arc::new(grabbed.image), grabbed.targets, grabbed.windows, selection, shapes);
+                    deferred
+                }
+                Err(error) => {
+                    log::warn!("event=gpui.capture_refresh_failed message={error}");
+                    None
+                }
+            };
+            // 布局不变时浮层就地换图，需重新显示；重建的浮层本就可见。
+            let windows = session.read(cx).windows.clone();
+            for handle in &windows {
+                let _ = handle.update(cx, |_, window, _| crate::native::set_visible(window, true));
+            }
+            if let Some(handle) = windows.first() {
+                let _ = handle.update(cx, |_, window, _| window.activate_window());
+            }
+            deferred.map(|request| (session, request))
+        });
+        if let Some((session, request)) = deferred {
+            super::complete_targets(cx, session, request).await;
+        }
+    })
+    .detach();
 }
 
 /// 替换会话画面、选区与标注；显示器布局不变时就地换图，否则重建浮层。

@@ -1010,6 +1010,7 @@
   "选择条目 {0}，双击预览": "Select entry {0}; double-click to preview",
   "上一张截图（,）": "Previous capture (,)",
   "上一张 ,": "Previous ,",
+  "刷新 F5": "Refresh F5",
   "下一张 .": "Next .",
   "下一张截图（.），最后一张后返回现场": "Next capture (.), then return to the live session",
   "截图历史 {0}/{1}": "Capture history {0}/{1}",

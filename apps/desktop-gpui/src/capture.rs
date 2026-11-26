@@ -1428,6 +1428,14 @@ fn mode_bar(s: &Session, position: Option<(usize, usize)>, has_history: bool) ->
         }
         bar = bar.child(forward);
     }
+    if !s.recording {
+        let live = enabled && position.is_none();
+        let mut refresh = button("capture-refresh", s.text("刷新 F5"), live);
+        if live {
+            refresh = refresh.on_click(|_, _, cx| history::refresh(cx));
+        }
+        bar = bar.child(refresh);
+    }
     let recent = enabled
         && !s.selection_locked()
         && recent::restore(s.recent.as_ref(), s.image.width(), s.image.height(), &s.layout_key).is_some();
@@ -1878,6 +1886,11 @@ impl Overlay {
                 }
                 cx.notify();
             });
+            return;
+        }
+        // F5：重新拍屏刷新画面，保留选区与标注。
+        if key == "f5" && !command && !keystroke.modifiers.alt {
+            history::refresh(cx);
             return;
         }
         // , / .：截图历史上一张、下一张（越过最新一张回到现场）。
