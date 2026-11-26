@@ -1,0 +1,5 @@
+windows: irm https://bitdan.github.io/snap-desk/install.ps1.txt | iex
+unix: |-
+  curl -fsSL https://bitdan.github.io/snap-desk/install.sh | sh
+deb: |-
+  curl -fsSL https://bitdan.github.io/snap-desk/install.sh | sh -s -- --deb

@@ -1,0 +1,4 @@
+---
+layout: null
+---
+{%- include_relative install/install.ps1 -%}

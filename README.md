@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://bitdan.github.io/snap-desk/#download">下载</a> ·
+  <a href="#下载">下载</a> ·
   <a href="https://bitdan.github.io/snap-desk/">项目官网</a> ·
   <a href="https://bitdan.github.io/snap-desk/guide/">使用手册</a> ·
   <a href="#功能">功能</a> ·
@@ -166,18 +166,46 @@ Rust 原生实现，不内置浏览器内核。以下为 release 构建的实测
 
 ## 下载
 
-在[官网](https://bitdan.github.io/snap-desk/#download)直接下载对应安装包，或复制带 SHA-256 校验的终端命令。旧版和更新说明见 [GitHub Releases](https://github.com/bitdan/snap-desk/releases)。
+[前往 GitHub Releases 下载](https://github.com/bitdan/snap-desk/releases) · [官网安装入口](https://bitdan.github.io/snap-desk/#download)
 
-- Windows x64（已安装 Scoop）：先运行 `scoop bucket add snap-desk https://github.com/bitdan/homebrew-snap-desk`，再运行 `scoop install snap-desk/snap-desk`。
-- macOS Apple 芯片（已安装 Homebrew）：`brew install --cask bitdan/snap-desk/snap-desk`。
-- Debian / Ubuntu：下载 deb 后，在文件所在目录运行 `sudo apt install ./<文件名>.deb`。AppImage 可用官网命令下载、校验并赋予执行权限。
-- 其他渠道：[WinGet v0.3.2 正在审核](https://github.com/microsoft/winget-pkgs/pull/488147)，AUR 暂未上架。
+### 终端安装
 
-| 平台 | 文件 | 状态 |
-| --- | --- | --- |
-| Windows x64 | `-setup.exe` 安装包 / `-standalone.exe` 独立 EXE | 功能完整 |
-| macOS Apple 芯片 | `-macos-arm64.dmg` | 功能完整，需 macOS 13.3+ |
-| Linux x64 | `-linux-x64.AppImage` / `-linux-x64.deb` | 预览，需 glibc 2.35+（Ubuntu 22.04 同期） |
+**Windows x64 · PowerShell**
+
+```powershell
+irm https://bitdan.github.io/snap-desk/install.ps1.txt | iex
+```
+
+**macOS Apple 芯片 · Linux x64**
+
+```sh
+curl -fsSL https://bitdan.github.io/snap-desk/install.sh | sh
+```
+
+macOS 安装到 `~/Applications`，Linux 将 AppImage 安装到 `~/.local/bin/snap-desk.AppImage`。
+
+**Debian / Ubuntu x64 · deb**
+
+```sh
+curl -fsSL https://bitdan.github.io/snap-desk/install.sh | sh -s -- --deb
+```
+
+### 包管理器安装
+
+**Windows x64 · Scoop**
+
+```powershell
+scoop bucket add snap-desk https://github.com/bitdan/homebrew-snap-desk
+scoop install snap-desk/snap-desk
+```
+
+**macOS Apple 芯片 · Homebrew**
+
+```sh
+brew install --cask bitdan/snap-desk/snap-desk
+```
+
+WinGet [正在审核](https://github.com/microsoft/winget-pkgs/pull/488147)，AUR 暂未上架。
 
 <details>
 <summary><strong>macOS 与 Linux 说明</strong></summary>

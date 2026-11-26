@@ -94,10 +94,12 @@ jobs:
           # 手动补发可指定旧标签，官网下载入口仍应指向最新的正式版。
           if [ ! -f downloads.json ] || [ "$(printf '%s\n' "${TAG#v}" "$(jq -r .version downloads.json)" | sort -V | tail -n1)" = "${TAG#v}" ]; then
             cp ../distribution/downloads.json downloads.json
+            cp ../distribution/downloads.tsv downloads.tsv
+            git add downloads.json downloads.tsv
           fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add bucket Casks downloads.json
+          git add bucket Casks
           git diff --cached --quiet && { echo '清单没有变化'; exit 0; }
           git commit -m "snap-desk ${TAG#v}"
           git push

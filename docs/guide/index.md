@@ -7,7 +7,7 @@ lead: Snap Desk 常驻在托盘，用快捷键唤出各项功能。这一页带�
 
 ## 安装 {#install}
 
-在[官网下载区](/snap-desk/#download)选择安装包，或复制对应的终端命令下载并校验。Scoop、Homebrew 及其他渠道的状态见[包管理器](/snap-desk/#install-commands)。
+在[官网下载区](/snap-desk/#download)复制终端安装命令，或前往 [GitHub Releases](https://github.com/bitdan/snap-desk/releases) 下载对应安装包。Scoop、Homebrew 及其他渠道的状态见[包管理器](/snap-desk/#install-commands)。
 
 | 平台 | 文件 | 说明 |
 | --- | --- | --- |

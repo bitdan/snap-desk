@@ -105,7 +105,7 @@ Linux 另需截图库的系统依赖，Debian / Ubuntu 可执行 `bash scripts/c
 
 - AppImage 由 linuxdeploy 把主程序依赖的系统库一并打包；deb 依赖系统安装的库，因此小得多。
 - 正式版公开后，`distribute.yml` 把安装描述推送到包管理器（测试版不分发）；清单由 `scripts/distribution.mjs` 按附件实际哈希生成，也可 `gh workflow run distribute.yml -f tag=v<版本>` 补发。对应 secret 未配置的渠道会跳过：
-  - 官网 `downloads.json` 也按正式版附件生成，与 Scoop、Homebrew 清单一起推送到 tap。GitHub Pages 使用 `docs/_data/downloads.json` 渲染可直接下载的备用版本，页面加载后使用 tap 的同版或更新清单。
+  - 终端安装脚本读取 tap 的 `downloads.tsv`。流水线从实际发布附件生成它和 `downloads.json`，并与 Scoop、Homebrew 清单一起推送。GitHub Pages 使用 `docs/_data/downloads.json` 渲染备用 TSV，供 tap 暂不可用时安装。
   - Scoop（独立 EXE）与 Homebrew Cask（DMG）共用 tap 仓库 `bitdan/homebrew-snap-desk`（`bucket/`、`Casks/`），需 `TAP_TOKEN`。安装：`scoop bucket add snap-desk https://github.com/bitdan/homebrew-snap-desk`、`brew install --cask bitdan/snap-desk/snap-desk`。
   - WinGet（NSIS 安装包，`bitdan.SnapDesk`）由 wingetcreate 向 `microsoft/winget-pkgs` 提 PR，需 `WINGET_TOKEN`（classic PAT，`public_repo`），合并要等社区审核。
   - AUR `snap-desk-bin`（解包 deb），需 `AUR_SSH_PRIVATE_KEY`，且包名需先在 AUR 网站登录账号后由首次推送创建。

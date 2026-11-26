@@ -1,0 +1,5 @@
+---
+---
+{% for entry in site.data.downloads.assets -%}
+{{ entry[0] }}	{{ entry[1].url }}	{{ entry[1].sha256 }}
+{% endfor -%}
