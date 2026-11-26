@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import { resolve } from 'node:path'
-import { appRunPath, executableNames, packagerConfig, parseOptions, standaloneName } from './package-gpui.mjs'
+import { appRunPath, executableNames, importedLibraries, packagerConfig, parseOptions, standaloneName, vcRuntimeImports } from './package-gpui.mjs'
 import { RELEASE_ASSETS } from './release-assets.mjs'
 
 const root = resolve('/repo')
@@ -59,4 +60,39 @@ test('--standalone 只生成独立 EXE，文件名与发布附件清单一致', 
   assert.deepEqual(parseOptions(['--debug', '--standalone']), { debug: true, standalone: true })
   const asset = RELEASE_ASSETS.find(item => item.target === 'windows-x86_64-standalone')
   assert.equal(standaloneName('1.2.3-beta.1'), asset.match('1.2.3-beta.1'))
+})
+
+/** 只含一个节和导入表的最小 64 位 PE：节从文件偏移 0x200 映射到内存地址 0x1000，导入描述符在节开头。 */
+function executable(libraries) {
+  const image = Buffer.alloc(0x400)
+  image.write('MZ', 0, 'latin1')
+  image.writeUInt32LE(0x40, 0x3c)
+  image.write('PE\0\0', 0x40, 'latin1')
+  image.writeUInt16LE(1, 0x46)
+  image.writeUInt16LE(240, 0x54)
+  image.writeUInt16LE(0x20b, 0x58)
+  image.writeUInt32LE(0x1000, 0x58 + 120)
+  const section = 0x58 + 240
+  image.writeUInt32LE(0x200, section + 8)
+  image.writeUInt32LE(0x1000, section + 12)
+  image.writeUInt32LE(0x200, section + 16)
+  image.writeUInt32LE(0x200, section + 20)
+  let name = 0x200 + (libraries.length + 1) * 20
+  libraries.forEach((library, index) => {
+    image.writeUInt32LE(name - 0x200 + 0x1000, 0x200 + index * 20 + 12)
+    name += image.write(`${library}\0`, name, 'latin1')
+  })
+  return image
+}
+
+test('打包前从导入表找出需要另装的 VC++ 运行库', () => {
+  const libraries = importedLibraries(executable(['KERNEL32.dll', 'VCRUNTIME140.dll', 'MSVCP140_1.dll', 'api-ms-win-crt-heap-l1-1-0.dll']))
+  assert.deepEqual(libraries, ['kernel32.dll', 'vcruntime140.dll', 'msvcp140_1.dll', 'api-ms-win-crt-heap-l1-1-0.dll'])
+  assert.deepEqual(vcRuntimeImports(libraries), ['vcruntime140.dll', 'msvcp140_1.dll'])
+  assert.deepEqual(vcRuntimeImports(importedLibraries(executable(['KERNEL32.dll', 'd3d11.dll']))), [])
+  assert.throws(() => importedLibraries(Buffer.alloc(0x100)), /PE/)
+})
+
+test('导入表解析适用于真实的 Windows 程序', { skip: process.platform !== 'win32' }, () => {
+  assert.ok(importedLibraries(readFileSync(process.execPath)).includes('kernel32.dll'))
 })

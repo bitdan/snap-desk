@@ -1,0 +1,7 @@
+# Windows 静态链接 MSVC C 运行库（等同 /MT）：未装 Visual C++ 运行库的电脑（干净系统、Windows 沙盒、
+# WinGet 验证机）没有 VCRUNTIME140.dll，动态链接时主程序一启动就报找不到 DLL。
+# cc 编译的 C 依赖（内置 SQLite 等）会读取同一目标特性，随之改用静态运行库。
+# 设置 RUSTFLAGS 环境变量会整体覆盖这里的 rustflags，构建脚本与 CI 不要设置它；
+# scripts/package-gpui.mjs 在打包前检查主程序的导入表，漏掉这一项时停止打包。
+[target.'cfg(all(windows, target_env = "msvc"))']
+rustflags = ["-C", "target-feature=+crt-static"]
