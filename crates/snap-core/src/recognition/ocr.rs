@@ -63,7 +63,7 @@ pub fn validate_image(image: &image::RgbaImage) -> Result<(), String> {
     Ok(())
 }
 
-fn cjk(c: char) -> bool {
+pub(crate) fn cjk(c: char) -> bool {
     // 2E80–9FFF 已包含 CJK 标点（3000–303F）。
     matches!(c, '\u{2e80}'..='\u{9fff}' | '\u{ac00}'..='\u{d7af}' | '\u{ff00}'..='\u{ffef}')
 }

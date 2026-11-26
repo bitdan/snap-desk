@@ -10,7 +10,7 @@
 use gpui_kit::{component::Icon, *};
 use image::RgbaImage;
 use snap_core::annotations::{
-    self, Annotation, Kind, Point,
+    self, Annotation, ArrowHeads, Fill, Kind, LineStyle, Point,
     edit::{self, Bounds, Handle, History},
     raster,
 };
@@ -213,17 +213,32 @@ pub mod icons {
     icon!(GRIP, "grip-vertical");
     icon!(APP_WINDOW, "app-window");
     icon!(CHECK, "check");
+    icon!(INFO, "info");
+    icon!(ARROW_END, "move-right");
+    icon!(ARROW_BOTH, "move-horizontal");
 }
+
+/// 样式条“圆角”按钮使用的半径（原图物理像素）。
+pub const ROUNDED_RADIUS: f64 = 12.0;
 
 /// 当前样式；选中图形时同步为该图形的样式。
 #[derive(Clone, Debug)]
 pub struct Style {
+    /// 颜色板上的颜色。文字开启背景时它是背景框颜色，字色由它推导（见 [`paint_text`]）。
     pub color: String,
+    /// 线宽；文字为描边宽度。
     pub width: f64,
     pub opacity: f64,
     pub magnification: f64,
     pub font_size: f64,
     pub font_family: String,
+    /// 线型、箭头、填充、圆角在切换工具后保留，只作用于支持它们的图形。
+    pub line_style: LineStyle,
+    pub arrow_heads: ArrowHeads,
+    pub fill: Fill,
+    pub corner_radius: f64,
+    pub text_background: bool,
+    pub text_outline: bool,
 }
 
 impl Default for Style {
@@ -235,6 +250,12 @@ impl Default for Style {
             magnification: 2.0,
             font_size: 24.0,
             font_family: "sans".into(),
+            line_style: LineStyle::Solid,
+            arrow_heads: ArrowHeads::End,
+            fill: Fill::None,
+            corner_radius: 0.0,
+            text_background: false,
+            text_outline: false,
         }
     }
 }
@@ -248,6 +269,35 @@ pub enum StylePatch {
     Magnification(f64),
     FontSize(f64),
     FontFamily(String),
+    LineStyle(LineStyle),
+    ArrowHeads(ArrowHeads),
+    Fill(Fill),
+    CornerRadius(f64),
+    TextBackground(bool),
+    TextOutline(bool),
+}
+
+/// 文字的三种颜色都由颜色板上的一种颜色推导，样式条只需一组色块：
+/// 开背景时它填充背景框，字色取黑白中对比更强者（与序号一致），否则它就是字色；描边取字色的对比色。
+/// 结果写成显式的字色、背景色、描边色，渲染与导出不依赖这条规则。
+pub fn paint_text(shape: &mut Annotation, color: &str, background: bool, outline: bool) {
+    if background {
+        shape.background = Some(color.to_owned());
+        shape.color = annotations::contrast(color);
+    } else {
+        shape.background = None;
+        shape.color = color.to_owned();
+    }
+    shape.outline = outline.then(|| annotations::contrast(&shape.color));
+}
+
+/// 文字输入框的字色与底色（`rgb`、`rgba`）：有背景框时用背景色垫底，输入时就能看清对比色的字；
+/// 否则沿用半透明白底。三个宿主（截图、贴图、录屏标注）共用。
+pub fn text_input_colors(shape: &Annotation) -> (u32, u32) {
+    let parse = |color: &str| u32::from_str_radix(color.trim_start_matches('#'), 16).ok();
+    let text = parse(&shape.color).unwrap_or(0xef4444);
+    let background = shape.background.as_deref().and_then(parse).map_or(0xffffff18, |c| (c << 8) | 0xff);
+    (text, background)
 }
 
 #[derive(Clone, Copy)]
@@ -430,12 +480,30 @@ impl Editor {
     pub fn select(&mut self, index: Option<usize>) {
         self.selected = index.filter(|&i| i < self.shapes().len());
         if let Some(s) = self.selected.map(|i| self.shapes()[i].clone()) {
-            self.style.color = s.color.clone();
+            // 有背景框的文字，颜色板上选中的是背景色（字色由它推导）。
+            self.style.color = s.background.clone().unwrap_or_else(|| s.color.clone());
             self.style.width = s.width;
             self.style.opacity = s.opacity;
             self.style.magnification = s.magnification.unwrap_or(2.0);
             self.style.font_size = s.font_size.unwrap_or(24.0);
             self.style.font_family = s.font_family.clone().unwrap_or_else(|| "sans".into());
+            // 线型、箭头、填充等只从带这些属性的图形同步：选中一段文字不会把上次选的虚线清回实线。
+            if s.kind.has_line_style() {
+                self.style.line_style = s.line_style;
+            }
+            if s.kind == Kind::Arrow {
+                self.style.arrow_heads = s.arrow_heads;
+            }
+            if s.kind.has_fill() {
+                self.style.fill = s.fill;
+            }
+            if s.kind == Kind::Rectangle {
+                self.style.corner_radius = s.corner_radius;
+            }
+            if s.kind == Kind::Text {
+                self.style.text_background = s.background.is_some();
+                self.style.text_outline = s.outline.is_some();
+            }
         }
     }
 
@@ -580,6 +648,12 @@ impl Editor {
             font_size: None,
             font_family: None,
             raster: None,
+            line_style: if kind.has_line_style() { self.style.line_style } else { LineStyle::Solid },
+            arrow_heads: if kind == Kind::Arrow { self.style.arrow_heads } else { ArrowHeads::End },
+            fill: if kind.has_fill() { self.style.fill } else { Fill::None },
+            corner_radius: if kind == Kind::Rectangle { self.style.corner_radius } else { 0.0 },
+            background: None,
+            outline: None,
         };
         match kind {
             Kind::Magnify => shape.magnification = Some(self.style.magnification),
@@ -627,22 +701,31 @@ impl Editor {
             y: p.y.min(c.y + (c.height - line).max(0.0)),
         };
         self.text_serial += 1;
+        let color = arrow.as_ref().map_or(self.style.color.clone(), |a| a.color.clone());
+        let mut shape = Annotation {
+            kind: Kind::Text,
+            start,
+            end: start,
+            color: color.clone(),
+            width: self.style.width,
+            opacity: self.style.opacity,
+            magnification: None,
+            points: vec![],
+            text: Some(String::new()),
+            font_size: Some(self.style.font_size),
+            font_family: Some(self.style.font_family.clone()),
+            raster: None,
+            line_style: LineStyle::Solid,
+            arrow_heads: ArrowHeads::End,
+            fill: Fill::None,
+            corner_radius: 0.0,
+            background: None,
+            outline: None,
+        };
+        paint_text(&mut shape, &color, self.style.text_background, self.style.text_outline);
         self.text = Some(TextDraft {
             id: self.text_serial,
-            shape: Annotation {
-                kind: Kind::Text,
-                start,
-                end: start,
-                color: arrow.as_ref().map_or(self.style.color.clone(), |a| a.color.clone()),
-                width: self.style.width,
-                opacity: self.style.opacity,
-                magnification: None,
-                points: vec![],
-                text: Some(String::new()),
-                font_size: Some(self.style.font_size),
-                font_family: Some(self.style.font_family.clone()),
-                raster: None,
-            },
+            shape,
             index: None,
             arrow,
         });
@@ -660,9 +743,13 @@ impl Editor {
         };
         self.select(Some(index));
         self.text_serial += 1;
+        // 输入框按无装饰文字摆放：起点先移到字形处，提交时 finish_text 再退回同样距离，
+        // 有背景框或描边的文字反复编辑也不会逐次向右下漂移。
+        let (dx, dy) = raster::decoration_offset(&shape);
+        let start = Point { x: shape.start.x + dx, y: shape.start.y + dy };
         self.text = Some(TextDraft {
             id: self.text_serial,
-            shape: Annotation { raster: None, ..shape },
+            shape: Annotation { raster: None, start, end: start, ..shape },
             index: Some(index),
             arrow: None,
         });
@@ -877,12 +964,20 @@ impl Editor {
             self.error = Some("文字最多 500 个字符。".into());
             return None;
         }
+        // 背景框与描边加大了四周留白：起点向左上退回同样距离，字形落在输入框里的位置。
+        let c = self.crop;
+        let (dx, dy) = raster::decoration_offset(&draft.shape);
+        let start = Point {
+            x: (draft.shape.start.x - dx).max(c.x),
+            y: (draft.shape.start.y - dy).max(c.y),
+        };
         let shape = Annotation {
             text: Some(value.to_owned()),
+            start,
+            end: start,
             ..draft.shape.clone()
         };
         // 文字从输入框左上角起排，可用宽度为到选区右边缘的距离（最多 2048）。
-        let c = self.crop;
         let crop = Bounds {
             x: shape.start.x,
             y: shape.start.y,
@@ -926,15 +1021,37 @@ impl Editor {
             StylePatch::Magnification(zoom) => s.magnification = *zoom,
             StylePatch::FontSize(size) => s.font_size = size.clamp(8.0, 128.0),
             StylePatch::FontFamily(family) => s.font_family = family.clone(),
+            StylePatch::LineStyle(value) => s.line_style = *value,
+            StylePatch::ArrowHeads(value) => s.arrow_heads = *value,
+            StylePatch::Fill(value) => s.fill = *value,
+            StylePatch::CornerRadius(radius) => s.corner_radius = radius.clamp(0.0, annotations::MAX_CORNER_RADIUS),
+            StylePatch::TextBackground(on) => s.text_background = *on,
+            StylePatch::TextOutline(on) => s.text_outline = *on,
         }
         let style = self.style.clone();
+        // 只改图形支持的属性；不支持时图形不变，随后的 same_shape 判断会直接返回，不产生空的历史步骤。
         let restyle = |shape: &mut Annotation| match &patch {
+            StylePatch::Color(_) | StylePatch::TextBackground(_) | StylePatch::TextOutline(_)
+                if shape.kind == Kind::Text =>
+            {
+                paint_text(shape, &style.color, style.text_background, style.text_outline)
+            }
             StylePatch::Color(_) => shape.color = style.color.clone(),
             StylePatch::Width(_) => shape.width = style.width,
             StylePatch::Opacity(_) => shape.opacity = style.opacity,
             StylePatch::Magnification(_) => shape.magnification = Some(style.magnification),
             StylePatch::FontSize(_) => shape.font_size = Some(style.font_size),
             StylePatch::FontFamily(_) => shape.font_family = Some(style.font_family.clone()),
+            StylePatch::LineStyle(_) if shape.kind.has_line_style() => shape.line_style = style.line_style,
+            StylePatch::ArrowHeads(_) if shape.kind == Kind::Arrow => shape.arrow_heads = style.arrow_heads,
+            StylePatch::Fill(_) if shape.kind.has_fill() => shape.fill = style.fill,
+            StylePatch::CornerRadius(_) if shape.kind == Kind::Rectangle => shape.corner_radius = style.corner_radius,
+            StylePatch::LineStyle(_)
+            | StylePatch::ArrowHeads(_)
+            | StylePatch::Fill(_)
+            | StylePatch::CornerRadius(_)
+            | StylePatch::TextBackground(_)
+            | StylePatch::TextOutline(_) => {}
         };
         if let Some(text) = self.text.as_mut() {
             if self.gesture.is_none() {
@@ -1002,15 +1119,30 @@ impl Editor {
                 }
             }
         }
-        let relayout = matches!(patch, StylePatch::FontSize(_) | StylePatch::FontFamily(_));
+        let font = matches!(patch, StylePatch::FontSize(_) | StylePatch::FontFamily(_));
+        // 有装饰的文字三层颜色烤在同一张图里，开关装饰或改色都要重新排版（见 raster::rasterize）。
+        let decorated = shape.kind == Kind::Text && (raster::decorated(&original) || raster::decorated(&shape));
+        let mut crop = self.crop;
+        if shape.kind == Kind::Text {
+            // 字形停在原处：装饰或字号改变了四周留白时，起点反向移动同样距离，框和描边向四周展开或收回。
+            let (ox, oy) = raster::decoration_offset(&original);
+            let (nx, ny) = raster::decoration_offset(&shape);
+            shape = edit::map_shape(&shape, |p| Point { x: p.x + ox - nx, y: p.y + oy - ny });
+            if decorated && !font {
+                // 只改颜色或装饰时从原起点换行：多行文字不会因为可用宽度变大而重排、整体左移。
+                let x = shape.start.x.max(crop.x);
+                crop = Bounds { x, width: crop.right() - x, ..crop };
+            }
+        }
         let needs = match shape.kind {
-            Kind::Text => true,
+            // 不透明度在合成时才乘上，文字图片不必重画。
+            Kind::Text => !matches!(patch, StylePatch::Opacity(_)),
             Kind::Number => matches!(patch, StylePatch::Color(_)),
             Kind::Mosaic | Kind::Blur | Kind::Magnify => true,
             _ => false,
         };
         if needs {
-            return Some(self.job(shape, self.crop, !relayout, Target::Restyle(index)));
+            return Some(self.job(shape, crop, !(font || decorated), Target::Restyle(index)));
         }
         self.apply(Target::Restyle(index), shape);
         self.select(Some(index));
@@ -1050,6 +1182,19 @@ impl Editor {
         }
         self.commit(Vec::new());
         self.selected = None;
+    }
+
+    /// 追加一组已校验的标注，作为一步撤销（贴图把选中的文字转成荧光笔时使用）；返回是否已提交。
+    pub fn append(&mut self, shapes: Vec<Annotation>) -> bool {
+        if self.locked() || self.interacting() || shapes.is_empty() {
+            return false;
+        }
+        let mut next = self.shapes().to_vec();
+        next.extend(shapes);
+        let version = self.version;
+        self.commit(next);
+        self.selected = None;
+        self.version != version
     }
 
     pub fn undo(&mut self) {
@@ -1368,6 +1513,50 @@ fn text_button(id: impl Into<ElementId>, label: String, pressed: bool) -> Statef
     b
 }
 
+/// 样张按钮：用小块示意图表示线型、箭头、填充与圆角，名称放在悬停提示里，样式条不必逐项加文字标签。
+fn sample_button(id: impl Into<ElementId>, tooltip: String, pressed: bool, sample: impl IntoElement) -> Stateful<Div> {
+    let mut button = div()
+        .id(id)
+        .size(px(24.0))
+        .flex()
+        .flex_none()
+        .items_center()
+        .justify_center()
+        .rounded(px(5.0))
+        .cursor_pointer()
+        .hover(|s| s.bg(rgb(hover())))
+        .child(sample)
+        .tooltip(move |_, cx| cx.new(|_| Tooltip(tooltip.clone().into())).into());
+    if pressed {
+        button = button.bg(rgb(active_bg()));
+    }
+    button
+}
+
+/// 线型样张：一条实线、三段短划或四个圆点，宽度相近，按钮排在一起时对齐。
+fn line_sample(style: LineStyle, color: u32) -> Div {
+    let (count, length) = match style {
+        LineStyle::Solid => (1, 14.0),
+        LineStyle::Dashed => (3, 4.0),
+        LineStyle::Dotted => (4, 2.0),
+    };
+    div()
+        .flex()
+        .items_center()
+        .gap(px(2.0))
+        .children((0..count).map(move |_| div().w(px(length)).h(px(2.0)).rounded(px(1.0)).bg(rgb(color))))
+}
+
+/// 填充与圆角样张：12 像素小方框，填充用底色深浅表示，圆角用方框圆角表示。
+fn box_sample(fill: Fill, radius: f32, color: u32) -> Div {
+    let square = div().size(px(12.0)).rounded(px(radius)).border_1().border_color(rgb(color));
+    match fill {
+        Fill::None => square,
+        Fill::Translucent => square.bg(rgba((color << 8) | 0x55)),
+        Fill::Solid => square.bg(rgb(color)),
+    }
+}
+
 /// 工具栏所需的上下文：翻译函数与是否禁用。
 pub struct ToolbarProps<'a> {
     pub editor: &'a Editor,
@@ -1536,18 +1725,21 @@ pub fn tool_row<T: 'static>(
     row
 }
 
-/// 样式条：颜色、粗细/直径/边框、倍率、不透明度、字号与字体；选择工具且未选中图形时返回 None。
+/// 样式条：颜色、粗细/直径/边框、线型、箭头、填充与圆角、倍率、不透明度、字号、字体与文字装饰，
+/// 末尾的 info 图标悬停显示当前工具的操作提示；选择工具且未选中图形时返回 None。
+/// 只列出当前图形支持的项；贴图工具栏窗口按 [`options_width`] 的估算加宽。
 pub fn options_row<T: 'static>(props: &ToolbarProps, host: &Host<T>) -> Option<Div> {
     let e = props.editor;
     if !props.active || (e.tool == Tool::Edit && e.selected.is_none()) {
         return None;
     }
-    let kind = e
-        .selected
-        .and_then(|i| e.shapes().get(i))
-        .map(|s| s.kind)
-        .or(e.tool.kind());
-    let text_mode = matches!(kind, Some(Kind::Text)) || e.tool == Tool::ArrowText || e.text.is_some();
+    // 输入文字时样式只作用于文字草稿（箭头文字的箭头已经画好），样式条按文字显示。
+    let kind = if e.text.is_some() {
+        Some(Kind::Text)
+    } else {
+        e.selected.and_then(|i| e.shapes().get(i)).map(|s| s.kind).or(e.tool.kind())
+    };
+    let text_mode = matches!(kind, Some(Kind::Text));
     let filter = matches!(kind, Some(Kind::Mosaic | Kind::Blur | Kind::Erase));
     let number = matches!(kind, Some(Kind::Number));
     let spotlight = matches!(kind, Some(Kind::Spotlight));
@@ -1583,7 +1775,21 @@ pub fn options_row<T: 'static>(props: &ToolbarProps, host: &Host<T>) -> Option<D
         }
         row = row.child(swatches);
     }
-    if !number && !spotlight {
+    let width_control = |name: &'static str| {
+        let width = e.style.width;
+        let step = if width >= 10.0 { 4.0 } else { 1.0 };
+        div()
+            .flex()
+            .flex_none()
+            .items_center()
+            .gap(px(2.0))
+            .child(label((props.text)(name)))
+            .child(on(text_button("annotation-width-down", "−".into(), false), Action::Style(StylePatch::Width((width - step).max(1.0))), enabled, host))
+            .child(div().w(px(22.0)).flex().justify_center().text_xs().text_color(rgb(text())).child(format!("{width}")))
+            .child(on(text_button("annotation-width-up", "+".into(), false), Action::Style(StylePatch::Width((width + step).min(64.0))), enabled, host))
+    };
+    // 文字的粗细是描边宽度，放在“描边”开关旁边，只在开启描边时出现。
+    if !number && !spotlight && !text_mode {
         let name = if magnify {
             "边框"
         } else if matches!(kind, Some(Kind::Erase)) {
@@ -1591,19 +1797,42 @@ pub fn options_row<T: 'static>(props: &ToolbarProps, host: &Host<T>) -> Option<D
         } else {
             "粗细"
         };
-        let width = e.style.width;
-        let step = if width >= 10.0 { 4.0 } else { 1.0 };
-        row = row.child(
-            div()
-                .flex()
-                .flex_none()
-                .items_center()
-                .gap(px(2.0))
-                .child(label((props.text)(name)))
-                .child(on(text_button("annotation-width-down", "−".into(), false), Action::Style(StylePatch::Width((width - step).max(1.0))), enabled, host))
-                .child(div().w(px(22.0)).flex().justify_center().text_xs().text_color(rgb(text())).child(format!("{width}")))
-                .child(on(text_button("annotation-width-up", "+".into(), false), Action::Style(StylePatch::Width((width + step).min(64.0))), enabled, host)),
-        );
+        row = row.child(width_control(name));
+    }
+    let sample = |pressed: bool| if pressed { active_fg() } else { text() };
+    if let Some(kind) = kind.filter(|k| k.has_line_style()) {
+        let mut group = div().flex().flex_none().items_center().gap(px(2.0));
+        for (index, (value, name)) in [(LineStyle::Solid, "实线"), (LineStyle::Dashed, "虚线"), (LineStyle::Dotted, "点线")].into_iter().enumerate() {
+            let pressed = e.style.line_style == value;
+            let b = sample_button(("annotation-line-style", index), (props.text)(name), pressed, line_sample(value, sample(pressed)));
+            group = group.child(on(b, Action::Style(StylePatch::LineStyle(value)), enabled, host));
+        }
+        if kind == Kind::Arrow {
+            group = group.child(divider());
+            for (index, (value, name, data)) in [(ArrowHeads::End, "单向箭头", icons::ARROW_END), (ArrowHeads::Both, "双向箭头", icons::ARROW_BOTH)].into_iter().enumerate() {
+                let pressed = e.style.arrow_heads == value;
+                let b = sample_button(("annotation-arrow-heads", index), (props.text)(name), pressed, icon(data, sample(pressed)));
+                group = group.child(on(b, Action::Style(StylePatch::ArrowHeads(value)), enabled, host));
+            }
+        }
+        row = row.child(group);
+    }
+    if let Some(kind) = kind.filter(|k| k.has_fill()) {
+        let mut group = div().flex().flex_none().items_center().gap(px(2.0));
+        for (index, (value, name)) in [(Fill::None, "无填充"), (Fill::Translucent, "半透明填充"), (Fill::Solid, "实心填充")].into_iter().enumerate() {
+            let pressed = e.style.fill == value;
+            let b = sample_button(("annotation-fill", index), (props.text)(name), pressed, box_sample(value, 2.0, sample(pressed)));
+            group = group.child(on(b, Action::Style(StylePatch::Fill(value)), enabled, host));
+        }
+        if kind == Kind::Rectangle {
+            group = group.child(divider());
+            for (index, (radius, name)) in [(0.0, "直角矩形"), (ROUNDED_RADIUS, "圆角矩形")].into_iter().enumerate() {
+                let pressed = (e.style.corner_radius > 0.0) == (radius > 0.0);
+                let b = sample_button(("annotation-corner", index), (props.text)(name), pressed, box_sample(Fill::None, if radius > 0.0 { 5.0 } else { 0.0 }, sample(pressed)));
+                group = group.child(on(b, Action::Style(StylePatch::CornerRadius(radius)), enabled, host));
+            }
+        }
+        row = row.child(group);
     }
     if magnify {
         let mut zoom = div().flex().flex_none().items_center().gap(px(2.0)).child(label((props.text)("倍率")));
@@ -1640,6 +1869,15 @@ pub fn options_row<T: 'static>(props: &ToolbarProps, host: &Host<T>) -> Option<D
             family = family.child(on(b, Action::Style(StylePatch::FontFamily(value.into())), enabled, host));
         }
         row = row.child(family);
+        let background = e.style.text_background;
+        let outline = e.style.text_outline;
+        let mut decoration = div().flex().flex_none().items_center().gap(px(2.0));
+        decoration = decoration.child(on(text_button("annotation-text-background", (props.text)("背景"), background), Action::Style(StylePatch::TextBackground(!background)), enabled, host));
+        decoration = decoration.child(on(text_button("annotation-text-outline", (props.text)("描边"), outline), Action::Style(StylePatch::TextOutline(!outline)), enabled, host));
+        row = row.child(decoration);
+        if outline {
+            row = row.child(width_control("粗细"));
+        }
     }
     let hint = if text_mode {
         "Ctrl+Enter 或点击输入框外完成；Esc 取消；双击文字重新编辑"
@@ -1656,7 +1894,61 @@ pub fn options_row<T: 'static>(props: &ToolbarProps, host: &Host<T>) -> Option<D
     } else {
         "单击标注拖动；Alt 拖动叠加绘制"
     };
-    Some(row.child(label((props.text)(hint))))
+    // 操作提示收进 info 图标（AGENTS.md：次要说明用 info 图标与悬停提示，不常驻），给样式控件让出宽度。
+    let hint = (props.text)(hint);
+    let info = div()
+        .id("annotation-hint")
+        .size(px(24.0))
+        .flex()
+        .flex_none()
+        .items_center()
+        .justify_center()
+        .rounded(px(5.0))
+        .hover(|s| s.bg(rgb(hover())))
+        .child(icon(icons::INFO, muted()))
+        .tooltip(move |_, cx| cx.new(|_| Tooltip(hint.clone().into())).into());
+    Some(row.child(info))
+}
+
+/// 样式条的估算宽度（逻辑像素），每组按英文文案留余量。贴图工具栏是贴在图片外的独立小窗口，
+/// 按它加宽以免末尾控件被裁掉；截图与录屏标注的浮层足够宽，不需要。分组规则与 [`options_row`] 一致，增删控件时同步。
+pub fn options_width(editor: &Editor) -> f32 {
+    let kind = if editor.text.is_some() {
+        Some(Kind::Text)
+    } else {
+        editor.selected.and_then(|i| editor.shapes().get(i)).map(|s| s.kind).or(editor.tool.kind())
+    };
+    // 提示图标总在。
+    let mut groups = vec![26.0_f32];
+    if !matches!(kind, Some(Kind::Mosaic | Kind::Blur | Kind::Erase)) {
+        // 色块与不透明度。
+        groups.extend([230.0, 200.0]);
+    }
+    match kind {
+        Some(Kind::Text) => {
+            // 字号、字体、背景与描边；开启描边时多一组粗细。
+            groups.extend([120.0, 190.0, 140.0]);
+            if editor.style.text_outline {
+                groups.push(100.0);
+            }
+        }
+        Some(Kind::Number | Kind::Spotlight) => {}
+        Some(kind) => {
+            groups.push(100.0);
+            if kind.has_line_style() {
+                groups.push(if kind == Kind::Arrow { 140.0 } else { 80.0 });
+            }
+            if kind.has_fill() {
+                groups.push(if kind == Kind::Rectangle { 140.0 } else { 80.0 });
+            }
+            if kind == Kind::Magnify {
+                groups.push(130.0);
+            }
+        }
+        None => groups.push(100.0),
+    }
+    // 组间距 10，左右内边距与边框 22。
+    groups.iter().sum::<f32>() + 10.0 * (groups.len() - 1) as f32 + 22.0
 }
 
 /// 错误提示条。
@@ -1749,7 +2041,10 @@ pub fn user_font() -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     // 不能 `use super::*`：gpui 的 `test` 宏会遮蔽标准库 #[test]。
-    use super::{Bounds, Editor, Handle, Kind, Layers, Point, RgbaImage, StylePatch, Tool, UiAction, annotations};
+    use super::{
+        ArrowHeads, Bounds, Editor, Fill, Handle, Kind, Layers, LineStyle, Point, ROUNDED_RADIUS, RgbaImage, StylePatch, Tool,
+        UiAction, annotations, options_width, raster, text_input_colors,
+    };
 
     const CROP: Bounds = Bounds { x: 0.0, y: 0.0, width: 200.0, height: 100.0 };
     fn p(x: f64, y: f64) -> Point {
@@ -1985,5 +2280,97 @@ mod tests {
         let second = e.text.as_ref().expect("second text draft");
         assert_ne!(second.id, first, "新文字草稿必须换新输入框");
         assert_eq!(second.shape.text.as_deref(), Some(""));
+    }
+
+    #[test]
+    fn line_style_fill_corners_and_arrow_heads_apply_where_supported_with_undo() {
+        let mut e = Editor::new(CROP, vec![]);
+        e.set_tool(Tool::Rectangle);
+        assert!(e.style(StylePatch::LineStyle(LineStyle::Dashed)).is_none());
+        assert!(e.style(StylePatch::Fill(Fill::Translucent)).is_none());
+        e.begin(p(10.0, 10.0), 6.0, None, false);
+        e.drag(p(60.0, 50.0));
+        e.finish(false);
+        let rect = &e.shapes()[0];
+        assert_eq!((rect.line_style, rect.fill, rect.corner_radius), (LineStyle::Dashed, Fill::Translucent, 0.0));
+        // 选中后改圆角是一步历史，可撤销、重做。
+        e.set_tool(Tool::Edit);
+        e.select(Some(0));
+        assert!(e.style(StylePatch::CornerRadius(ROUNDED_RADIUS)).is_none());
+        assert_eq!(e.shapes()[0].corner_radius, ROUNDED_RADIUS);
+        e.undo();
+        assert_eq!(e.shapes()[0].corner_radius, 0.0);
+        e.redo();
+        assert_eq!(e.shapes()[0].corner_radius, ROUNDED_RADIUS);
+        // 箭头沿用线型，填充与圆角不写入不支持的类型。
+        e.set_tool(Tool::Arrow);
+        e.style(StylePatch::ArrowHeads(ArrowHeads::Both));
+        e.begin(p(100.0, 80.0), 6.0, None, false);
+        e.drag(p(180.0, 80.0));
+        e.finish(false);
+        let arrow = &e.shapes()[1];
+        assert_eq!((arrow.line_style, arrow.arrow_heads, arrow.fill, arrow.corner_radius), (LineStyle::Dashed, ArrowHeads::Both, Fill::None, 0.0));
+        annotations::validate(e.shapes(), 200, 100).unwrap();
+        // 选中矩形不清掉上次的箭头选择；对矩形改箭头不产生历史步骤。
+        e.set_tool(Tool::Edit);
+        e.select(Some(0));
+        assert_eq!(e.style.arrow_heads, ArrowHeads::Both);
+        let version = e.version;
+        assert!(e.style(StylePatch::ArrowHeads(ArrowHeads::End)).is_none());
+        assert_eq!(e.version, version);
+        // 选中箭头改为实线只影响它。
+        e.select(Some(1));
+        e.style(StylePatch::LineStyle(LineStyle::Solid));
+        assert_eq!((e.shapes()[0].line_style, e.shapes()[1].line_style), (LineStyle::Dashed, LineStyle::Solid));
+        // 贴图工具栏按样式条估算宽度加宽：矩形比画笔宽。
+        e.set_tool(Tool::Rectangle);
+        let rectangle = options_width(&e);
+        e.set_tool(Tool::Pen);
+        assert!(rectangle > options_width(&e));
+    }
+
+    #[test]
+    fn text_background_keeps_glyphs_in_place_and_restyles_by_relayout() {
+        let near = |a: Point, b: Point| (a.x - b.x).abs() < 1e-9 && (a.y - b.y).abs() < 1e-9;
+        let mut e = Editor::new(CROP, vec![]);
+        e.set_tool(Tool::Text);
+        e.style(StylePatch::TextBackground(true));
+        e.begin(p(40.0, 30.0), 6.0, None, false);
+        let draft = e.text.as_ref().expect("text draft").shape.clone();
+        // 颜色板上的颜色填充背景，字色取对比色；输入框用背景色垫底。
+        assert_eq!((draft.background.as_deref(), draft.color.as_str()), (Some("#ef4444"), "#ffffff"));
+        assert_eq!(text_input_colors(&draft), (0xffffff, 0xef4444ff));
+        let (dx, dy) = raster::decoration_offset(&draft);
+        assert!(dx > 0.0 && dy > 0.0);
+        let job = e.finish_text("Hi").expect("raster job");
+        // 起点向左上退回装饰留白，字形停在输入框里的位置。
+        assert!(near(job.shape.start, p(draft.start.x - dx, draft.start.y - dy)));
+        let mut done = job.shape.clone();
+        done.end = Point { x: done.start.x + 60.0, y: done.start.y + 40.0 };
+        done.raster = Some("x".into());
+        e.complete(job, Ok(done));
+        let before = e.shapes()[0].start;
+        e.set_tool(Tool::Edit);
+        e.select(Some(0));
+        assert!(e.style.text_background && e.style.color == "#ef4444");
+        // 关闭背景要重新排版（不能只换色），起点移回字形处。
+        let job = e.style(StylePatch::TextBackground(false)).expect("relayout job");
+        assert!(!job.preserve);
+        assert!(job.shape.background.is_none() && job.shape.color == "#ef4444");
+        assert!(near(job.shape.start, p(before.x + dx, before.y + dy)));
+        e.complete(job, Err("stop".into()));
+        // 不透明度在合成时生效，不重画文字图片。
+        assert!(e.style(StylePatch::Opacity(0.7)).is_none());
+        assert_eq!(e.shapes()[0].opacity, 0.7);
+        // 开启描边：描边色为字色的对比色，同样重新排版。
+        let job = e.style(StylePatch::TextOutline(true)).expect("outline job");
+        assert_eq!(job.shape.outline.as_deref(), Some("#111827"));
+        e.complete(job, Err("stop".into()));
+        // 重新编辑：输入框回到字形处，提交时退回同样距离，不会逐次漂移。
+        e.edit_text(0);
+        let draft = e.text.as_ref().expect("edit draft").shape.clone();
+        assert!(near(draft.start, p(before.x + dx, before.y + dy)));
+        let job = e.finish_text("Hi there").expect("raster job");
+        assert!(near(job.shape.start, before));
     }
 }

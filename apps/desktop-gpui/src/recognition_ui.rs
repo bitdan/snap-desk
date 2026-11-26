@@ -1,9 +1,9 @@
-//! 截图识别结果窗口的界面：文字识别、翻译与二维码结果。
+//! 截图识别结果窗口的界面：文字识别、翻译与二维码 / 条形码结果。
 //!
 //! 文字识别：左侧浅底原图（识别框描边），右侧整理工具条与可编辑文字，底栏为行数/字数与“翻译文字”“复制文字”。
 //! 截图翻译：右侧为浅底上的原文卡片、语言条与译文卡片，底栏“返回识别”。开启“覆盖原文”时只显示原图一栏
 //! （译文画在图上），底栏提供显示原文/译文、展开 / 收起翻译面板与“复制译文”；出错或隐藏原图时恢复右侧面板。
-//! 二维码：结果卡片列表与底栏。
+//! 二维码 / 条形码：按原图阅读顺序排列的结果卡片（格式名、链接或文本、内容与操作）与底栏。
 use super::{Mode, Panel, TARGETS};
 use crate::theme;
 use gpui_kit::{
@@ -615,21 +615,24 @@ impl Panel {
             .child(output)
     }
 
-    fn qr_body(&self, cx: &mut Context<Self>, c: &Colors) -> Div {
+    /// 码多时（如整页商品条码）列表可滚动，卡片不压缩。
+    fn codes_body(&self, cx: &mut Context<Self>, c: &Colors) -> Stateful<Div> {
         let mut body = div()
+            .id("codes-body")
             .flex_1()
             .min_h_0()
+            .overflow_y_scroll()
             .p(px(16.0))
             .flex()
             .flex_col()
             .gap(px(10.0));
-        match self.qr.as_ref() {
+        match self.codes.as_ref() {
             None => {
                 body = body
                     .items_center()
                     .justify_center()
                     .text_color(rgb(c.muted))
-                    .child(self.t("正在识别二维码…"));
+                    .child(self.t("正在识别二维码 / 条形码…"));
             }
             Some(items) if items.is_empty() => {
                 body = body
@@ -651,7 +654,7 @@ impl Panel {
                         div()
                             .text_size(px(15.0))
                             .font_weight(FontWeight::SEMIBOLD)
-                            .child(self.t("未发现二维码")),
+                            .child(self.t("未发现二维码或条形码")),
                     )
                     .child(
                         div()
@@ -659,13 +662,13 @@ impl Panel {
                             .text_center()
                             .line_height(relative(1.6))
                             .text_color(rgb(c.muted))
-                            .child(self.t("请完整框选二维码并保留周围白边，然后重试。")),
+                            .child(self.t("请完整框选二维码或条形码，然后重试。")),
                     );
             }
             Some(items) => {
                 body = body.child(
                     div().text_xs().text_color(rgb(c.muted)).child(
-                        self.t("识别到 {0} 个二维码")
+                        self.t("识别到 {0} 个码")
                             .replace("{0}", &items.len().to_string()),
                     ),
                 );
@@ -682,7 +685,7 @@ impl Panel {
                         .on_click(cx.listener(
                             move |p, _: &ClickEvent, _, cx| {
                                 if let Some(text) =
-                                    p.qr.as_ref()
+                                    p.codes.as_ref()
                                         .and_then(|items| items.get(index))
                                         .map(|i| i.text.clone())
                                 {
@@ -726,7 +729,7 @@ impl Panel {
                                     .on_click(cx.listener(
                                         move |p, _: &ClickEvent, _, cx| {
                                             if let Some(url) =
-                                                p.qr.as_ref()
+                                                p.codes.as_ref()
                                                     .and_then(|items| items.get(index))
                                                     .and_then(|i| i.url.clone())
                                             {
@@ -758,6 +761,7 @@ impl Panel {
                     }
                     body = body.child(
                         div()
+                            .flex_none()
                             .p(px(12.0))
                             .flex()
                             .flex_col()
@@ -767,6 +771,7 @@ impl Panel {
                             .border_color(rgb(c.border))
                             .bg(rgb(c.soft))
                             .child(
+                                // 码制（如 EAN-13，各语言通用写法）在前，内容类型在后。
                                 div()
                                     .flex()
                                     .items_center()
@@ -778,6 +783,13 @@ impl Panel {
                                         13.0,
                                         c.muted,
                                     ))
+                                    .child(
+                                        div()
+                                            .font_weight(FontWeight::SEMIBOLD)
+                                            .text_color(rgb(c.text))
+                                            .child(item.format.name()),
+                                    )
+                                    .child("·")
                                     .child(self.t(if link { "链接" } else { "文本" })),
                             )
                             .child(
@@ -928,13 +940,16 @@ impl Render for Panel {
                             false,
                             &c,
                         )
-                        .on_click(cx.listener(|p, _: &ClickEvent, _, cx| p.scan_qr(cx))),
+                        .on_click(cx.listener(|p, _: &ClickEvent, _, cx| {
+                            p.scan_codes(cx);
+                            cx.notify();
+                        })),
                     )
                     .child(
                         qr_button("qr-close", None, self.t("关闭"), false, &c)
                             .on_click(|_, window, _| window.remove_window()),
                     );
-                (self.qr_body(cx, &c).into_any_element(), footer)
+                (self.codes_body(cx, &c).into_any_element(), footer)
             }
             mode => {
                 // 覆盖原文时只留原图一栏（译文画在图上），右侧面板不渲染。

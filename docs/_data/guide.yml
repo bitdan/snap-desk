@@ -23,7 +23,7 @@
       url: /guide/shelf/
 - group: 识别与翻译
   pages:
-    - title: 文字识别与二维码
+    - title: 文字识别、二维码与条形码
       url: /guide/ocr/
     - title: 翻译
       url: /guide/translate/

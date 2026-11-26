@@ -1333,7 +1333,7 @@ pub fn pin(cx: &mut App) {
     .detach();
 }
 
-/// 识别选区：文字识别与翻译用原始像素（标注可能遮挡文字），二维码包含标注。
+/// 识别选区：文字识别与翻译用原始像素（标注可能遮挡文字），二维码 / 条形码包含标注。
 /// 识别在结果窗口中进行；浮层随即关闭，结果窗口独立存活。
 pub fn recognize(cx: &mut App, mode: RecognitionMode) {
     let Some((session, image, rect, shapes)) = begin_export(cx) else {
@@ -3112,7 +3112,7 @@ impl Render for Overlay {
                 let crop = s.editor.crop;
                 let width = ((crop.x + crop.width - text.shape.start.x).min(2048.0) as f32 / scale).max(40.0);
                 let font = text.shape.font_size.unwrap_or(24.0) as f32 / scale;
-                let color = u32::from_str_radix(text.shape.color.trim_start_matches('#'), 16).unwrap_or(0xef4444);
+                let (color, background) = annotate::text_input_colors(&text.shape);
                 root = root.child(
                     div()
                         .absolute()
@@ -3122,7 +3122,7 @@ impl Render for Overlay {
                         .border_1()
                         .border_dashed()
                         .border_color(rgb(ACCENT))
-                        .bg(rgba(0xffffff18))
+                        .bg(rgba(background))
                         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                         .child(
                             Textarea::new(state)
@@ -3185,7 +3185,7 @@ impl Render for Overlay {
                 export_button("capture-record-start", annotate::icons::VIDEO, s.text("开始录屏"), true, record),
             ]
         } else {
-            // 顺序：重新框选、全屏、滚动截图、录屏 | 贴图、识别文字、截图翻译、二维码、保存、复制（主色）、取消。
+            // 顺序：重新框选、全屏、滚动截图、录屏 | 贴图、识别文字、截图翻译、二维码 / 条形码、保存、复制（主色）、取消。
             // 回放中的画面不是现场，不能开始滚动截图或录屏。
             let replaying = history::position(cx).is_some();
             let mut actions = vec![
@@ -3203,7 +3203,7 @@ impl Render for Overlay {
                 export_button("capture-pin", annotate::icons::PIN, s.text("贴图 Ctrl/⌘+P"), false, |cx, _| pin(cx)),
                 export_button("capture-ocr", annotate::icons::SCAN_TEXT, s.text("识别文字"), false, |cx, _| recognize(cx, RecognitionMode::Ocr)),
                 export_button("capture-translate", annotate::icons::LANGUAGES, s.text("截图翻译"), false, |cx, _| recognize(cx, RecognitionMode::Translate)),
-                export_button("capture-qr", annotate::icons::QR_CODE, s.text("识别二维码"), false, |cx, _| recognize(cx, RecognitionMode::Qr)),
+                export_button("capture-qr", annotate::icons::QR_CODE, s.text("识别二维码 / 条形码"), false, |cx, _| recognize(cx, RecognitionMode::Qr)),
                 // 按住 Shift 单击为快速保存（与 Snipaste、PixPin 一致）。
                 annotate::icon_button("capture-save", annotate::icons::SAVE, s.text("保存图片 Ctrl/⌘+S · 快速保存 Shift+单击 或 Ctrl/⌘+Shift+S"), false, false)
                     .on_click(|event: &ClickEvent, _, cx| if event.modifiers().shift { quick_save(cx) } else { save(cx) })

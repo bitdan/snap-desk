@@ -25,10 +25,12 @@ dirs = "6"
 global-hotkey = { version = "0.8", features = ["serde"] }
 # 屏幕与窗口采集。
 xcap = "=0.9.8"
-# 识别：本地 PP-OCR（OAR 前后处理 + ort CPU 推理）、在线 OCR/翻译、二维码、资源摘要与运行库解压。
+# 识别：本地 PP-OCR（OAR 前后处理 + ort CPU 推理）、在线 OCR/翻译、二维码与条形码、资源摘要与运行库解压。
 oar-ocr = { version = "=0.10.0", default-features = false }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "socks"] }
-rqrr = { version = "=0.10.1", default-features = false }
+# 二维码与条形码只解码像素：不启用默认的图片读取（会锁死 image 版本）、结果解析与编码器；
+# encoding_rs 用于按 ECI 解出非 UTF-8 内容。
+rxing = { version = "=0.9.4", default-features = false, features = ["decoders", "multi_barcode_readers", "qrcode", "oned", "datamatrix", "pdf417", "aztec", "encoding_rs"] }
 sha2 = "0.10"
 blake3 = "=1.8.2"
 # 富文本贴图：HTML 解析。
@@ -45,6 +47,10 @@ semver = "1"
 minisign-verify = "0.3"
 # 本地翻译 worker 进程桥（异步管道与超时）。
 tokio = { version = "1", features = ["rt", "sync", "process", "io-util", "time"] }
+
+[dev-dependencies]
+# 测试用编码器生成码图；只在编译测试时启用，不进入应用。
+rxing = { version = "=0.9.4", default-features = false, features = ["encoders"] }
 
 # Windows：物理像素拼接、录屏（WGC 采集、Media Foundation 编码、WASAPI 声音、Raw Input 键鼠）、窗口与 UIA 控件候选、光标合成。版本已锁定的 windows 0.62.2 一致。
 [target.'cfg(windows)'.dependencies]
