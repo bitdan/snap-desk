@@ -127,7 +127,7 @@ apps/desktop-gpui/     # 桌面应用（主程序 snap-desk-gpui，打包时复�
   src/annotate.rs · live_annotate.rs  # 标注
   src/pins.rs · native.rs              # 桌面贴图与平台窗口能力
   src/clipboard*.rs · shelf.rs         # 剪贴板历史与顶部暂存架
-  src/recognition*.rs · translation_window.rs · local_translate.rs  # OCR、二维码与翻译
+  src/recognition*.rs · translation_window.rs · local_translate.rs  # OCR、二维码 / 条形码与翻译
   src/settings_*.rs    # 设置窗口各分类页
   src/updater.rs       # 在线更新（portable.ps1 为独立 EXE 的替换脚本）
   assets/              # 界面图标与服务商品牌图

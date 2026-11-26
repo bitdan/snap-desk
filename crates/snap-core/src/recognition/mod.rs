@@ -1,5 +1,5 @@
 //! 识别与翻译：配置模型（服务目录、翻译与 OCR 设置及地址白名单）、OCR 引擎（本地 PP-OCR、
-//! Windows OCR / Apple Vision、在线 OCR 与 PaddleOCR 服务）、二维码、在线翻译与系统凭据库。
+//! Windows OCR / Apple Vision、在线 OCR 与 PaddleOCR 服务）、二维码与条形码、在线翻译与系统凭据库。
 //! 本地 CTranslate2 翻译（引擎安装、语言包、worker 进程桥）在 local_*；微信 OCR（仅 Windows x64）在 wechat_ocr。
 //! 贴图“选择文字”的文字层（命中测试、选区与复制文本）在 text_layer。
 pub mod ai_credentials;
@@ -14,7 +14,7 @@ pub mod ocr_runtime;
 pub mod online_ocr;
 pub mod paddle_ocr;
 pub mod providers;
-pub mod qr;
+pub mod codes;
 pub mod selected_text;
 pub mod services;
 pub mod text_layer;

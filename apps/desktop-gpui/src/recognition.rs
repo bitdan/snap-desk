@@ -1,4 +1,4 @@
-//! 识别结果窗口：文字识别（可编辑草稿）、图片翻译、二维码。截图与贴图共用。
+//! 识别结果窗口：文字识别（可编辑草稿）、图片翻译、二维码与条形码。截图与贴图共用。
 //!
 //! 截图与贴图的识别结果：
 //! - 识别出内容后截图浮层即关闭，结果窗口独立存活，直到用户关闭；
@@ -8,7 +8,7 @@
 //!   本地 CTranslate2 翻译在本机进程中执行（`local_translate.rs`）；
 //! - 设置开启“截图翻译覆盖原文”且原文未改动时按段落翻译，并把译文按原图配色画回原位置
 //!   （`snap_core::recognition::overlay`）；
-//! - 二维码只在用户确认后才打开 HTTP/HTTPS 链接。
+//! - 二维码 / 条形码逐个列出格式与内容，只在用户确认后才打开 HTTP/HTTPS 链接。
 //! 识别与翻译在后台线程执行（翻译用一个临时的单线程 tokio 运行时承载异步 HTTP 请求）。
 //!
 //! 文字翻译窗口复用同一面板、不带图片：“翻译”快捷键先在前台应用
@@ -28,7 +28,7 @@ use snap_core::{
         Engines,
         overlay::{self, Paragraph},
         providers::TranslationRequest,
-        qr::QrItem,
+        codes::CodeItem,
     },
     settings::Settings,
 };
@@ -38,6 +38,7 @@ use std::{sync::Arc, time::Duration};
 pub enum Mode {
     Ocr,
     Translate,
+    /// 二维码与条形码（沿用 `Qr` 名称，截图与贴图的入口不变）。
     Qr,
 }
 
@@ -177,7 +178,7 @@ fn title(settings: &Settings, mode: Mode) -> String {
         match mode {
             Mode::Ocr => "文字识别结果",
             Mode::Translate => "图片翻译",
-            Mode::Qr => "图片二维码识别",
+            Mode::Qr => "二维码 / 条形码识别",
         },
     )
 }
@@ -195,8 +196,8 @@ struct Panel {
     /// 译文（可编辑、可复制）。
     translated: Entity<TextareaState>,
     target: String,
-    qr: Option<Vec<QrItem>>,
-    /// 待确认打开的二维码链接。
+    codes: Option<Vec<CodeItem>>,
+    /// 待确认打开的码内链接（`codes` 的下标）。
     pending_link: Option<usize>,
     busy: Option<&'static str>,
     error: Option<String>,
@@ -265,7 +266,7 @@ impl Panel {
             local,
             ocr: None,
             target,
-            qr: None,
+            codes: None,
             pending_link: None,
             busy: None,
             error: None,
@@ -305,7 +306,7 @@ impl Panel {
 
     fn start(&mut self, cx: &mut Context<Self>) {
         match self.mode {
-            Mode::Qr => self.scan_qr(cx),
+            Mode::Qr => self.scan_codes(cx),
             Mode::Ocr | Mode::Translate => self.recognize(cx),
         }
     }
@@ -364,28 +365,39 @@ impl Panel {
         .detach();
     }
 
-    fn scan_qr(&mut self, cx: &mut Context<Self>) {
+    /// 识别二维码 / 条形码；“重新识别”时清掉上次的提示与待确认链接（下标可能对应到新结果里的别的码）。
+    fn scan_codes(&mut self, cx: &mut Context<Self>) {
+        if self.busy.is_some() {
+            return;
+        }
         let Some(image) = self.image.clone() else {
             return;
         };
-        self.busy = Some("正在识别二维码…");
+        self.busy = Some("正在识别二维码 / 条形码…");
         self.error = None;
+        self.message = None;
+        self.pending_link = None;
         cx.spawn(async move |this, cx| {
             let result = cx
                 .background_executor()
-                .spawn(async move { recognition::qr::decode(&image) })
+                .spawn(async move { recognition::codes::decode(&image) })
                 .await;
             let _ = this.update(cx, |panel, cx| {
                 panel.busy = None;
                 match result {
                     Ok(items) => {
-                        log::info!("event=gpui.qr_finished items={}", items.len());
+                        log::info!("event=gpui.codes_finished items={}", items.len());
                         if items.is_empty() {
-                            panel.message = Some(panel.t("未识别到二维码。"));
+                            panel.message = Some(panel.t("未识别到二维码或条形码。"));
                         }
-                        panel.qr = Some(items);
+                        panel.codes = Some(items);
                     }
-                    Err(error) => panel.error = Some(error),
+                    Err(error) => {
+                        log::warn!("event=gpui.codes_failed");
+                        panel.error = Some(
+                            snap_core::i18n::for_language(&panel.settings.appearance.language, &error).to_owned(),
+                        );
+                    }
                 }
                 cx.notify();
             });
