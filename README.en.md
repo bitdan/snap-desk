@@ -92,7 +92,7 @@ Native Rust, no embedded browser engine. Measured on a release build; full data 
 - ✅ Groups and shared appearance (shadow, corner radius, border)
 - ✅ Rotate, flip, grayscale, invert, auto adjust
 - ✅ Annotate, copy, save, drag out to other apps
-- ✅ OCR, QR code recognition, image translation
+- ✅ OCR, QR code / barcode recognition, image translation
 
 ### Top Shelf
 
@@ -115,7 +115,7 @@ Native Rust, no embedded browser engine. Measured on a release build; full data 
 - ✅ Combined export to PDF / long image / separate files, with reordering and text rewriting
 - ✅ Retention days, item count, and size limits
 
-### OCR & QR Codes
+### OCR, QR Codes & Barcodes
 
 | OCR result | QR code |
 | :---: | :---: |
@@ -125,7 +125,7 @@ Native Rust, no embedded browser engine. Measured on a release build; full data 
 - ✅ Online: OCR.space, Paddle API, Groq Vision, DeepSeek, custom vision services
 - ✅ Shortcut-driven recognition, with recognition boxes over the original image
 - ✅ Merge line breaks, tidy spaces, auto copy
-- ✅ Local QR code recognition, with confirmation before opening links
+- ✅ Local QR code and barcode recognition (Code 128, EAN, UPC and more), several codes per image, with confirmation before opening links
 
 ### Translation
 

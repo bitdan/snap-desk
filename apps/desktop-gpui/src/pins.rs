@@ -1698,7 +1698,7 @@ impl Pin {
             Item::Recognize(mode) => (
                 self.text(match mode {
                     crate::recognition::Mode::Ocr => "识别文字",
-                    crate::recognition::Mode::Qr => "识别二维码",
+                    crate::recognition::Mode::Qr => "识别二维码 / 条形码",
                     crate::recognition::Mode::Translate => "翻译图片",
                 }),
                 false,
