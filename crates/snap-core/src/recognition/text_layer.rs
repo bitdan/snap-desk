@@ -365,6 +365,13 @@ pub fn highlighter_marks(rects: &[Rect], color: &str, opacity: f64, width: u32, 
                 font_size: None,
                 font_family: None,
                 raster: None,
+                // 荧光笔不用这些样式：实线、无箭头、无填充、直角、无文字装饰。
+                line_style: Default::default(),
+                arrow_heads: Default::default(),
+                fill: Default::default(),
+                corner_radius: 0.0,
+                background: None,
+                outline: None,
             }
         })
         .collect()
