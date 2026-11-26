@@ -83,6 +83,7 @@ cargo run -p snap-desk-gpui
 - `npm test`：snap-core 边界与内嵌资源检查（`check:architecture`），以及打包、签名、版本同步等脚本测试。
 - `npm run desktop:dev`：以调试模式运行应用，程序在 `target/debug/snap-desk-gpui`（Windows 为 `.exe`）。
 - `npm run desktop:package`：构建发布版并用 cargo-packager 生成安装包；构建前从托盘退出旧程序。
+- `npm run desktop:standalone`：只构建发布版并生成 Windows 独立 EXE（`target/release/snap-desk-v<版本>-windows-x64-standalone.exe`），不生成安装包，也不需要 cargo-packager；其他平台只构建主程序。构建前同样从托盘退出旧程序。
 - `npm run desktop:clean`：清理 `target/`。
 
 Linux 另需截图库的系统依赖，Debian / Ubuntu 可执行 `bash scripts/ci/install-linux-deps.sh`。

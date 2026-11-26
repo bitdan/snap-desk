@@ -3,7 +3,8 @@
 // （scripts/release-signing.mjs）。产物在 target/release/packages，Windows 独立 EXE 在 target/release。
 //
 // 需要先安装 cargo-packager：cargo install cargo-packager --version 0.11.8 --locked
-// 用法：node scripts/package-gpui.mjs [--debug]
+// 用法：node scripts/package-gpui.mjs [--debug] [--standalone]
+//   --standalone：只构建并生成 Windows 独立 EXE，不生成安装包，也不需要 cargo-packager（npm run desktop:standalone）。
 import { spawnSync } from 'node:child_process'
 import { chmodSync, copyFileSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -53,6 +54,16 @@ const DEB_DEPENDS = [
  */
 const APPIMAGE_LIBS = ['libayatana-appindicator3.so.1', 'libayatana-indicator3.so.7', 'libayatana-ido3-0.4.so.0',
   'libdbusmenu-glib.so.4', 'libdbusmenu-gtk3.so.4']
+
+/** 命令行选项：`--debug` 用调试构建，`--standalone` 只生成独立 EXE、跳过 cargo-packager。 */
+export function parseOptions(argv) {
+  return { debug: argv.includes('--debug'), standalone: argv.includes('--standalone') }
+}
+
+/** Windows 独立 EXE 的文件名，与发布附件清单（release-assets.mjs）一致。 */
+export function standaloneName(version) {
+  return `snap-desk-v${version}-windows-x64-standalone.exe`
+}
 
 /** 构建产物名与交给打包器的主程序名。 */
 export function executableNames(platform) {
@@ -110,7 +121,7 @@ function run(command, args, options) {
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const root = fileURLToPath(new URL('../', import.meta.url))
   const target = resolve(root, 'target')
-  const debug = process.argv.includes('--debug')
+  const { debug, standalone: standaloneOnly } = parseOptions(process.argv.slice(2))
   const releaseDirectory = resolve(target, debug ? 'debug' : 'release')
   syncVersion(root)
   const version = readVersion()
@@ -124,9 +135,14 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   if (!existsSync(built)) throw new Error(`未找到构建产物：${built}`)
   copyFileSync(built, resolve(releaseDirectory, names.bundled))
   if (process.platform === 'win32') {
-    const standalone = resolve(releaseDirectory, `snap-desk-v${version}-windows-x64-standalone.exe`)
+    const standalone = resolve(releaseDirectory, standaloneName(version))
     copyFileSync(built, standalone)
     console.log(`独立 EXE：${standalone}`)
+  }
+  if (standaloneOnly) {
+    // 独立 EXE 就是发布版主程序本身，只有 Windows 作为单独附件发布；其他平台直接给出主程序位置。
+    if (process.platform !== 'win32') console.log(`独立 EXE 只在 Windows 发布，当前平台的主程序：${built}`)
+    process.exit(0)
   }
 
   const config = packagerConfig({ platform: process.platform, root, releaseDirectory, version })
