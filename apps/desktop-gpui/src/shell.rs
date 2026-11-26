@@ -119,6 +119,7 @@ pub fn start(
     shell.register_startup();
     let clipboard = shell.settings.clipboard.clone();
     let restore_pins = shell.settings.pin_restore_on_startup;
+    let clean_days = shell.settings.export.auto_clean_days;
     cx.set_global(shell);
     // 按主题设置与系统外观选定调色板（窗口尚未打开，不需要重绘）。
     crate::theme::refresh(cx);
@@ -127,6 +128,10 @@ pub fn start(
     crate::shelf::init(cx);
     crate::local_translate::init(cx);
     crate::pins::init(cx, restore_pins);
+    // 到期的自动保存截图在后台清理（保存时也会顺带清理）。
+    if clean_days > 0 {
+        cx.background_executor().spawn(async move { crate::capture::clean_expired(clean_days) }).detach();
+    }
     if first_launch {
         // 先保存再开窗口：保存时从磁盘重新读取，全新安装要把按系统选出的语言一并写入。
         let saved = update_settings(cx, |s| {

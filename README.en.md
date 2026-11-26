@@ -53,10 +53,12 @@ Native Rust, no embedded browser engine. Measured on a release build; full data 
 - ✅ Multiple monitors, mixed scaling, capture delay, optional cursor
 - ✅ Magnifier and color picker
 - ✅ Reuse last selection; copy, pin, or save right after selecting
+- ✅ Type the position and size (px / dp), lock an aspect ratio, size presets; move, grow, shrink, or resize the selection symmetrically with the arrow keys
 - ✅ Capture history: replay the last 20 captures with `,` / `.` and keep editing
 - ✅ 16 annotation tools: rectangle, ellipse, arrow, arrow with label, line, polyline, pen, highlighter, text, numbered label, spotlight, magnifier, mosaic, blur, pixel eraser, delete annotation
 - ✅ Undo/redo, collapsible and reorderable toolbar
-- ✅ PNG / JPEG / WebP export with custom filenames
+- ✅ PNG / JPEG / WebP / PDF export with custom filenames
+- ✅ Quick save (Shift+click Save or Ctrl+Shift+S), auto-save with scheduled cleanup
 
 ### Scrolling Screenshot
 
@@ -66,6 +68,7 @@ Native Rust, no embedded browser engine. Measured on a release build; full data 
 - ✅ Automatic stitching, with back-and-forth scrolling along the same axis; press Ctrl+C or the screenshot shortcut again to finish, Esc to cancel
 - ✅ Live preview and failure recovery
 - ✅ PNG export with a white or transparent background
+- ✅ Afterwards, crop both ends, then copy, save, pin, or recognize text
 
 ### Screen Recording
 

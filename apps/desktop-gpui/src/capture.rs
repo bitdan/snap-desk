@@ -20,13 +20,16 @@ use crate::magnifier::{self, Picker};
 use crate::recognition::Mode as RecognitionMode;
 use crate::selection::{self, Handle, Snap, SnapKind};
 use gpui_kit::{
-    component::input::{Textarea, TextareaState},
+    component::{
+        Sizable,
+        input::{Input, InputState, Textarea, TextareaState},
+    },
     *,
 };
 use image::RgbaImage;
 use snap_core::{
     annotations::{Annotation, Point as ImagePoint, edit::Bounds as ImageBounds},
-    capture::{Display, Rect, recent::{self, RecentSelection}},
+    capture::{Display, Rect, recent::{self, RecentSelection}, sizing::{self, Size as Dimensions, Unit}},
     settings::{ExportSettings, Language, Settings},
 };
 use std::{sync::Arc, time::{Duration, Instant}};
@@ -45,6 +48,12 @@ const HANDLE_HIT: f32 = 6.0;
 const HANDLE_SIZE: f32 = 8.0;
 /// 新建选区前允许的抖动（物理像素）：小于它视为单击，用于选中吸附候选。
 const CLICK_SLOP: i64 = 4;
+/// 位置与尺寸条（逻辑像素）：最小宽度；固定三行（输入、比例、预设）的高度：
+/// 边框 1 + 内边距 6 + 输入行 28 + 间距 4 + 比例行 24 + 间距 4 + 预设行 24 + 内边距 6 + 边框 1。
+const SIZE_PANEL_WIDTH: f32 = 560.0;
+const SIZE_PANEL_HEIGHT: f32 = 98.0;
+/// 一个预设按钮（如“1920×1080”加内边距与间距）的估算宽度，预设多时据此加宽尺寸条、不换行。
+const SIZE_PRESET_WIDTH: f32 = 80.0;
 
 /// 拖动中的操作；起点都记录在按下时，移动时总是从起点重新计算，避免累计误差。
 #[derive(Clone, Copy)]
@@ -115,6 +124,90 @@ pub struct Session {
     /// 工具栏被拖动后的偏移（逻辑像素；双击工具栏恢复位置），与拖动起点。
     toolbar_offset: (f32, f32),
     toolbar_drag: Option<(Point<Pixels>, (f32, f32))>,
+    /// 位置与尺寸输入条（单击选区尺寸标签打开）。
+    size_editor: Option<SizeEditor>,
+    /// 比例锁定、尺寸条单位与尺寸预设（`capture-size.json`），修改即保存。
+    sizing: sizing::Sizing,
+}
+
+/// 位置与尺寸输入条：所在浮层与 X、Y、宽、高四个输入框（数值为尺寸条当前单位）。
+/// 输入框属于该浮层窗口，浮层关闭或选区被别的操作替换时随之丢弃。
+struct SizeEditor {
+    owner: usize,
+    fields: [Entity<InputState>; 4],
+}
+
+impl Session {
+    /// 选区所在屏的缩放：按左上角所在屏，找不到时为 1。
+    fn scale_at(&self, rect: Rect) -> f64 {
+        let corner = (i64::from(rect.x), i64::from(rect.y));
+        (0..self.displays.len())
+            .find(|&i| selection::contains(self.region(i), corner))
+            .map_or(1.0, |i| self.displays[i].scale)
+    }
+
+    /// 尺寸条单位的换算系数：px 为 1，dp 为选区所在屏的缩放。
+    fn unit_scale(&self, rect: Rect) -> f64 {
+        match self.sizing.unit {
+            Unit::Px => 1.0,
+            Unit::Dp => self.scale_at(rect),
+        }
+    }
+
+    /// 选区在尺寸条单位下的 X、Y、宽、高。
+    fn size_values(&self, rect: Rect) -> [i64; 4] {
+        let k = self.unit_scale(rect);
+        [rect.x, rect.y, rect.width, rect.height].map(|v| (f64::from(v) / k).round() as i64)
+    }
+
+    fn ratio(&self) -> Option<selection::Ratio> {
+        self.sizing.ratio.map(|r| (r.width, r.height))
+    }
+
+    /// 保存尺寸偏好；失败只影响下次截图，记录日志即可。
+    fn save_sizing(&self) {
+        if let Some(path) = sizing::default_path()
+            && let Err(error) = sizing::save(&path, &self.sizing)
+        {
+            log::warn!("event=gpui.capture_sizing_save_failed message={error}");
+        }
+    }
+
+    /// 按尺寸条输入改选区。数值为当前单位，空或无效的项沿用原值（未改动的项直接用原物理像素，
+    /// 避免 dp 来回换算差 1 像素）；比例锁定时由改动的那一边推出另一边。返回选区是否变化。
+    fn apply_size(&mut self, typed: [Option<i64>; 4]) -> bool {
+        let Some(rect) = self.selection else {
+            return false;
+        };
+        let k = self.unit_scale(rect);
+        let current = self.size_values(rect);
+        let original = [rect.x, rect.y, rect.width, rect.height].map(i64::from);
+        let changed = |i: usize| typed[i].is_some_and(|v| v != current[i]);
+        let value = |i: usize| match typed[i] {
+            Some(v) if changed(i) => (v as f64 * k).round() as i64,
+            _ => original[i],
+        };
+        let (x, y, mut w, mut h) = (value(0), value(1), value(2), value(3));
+        let ratio = self.ratio();
+        if let Some((rw, rh)) = ratio {
+            let (rw, rh) = (i64::from(rw), i64::from(rh));
+            if changed(3) && !changed(2) {
+                w = (h * rw / rh).max(1);
+            } else {
+                h = (w * rh / rw).max(1);
+            }
+        }
+        let Some(next) = selection::placed(x, y, w, h, ratio.is_some(), self.area()) else {
+            return false;
+        };
+        self.selection = Some(next);
+        next != rect
+    }
+
+    /// 选区被替换（全屏、重新框选、最近选区、回放等）时关闭尺寸条，避免输入框里留着旧数值。
+    fn drop_size_editor(&mut self) {
+        self.size_editor = None;
+    }
 }
 
 impl Session {
@@ -580,11 +673,12 @@ fn begin(cx: &mut App, settings: &Settings, delay: Duration, purpose: Option<Rec
                 return;
             }
         }
-        // 展开中的暂存架、录屏中的红框与控制条先临时收起，等桌面合成去掉它们再拍屏；会话结束后恢复。
+        // 展开中的暂存架、录屏中的红框与控制条、“已保存”提示先临时收起，等桌面合成去掉它们再拍屏；会话结束后恢复。
         let hidden = cx.update(|cx| {
             let shelf = crate::shelf::suspend(cx);
             let recording = crate::recording::set_overlays_visible(cx, false);
-            shelf || recording
+            let toast = crate::toast::dismiss(cx);
+            shelf || recording || toast
         });
         if hidden {
             cx.background_executor().timer(Duration::from_millis(120)).await;
@@ -643,6 +737,8 @@ fn begin(cx: &mut App, settings: &Settings, delay: Duration, purpose: Option<Rec
                         include_cursor: grabbed.include_cursor,
                         toolbar_offset: (0.0, 0.0),
                         toolbar_drag: None,
+                        size_editor: None,
+                        sizing: sizing::default_path().map(|path| sizing::load(&path)).unwrap_or_default(),
                     });
                     session.update(cx, |s, _| {
                         s.layout_key = recent::layout_key(&s.displays);
@@ -841,6 +937,7 @@ fn select_screen(cx: &mut App, _owner: isize) {
             }
             let index = s.picker.at.map_or(0, |(owner, _, _)| owner).min(s.displays.len().saturating_sub(1));
             s.selection = Some(s.region(index));
+            s.drop_size_editor();
             s.hover = None;
             s.drag = None;
             s.sync();
@@ -953,6 +1050,7 @@ fn reselect(cx: &mut App, _owner: isize) {
         s.annotating = false;
         s.text_input = None;
         s.selection = None;
+        s.drop_size_editor();
         s.drag = None;
         s.layers.clear();
         s.sync();
@@ -1130,12 +1228,12 @@ fn copy(cx: &mut App, owner: isize) {
             })
             .await;
         cx.update(|cx| {
-            let result = encoded.and_then(|(image, png)| {
-                write_clipboard(cx, owner, &image, png).map(|_| image.dimensions())
-            });
+            let result = encoded.and_then(|(image, png)| write_clipboard(cx, owner, &image, png).map(|_| image));
             match result {
-                Ok((width, height)) => {
+                Ok(image) => {
+                    let (width, height) = image.dimensions();
                     log::info!("event=gpui.capture_copied width={width} height={height}");
+                    auto_save(cx, Arc::new(image));
                     remember(cx);
                     finish(cx);
                 }
@@ -1167,6 +1265,8 @@ pub fn pin(cx: &mut App) {
     let Some((session, image, rect, shapes)) = begin_export(cx) else {
         return;
     };
+    // 自动保存的那一份带上标注（贴图本身的标注仍可编辑，底图不合成）。
+    let annotated = crate::shell::settings(cx).export.auto_save.then(|| (image.clone(), shapes.clone()));
     // 贴图保留可编辑的标注：底图不合成，标注坐标换算到贴图图像（减去选区原点）。
     let (ox, oy) = (f64::from(rect.x), f64::from(rect.y));
     let shapes: Vec<Annotation> = shapes
@@ -1217,6 +1317,9 @@ pub fn pin(cx: &mut App) {
             match result {
                 Ok(()) => {
                     log::info!("event=gpui.capture_pinned width={} height={}", rect.width, rect.height);
+                    if let Some((source, shapes)) = annotated {
+                        auto_save_composed(cx, source, rect, shapes);
+                    }
                     remember(cx);
                     finish(cx);
                 }
@@ -1263,10 +1366,9 @@ fn save(cx: &mut App) {
     let Some((session, image, rect, shapes)) = begin_export(cx) else {
         return;
     };
-    let (export, title, label) = {
+    let (export, title, language) = {
         let s = session.read(cx);
-        let (label, _) = s.export.format.filter();
-        (s.export.clone(), s.text("保存图片"), s.text(label))
+        (s.export.clone(), s.text("保存图片"), s.language.clone())
     };
     close_overlays(cx, &session);
     cx.spawn(async move |cx| {
@@ -1296,26 +1398,18 @@ fn save(cx: &mut App) {
             }
         };
         let record = snap_core::export::directory_record();
-        let (_, extensions) = export.format.filter();
-        let mut dialog = rfd::AsyncFileDialog::new()
-            .set_title(title)
-            .add_filter(label, extensions)
-            .set_file_name(name);
-        if let Some(directory) = record
+        let directory = record
             .as_deref()
-            .and_then(|path| snap_core::export::preferred_directory(path, export.remember_directory))
-        {
-            dialog = dialog.set_directory(directory);
-        }
+            .and_then(|path| snap_core::export::preferred_directory(path, export.remember_directory));
+        let dialog = SaveDialog::new(title, name, directory, export.format, &language, None);
         // 浮层已关闭；置顶贴图同样会盖住对话框，期间临时隐藏。
         let hidden = cx.update(|cx| crate::pins::hide_pins(cx, None));
-        let picked = dialog.save_file().await;
+        let picked = dialog.pick().await;
         cx.update(|cx| crate::pins::show_pins(cx, hidden));
-        let Some(file) = picked else {
+        let Some(path) = picked else {
             cx.update(|cx| reopen(cx, &session));
             return;
         };
-        let path = file.path().to_path_buf();
         let (width, height) = image.dimensions();
         let written = cx
             .background_executor()
@@ -1348,6 +1442,176 @@ fn save(cx: &mut App) {
     .detach();
 }
 
+/// 快速保存：不弹对话框，按默认格式与文件名规则存进截图保存目录（重名加 -2、-3），然后结束截图并提示已保存，
+/// 单击提示在文件夹中定位文件。失败时保留浮层与选区，在工具栏下方显示原因。
+pub(crate) fn quick_save(cx: &mut App) {
+    let Some((session, image, rect, shapes)) = begin_export(cx) else {
+        return;
+    };
+    let export = session.read(cx).export.clone();
+    cx.spawn(async move |cx| {
+        let saved = cx
+            .background_executor()
+            .spawn(async move {
+                let image = snap_core::capture::compose(&image, rect, &shapes)?;
+                let directory = snap_core::export::save_directory(export.remember_directory)
+                    .ok_or("无法确定截图保存目录，请在设置中选择。")?;
+                snap_core::export::quick_save(&image, &export, &directory)
+            })
+            .await;
+        cx.update(|cx| match saved {
+            Ok(path) => {
+                log::info!("event=gpui.capture_quick_saved width={} height={}", rect.width, rect.height);
+                remember(cx);
+                finish(cx);
+                crate::toast::saved(cx, path);
+            }
+            Err(error) => {
+                log::error!("event=gpui.capture_quick_save_failed message={error}");
+                session.update(cx, |s, cx| {
+                    s.busy = false;
+                    s.editor.error = Some(snap_core::i18n::for_language(&s.language, &error).to_owned());
+                    cx.notify();
+                });
+            }
+        });
+    })
+    .detach();
+}
+
+/// 设置开启“自动保存”时，在后台把成图另存一份到截图保存目录，并按保留天数清理到期的自动保存文件。
+/// 复制、贴图、滚动截图完成后调用；失败只记录日志，不影响已完成的操作。
+pub(crate) fn auto_save(cx: &App, image: Arc<RgbaImage>) {
+    let export = crate::shell::settings(cx).export;
+    if !export.auto_save {
+        return;
+    }
+    cx.background_executor()
+        .spawn(async move {
+            let Some(directory) = snap_core::export::save_directory(export.remember_directory) else {
+                log::warn!("event=gpui.auto_save_failed message=no_directory");
+                return;
+            };
+            match snap_core::auto_save::save(&image, &export, &directory) {
+                Ok(_) => log::info!("event=gpui.auto_saved width={} height={}", image.width(), image.height()),
+                Err(error) => log::warn!("event=gpui.auto_save_failed message={error}"),
+            }
+            clean_expired(export.auto_clean_days);
+        })
+        .detach();
+}
+
+/// 贴图时的自动保存：成图要先把标注合成进去，合成也放在后台线程。
+fn auto_save_composed(cx: &App, source: Arc<RgbaImage>, rect: Rect, shapes: Vec<Annotation>) {
+    let export = crate::shell::settings(cx).export;
+    cx.background_executor()
+        .spawn(async move {
+            let composed = snap_core::capture::compose(&source, rect, &shapes);
+            let directory = snap_core::export::save_directory(export.remember_directory);
+            match (composed, directory) {
+                (Ok(image), Some(directory)) => match snap_core::auto_save::save(&image, &export, &directory) {
+                    Ok(_) => log::info!("event=gpui.auto_saved width={} height={}", image.width(), image.height()),
+                    Err(error) => log::warn!("event=gpui.auto_save_failed message={error}"),
+                },
+                (Err(error), _) => log::warn!("event=gpui.auto_save_failed message={error}"),
+                (_, None) => log::warn!("event=gpui.auto_save_failed message=no_directory"),
+            }
+            clean_expired(export.auto_clean_days);
+        })
+        .detach();
+}
+
+/// 按保留天数删除到期的自动保存文件（启动时与每次自动保存后调用，在后台线程执行）。
+pub(crate) fn clean_expired(days: u16) {
+    match snap_core::auto_save::clean(days) {
+        Ok(0) => {}
+        Ok(count) => log::info!("event=gpui.auto_save_cleaned count={count}"),
+        Err(error) => log::warn!("event=gpui.auto_save_clean_failed message={error}"),
+    }
+}
+
+/// 图片保存对话框（截图、贴图、滚动截图结果共用）。类型列表为设置中的默认格式在前、默认选中，其余格式随后；
+/// 实际编码按返回路径的扩展名决定（`snap_core::export::write_file`）。
+/// Windows 用 `snap_core::save_dialog`，默认文件名不带扩展名，按所选类型补上，选 PDF 就得到 .pdf，对话框在独立线程中显示；
+/// 其他平台用 rfd，默认文件名带默认格式的扩展名，可直接改写。
+pub(crate) struct SaveDialog {
+    #[cfg(windows)]
+    request: snap_core::save_dialog::SaveRequest,
+    #[cfg(not(windows))]
+    dialog: rfd::AsyncFileDialog,
+}
+
+impl SaveDialog {
+    /// `owner` 为对话框所属窗口（贴图、结果窗口）；截图浮层已关闭时传 None。
+    pub(crate) fn new(
+        title: String,
+        file_name: String,
+        directory: Option<std::path::PathBuf>,
+        default: snap_core::settings::ExportFormat,
+        language: &Language,
+        owner: Option<&Window>,
+    ) -> Self {
+        let types = default.dialog_order().map(|format| {
+            let (label, extensions) = format.filter();
+            (snap_core::i18n::for_language(language, label).to_owned(), extensions)
+        });
+        #[cfg(windows)]
+        {
+            let types = types
+                .map(|(name, extensions)| snap_core::save_dialog::FileType {
+                    name,
+                    extensions: extensions.iter().map(|e| (*e).to_owned()).collect(),
+                })
+                .collect();
+            let owner = owner.map(crate::native::hwnd);
+            // 文件名不带扩展名：扩展名由“保存类型”决定，关闭后按所选类型补上（见 `snap_core::save_dialog`），
+            // 免得选了 PDF 时文件名里仍显示 .png。
+            let file_name = file_name.rsplit_once('.').map_or(file_name.as_str(), |(stem, _)| stem).to_owned();
+            let replace_prompt = snap_core::i18n::for_language(language, "“{0}”已存在，要替换吗？").to_owned();
+            Self { request: snap_core::save_dialog::SaveRequest { title, file_name, directory, types, owner, replace_prompt } }
+        }
+        #[cfg(not(windows))]
+        {
+            let mut dialog = rfd::AsyncFileDialog::new().set_title(title).set_file_name(file_name);
+            for (name, extensions) in types {
+                dialog = dialog.add_filter(name, extensions);
+            }
+            if let Some(directory) = directory {
+                dialog = dialog.set_directory(directory);
+            }
+            if let Some(window) = owner {
+                dialog = dialog.set_parent(window);
+            }
+            Self { dialog }
+        }
+    }
+
+    /// 显示对话框并返回选定的路径；取消或对话框出错时为 None（出错记录日志）。
+    pub(crate) async fn pick(self) -> Option<std::path::PathBuf> {
+        #[cfg(windows)]
+        {
+            // 模态对话框会阻塞所在线程直到关闭，不能占用界面线程或后台执行器。
+            let (sender, receiver) = futures::channel::oneshot::channel();
+            let request = self.request;
+            std::thread::spawn(move || {
+                let _ = sender.send(snap_core::save_dialog::show(&request));
+            });
+            match receiver.await {
+                Ok(Ok(path)) => path,
+                Ok(Err(error)) => {
+                    log::error!("event=gpui.save_dialog_failed message={error}");
+                    None
+                }
+                Err(_) => None,
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            self.dialog.save_file().await.map(|file| file.path().to_path_buf())
+        }
+    }
+}
+
 /// 保存取消或失败后重新显示浮层，沿用原选区。
 fn reopen(cx: &mut App, session: &Entity<Session>) {
     let still_current = current(cx).is_some_and(|active| active == *session);
@@ -1359,6 +1623,7 @@ fn reopen(cx: &mut App, session: &Entity<Session>) {
         s.drag = None;
         // 输入框属于已关闭的浮层窗口，随之丢弃；旧窗口的纹理已随窗口释放，图层需重建。
         s.text_input = None;
+        s.drop_size_editor();
         s.layers.clear();
         let _ = s.layers.take_retired();
         s.sync();
@@ -1447,6 +1712,7 @@ fn mode_bar(s: &Session, position: Option<(usize, usize)>, has_history: bool) ->
                 session.update(cx, |s, cx| {
                     if let Some(rect) = recent::restore(s.recent.as_ref(), s.image.width(), s.image.height(), &s.layout_key) {
                         s.selection = Some(rect);
+                        s.drop_size_editor();
                         s.drag = None;
                         s.hover = None;
                         s.sync();
@@ -1489,7 +1755,11 @@ fn capture_tip(s: &Session) -> Div {
                 .justify_center()
                 .gap_x(px(20.0))
                 .child(s.text(main))
-                .child(div().text_xs().text_color(rgb(0xb7b4c8)).child(s.text(keys))),
+                .child(div().text_xs().text_color(rgb(0xb7b4c8)).child(s.text(keys)))
+                // 锁定了比例时提示：拖动会保持该比例（在选区尺寸标签打开的尺寸条里解除）。
+                .children(s.ratio().map(|(w, h)| {
+                    div().text_xs().text_color(rgb(0x93c5fd)).child(s.text("比例 {0}").replace("{0}", &format!("{w}:{h}")))
+                })),
         )
 }
 
@@ -1637,6 +1907,11 @@ impl Overlay {
             self.commit_text(window, cx);
             return;
         }
+        if self.session.read(cx).size_editor.is_some() {
+            // 点击尺寸条以外：应用输入并关闭，这次按下不再新建或移动选区。
+            self.apply_size_editor(true, window, cx);
+            return;
+        }
         let p = self.to_image(event.position, cx);
         let point = self.to_point(event.position, cx);
         let tolerance = (HANDLE_HIT * self.scale(cx)).round() as i64;
@@ -1749,14 +2024,24 @@ impl Overlay {
                         return false;
                     }
                     s.drag = Some(Drag::Create { anchor, moved: true, area });
-                    s.selection = selection::from_points(anchor, p, area);
+                    // 锁定比例时按比例拖出；未锁定时按住 Shift 拖出正方形。
+                    s.selection = match s.ratio().or(event.modifiers.shift.then_some((1, 1))) {
+                        Some(ratio) => selection::from_points_ratio(anchor, p, ratio, area),
+                        None => selection::from_points(anchor, p, area),
+                    };
                     s.hover = None;
                 }
                 (true, Some(Drag::Move { anchor, start })) => {
                     s.selection = Some(selection::moved(start, p.0 - anchor.0, p.1 - anchor.1, s.area()));
                 }
                 (true, Some(Drag::Resize { anchor, start, handle })) => {
-                    if let Some(rect) = selection::resized(start, handle, p.0 - anchor.0, p.1 - anchor.1, s.area()) {
+                    // 锁定比例时保持该比例；未锁定时按住 Shift 保持开始拖动时的宽高比。
+                    let (dx, dy) = (p.0 - anchor.0, p.1 - anchor.1);
+                    let resized = match s.ratio().or(event.modifiers.shift.then_some((start.width, start.height))) {
+                        Some(ratio) => selection::resized_ratio(start, handle, dx, dy, ratio, s.area()),
+                        None => selection::resized(start, handle, dx, dy, s.area()),
+                    };
+                    if let Some(rect) = resized {
                         s.selection = Some(rect);
                     }
                 }
@@ -1826,6 +2111,10 @@ impl Overlay {
 
     /// 右键：放弃未完成的笔画 → 退出标注模式 → 清除选区重新框选 → 退出截图。
     fn right_click(&mut self, _: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if self.session.read(cx).size_editor.is_some() {
+            self.close_size_editor(window, cx);
+            return;
+        }
         let cleared = self.session.update(cx, |s, cx| {
             cx.notify();
             if s.editor.text.is_some() {
@@ -1874,6 +2163,17 @@ impl Overlay {
                 }
                 _ => {}
             }
+            return;
+        }
+        if self.session.read(cx).size_editor.is_some() {
+            // 尺寸条打开时只处理应用、关闭与切换输入框；数字等其余按键交给输入框，不触发截图快捷键。
+            match key {
+                "enter" => self.apply_size_editor(true, window, cx),
+                "escape" => self.close_size_editor(window, cx),
+                "tab" => self.focus_size_field(if keystroke.modifiers.shift { -1 } else { 1 }, window, cx),
+                _ => return,
+            }
+            cx.stop_propagation();
             return;
         }
         // 取色快捷键：C 复制色值、P 切换全局/相对坐标（Shift 切换格式见 modifiers）。
@@ -1973,24 +2273,34 @@ impl Overlay {
             "enter" if recording => record(cx, 0),
             "enter" => copy(cx, crate::native::hwnd(window)),
             "c" if command => copy(cx, crate::native::hwnd(window)),
+            "s" if command && keystroke.modifiers.shift => quick_save(cx),
             "s" if command => save(cx),
             // 与工具栏“贴图 Ctrl/⌘+P”提示一致；录屏选区没有贴图按钮。
             "p" if command && !recording => pin(cx),
-            // 方向键微调选区 1 像素，Shift 为 10 像素（已有标注时选区固定）。
+            // 方向键微调选区（已有标注时选区固定）：单按移动 1 像素，Shift 移动 10 像素；
+            // Ctrl/⌘ 把方向键所指的边向外扩 1 像素，Ctrl/⌘+Shift 向内收 1 像素；再加 Alt 时对边同步（对称缩放）。
             "left" | "right" | "up" | "down" => {
-                let step = if keystroke.modifiers.shift { 10 } else { 1 };
-                let (dx, dy) = match key {
-                    "left" => (-step, 0),
-                    "right" => (step, 0),
-                    "up" => (0, -step),
-                    _ => (0, step),
+                let side = match key {
+                    "left" => selection::Side::Left,
+                    "right" => selection::Side::Right,
+                    "up" => selection::Side::Up,
+                    _ => selection::Side::Down,
                 };
+                let shift = keystroke.modifiers.shift;
+                let (nudge, step) = match (command, shift) {
+                    (true, false) => (selection::Nudge::Grow, 1),
+                    (true, true) => (selection::Nudge::Shrink, 1),
+                    (false, true) => (selection::Nudge::Move, 10),
+                    (false, false) => (selection::Nudge::Move, 1),
+                };
+                let symmetric = command && keystroke.modifiers.alt;
                 self.session.update(cx, |s, cx| {
-                    if s.selection_locked() {
+                    if s.selection_locked() || s.busy {
                         return;
                     }
                     if let Some(rect) = s.selection {
-                        s.selection = Some(selection::moved(rect, dx, dy, s.area()));
+                        let area = s.area();
+                        s.selection = Some(selection::nudged(rect, side, nudge, step, symmetric, area));
                         s.sync();
                         cx.notify();
                     }
@@ -2104,6 +2414,363 @@ impl Overlay {
         });
         self.after_edit(window, cx);
     }
+
+    /// 打开位置与尺寸条：四个只收数字的输入框，焦点放在宽度上并全选，直接输入即可替换。
+    fn open_size_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let values = {
+            let s = self.session.read(cx);
+            match s.selection {
+                Some(rect) if !s.busy && !s.selection_locked() && s.editor.text.is_none() => s.size_values(rect),
+                _ => return,
+            }
+        };
+        let fields = values.map(|value| {
+            cx.new(|cx| {
+                InputState::new(window, cx)
+                    .default_value(value.to_string())
+                    .validate(|text, _| text.len() <= 6 && text.chars().all(|c| c.is_ascii_digit()))
+            })
+        });
+        fields[2].update(cx, |state, cx| {
+            state.focus(window, cx);
+            state.select_all(window, cx);
+        });
+        let owner = self.index;
+        self.session.update(cx, |s, cx| {
+            s.size_editor = Some(SizeEditor { owner, fields });
+            cx.notify();
+        });
+    }
+
+    /// 应用输入框里的数值；`close` 时随后关闭尺寸条，否则把输入框同步为应用后的数值。
+    fn apply_size_editor(&mut self, close: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(fields) = self.session.read(cx).size_editor.as_ref().map(|e| e.fields.clone()) else {
+            return;
+        };
+        let typed = fields.map(|field| field.read(cx).value().trim().parse::<i64>().ok());
+        self.session.update(cx, |s, cx| {
+            if s.apply_size(typed) {
+                s.sync();
+            }
+            if close {
+                s.size_editor = None;
+            }
+            cx.notify();
+        });
+        if close {
+            window.focus(&self.focus, cx);
+        } else {
+            self.sync_size_fields(window, cx);
+        }
+    }
+
+    fn close_size_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let closed = self.session.update(cx, |s, cx| {
+            cx.notify();
+            s.size_editor.take().is_some()
+        });
+        if closed {
+            window.focus(&self.focus, cx);
+        }
+    }
+
+    /// 比例、预设或单位改动后，把输入框改成当前选区的数值。
+    fn sync_size_fields(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let synced = {
+            let s = self.session.read(cx);
+            match (s.size_editor.as_ref(), s.selection) {
+                (Some(editor), Some(rect)) => Some((editor.fields.clone(), s.size_values(rect))),
+                _ => None,
+            }
+        };
+        let Some((fields, values)) = synced else {
+            return;
+        };
+        for (field, value) in fields.iter().zip(values) {
+            field.update(cx, |state, cx| state.set_value(value.to_string(), window, cx));
+        }
+    }
+
+    /// Tab / Shift+Tab 在 X、Y、宽、高之间循环，进入的输入框全选。
+    fn focus_size_field(&mut self, delta: i32, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(fields) = self.session.read(cx).size_editor.as_ref().map(|e| e.fields.clone()) else {
+            return;
+        };
+        let current = fields.iter().position(|field| field.read(cx).focus_handle(cx).is_focused(window));
+        let next = current.map_or(0, |i| (i as i32 + delta).rem_euclid(fields.len() as i32) as usize);
+        fields[next].update(cx, |state, cx| {
+            state.focus(window, cx);
+            state.select_all(window, cx);
+        });
+    }
+
+    /// 锁定或解除比例。锁定时立即把选区改成该比例（保持左上角与宽度），之后拖动也保持它。
+    fn set_ratio(&mut self, ratio: Option<Dimensions>, window: &mut Window, cx: &mut Context<Self>) {
+        self.session.update(cx, |s, cx| {
+            s.sizing.set_ratio(ratio);
+            s.save_sizing();
+            if let (Some(ratio), Some(rect)) = (s.ratio(), s.selection.filter(|_| !s.selection_locked())) {
+                s.selection = Some(selection::with_ratio(rect, ratio, s.area()));
+                s.sync();
+            }
+            cx.notify();
+        });
+        self.sync_size_fields(window, cx);
+    }
+
+    /// 套用尺寸预设：保持左上角，放不下时向内推、仍放不下时等比缩小。锁定了比例时改锁为预设的比例。
+    fn apply_preset(&mut self, size: Dimensions, window: &mut Window, cx: &mut Context<Self>) {
+        self.session.update(cx, |s, cx| {
+            let Some(rect) = s.selection.filter(|_| !s.selection_locked() && !s.busy) else {
+                return;
+            };
+            if s.sizing.ratio.is_some() {
+                s.sizing.set_ratio(Some(size));
+                s.save_sizing();
+            }
+            let (width, height) = (i64::from(size.width), i64::from(size.height));
+            if let Some(next) = selection::placed(i64::from(rect.x), i64::from(rect.y), width, height, true, s.area()) {
+                s.selection = Some(next);
+                s.sync();
+            }
+            cx.notify();
+        });
+        self.sync_size_fields(window, cx);
+    }
+
+    /// 把当前选区尺寸存为预设（物理像素）。
+    fn save_preset(&mut self, cx: &mut Context<Self>) {
+        self.session.update(cx, |s, cx| {
+            let Some(rect) = s.selection else {
+                return;
+            };
+            if s.sizing.add_preset(Dimensions::new(rect.width, rect.height)) {
+                s.save_sizing();
+                cx.notify();
+            }
+        });
+    }
+
+    fn remove_preset(&mut self, size: Dimensions, cx: &mut Context<Self>) {
+        self.session.update(cx, |s, cx| {
+            if s.sizing.remove_preset(size) {
+                s.save_sizing();
+                cx.notify();
+            }
+        });
+    }
+
+    /// 在 px（导出图片像素）与 dp（按显示器缩放换算）之间切换尺寸条的单位。
+    fn toggle_unit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.session.update(cx, |s, cx| {
+            s.sizing.unit = match s.sizing.unit {
+                Unit::Px => Unit::Dp,
+                Unit::Dp => Unit::Px,
+            };
+            s.save_sizing();
+            cx.notify();
+        });
+        self.sync_size_fields(window, cx);
+    }
+}
+
+/// 选区尺寸标签的文字：当前单位下的宽高与左上角坐标，锁定比例时附上比例。
+fn size_label(s: &Session, rect: Rect) -> String {
+    let [x, y, width, height] = s.size_values(rect);
+    let unit = match s.sizing.unit {
+        Unit::Px => "px",
+        Unit::Dp => "dp",
+    };
+    let mut label = format!("{width} × {height} {unit} · ({x}, {y})");
+    if let Some((w, h)) = s.ratio() {
+        label.push_str(&format!(" · {w}:{h}"));
+    }
+    label
+}
+
+/// 尺寸条上的文字小按钮（比例、预设、单位）。
+fn size_chip(id: impl Into<ElementId>, label: String, on: bool) -> Stateful<Div> {
+    div()
+        .id(id)
+        .h(px(24.0))
+        .px(px(7.0))
+        .flex()
+        .flex_none()
+        .items_center()
+        .rounded(px(5.0))
+        .text_xs()
+        .cursor_pointer()
+        .text_color(rgb(if on { annotate::active_fg() } else { annotate::text() }))
+        .bg(rgb(if on { annotate::active_bg() } else { annotate::surface() }))
+        .hover(|b| b.bg(rgb(annotate::hover())))
+        .child(label)
+}
+
+/// 位置与尺寸条的大小：高度固定三行；预设一行不换行，预设多时按估算宽度加宽（行首标签与“+”另计）。
+fn size_panel_size(presets: usize) -> Size<Pixels> {
+    let presets_row = 14.0 + 52.0 + (presets + 1) as f32 * SIZE_PRESET_WIDTH;
+    size(px(SIZE_PANEL_WIDTH.max(presets_row)), px(SIZE_PANEL_HEIGHT))
+}
+
+/// 位置与尺寸条的左上角：与选区左边对齐、不超出屏幕；依次尝试选区上方、选区下方、工具栏下方、工具栏上方，
+/// 取第一个放得下且不压住选区和工具栏的位置；都不行时放进选区内左上角。
+fn size_panel_origin(
+    selection: Bounds<Pixels>,
+    viewport: Size<Pixels>,
+    panel: Size<Pixels>,
+    toolbar: Option<Bounds<Pixels>>,
+) -> Point<Pixels> {
+    let gap = px(6.0);
+    let left = selection.origin.x.min(viewport.width - panel.width - px(4.0)).max(px(4.0));
+    let mut tops = vec![selection.origin.y - gap - panel.height, selection.origin.y + selection.size.height + gap];
+    if let Some(toolbar) = toolbar {
+        tops.push(toolbar.origin.y + toolbar.size.height + gap);
+        tops.push(toolbar.origin.y - gap - panel.height);
+    }
+    let free = |top: Pixels| {
+        let bounds = Bounds::new(point(left, top), panel);
+        top >= px(4.0)
+            && top + panel.height <= viewport.height - px(4.0)
+            && !bounds.intersects(&selection)
+            && toolbar.is_none_or(|toolbar| !bounds.intersects(&toolbar))
+    };
+    let top = tops.into_iter().find(|&top| free(top)).unwrap_or((selection.origin.y + gap).max(px(4.0)));
+    point(left, top)
+}
+
+/// 位置与尺寸条：第一行输入 X、Y、宽、高与单位，第二行锁定比例，第三行套用 / 保存尺寸预设。
+fn size_panel(s: &Session, editor: &SizeEditor, panel: Size<Pixels>, view: &Entity<Overlay>, window: &Window) -> Stateful<Div> {
+    let field = |label: String, state: &Entity<InputState>| {
+        div()
+            .flex()
+            .flex_none()
+            .items_center()
+            .gap(px(4.0))
+            .child(div().text_color(rgb(annotate::muted())).child(label))
+            .child(
+                div()
+                    .w(px(62.0))
+                    .rounded(px(5.0))
+                    .border_1()
+                    .border_color(rgb(annotate::border()))
+                    .bg(rgb(annotate::surface()))
+                    .text_size(px(12.0))
+                    .child(Input::new(state).appearance(false).small()),
+            )
+    };
+    let unit = match s.sizing.unit {
+        Unit::Px => "px",
+        Unit::Dp => "dp",
+    };
+    let inputs = div()
+        .h(px(28.0))
+        .flex()
+        .items_center()
+        .gap(px(8.0))
+        .child(field("X".into(), &editor.fields[0]))
+        .child(field("Y".into(), &editor.fields[1]))
+        .child(annotate::divider())
+        .child(field(s.text("宽"), &editor.fields[2]))
+        .child(field(s.text("高"), &editor.fields[3]))
+        .child(
+            size_chip("capture-size-unit", unit.into(), false)
+                .tooltip({
+                    let tip = s.text("切换单位：px 为导出图片的像素，dp 按显示器缩放换算");
+                    move |_, cx| cx.new(|_| annotate::Tooltip(tip.clone().into())).into()
+                })
+                .on_click(window.listener_for(view, |this: &mut Overlay, _: &ClickEvent, window, cx| this.toggle_unit(window, cx))),
+        )
+        .child(div().flex_1())
+        .child(
+            annotate::icon_button("capture-size-apply", annotate::icons::CHECK, s.text("应用 Enter"), false, false)
+                .on_click(window.listener_for(view, |this: &mut Overlay, _: &ClickEvent, window, cx| {
+                    this.apply_size_editor(true, window, cx)
+                })),
+        )
+        .child(
+            annotate::icon_button("capture-size-close", annotate::icons::CLOSE, s.text("关闭 Esc"), false, false)
+                .on_click(window.listener_for(view, |this: &mut Overlay, _: &ClickEvent, window, cx| {
+                    this.close_size_editor(window, cx)
+                })),
+        );
+    let mut ratios = div()
+        .h(px(24.0))
+        .flex()
+        .items_center()
+        .gap(px(2.0))
+        .child(div().mr(px(4.0)).text_color(rgb(annotate::muted())).child(s.text("比例")))
+        .child(
+            size_chip("capture-ratio-free", s.text("自由"), s.sizing.ratio.is_none())
+                .on_click(window.listener_for(view, |this: &mut Overlay, _: &ClickEvent, window, cx| this.set_ratio(None, window, cx))),
+        );
+    for (index, ratio) in sizing::RATIOS.into_iter().enumerate() {
+        ratios = ratios.child(
+            size_chip(("capture-ratio", index), format!("{}:{}", ratio.width, ratio.height), s.sizing.ratio == Some(ratio))
+                .on_click(window.listener_for(view, move |this: &mut Overlay, _: &ClickEvent, window, cx| {
+                    this.set_ratio(Some(ratio), window, cx)
+                })),
+        );
+    }
+    let current = s.selection.map(|rect| Dimensions::new(rect.width, rect.height));
+    let mut presets = div()
+        .h(px(24.0))
+        .flex()
+        .items_center()
+        .gap(px(2.0))
+        .child(div().mr(px(4.0)).text_color(rgb(annotate::muted())).child(s.text("预设")));
+    let tip = s.text("单击套用，右键删除");
+    for (index, preset) in s.sizing.presets.iter().copied().enumerate() {
+        let tip = tip.clone();
+        presets = presets.child(
+            size_chip(("capture-preset", index), format!("{}×{}", preset.width, preset.height), current == Some(preset))
+                .tooltip(move |_, cx| cx.new(|_| annotate::Tooltip(tip.clone().into())).into())
+                .on_click(window.listener_for(view, move |this: &mut Overlay, _: &ClickEvent, window, cx| {
+                    this.apply_preset(preset, window, cx)
+                }))
+                .on_mouse_down(
+                    MouseButton::Right,
+                    window.listener_for(view, move |this: &mut Overlay, _: &MouseDownEvent, _, cx| {
+                        cx.stop_propagation();
+                        this.remove_preset(preset, cx)
+                    }),
+                ),
+        );
+    }
+    let can_save = current.is_some_and(|size| !s.sizing.presets.contains(&size)) && s.sizing.presets.len() < sizing::MAX_PRESETS;
+    if can_save {
+        presets = presets.child(
+            size_chip("capture-preset-add", "+".into(), false)
+                .tooltip({
+                    let tip = s.text("把当前尺寸存为预设");
+                    move |_, cx| cx.new(|_| annotate::Tooltip(tip.clone().into())).into()
+                })
+                .on_click(window.listener_for(view, |this: &mut Overlay, _: &ClickEvent, _, cx| this.save_preset(cx))),
+        );
+    }
+    div()
+        .id("capture-size-panel")
+        .absolute()
+        .w(panel.width)
+        .h(panel.height)
+        .p(px(6.0))
+        .flex()
+        .flex_col()
+        .gap(px(4.0))
+        .rounded(px(8.0))
+        .border_1()
+        .border_color(rgb(annotate::border()))
+        .bg(rgb(annotate::surface()))
+        .shadow_lg()
+        .text_xs()
+        .text_color(rgb(annotate::text()))
+        .whitespace_nowrap()
+        .cursor_default()
+        // 尺寸条上的按下不能冒泡到浮层，否则会被当作新建选区或“点击框外应用”。
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
+        .child(inputs)
+        .child(ratios)
+        .child(presets)
 }
 
 /// 截图物理像素矩形 → 本屏窗口内逻辑像素边界。
@@ -2382,10 +3049,19 @@ impl Render for Overlay {
                 .border_1()
                 .border_color(rgb(ACCENT)),
         );
-        // 尺寸标签显示物理像素，与导出图片一致；顶部放不下时放进选区内。
-        let label_top = if b.origin.y >= px(30.0) { b.origin.y - px(28.0) } else { b.origin.y + px(6.0) };
-        root = root.child(
-            div()
+        // 位置与尺寸条替代尺寸标签；这里只构建，等工具栏定好位置后再放（避开选区与工具栏），
+        // 并且最后加入，画在选区手柄之上。
+        let panel_size = size_panel_size(s.sizing.presets.len());
+        let mut panel = s
+            .size_editor
+            .as_ref()
+            .filter(|editor| editor.owner == self.index)
+            .map(|editor| size_panel(s, editor, panel_size, &view, window));
+        if panel.is_none() {
+            // 尺寸标签：px 与导出图片一致，dp 按显示器缩放换算；单击打开位置与尺寸条。顶部放不下时放进选区内。
+            let label_top = if b.origin.y >= px(30.0) { b.origin.y - px(28.0) } else { b.origin.y + px(6.0) };
+            let mut label = div()
+                .id("capture-size-label")
                 .absolute()
                 .left(b.origin.x)
                 .top(label_top)
@@ -2395,8 +3071,21 @@ impl Render for Overlay {
                 .text_size(px(11.0))
                 .text_color(rgb(0xffffff))
                 .whitespace_nowrap()
-                .child(format!("{} × {} px · ({}, {})", rect.width, rect.height, rect.x, rect.y)),
-        );
+                .child(size_label(s, rect));
+            if !s.selection_locked() && !s.busy {
+                let tip = s.text("输入位置和尺寸");
+                label = label
+                    .cursor_pointer()
+                    .hover(|label| label.bg(rgba(0x2563ebe6)))
+                    .tooltip(move |_, cx| cx.new(|_| annotate::Tooltip(tip.clone().into())).into())
+                    // 标签可能在选区内：按下不能冒泡成移动选区。
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .on_click(window.listener_for(&view, |this: &mut Self, _: &ClickEvent, window, cx| {
+                        this.open_size_editor(window, cx)
+                    }));
+            }
+            root = root.child(label);
+        }
         if !s.selection_locked() {
             for handle in Handle::ALL {
                 let (x, y) = selection::handle_point(rect, handle);
@@ -2447,6 +3136,10 @@ impl Render for Overlay {
         // 工具栏只画在选区右下角所在的屏幕上；下方放不下时放到选区上方，再不行贴着底边放在内侧。
         let corner = (i64::from(rect.x + rect.width) - 1, i64::from(rect.y + rect.height) - 1);
         if dragging || !selection::contains(region, corner) {
+            if let Some(panel) = panel.take() {
+                let origin = size_panel_origin(b, viewport, panel_size, None);
+                root = root.child(panel.left(origin.x).top(origin.y));
+            }
             return root.children(loupe);
         }
         let text = |key: &'static str| s.text(key);
@@ -2511,7 +3204,10 @@ impl Render for Overlay {
                 export_button("capture-ocr", annotate::icons::SCAN_TEXT, s.text("识别文字"), false, |cx, _| recognize(cx, RecognitionMode::Ocr)),
                 export_button("capture-translate", annotate::icons::LANGUAGES, s.text("截图翻译"), false, |cx, _| recognize(cx, RecognitionMode::Translate)),
                 export_button("capture-qr", annotate::icons::QR_CODE, s.text("识别二维码"), false, |cx, _| recognize(cx, RecognitionMode::Qr)),
-                export_button("capture-save", annotate::icons::SAVE, s.text("保存图片 Ctrl/⌘+S"), false, |cx, _| save(cx)),
+                // 按住 Shift 单击为快速保存（与 Snipaste、PixPin 一致）。
+                annotate::icon_button("capture-save", annotate::icons::SAVE, s.text("保存图片 Ctrl/⌘+S · 快速保存 Shift+单击 或 Ctrl/⌘+Shift+S"), false, false)
+                    .on_click(|event: &ClickEvent, _, cx| if event.modifiers().shift { quick_save(cx) } else { save(cx) })
+                    .into_any_element(),
                 export_button("capture-copy", annotate::icons::COPY, s.text("复制图片 Enter"), true, copy),
                 export_button("capture-cancel", annotate::icons::CLOSE, s.text("取消截图"), false, |cx, _| cancel(cx)),
             ]);
@@ -2554,11 +3250,47 @@ impl Render for Overlay {
             .children(options)
             .children(error.map(annotate::error_row));
         let dx = px(s.toolbar_offset.0);
-        toolbar = if right >= px(min_width) {
-            toolbar.right((viewport.width - right).max(px(4.0)) - dx)
+        // 工具栏的大致范围（宽度按最小排布宽度估算），供尺寸条避让。
+        let toolbar_left = if right >= px(min_width) {
+            toolbar = toolbar.right((viewport.width - right).max(px(4.0)) - dx);
+            right.min(viewport.width - px(4.0)) + dx - px(min_width)
         } else {
-            toolbar.left(px(4.0) + dx).items_start()
+            toolbar = toolbar.left(px(4.0) + dx).items_start();
+            px(4.0) + dx
         };
-        root.child(toolbar).children(loupe)
+        root = root.child(toolbar);
+        if let Some(panel) = panel {
+            let area = Bounds::new(point(toolbar_left, top + px(s.toolbar_offset.1)), size(px(min_width), px(height)));
+            let origin = size_panel_origin(b, viewport, panel_size, Some(area));
+            root = root.child(panel.left(origin.x).top(origin.y));
+        }
+        root.children(loupe)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    // 不用 `super::*`：其中的 `gpui_kit::*` 带有 GPUI 自己的 `test` 宏，会遮住标准的 `#[test]`。
+    use super::{size_panel_origin, size_panel_size, SIZE_PANEL_HEIGHT};
+    use gpui_kit::{point, px, size, Bounds};
+
+    #[test]
+    fn size_panel_goes_above_then_below_avoiding_the_toolbar_then_inside() {
+        let panel = size_panel_size(5);
+        assert_eq!(panel.height, px(SIZE_PANEL_HEIGHT));
+        let screen = size(px(1920.0), px(1080.0));
+        // 上方放得下：贴在选区上方。
+        let low = Bounds::new(point(px(200.0), px(300.0)), size(px(800.0), px(300.0)));
+        assert_eq!(size_panel_origin(low, screen, panel, None), point(px(200.0), px(300.0 - 6.0 - SIZE_PANEL_HEIGHT)));
+        // 上方放不下，选区下方被工具栏占着：排到工具栏下面。
+        let tall = Bounds::new(point(px(20.0), px(90.0)), size(px(1000.0), px(667.0)));
+        let toolbar = Bounds::new(point(px(260.0), px(763.0)), size(px(760.0), px(40.0)));
+        assert_eq!(size_panel_origin(tall, screen, panel, Some(toolbar)), point(px(20.0), px(809.0)));
+        // 哪里都放不下：放进选区内左上角。
+        let short = size(px(1920.0), px(856.0));
+        assert_eq!(size_panel_origin(tall, short, panel, Some(toolbar)), point(px(20.0), px(96.0)));
+        // 靠近右边缘：向左收回屏幕内。
+        let right = Bounds::new(point(px(1700.0), px(500.0)), size(px(200.0), px(200.0)));
+        assert_eq!(size_panel_origin(right, screen, panel, None).x, px(1920.0 - 4.0) - panel.width);
     }
 }

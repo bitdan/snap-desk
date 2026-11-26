@@ -26,6 +26,7 @@ lead: 全局快捷键可以在主界面“快捷键”页修改；窗口内的�
 | <kbd>Enter</kbd> / <kbd>Ctrl</kbd>+<kbd>C</kbd> | 复制图片并结束（录屏选区时 <kbd>Enter</kbd> 为开始录制） |
 | 在选区内双击 | 复制图片并结束 |
 | <kbd>Ctrl</kbd>+<kbd>S</kbd> | 保存图片 |
+| <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd> / 按住 <kbd>Shift</kbd> 点保存按钮 | 快速保存到截图保存目录，不弹对话框 |
 | <kbd>F2</kbd> | 把选区贴到桌面 |
 | 滚轮 / <kbd>Tab</kbd> / <kbd>Shift</kbd>+<kbd>Tab</kbd> | 未框选时切换吸附层级：控件 → 面板 → 整个窗口 → 整个屏幕 |
 | 按住 <kbd>Alt</kbd> | 未框选时直接吸附整个窗口 |
@@ -34,6 +35,9 @@ lead: 全局快捷键可以在主界面“快捷键”页修改；窗口内的�
 | <kbd>,</kbd> / <kbd>.</kbd> | 截图历史：上一张 / 下一张（最近 20 次） |
 | <kbd>F5</kbd> | 刷新截图：重新拍下屏幕，保留选区和标注 |
 | 方向键 | 移动选区 1 像素；加 <kbd>Shift</kbd> 为 10 像素 |
+| <kbd>Ctrl</kbd>+方向键 | 把那一侧的边向外扩 1 像素；加 <kbd>Shift</kbd> 为向内收；再加 <kbd>Alt</kbd> 时对边同时变化 |
+| 拖动时按住 <kbd>Shift</kbd> | 拖出正方形；拖动边角时保持宽高比 |
+| 单击尺寸标签 | 输入位置和尺寸、锁定比例、套用尺寸预设（<kbd>Enter</kbd> 应用，<kbd>Tab</kbd> 切换，<kbd>Esc</kbd> 放弃） |
 | <kbd>Esc</kbd> / 右键 | 逐级退出：取消正在画的图形 → 退出标注 → 清除选区 → 结束截图 |
 | 取色时 <kbd>C</kbd> | 复制当前颜色值 |
 | 取色时 <kbd>Shift</kbd> | 切换 HEX / RGB 格式 |
@@ -86,6 +90,9 @@ lead: 全局快捷键可以在主界面“快捷键”页修改；窗口内的�
 | 滚动截图 | <kbd>Ctrl</kbd>+<kbd>C</kbd> / 再按 <kbd>F1</kbd> | 完成拼接 |
 | 滚动截图 | <kbd>Esc</kbd> | 取消，不保存 |
 | 滚动截图 | 按住 <kbd>Shift</kbd> 滚动 | 横向滚动 |
+| 滚动截图结果 | <kbd>Enter</kbd> / <kbd>Ctrl</kbd>+<kbd>C</kbd> | 复制裁剪后的长图并关闭 |
+| 滚动截图结果 | <kbd>Ctrl</kbd>+<kbd>S</kbd> / <kbd>Ctrl</kbd>+<kbd>P</kbd> | 保存 / 贴到桌面 |
+| 滚动截图结果 | <kbd>Esc</kbd> | 关闭结果窗口（长图已复制并保存） |
 | 录屏 | 再按 <kbd>F3</kbd> | 结束并保存 |
 | 录屏 | <kbd>Esc</kbd> | 录制中：结束并保存；倒计时中：取消 |
 

@@ -212,6 +212,7 @@ pub mod icons {
     icon!(RESELECT, "rotate-ccw");
     icon!(GRIP, "grip-vertical");
     icon!(APP_WINDOW, "app-window");
+    icon!(CHECK, "check");
 }
 
 /// 当前样式；选中图形时同步为该图形的样式。

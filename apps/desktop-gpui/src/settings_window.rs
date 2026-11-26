@@ -1775,6 +1775,7 @@ impl SettingsView {
                     (ExportFormat::Png, "PNG".into()),
                     (ExportFormat::Jpeg, "JPEG".into()),
                     (ExportFormat::Webp, "WebP".into()),
+                    (ExportFormat::Pdf, "PDF".into()),
                 ],
                 cx,
                 |s, v| s.export.format = v,
@@ -1812,6 +1813,26 @@ impl SettingsView {
                 s.export.remember_directory,
                 cx,
                 |s, v| s.export.remember_directory = v,
+            ),
+        ));
+        // 自动保存与快速保存（截图中 Shift+单击保存或 Ctrl/⌘+Shift+S）都存进“通用”页的截图保存目录。
+        export.push(row(
+            t("复制、贴图或滚动截图后自动保存"),
+            None,
+            self.toggle("auto-save", s.export.auto_save, cx, |s, v| s.export.auto_save = v),
+        ));
+        export.push(row(
+            t("自动保存的截图保留"),
+            None,
+            self.segmented(
+                "auto-clean",
+                s.export.auto_clean_days,
+                snap_core::settings::AUTO_CLEAN_DAYS
+                    .into_iter()
+                    .map(|days| (days, if days == 0 { t("永久") } else { t("{0} 天").replace("{0}", &days.to_string()) }))
+                    .collect(),
+                cx,
+                |s, v| s.export.auto_clean_days = v,
             ),
         ));
         vec![
@@ -2856,15 +2877,16 @@ enum Folder {
 }
 
 impl Folder {
-    /// 当前目录与是否为默认。截图没有固定默认目录（交给保存对话框），返回 None。
+    /// 当前目录与是否为默认。截图显示快速保存与自动保存实际使用的目录：未选择时为“图片/Snap Desk”
+    /// （手动保存的对话框此时仍由系统决定起始位置）。
     fn current(self, s: &Settings) -> (Option<PathBuf>, bool) {
         match self {
             Folder::Captures => {
-                let path = snap_core::export::directory_record().and_then(|record| {
+                let selected = snap_core::export::directory_record().and_then(|record| {
                     snap_core::export::preferred_directory(&record, s.export.remember_directory)
                 });
-                let is_default = path.is_none();
-                (path, is_default)
+                let is_default = selected.is_none();
+                (selected.or_else(|| snap_core::export::save_directory(s.export.remember_directory)), is_default)
             }
             Folder::Recordings => {
                 let (Some(record), Some(data)) = (

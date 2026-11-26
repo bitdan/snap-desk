@@ -1154,28 +1154,26 @@ impl Pin {
             }
         };
         self.busy = true;
-        let (label, extensions) = export.format.filter();
         let record = snap_core::export::directory_record();
-        let mut dialog = rfd::AsyncFileDialog::new()
-            .set_title(self.text("保存图片"))
-            .add_filter(self.text(label), extensions)
-            .set_file_name(name)
-            .set_parent(window);
-        if let Some(directory) = record
+        let directory = record
             .as_deref()
-            .and_then(|path| snap_core::export::preferred_directory(path, export.remember_directory))
-        {
-            dialog = dialog.set_directory(directory);
-        }
+            .and_then(|path| snap_core::export::preferred_directory(path, export.remember_directory));
+        let dialog = crate::capture::SaveDialog::new(
+            self.text("保存图片"),
+            name,
+            directory,
+            export.format,
+            &self.language,
+            Some(window),
+        );
         let hidden = hide_pins(cx, Some(window.window_handle()));
         cx.spawn(async move |this, cx| {
-            let picked = dialog.save_file().await;
+            let picked = dialog.pick().await;
             cx.update(|cx| show_pins(cx, hidden));
-            let Some(file) = picked else {
+            let Some(path) = picked else {
                 let _ = this.update(cx, |pin, _| pin.busy = false);
                 return;
             };
-            let path = file.path().to_path_buf();
             let written = cx
                 .background_executor()
                 .spawn({

@@ -243,44 +243,10 @@ pub fn pdf_with_font<W: Write>(
                     }
                 }
             }
-            Snapshot::Image(path, w, h) => {
+            Snapshot::Image(path, _, _) => {
                 let image = crate::pins::content::read_image(path)?;
-                // PDF 采用白色纸面，先正确合成透明像素，避免透明处变黑。
-                let rgb = crate::export::white_background(&image);
-                let margin = options.margin_mm;
-                let (pw, ph) = if options.page_size == PageSize::Original {
-                    (
-                        *w as f32 * 25.4 / 96.0 + margin * 2.0,
-                        *h as f32 * 25.4 / 96.0 + margin * 2.0,
-                    )
-                } else {
-                    (210.0, 297.0)
-                };
-                let scale = ((pw - margin * 2.0) / (*w as f32 * 25.4 / 96.0))
-                    .min((ph - margin * 2.0) / (*h as f32 * 25.4 / 96.0));
-                let (page, layer) = doc.add_page(Mm(pw), Mm(ph), "图片");
-                let image = Image::from(ImageXObject {
-                    width: Px(*w as usize),
-                    height: Px(*h as usize),
-                    color_space: ColorSpace::Rgb,
-                    bits_per_component: ColorBits::Bit8,
-                    interpolate: true,
-                    image_data: rgb.into_raw(),
-                    image_filter: None,
-                    smask: None,
-                    clipping_bbox: None,
-                });
-                image.add_to_layer(
-                    doc.get_page(page).get_layer(layer),
-                    ImageTransform {
-                        translate_x: Some(Mm((pw - *w as f32 * 25.4 / 96.0 * scale) / 2.0)),
-                        translate_y: Some(Mm((ph - *h as f32 * 25.4 / 96.0 * scale) / 2.0)),
-                        scale_x: Some(scale),
-                        scale_y: Some(scale),
-                        dpi: Some(96.0),
-                        ..Default::default()
-                    },
-                );
+                let page = (options.page_size == PageSize::A4).then_some((210.0, 297.0));
+                crate::export::add_pdf_image_page(&doc, &image, page, options.margin_mm);
                 pages += 1;
             }
         }
