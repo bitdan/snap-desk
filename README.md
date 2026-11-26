@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/bitdan/snap-desk/releases">下载</a> ·
+  <a href="https://bitdan.github.io/snap-desk/#download">下载</a> ·
   <a href="https://bitdan.github.io/snap-desk/">项目官网</a> ·
   <a href="https://bitdan.github.io/snap-desk/guide/">使用手册</a> ·
   <a href="#功能">功能</a> ·
@@ -166,7 +166,12 @@ Rust 原生实现，不内置浏览器内核。以下为 release 构建的实测
 
 ## 下载
 
-前往 [Releases](https://github.com/bitdan/snap-desk/releases) 下载。
+在[官网](https://bitdan.github.io/snap-desk/#download)直接下载对应安装包，或复制带 SHA-256 校验的终端命令。旧版和更新说明见 [GitHub Releases](https://github.com/bitdan/snap-desk/releases)。
+
+- Windows x64（已安装 Scoop）：先运行 `scoop bucket add snap-desk https://github.com/bitdan/homebrew-snap-desk`，再运行 `scoop install snap-desk/snap-desk`。
+- macOS Apple 芯片（已安装 Homebrew）：`brew install --cask bitdan/snap-desk/snap-desk`。
+- Debian / Ubuntu：下载 deb 后，在文件所在目录运行 `sudo apt install ./<文件名>.deb`。AppImage 可用官网命令下载、校验并赋予执行权限。
+- 其他渠道：[WinGet v0.3.2 正在审核](https://github.com/microsoft/winget-pkgs/pull/488147)，AUR 暂未上架。
 
 | 平台 | 文件 | 状态 |
 | --- | --- | --- |

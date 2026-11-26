@@ -1,7 +1,7 @@
 name: Distribute to package managers
 run-name: 包管理器分发 · ${{ inputs.tag }}
 
-# 正式版发布后把安装描述推送到 Scoop / Homebrew（同一个 tap 仓库）、WinGet 与 AUR。
+# 正式版发布后更新官网下载清单，并把安装描述推送到 Scoop / Homebrew、WinGet 与 AUR。
 # 由 release.yml 在 Release 公开后调用（GITHUB_TOKEN 创建的 Release 不会触发 release 事件），也可手动补发。
 # 清单由 scripts/distribution.mjs 按附件实际哈希生成；某个渠道的 secret 未配置时跳过该渠道。
 #
@@ -50,7 +50,7 @@ jobs:
         run: |
           gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir assets \
             --pattern '*-windows-x64-standalone.exe' --pattern '*-windows-x64-setup.exe' \
-            --pattern '*-macos-arm64.dmg' --pattern '*-linux-x64.deb'
+            --pattern '*-macos-arm64.dmg' --pattern '*-linux-x64.deb' --pattern '*-linux-x64.AppImage'
 
       - name: Generate manifests
         env:
@@ -65,8 +65,11 @@ jobs:
           if-no-files-found: error
 
   tap:
-    name: Scoop bucket and Homebrew tap
+    name: Publish downloads, Scoop and Homebrew
     needs: manifests
+    concurrency:
+      group: snap-desk-tap-publication
+      cancel-in-progress: false
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     env:
@@ -88,9 +91,13 @@ jobs:
           cp distribution/scoop/snap-desk.json tap/bucket/
           cp distribution/homebrew/snap-desk.rb tap/Casks/
           cd tap
+          # 手动补发可指定旧标签，官网下载入口仍应指向最新的正式版。
+          if [ ! -f downloads.json ] || [ "$(printf '%s\n' "${TAG#v}" "$(jq -r .version downloads.json)" | sort -V | tail -n1)" = "${TAG#v}" ]; then
+            cp ../distribution/downloads.json downloads.json
+          fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add bucket Casks
+          git add bucket Casks downloads.json
           git diff --cached --quiet && { echo '清单没有变化'; exit 0; }
           git commit -m "snap-desk ${TAG#v}"
           git push
