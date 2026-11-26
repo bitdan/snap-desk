@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/bitdan/snap-desk/releases">Download</a> ·
+  <a href="https://bitdan.github.io/snap-desk/en/#download">Download</a> ·
   <a href="https://bitdan.github.io/snap-desk/en/">Website</a> ·
   <a href="#features">Features</a> ·
   <a href="#quick-start">Quick Start</a> ·
@@ -167,7 +167,12 @@ Native Rust, no embedded browser engine. Measured on a release build; full data 
 
 ## Download
 
-Download from [Releases](https://github.com/bitdan/snap-desk/releases).
+Get the package for your platform from the [download page](https://bitdan.github.io/snap-desk/en/#download), or copy a terminal command that verifies its SHA-256 checksum. See [GitHub Releases](https://github.com/bitdan/snap-desk/releases) for earlier versions and release notes.
+
+- Windows x64 (with Scoop installed): Run `scoop bucket add snap-desk https://github.com/bitdan/homebrew-snap-desk`, then `scoop install snap-desk/snap-desk`.
+- macOS Apple silicon (with Homebrew installed): `brew install --cask bitdan/snap-desk/snap-desk`.
+- Debian / Ubuntu: Download the deb and run `sudo apt install ./<filename>.deb` from the download directory. The website's AppImage command downloads and verifies the file, then makes it executable.
+- Other channels: [WinGet v0.3.2 is under review](https://github.com/microsoft/winget-pkgs/pull/488147). The AUR package is pending publication.
 
 | Platform | File | Status |
 | --- | --- | --- |

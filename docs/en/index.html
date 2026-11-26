@@ -1,3 +1,5 @@
+---
+---
 <!doctype html>
 <html lang="en">
 <head>
@@ -24,6 +26,7 @@
   <meta property="og:image" content="https://raw.githubusercontent.com/bitdan/snap-desk/master/resources/icons/128x128@2x.png">
   <meta name="twitter:card" content="summary">
   <script type="application/ld+json">{"@context":"https://schema.org","@type":"SoftwareApplication","name":"Snap Desk","alternateName":["SnapDesk","snap-desk"],"url":"https://bitdan.github.io/snap-desk/en/","description":"Snap Desk (SnapDesk) is a free open-source cross-platform screenshot and screen recorder for Windows, macOS, and Linux, with scrolling capture, image annotation, desktop pinning, MP4/GIF, OCR, translation, and clipboard history.","applicationCategory":"UtilitiesApplication","operatingSystem":"Windows (x64), macOS (Apple silicon), Linux (x64)","license":"https://www.gnu.org/licenses/gpl-3.0.html","downloadUrl":"https://github.com/bitdan/snap-desk/releases","isAccessibleForFree":true,"offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+  <script type="module" src="../assets/downloads.js"></script>
 </head>
 <body>
   <svg class="defs" width="0" height="0" aria-hidden="true" focusable="false">
@@ -47,7 +50,7 @@
         <a class="mlink plain wide" href="#download">Platforms</a>
         <a class="mlink plain wide" href="https://github.com/bitdan/snap-desk">Source</a>
         <a class="mlink plain" href="https://bitdan.github.io/snap-desk/" lang="zh-CN">简体中文</a>
-        <a class="mlink " href="https://github.com/bitdan/snap-desk/releases">Download<span class="arrow" aria-hidden="true">→</span></a>
+        <a class="mlink " href="#download">Download<span class="arrow" aria-hidden="true">→</span></a>
       </nav>
     </div>
   </header>
@@ -57,7 +60,7 @@
         <h1>Capture it.<br>Mark it up.<br>Put it to use.</h1>
         <p class="lead">Snap Desk (also written SnapDesk) is a free and open-source cross-platform desktop utility for screenshots, scrolling capture, annotation, image pinning, MP4/GIF recording, OCR, translation, and clipboard history.</p>
         <div class="links">
-          <a class="mlink " href="https://github.com/bitdan/snap-desk/releases">Download<span class="arrow" aria-hidden="true">→</span></a>
+          <a class="mlink " href="#download">Download<span class="arrow" aria-hidden="true">→</span></a>
           <a class="mlink " href="https://github.com/bitdan/snap-desk">Source on GitHub</a>
         </div>
         <p class="meta">Windows · macOS · Linux　/　GPL-3.0　/　Capture and recording run locally</p>
@@ -77,31 +80,34 @@
       </div>
     </section>
 
-    <section class="container" id="download">
+    <section class="container" id="download" data-copied="Copied" data-copy-failed="Copy failed. Select and copy the command below.">
       <div class="plaque"><h2>Download &amp; platforms</h2><p>Windows and macOS have the full feature set, and macOS has been tested on an Apple silicon Mac. The main features are ported to Linux, but so far it has only passed CI builds and automated tests and has not been tested on real hardware. Feedback is welcome.</p></div>
+      <script type="application/json" data-downloads>{{ site.data.downloads | jsonify }}</script>
+      <p class="download-version">Stable release <span data-download-version>v{{ site.data.downloads.version }}</span> · <a href="https://github.com/bitdan/snap-desk/releases">All releases and release notes</a></p>
       <div class="platforms">
         <article class="platform">
           <span class="status full">Full feature set</span>
           <h3>Windows</h3>
           <p class="arch">x64</p>
           <ul><li><code>-setup.exe</code> installer</li><li><code>-standalone.exe</code> standalone EXE, no install</li><li>Both update online</li></ul>
-          <a class="mlink " href="https://github.com/bitdan/snap-desk/releases">Download<span class="arrow" aria-hidden="true">→</span></a>
+          {% include download-actions.html keys="setup,standalone" lang="en" %}
         </article>
         <article class="platform">
           <span class="status full">Full feature set</span>
           <h3>macOS</h3>
           <p class="arch">Apple silicon · macOS 13.3+</p>
           <ul><li><code>.dmg</code> disk image with online updates</li><li>Not notarized by Apple: allow it in Privacy &amp; Security on first launch</li><li>Grant Screen &amp; System Audio Recording before capturing; updates keep the permission</li><li>Tested on real hardware</li></ul>
-          <a class="mlink " href="https://github.com/bitdan/snap-desk/releases">Download<span class="arrow" aria-hidden="true">→</span></a>
+          {% include download-actions.html keys="dmg" lang="en" %}
         </article>
         <article class="platform">
           <span class="status preview">Preview</span>
           <h3>Linux</h3>
           <p class="arch">x64 · Ubuntu 22.04 or comparable</p>
           <ul><li><code>.AppImage</code> runs as downloaded and updates online</li><li><code>.deb</code> is smaller; dependencies come from the package manager</li><li>Supports X11 and Wayland sessions</li><li>Not yet tested on real hardware</li></ul>
-          <a class="mlink " href="https://github.com/bitdan/snap-desk/releases">Download<span class="arrow" aria-hidden="true">→</span></a>
+          {% include download-actions.html keys="appimage,deb" lang="en" %}
         </article>
       </div>
+      {% include install-channels.html lang="en" %}
       <div class="matrix-wrap">
         <table class="matrix">
           <thead><tr><th scope="col">Feature</th><th scope="col">Windows</th><th scope="col">macOS</th><th scope="col">Linux</th></tr></thead>
@@ -122,12 +128,12 @@
     <section class="container closing">
       <h2>Free and open source.<br>No account, no subscription.</h2>
       <div class="links">
-        <a class="mlink " href="https://github.com/bitdan/snap-desk/releases">Download<span class="arrow" aria-hidden="true">→</span></a>
+        <a class="mlink " href="#download">Download<span class="arrow" aria-hidden="true">→</span></a>
         <a class="mlink " href="https://github.com/bitdan/snap-desk/blob/master/README.en.md">Full guide</a>
       </div>
     </section>
   </main>
-  <footer><div class="container footer-inner"><span>© Snap Desk · GPL-3.0-only</span><nav aria-label="Footer links"><a class="mlink plain" href="https://github.com/bitdan/snap-desk">GitHub</a><a class="mlink plain" href="https://github.com/bitdan/snap-desk/releases">Download</a><a class="mlink plain" href="https://bitdan.github.io/">Author</a></nav></div></footer>
+  <footer><div class="container footer-inner"><span>© Snap Desk · GPL-3.0-only</span><nav aria-label="Footer links"><a class="mlink plain" href="https://github.com/bitdan/snap-desk">GitHub</a><a class="mlink plain" href="#download">Download</a><a class="mlink plain" href="https://bitdan.github.io/">Author</a></nav></div></footer>
   <script>document.documentElement.classList.add("js");addEventListener("DOMContentLoaded",function(){var s=document.querySelectorAll(".sketch");if(!("IntersectionObserver" in window)){s.forEach(function(e){e.classList.add("in")});return}var o=new IntersectionObserver(function(l){l.forEach(function(e){if(e.isIntersecting){e.target.classList.add("in");o.unobserve(e.target)}})},{threshold:.25});s.forEach(function(e){o.observe(e)})});</script>
 </body>
 </html>

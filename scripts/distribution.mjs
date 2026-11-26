@@ -27,6 +27,7 @@ export const DISTRIBUTED = {
   setup: '-setup.exe',
   dmg: '-macos-arm64.dmg',
   deb: '-linux-x64.deb',
+  appimage: '-linux-x64.AppImage',
 }
 
 /** 正式版才分发：WinGet 与 Homebrew 不接受预发布版本，AUR 的 pkgver 也不能含连字符。 */
@@ -42,6 +43,17 @@ export function assetName(key, version) {
 
 export function assetUrl(key, version) {
   return `${HOMEPAGE}/releases/download/v${version}/${assetName(key, version)}`
+}
+
+/** 官网下载清单沿用各渠道的附件地址与 SHA-256，只包含用户直接安装的产物。 */
+export function downloadManifest(version, hashes) {
+  if (!isStable(version)) throw new Error(`官网只收录正式版：${version}`)
+  const assets = Object.fromEntries(Object.keys(DISTRIBUTED).map(key => {
+    const sha256 = hashes[key]
+    if (!/^[a-f0-9]{64}$/.test(sha256)) throw new Error(`附件缺少 SHA-256：${key}`)
+    return [key, { url: assetUrl(key, version), sha256 }]
+  }))
+  return { version, assets }
 }
 
 /** Scoop：独立 EXE 改名为 snap-desk.exe；checkver / autoupdate 让 `scoop update` 也能自行发现新版本。 */
@@ -203,6 +215,7 @@ export function writeDistribution(version, hashes, output) {
   write('homebrew', { 'snap-desk.rb': homebrewCask(version, hashes) })
   write('winget', wingetManifests(version, hashes))
   write('aur', aurPackage(version, hashes))
+  writeFileSync(join(output, 'downloads.json'), JSON.stringify(downloadManifest(version, hashes), null, 2) + '\n')
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

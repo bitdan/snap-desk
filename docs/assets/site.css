@@ -97,6 +97,26 @@ main > section + section { margin-top: 140px; }
 .platform ul { margin: 0 0 28px; padding: 0; list-style: none; color: var(--muted); font-size: 15px; line-height: 1.7; }
 .platform li { padding: 5px 0; }
 .platform code { font: 500 13px/1.5 var(--mono); color: var(--ink); }
+.download-version { margin: 0 0 16px; color: var(--muted); font-size: 14px; }
+.platform .download-actions { margin: 0; }
+.download-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; }
+.download-row .mlink { white-space: normal; letter-spacing: .035em; text-transform: none; }
+.copy-download { min-height: 24px; padding: 2px 0; border: 0; background: none; color: var(--muted); cursor: pointer; font: inherit; font-size: 13px; text-decoration: underline; text-underline-offset: 3px; }
+.copy-download:hover { color: var(--blue); }
+.copy-status { display: block; font-size: 13px; }
+.download-actions textarea { width: 100%; margin: 4px 0 8px; padding: 8px; resize: vertical; border: 1px solid var(--rule); background: var(--paper); color: var(--ink); font: 12px/1.5 var(--mono); }
+.install-channels { padding: 24px 0; border-bottom: 1px solid var(--rule); }
+.install-channels h3 { margin: 0 0 14px; font-size: 23px; }
+.install-channels dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 12px 20px; margin: 0; font-size: 14px; }
+.install-channels dt { font-weight: 500; }
+.install-channels dd, .install-channels pre { margin: 0; }
+.install-channels pre { overflow-x: auto; }
+.install-channels code { font: 12px/1.6 var(--mono); }
+.install-channels p { margin: 16px 0 0; color: var(--muted); font-size: 14px; }
+@media (max-width: 600px) {
+  .install-channels dl { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+  .install-channels dd + dt { margin-top: 8px; }
+}
 
 /* 功能对照表 */
 .matrix-wrap { margin-top: 64px; overflow-x: auto; }
