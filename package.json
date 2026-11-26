@@ -11,6 +11,7 @@
     "version:sync": "node scripts/sync-version.mjs",
     "desktop:dev": "cargo run -p snap-desk-gpui",
     "desktop:package": "node scripts/package-gpui.mjs",
+    "desktop:standalone": "node scripts/package-gpui.mjs --standalone",
     "desktop:clean": "node scripts/clean-desktop.mjs"
   }
 }
