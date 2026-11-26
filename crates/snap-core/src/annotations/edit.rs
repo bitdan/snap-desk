@@ -2,7 +2,7 @@
 //!
 //! 供截图与贴图共用。
 //! 坐标全部是原图物理像素；`crop` 是允许编辑的范围（截图选区或贴图整图）。
-use super::{Annotation, Kind, Point};
+use super::{Annotation, ArrowHeads, Fill, Kind, Point};
 use std::collections::HashSet;
 
 /// 原图像素中的浮点矩形；宽高非负。
@@ -224,15 +224,23 @@ pub fn resize_shape(shape: &Annotation, handle: Handle, p: Point, crop: Bounds) 
     }
 }
 
-/// 箭头两翼端点；尺寸公式与 `render` 的箭头一致。
-pub fn arrow_wings(shape: &Annotation) -> [Point; 2] {
-    let (a, b) = (shape.start, shape.end);
+/// 箭头头部 `(尖端, 两翼端点)`：终点总有，双向箭头起点也有一个；`render` 与命中测试共用。
+pub fn arrow_heads(shape: &Annotation) -> Vec<(Point, [Point; 2])> {
+    let mut heads = vec![(shape.end, wings(shape.start, shape.end, shape.width))];
+    if shape.arrow_heads == ArrowHeads::Both {
+        heads.push((shape.start, wings(shape.end, shape.start, shape.width)));
+    }
+    heads
+}
+
+/// 从 `a` 指向尖端 `b` 的两翼端点。短箭头的翼不超过主线长度的 45%，双向箭头两端合计也不会重叠。
+fn wings(a: Point, b: Point, width: f64) -> [Point; 2] {
     let (dx, dy) = (b.x - a.x, b.y - a.y);
     let length = dx.hypot(dy);
     if length == 0.0 {
         return [b, b];
     }
-    let size = (shape.width * 4.0).max(10.0).min(length * 0.45);
+    let size = (width * 4.0).max(10.0).min(length * 0.45);
     let (ux, uy) = (dx / length, dy / length);
     [
         Point {
@@ -281,10 +289,12 @@ pub fn hit_test(
         if matches!(s.kind, Kind::Line | Kind::Arrow) {
             return segment_distance(p, s.start, s.end) <= t
                 || (matches!(s.kind, Kind::Arrow)
-                    && arrow_wings(s)
-                        .iter()
-                        .any(|w| segment_distance(p, *w, s.end) <= t));
+                    && arrow_heads(s).iter().any(|(tip, wings)| {
+                        wings.iter().any(|w| segment_distance(p, *w, *tip) <= t)
+                    }));
         }
+        // 填充过的内部也是实际笔迹，整项删除时点在内部同样命中。
+        let interiors = interiors || s.fill != Fill::None;
         if matches!(s.kind, Kind::Ellipse) {
             let (rx, ry) = (b.width / 2.0, b.height / 2.0);
             if rx <= 0.0 || ry <= 0.0 {
@@ -390,6 +400,12 @@ pub fn same_shape(a: &Annotation, b: &Annotation) -> bool {
         && a.text == b.text
         && a.font_size == b.font_size
         && a.font_family == b.font_family
+        && a.line_style == b.line_style
+        && a.arrow_heads == b.arrow_heads
+        && a.fill == b.fill
+        && a.corner_radius == b.corner_radius
+        && a.background == b.background
+        && a.outline == b.outline
         && a.points.len() == b.points.len()
         && a.points.iter().zip(&b.points).all(|(p, q)| point(*p, *q))
 }
@@ -486,6 +502,12 @@ mod tests {
             font_size: None,
             font_family: None,
             raster: None,
+            line_style: Default::default(),
+            arrow_heads: Default::default(),
+            fill: Default::default(),
+            corner_radius: 0.0,
+            background: None,
+            outline: None,
         }
     }
     const CROP: Bounds = Bounds {

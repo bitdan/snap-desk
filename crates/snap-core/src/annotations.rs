@@ -1,5 +1,7 @@
 //! 将前端标注合成到裁剪后的原图。只接受结构化图形，不接收任意 SVG 或图片路径。
 //! 线段按像素中心到线段的距离绘制，边缘使用覆盖率混色，支持任意方向的箭头。
+//! 虚线、点线把路径切成圆头短段后走同一套线段绘制；矩形、椭圆的填充与描边写进同一张覆盖率掩码，
+//! 只混色一次。预览、导出、贴图与录屏都调用这里，样式在各处像素一致。
 use base64::{engine::general_purpose::STANDARD, Engine};
 use image::RgbaImage;
 use serde::{Deserialize, Serialize};
@@ -37,6 +39,68 @@ pub enum Kind {
     Blur,
 }
 
+impl Kind {
+    /// 可选虚线 / 点线的描边图形；荧光笔、橡皮擦等笔刷保持实线。
+    pub fn has_line_style(self) -> bool {
+        matches!(
+            self,
+            Self::Rectangle | Self::Ellipse | Self::Line | Self::Polyline | Self::Arrow | Self::Pen
+        )
+    }
+
+    /// 可填充内部的封闭图形。
+    pub fn has_fill(self) -> bool {
+        matches!(self, Self::Rectangle | Self::Ellipse)
+    }
+}
+
+/// 描边线型。划与点的长度按线宽换算；端点为圆头，封闭图形按周长微调间距，使首尾衔接。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LineStyle {
+    #[default]
+    Solid,
+    Dashed,
+    Dotted,
+}
+
+/// 箭头头部：只画在终点（旧数据的唯一形态），或起点、终点都画。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ArrowHeads {
+    #[default]
+    End,
+    Both,
+}
+
+/// 矩形、椭圆的内部填充，颜色与描边相同；半透明按 [`FILL_TRANSLUCENT`] 覆盖，再乘标注不透明度。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Fill {
+    #[default]
+    None,
+    Translucent,
+    Solid,
+}
+
+/// 半透明填充的覆盖率：底图仍清晰可读，又能看出框住的范围。
+pub const FILL_TRANSLUCENT: f64 = 0.3;
+/// 圆角半径上限（原图像素）；实际半径还会限制在短边的一半以内。
+pub const MAX_CORNER_RADIUS: f64 = 1024.0;
+
+fn is_default<T: Default + PartialEq>(value: &T) -> bool {
+    *value == T::default()
+}
+
+fn is_zero(value: &f64) -> bool {
+    *value == 0.0
+}
+
+/// 标注的结构化描述，截图历史、贴图历史与录屏标注轨道都直接序列化它。
+///
+/// 样式字段（线型、箭头、填充、圆角、文字背景与描边）后加，全部带 `serde(default)`：
+/// 旧历史缺这些字段时按实线、单向箭头、无填充、直角、无装饰读取；取缺省值时也不写出，
+/// 只用旧样式的文件与旧版本保持一致。
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Annotation {
@@ -60,9 +124,44 @@ pub struct Annotation {
     pub font_family: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub raster: Option<String>,
+    /// 线型，只用于 [`Kind::has_line_style`] 的图形；箭头只作用于主线，箭头头部保持实线。
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub line_style: LineStyle,
+    /// 只用于箭头。
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub arrow_heads: ArrowHeads,
+    /// 只用于 [`Kind::has_fill`] 的图形。
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub fill: Fill,
+    /// 矩形圆角半径（原图像素），0 为直角。
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub corner_radius: f64,
+    /// 文字背景框颜色 `#RRGGBB`；内边距与圆角按字号推导（见 `raster::text_inset`）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub background: Option<String>,
+    /// 文字描边颜色 `#RRGGBB`；描边宽度取 `width`，即字形边缘向外扩展的像素数。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outline: Option<String>,
 }
 fn opaque() -> f64 {
     1.0
+}
+
+/// 黑白中与 `color` 对比更强的一种，用于有底色的文字和序号的字色、文字描边色。
+/// 阈值与序号一直使用的亮度判断一致；颜色无效时按深色处理。
+pub fn contrast(color_text: &str) -> String {
+    let ink = contrast_ink(color(color_text).unwrap_or([0, 0, 0]));
+    format!("#{:02x}{:02x}{:02x}", ink[0], ink[1], ink[2])
+}
+
+pub(crate) fn contrast_ink(rgb: [u8; 3]) -> [u8; 3] {
+    let luminance =
+        f64::from(rgb[0]) * 0.299 + f64::from(rgb[1]) * 0.587 + f64::from(rgb[2]) * 0.114;
+    if luminance > 160.0 {
+        [0x11, 0x18, 0x27]
+    } else {
+        [0xff, 0xff, 0xff]
+    }
 }
 
 /// 字形/滤镜只允许受限 PNG；先检查解码尺寸再分配 RGBA，防止压缩图片导致巨量内存分配。
@@ -185,7 +284,24 @@ fn validate_impl(shapes: &[Annotation], width: u32, height: u32, live: bool) -> 
         {
             return Err("文字或字体参数无效。".into());
         }
+        // 样式只接受对该类型有意义的取值，避免历史里留下界面无法显示或编辑的状态。
+        if (s.line_style != LineStyle::Solid && !s.kind.has_line_style())
+            || (s.arrow_heads != ArrowHeads::End && s.kind != Kind::Arrow)
+            || (s.fill != Fill::None && !s.kind.has_fill())
+            || ((s.background.is_some() || s.outline.is_some()) && s.kind != Kind::Text)
+        {
+            return Err("此标注类型不支持所选样式。".into());
+        }
+        if !s.corner_radius.is_finite()
+            || !(0.0..=MAX_CORNER_RADIUS).contains(&s.corner_radius)
+            || (s.corner_radius > 0.0 && s.kind != Kind::Rectangle)
+        {
+            return Err("圆角半径无效。".into());
+        }
         color(&s.color)?;
+        for extra in [&s.background, &s.outline].into_iter().flatten() {
+            color(extra)?;
+        }
     }
     Ok(())
 }
@@ -201,10 +317,100 @@ fn color(text: &str) -> Result<[u8; 3], String> {
     Ok([(value >> 16) as u8, (value >> 8) as u8, value as u8])
 }
 
+/// 笔画实际绘制的线段：主路径按线型切成虚线 / 点线，箭头头部始终为实线。
 fn segments(s: &Annotation) -> Vec<(Point, Point)> {
+    let (path, closed) = stroke_path(s);
+    let mut out = match dash_pattern(s.line_style, s.width) {
+        Some((on, off)) if s.kind.has_line_style() => dash(&path, on, off, closed),
+        _ => path,
+    };
+    if matches!(s.kind, Kind::Arrow) {
+        for (tip, wings) in edit::arrow_heads(s) {
+            out.extend(wings.map(|wing| (wing, tip)));
+        }
+    }
+    out
+}
+
+/// 虚线 / 点线的“画、空”长度（原图像素）。线段两端是圆头，各多出半个线宽，
+/// 所以看到的划比 `on` 长一个线宽、空隙比 `off` 短一个线宽：虚线约为 3 倍线宽的划、2 倍线宽的空，
+/// 点线为直径等于线宽、间隔约一个线宽的圆点。细线按 2 像素计，避免划和空细碎到看不出线型。
+fn dash_pattern(style: LineStyle, width: f64) -> Option<(f64, f64)> {
+    let unit = width.max(2.0);
+    match style {
+        LineStyle::Solid => None,
+        LineStyle::Dashed => Some((unit * 2.0, unit * 3.0)),
+        LineStyle::Dotted => Some((0.0, unit * 2.0)),
+    }
+}
+
+/// 沿路径累计长度切出划段（点线的划长为 0，画成圆点）；一段划可以跨过拐角，连续经过多条线段。
+/// 开放路径缩放间距使两端都落在划上，封闭路径缩放为整数个周期，起点处不会出现半截划或多出的空隙。
+fn dash(path: &[(Point, Point)], on: f64, off: f64, closed: bool) -> Vec<(Point, Point)> {
+    let lengths: Vec<f64> = path.iter().map(|(a, b)| (b.x - a.x).hypot(b.y - a.y)).collect();
+    let total: f64 = lengths.iter().sum();
+    let period = on + off;
+    if path.is_empty() || total <= 0.0 || period <= 0.0 {
+        return path.to_vec();
+    }
+    let scale = if closed {
+        total / ((total / period).round().max(1.0) * period)
+    } else {
+        let count = ((total + off) / period).round().max(1.0);
+        let span = count * on + (count - 1.0) * off;
+        if span > 0.0 {
+            total / span
+        } else {
+            1.0
+        }
+    };
+    let (on, period) = (on * scale, period * scale);
+    // 封闭路径的最后一个周期回到起点，不再重复画起点处的划；开放路径容许浮点误差，保住终点的划。
+    let limit = if closed { total - 1e-6 } else { total + 1e-6 };
+    let lerp = |a: Point, b: Point, t: f64| Point {
+        x: a.x + (b.x - a.x) * t,
+        y: a.y + (b.y - a.y) * t,
+    };
+    let mut out = Vec::new();
+    // `index` 是第一条结束位置不早于当前划起点的线段，`offset` 为它之前的累计长度；划起点单调增加，只需向前扫描。
+    let (mut index, mut offset) = (0, 0.0);
+    let mut start = 0.0;
+    while start <= limit {
+        let end = (start + on).min(total);
+        while index + 1 < path.len() && offset + lengths[index] < start {
+            offset += lengths[index];
+            index += 1;
+        }
+        let (mut i, mut o) = (index, offset);
+        loop {
+            let (a, b) = path[i];
+            let length = lengths[i];
+            let (t0, t1) = if length > 0.0 {
+                (
+                    ((start - o) / length).clamp(0.0, 1.0),
+                    ((end - o) / length).clamp(0.0, 1.0),
+                )
+            } else {
+                (0.0, 0.0)
+            };
+            out.push((lerp(a, b, t0), lerp(a, b, t1)));
+            if o + length >= end || i + 1 >= path.len() {
+                break;
+            }
+            o += length;
+            i += 1;
+        }
+        start += period;
+    }
+    out
+}
+
+/// 主路径与是否首尾相接（矩形、椭圆）；箭头只含主线，头部由 [`edit::arrow_heads`] 给出。
+fn stroke_path(s: &Annotation) -> (Vec<(Point, Point)>, bool) {
     let a = s.start;
     let b = s.end;
-    match s.kind {
+    let closed = matches!(s.kind, Kind::Rectangle | Kind::Ellipse);
+    let path = match s.kind {
         Kind::Erase if s.points.len() == 1 => vec![(a, a)],
         Kind::Pen | Kind::Highlighter | Kind::Polyline | Kind::Erase => {
             s.points.windows(2).map(|p| (p[0], p[1])).collect()
@@ -212,7 +418,7 @@ fn segments(s: &Annotation) -> Vec<(Point, Point)> {
         Kind::Text | Kind::Number | Kind::Mosaic | Kind::Blur | Kind::Magnify | Kind::Spotlight => {
             vec![]
         }
-        Kind::Line => vec![(a, b)],
+        Kind::Line | Kind::Arrow => vec![(a, b)],
         Kind::Ellipse => {
             let rx = (b.x - a.x).abs() / 2.0;
             let ry = (b.y - a.y).abs() / 2.0;
@@ -233,41 +439,123 @@ fn segments(s: &Annotation) -> Vec<(Point, Point)> {
                 .map(|i| (point(i), point((i + 1) % count)))
                 .collect()
         }
+        Kind::Rectangle if s.corner_radius > 0.0 => rounded_rect(a, b, s.corner_radius),
         Kind::Rectangle => {
             let c = Point { x: b.x, y: a.y };
             let d = Point { x: a.x, y: b.y };
             vec![(a, c), (c, b), (b, d), (d, a)]
         }
-        Kind::Arrow => {
-            let dx = b.x - a.x;
-            let dy = b.y - a.y;
-            let length = dx.hypot(dy);
-            if length == 0.0 {
-                return vec![(a, b)];
-            }
-            // 与 TypeScript arrowWings 共用约定：短箭头的翼不能超过主线长度的 45%。
-            let size = (s.width * 4.0).max(10.0).min(length * 0.45);
-            let ux = dx / length;
-            let uy = dy / length;
-            vec![
-                (a, b),
-                (
-                    Point {
-                        x: b.x - ux * size + uy * size * 0.5,
-                        y: b.y - uy * size - ux * size * 0.5,
-                    },
-                    b,
-                ),
-                (
-                    Point {
-                        x: b.x - ux * size - uy * size * 0.5,
-                        y: b.y - uy * size + ux * size * 0.5,
-                    },
-                    b,
-                ),
-            ]
+    };
+    (path, closed)
+}
+
+/// 圆角半径限制在短边一半以内，宽高为 0 时退化为直角。
+fn corner(x0: f64, y0: f64, x1: f64, y1: f64, radius: f64) -> f64 {
+    radius.min((x1 - x0) / 2.0).min((y1 - y0) / 2.0).max(0.0)
+}
+
+/// 圆角矩形轮廓：从上边右端起顺时针，依次是右上弧、右边、右下弧……最后一段回到起点即上边。
+/// 每段四分之一圆弧的段数与椭圆的估算一致，弧线误差约小于 0.5 像素。
+fn rounded_rect(a: Point, b: Point, radius: f64) -> Vec<(Point, Point)> {
+    use std::f64::consts::{FRAC_PI_2, PI, TAU};
+    let (x0, x1) = (a.x.min(b.x), a.x.max(b.x));
+    let (y0, y1) = (a.y.min(b.y), a.y.max(b.y));
+    let r = corner(x0, y0, x1, y1, radius);
+    let steps = ((TAU * r.sqrt()).ceil() as usize / 4).clamp(2, 512);
+    let mut points = Vec::with_capacity((steps + 1) * 4);
+    // 屏幕坐标 y 向下：-90° 指向上方，角度增大即顺时针。
+    for (cx, cy, from) in [
+        (x1 - r, y0 + r, -FRAC_PI_2),
+        (x1 - r, y1 - r, 0.0),
+        (x0 + r, y1 - r, FRAC_PI_2),
+        (x0 + r, y0 + r, PI),
+    ] {
+        for i in 0..=steps {
+            let angle = from + FRAC_PI_2 * i as f64 / steps as f64;
+            points.push(Point {
+                x: cx + r * angle.cos(),
+                y: cy + r * angle.sin(),
+            });
         }
     }
+    let n = points.len();
+    (0..n).map(|i| (points[i], points[(i + 1) % n])).collect()
+}
+
+/// 圆角矩形（半径 0 即普通矩形）在像素中心的覆盖率：有符号距离减到 0.5 像素宽的过渡带。
+/// 文字背景框也用它，保证与矩形填充的边缘一致。
+fn rounded_rect_coverage(px: f64, py: f64, x0: f64, y0: f64, x1: f64, y1: f64, r: f64) -> f64 {
+    let (hx, hy) = ((x1 - x0) / 2.0, (y1 - y0) / 2.0);
+    let qx = (px - (x0 + hx)).abs() - (hx - r);
+    let qy = (py - (y0 + hy)).abs() - (hy - r);
+    let distance = qx.max(0.0).hypot(qy.max(0.0)) + qx.max(qy).min(0.0) - r;
+    (0.5 - distance).clamp(0.0, 1.0)
+}
+
+/// 椭圆在像素中心的覆盖率：隐函数值除以梯度长度近似到边缘的距离，边缘附近误差远小于 1 像素。
+fn ellipse_coverage(px: f64, py: f64, cx: f64, cy: f64, rx: f64, ry: f64) -> f64 {
+    let (dx, dy) = (px - cx, py - cy);
+    let value = (dx / rx).powi(2) + (dy / ry).powi(2) - 1.0;
+    let gradient = 2.0 * (dx / (rx * rx)).hypot(dy / (ry * ry));
+    if gradient == 0.0 {
+        return 1.0;
+    }
+    (0.5 - value / gradient).clamp(0.0, 1.0)
+}
+
+/// 把矩形 / 椭圆内部的覆盖率（乘填充强度）以取大方式写入笔画掩码，和描边合成一次，
+/// 描边内侧与填充重叠处不会因两次混色而变深。返回需要逐像素混色的范围 `(left, top, right, bottom)`：
+/// 大面积填充不进 `touched` 列表，避免整屏填充时分配上千万个下标。
+fn fill_mask(
+    image: &RgbaImage,
+    s: &Annotation,
+    origin: Point,
+    mask: &mut [u8],
+) -> Option<(u32, u32, u32, u32)> {
+    let strength = match s.fill {
+        Fill::None => return None,
+        Fill::Translucent => FILL_TRANSLUCENT,
+        Fill::Solid => 1.0,
+    };
+    if !s.kind.has_fill() {
+        return None;
+    }
+    let x0 = s.start.x.min(s.end.x) - origin.x;
+    let y0 = s.start.y.min(s.end.y) - origin.y;
+    let x1 = s.start.x.max(s.end.x) - origin.x;
+    let y1 = s.start.y.max(s.end.y) - origin.y;
+    // 外扩半个线宽，让描边外缘的抗锯齿像素也在混色范围内。
+    let grow = s.width / 2.0 + 2.0;
+    let left = (x0 - grow).floor().max(0.0) as u32;
+    let top = (y0 - grow).floor().max(0.0) as u32;
+    let right = (x1 + grow).ceil().min(f64::from(image.width())).max(0.0) as u32;
+    let bottom = (y1 + grow).ceil().min(f64::from(image.height())).max(0.0) as u32;
+    if left >= right || top >= bottom {
+        return None;
+    }
+    let radius = if matches!(s.kind, Kind::Rectangle) {
+        corner(x0, y0, x1, y1, s.corner_radius)
+    } else {
+        0.0
+    };
+    let (rx, ry) = ((x1 - x0) / 2.0, (y1 - y0) / 2.0);
+    for y in top..bottom {
+        let py = f64::from(y) + 0.5;
+        for x in left..right {
+            let px = f64::from(x) + 0.5;
+            let coverage = match s.kind {
+                Kind::Ellipse if rx > 0.0 && ry > 0.0 => {
+                    ellipse_coverage(px, py, x0 + rx, y0 + ry, rx, ry)
+                }
+                Kind::Ellipse => 0.0,
+                _ => rounded_rect_coverage(px, py, x0, y0, x1, y1, radius),
+            };
+            let value = (coverage * strength * 255.0).round() as u8;
+            let index = y as usize * image.width() as usize + x as usize;
+            mask[index] = mask[index].max(value);
+        }
+    }
+    Some((left, top, right, bottom))
 }
 
 /// 原图坐标减去裁剪原点后才是输出图片坐标；超出选区的笔画自然裁掉。
@@ -454,6 +742,7 @@ fn render_layer(
         if mask.is_empty() {
             mask = vec![0u8; image.width() as usize * image.height() as usize];
         }
+        let filled = fill_mask(image, s, origin, &mut mask);
         for (a, b) in segments(s) {
             line(
                 image,
@@ -469,6 +758,16 @@ fn render_layer(
                 &mut mask,
                 &mut touched,
             );
+        }
+        // 有填充时按范围逐像素混色并归零；描边下标都在范围内，随后的 touched 只剩已归零的空操作。
+        if let Some((left, top, right, bottom)) = filled {
+            for y in top..bottom {
+                for x in left..right {
+                    let index = y as usize * image.width() as usize + x as usize;
+                    let coverage = f64::from(std::mem::take(&mut mask[index])) / 255.0 * s.opacity;
+                    blend(image.get_pixel_mut(x, y), rgb, coverage);
+                }
+            }
         }
         for index in touched.drain(..) {
             // 取值同时归零，下一个笔画拿到的仍是全零掩码。
@@ -794,6 +1093,12 @@ mod tests {
             font_size: None,
             font_family: None,
             raster: None,
+            line_style: Default::default(),
+            arrow_heads: Default::default(),
+            fill: Default::default(),
+            corner_radius: 0.0,
+            background: None,
+            outline: None,
         }
     }
     #[test]
@@ -847,5 +1152,213 @@ mod tests {
         assert!(image.get_pixel(20, 15)[3] > 0);
         assert!(image.get_pixel(20, 24)[3] > 0);
         assert_eq!(image.get_pixel(15, 5)[3], 0);
+    }
+
+    #[test]
+    fn old_annotations_load_with_default_styles_and_serialize_without_new_keys() {
+        let old: Annotation = serde_json::from_str(r##"{"kind":"rectangle","start":{"x":1,"y":1},"end":{"x":9,"y":9},"color":"#ff0000","width":2}"##).unwrap();
+        assert_eq!(old.line_style, LineStyle::Solid);
+        assert_eq!(old.arrow_heads, ArrowHeads::End);
+        assert_eq!(old.fill, Fill::None);
+        assert_eq!(old.corner_radius, 0.0);
+        assert!(old.background.is_none() && old.outline.is_none());
+        let json = serde_json::to_value(&old).unwrap();
+        for key in [
+            "lineStyle",
+            "arrowHeads",
+            "fill",
+            "cornerRadius",
+            "background",
+            "outline",
+        ] {
+            assert!(json.get(key).is_none(), "{key}");
+        }
+        let styled: Annotation = serde_json::from_str(r##"{"kind":"rectangle","start":{"x":1,"y":1},"end":{"x":9,"y":9},"color":"#ff0000","width":2,"lineStyle":"dashed","fill":"translucent","cornerRadius":3}"##).unwrap();
+        validate(std::slice::from_ref(&styled), 10, 10).unwrap();
+        let json = serde_json::to_value(&styled).unwrap();
+        assert_eq!(json["lineStyle"], "dashed");
+        assert_eq!(json["fill"], "translucent");
+        assert_eq!(json["cornerRadius"], 3.0);
+        let arrow: Annotation = serde_json::from_str(r##"{"kind":"arrow","start":{"x":1,"y":1},"end":{"x":9,"y":9},"color":"#ff0000","width":2,"arrowHeads":"both","lineStyle":"dotted"}"##).unwrap();
+        assert_eq!(arrow.arrow_heads, ArrowHeads::Both);
+        assert_eq!(arrow.line_style, LineStyle::Dotted);
+        assert!(serde_json::from_str::<Annotation>(r##"{"kind":"line","start":{"x":1,"y":1},"end":{"x":9,"y":9},"color":"#ff0000","width":2,"lineStyle":"wavy"}"##).is_err());
+    }
+
+    #[test]
+    fn styles_are_rejected_on_kinds_that_cannot_show_them() {
+        let mut s = shape();
+        s.kind = Kind::Highlighter;
+        s.points = vec![s.start, s.end];
+        s.line_style = LineStyle::Dashed;
+        assert!(validate(std::slice::from_ref(&s), 32, 32).is_err());
+        let mut s = shape();
+        s.kind = Kind::Line;
+        s.arrow_heads = ArrowHeads::Both;
+        assert!(validate(std::slice::from_ref(&s), 32, 32).is_err());
+        s.arrow_heads = ArrowHeads::End;
+        s.fill = Fill::Solid;
+        assert!(validate(std::slice::from_ref(&s), 32, 32).is_err());
+        let mut s = shape();
+        s.kind = Kind::Ellipse;
+        s.corner_radius = 4.0;
+        assert!(validate(std::slice::from_ref(&s), 32, 32).is_err());
+        let mut s = shape();
+        s.background = Some("#ffffff".into());
+        assert!(validate(std::slice::from_ref(&s), 32, 32).is_err());
+        for radius in [-1.0, f64::NAN, MAX_CORNER_RADIUS + 1.0] {
+            let mut s = shape();
+            s.corner_radius = radius;
+            assert!(validate(&[s], 32, 32).is_err());
+        }
+        let mut s = shape();
+        s.line_style = LineStyle::Dotted;
+        s.fill = Fill::Translucent;
+        s.corner_radius = 4.0;
+        validate(&[s], 32, 32).unwrap();
+    }
+
+    /// 第 `y` 行中连续有像素的段数。
+    fn runs(image: &RgbaImage, y: u32) -> usize {
+        (0..image.width())
+            .filter(|&x| image.get_pixel(x, y)[3] > 0 && (x == 0 || image.get_pixel(x - 1, y)[3] == 0))
+            .count()
+    }
+
+    #[test]
+    fn dashed_and_dotted_lines_split_into_evenly_fitted_pieces() {
+        let mut s = shape();
+        s.kind = Kind::Line;
+        s.start = Point { x: 2.0, y: 10.0 };
+        s.end = Point { x: 62.0, y: 10.0 };
+        let draw = |s: &Annotation| {
+            let mut image = RgbaImage::new(64, 20);
+            render(&mut image, std::slice::from_ref(s), Point { x: 0.0, y: 0.0 }).unwrap();
+            image
+        };
+        assert_eq!(runs(&draw(&s), 10), 1);
+        // 线宽 2：虚线划 4、空 6，60 像素长的线缩放为 7 段划，两端都落在划上。
+        s.line_style = LineStyle::Dashed;
+        let dashed = draw(&s);
+        assert_eq!(runs(&dashed, 10), 7);
+        assert!(dashed.get_pixel(2, 10)[3] > 0 && dashed.get_pixel(61, 10)[3] > 0);
+        assert_eq!(dashed.get_pixel(8, 10)[3], 0);
+        // 点线：间隔 4 的圆点，0～60 共 16 个。
+        s.line_style = LineStyle::Dotted;
+        let dotted = draw(&s);
+        assert_eq!(runs(&dotted, 10), 16);
+        assert_eq!(dotted.get_pixel(4, 10)[3], 0);
+        validate(std::slice::from_ref(&s), 64, 20).unwrap();
+    }
+
+    #[test]
+    fn dash_fits_open_ends_and_whole_periods_on_closed_paths() {
+        let p = |x: f64, y: f64| Point { x, y };
+        let length = |pieces: &[(Point, Point)]| -> f64 {
+            pieces.iter().map(|(a, b)| (b.x - a.x).hypot(b.y - a.y)).sum()
+        };
+        let square = [
+            (p(0.0, 0.0), p(40.0, 0.0)),
+            (p(40.0, 0.0), p(40.0, 40.0)),
+            (p(40.0, 40.0), p(0.0, 40.0)),
+            (p(0.0, 40.0), p(0.0, 0.0)),
+        ];
+        // 周长 160、周期 10：整 16 段划，转角处的划拆成两段但总长不变，最后一段不回到起点重画。
+        let closed = dash(&square, 4.0, 6.0, true);
+        assert!((length(&closed) - 64.0).abs() < 1e-9);
+        assert_eq!((closed[0].0.x, closed[0].0.y), (0.0, 0.0));
+        let line = [(p(0.0, 0.0), p(60.0, 0.0))];
+        let open = dash(&line, 4.0, 6.0, false);
+        assert_eq!(open.len(), 7);
+        assert!((length(&open) - 7.0 * 3.75).abs() < 1e-9);
+        assert_eq!(open.last().unwrap().1.x, 60.0);
+        let dots = dash(&line, 0.0, 4.0, false);
+        assert_eq!(dots.len(), 16);
+        assert!(dots.iter().all(|(a, b)| a.x == b.x));
+        // 零长度路径原样返回。
+        assert_eq!(dash(&[(p(5.0, 5.0), p(5.0, 5.0))], 4.0, 6.0, false).len(), 1);
+    }
+
+    #[test]
+    fn double_headed_arrow_draws_wings_at_both_ends_and_keeps_heads_solid() {
+        let mut s = shape();
+        s.kind = Kind::Arrow;
+        s.start = Point { x: 10.0, y: 20.0 };
+        s.end = Point { x: 50.0, y: 20.0 };
+        let draw = |s: &Annotation| {
+            let mut image = RgbaImage::new(60, 40);
+            render(&mut image, std::slice::from_ref(s), Point { x: 0.0, y: 0.0 }).unwrap();
+            image
+        };
+        let single = draw(&s);
+        assert!(single.get_pixel(45, 17)[3] > 0);
+        assert_eq!(single.get_pixel(15, 17)[3], 0);
+        s.arrow_heads = ArrowHeads::Both;
+        validate(std::slice::from_ref(&s), 60, 40).unwrap();
+        let double = draw(&s);
+        assert!(double.get_pixel(45, 17)[3] > 0 && double.get_pixel(15, 17)[3] > 0);
+        assert!(edit::hit_test(std::slice::from_ref(&s), Point { x: 15.0, y: 17.5 }, 1.0, true, false).is_some());
+        // 虚线只切主线，两端的箭头头部仍是实线。
+        s.line_style = LineStyle::Dashed;
+        let dashed = draw(&s);
+        assert!(dashed.get_pixel(45, 17)[3] > 0 && dashed.get_pixel(15, 17)[3] > 0);
+        assert!(runs(&dashed, 20) > 1);
+    }
+
+    #[test]
+    fn fills_cover_interiors_once_and_rounded_corners_skip_the_box_corner() {
+        let mut s = shape();
+        s.start = Point { x: 10.0, y: 10.0 };
+        s.end = Point { x: 40.0, y: 30.0 };
+        let draw = |s: &Annotation| {
+            let mut image = RgbaImage::new(50, 40);
+            render(&mut image, std::slice::from_ref(s), Point { x: 0.0, y: 0.0 }).unwrap();
+            image
+        };
+        assert_eq!(draw(&s).get_pixel(25, 20)[3], 0);
+        s.fill = Fill::Translucent;
+        let translucent = draw(&s);
+        assert_eq!(translucent.get_pixel(25, 20).0, [255, 0, 0, 77]);
+        assert_eq!(translucent.get_pixel(25, 10).0, [255, 0, 0, 255]);
+        assert_eq!(translucent.get_pixel(5, 5)[3], 0);
+        // 半透明时描边内侧与外侧一样深：填充与描边取大后只混色一次。
+        s.opacity = 0.5;
+        let faded = draw(&s);
+        assert_eq!(faded.get_pixel(25, 10), faded.get_pixel(25, 9));
+        s.opacity = 1.0;
+        s.fill = Fill::Solid;
+        assert_eq!(draw(&s).get_pixel(25, 20).0, [255, 0, 0, 255]);
+        // 填充后的内部也算笔迹，整项删除点在内部即可命中。
+        assert!(edit::hit_test(std::slice::from_ref(&s), Point { x: 25.0, y: 20.0 }, 1.0, true, false).is_some());
+        s.kind = Kind::Ellipse;
+        let ellipse = draw(&s);
+        assert_eq!(ellipse.get_pixel(25, 20)[3], 255);
+        assert_eq!(ellipse.get_pixel(10, 10)[3], 0);
+        s.kind = Kind::Rectangle;
+        s.fill = Fill::None;
+        assert!(draw(&s).get_pixel(10, 10)[3] > 0);
+        s.corner_radius = 8.0;
+        let rounded = draw(&s);
+        assert_eq!(rounded.get_pixel(10, 10)[3], 0);
+        assert!(rounded.get_pixel(25, 10)[3] > 0 && rounded.get_pixel(10, 20)[3] > 0);
+        assert_eq!(rounded.get_pixel(25, 20)[3], 0);
+        s.fill = Fill::Solid;
+        let filled = draw(&s);
+        assert_eq!(filled.get_pixel(10, 10)[3], 0);
+        assert_eq!(filled.get_pixel(25, 20)[3], 255);
+        // 虚线圆角矩形：上边出现空隙，内部仍为空。
+        s.fill = Fill::None;
+        s.line_style = LineStyle::Dashed;
+        let dashed = draw(&s);
+        assert!(runs(&dashed, 10) > 1);
+        assert_eq!(dashed.get_pixel(25, 20)[3], 0);
+    }
+
+    #[test]
+    fn contrast_picks_dark_ink_on_light_colors() {
+        assert_eq!(contrast("#ef4444"), "#ffffff");
+        assert_eq!(contrast("#000000"), "#ffffff");
+        assert_eq!(contrast("#facc15"), "#111827");
+        assert_eq!(contrast("#ffffff"), "#111827");
     }
 }

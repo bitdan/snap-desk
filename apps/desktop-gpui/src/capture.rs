@@ -3112,7 +3112,7 @@ impl Render for Overlay {
                 let crop = s.editor.crop;
                 let width = ((crop.x + crop.width - text.shape.start.x).min(2048.0) as f32 / scale).max(40.0);
                 let font = text.shape.font_size.unwrap_or(24.0) as f32 / scale;
-                let color = u32::from_str_radix(text.shape.color.trim_start_matches('#'), 16).unwrap_or(0xef4444);
+                let (color, background) = annotate::text_input_colors(&text.shape);
                 root = root.child(
                     div()
                         .absolute()
@@ -3122,7 +3122,7 @@ impl Render for Overlay {
                         .border_1()
                         .border_dashed()
                         .border_color(rgb(ACCENT))
-                        .bg(rgba(0xffffff18))
+                        .bg(rgba(background))
                         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                         .child(
                             Textarea::new(state)

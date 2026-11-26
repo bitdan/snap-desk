@@ -387,15 +387,23 @@ pub fn transform_annotations(
                 s.raster = Some(STANDARD.encode(png.into_inner()));
             }
             if matches!(action, Transform::Grayscale | Transform::Invert) {
-                let value = u32::from_str_radix(&s.color[1..], 16).map_err(|e| e.to_string())?;
-                let pixel = RgbaImage::from_pixel(
-                    1,
-                    1,
-                    image::Rgba([(value >> 16) as u8, (value >> 8) as u8, value as u8, 255]),
-                );
-                let converted = transform(&pixel, &pixel, action);
-                let p = converted.get_pixel(0, 0);
-                s.color = format!("#{:02x}{:02x}{:02x}", p[0], p[1], p[2]);
+                let convert = |color: &str| -> Result<String, String> {
+                    let value = u32::from_str_radix(&color[1..], 16).map_err(|e| e.to_string())?;
+                    let pixel = RgbaImage::from_pixel(
+                        1,
+                        1,
+                        image::Rgba([(value >> 16) as u8, (value >> 8) as u8, value as u8, 255]),
+                    );
+                    let converted = transform(&pixel, &pixel, action);
+                    let p = converted.get_pixel(0, 0);
+                    Ok(format!("#{:02x}{:02x}{:02x}", p[0], p[1], p[2]))
+                };
+                s.color = convert(&s.color)?;
+                // 文字背景与描边已烤进字形 PNG 并随上面的像素变换一起变色；字段同步变换，
+                // 之后改样式重新排版时颜色与当前画面一致。
+                for extra in [&mut s.background, &mut s.outline].into_iter().flatten() {
+                    *extra = convert(extra)?;
+                }
             }
             Ok(s)
         })
@@ -474,6 +482,26 @@ mod tests {
             image::imageops::flip_horizontal(&pixels)
         );
         assert!(flipped[1].raster.is_none());
+    }
+
+    #[test]
+    fn inverting_a_pin_converts_text_background_and_outline_colors() {
+        let mut png = Cursor::new(Vec::new());
+        RgbaImage::from_pixel(2, 2, image::Rgba([255, 255, 255, 255]))
+            .write_to(&mut png, image::ImageFormat::Png)
+            .unwrap();
+        let text: crate::annotations::Annotation = serde_json::from_value(serde_json::json!({
+            "kind":"text", "start":{"x":10,"y":10}, "end":{"x":30,"y":20},
+            "color":"#ffffff", "width":3, "text":"a", "fontSize":24, "fontFamily":"sans",
+            "background":"#ff0000", "outline":"#000000",
+            "raster":STANDARD.encode(png.into_inner())
+        }))
+        .unwrap();
+        let inverted = transform_annotations(&[text], 100, 50, Transform::Invert).unwrap();
+        crate::annotations::validate(&inverted, 100, 50).unwrap();
+        assert_eq!(inverted[0].color, "#000000");
+        assert_eq!(inverted[0].background.as_deref(), Some("#00ffff"));
+        assert_eq!(inverted[0].outline.as_deref(), Some("#ffffff"));
     }
 
 
