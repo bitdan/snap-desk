@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 pub mod windows;
 pub mod recent;
 pub mod regions;
+pub mod sizing;
 #[cfg(windows)]
 pub use windows::{AppWindow as NativeWindow, PhysicalDpi};
 #[cfg(not(windows))]

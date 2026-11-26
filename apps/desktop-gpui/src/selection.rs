@@ -95,6 +95,137 @@ pub fn resized(start: Rect, handle: Handle, dx: i64, dy: i64, area: Rect) -> Opt
     from_edges(l, t, r, b, area)
 }
 
+/// 宽高比（宽:高）；两项都不为 0。
+pub type Ratio = (u32, u32);
+
+fn ratio_parts(ratio: Ratio) -> (i64, i64) {
+    (i64::from(ratio.0.max(1)), i64::from(ratio.1.max(1)))
+}
+
+/// 按比例拖出选区：`anchor` 是固定角，取拖动范围里按比例折算后更长的一边推出另一边，方向跟随拖动；
+/// 朝拖动方向放不下时整体等比缩小，比例不变。整数像素向下取整，比例最多差 1 像素。
+pub fn from_points_ratio(anchor: Point, to: Point, ratio: Ratio, area: Rect) -> Option<Rect> {
+    let (rw, rh) = ratio_parts(ratio);
+    let (al, at, ar, ab) = edges(area);
+    let anchor = (anchor.0.clamp(al, ar), anchor.1.clamp(at, ab));
+    let (sx, sy) = (if to.0 < anchor.0 { -1 } else { 1 }, if to.1 < anchor.1 { -1 } else { 1 });
+    let (dw, dh) = ((to.0 - anchor.0).abs(), (to.1 - anchor.1).abs());
+    let (mut w, mut h) = if dw * rh >= dh * rw { (dw, dw * rh / rw) } else { (dh * rw / rh, dh) };
+    let room_w = if sx > 0 { ar - anchor.0 } else { anchor.0 - al };
+    let room_h = if sy > 0 { ab - anchor.1 } else { anchor.1 - at };
+    if w > room_w {
+        w = room_w;
+        h = w * rh / rw;
+    }
+    if h > room_h {
+        h = room_h;
+        w = h * rw / rh;
+    }
+    from_edges(anchor.0, anchor.1, anchor.0 + sx * w, anchor.1 + sy * h, area)
+}
+
+/// 按比例拖动手柄缩放：角手柄以对角为固定点；边手柄以对边为固定边，另一方向从上边或左边延伸。
+pub fn resized_ratio(start: Rect, handle: Handle, dx: i64, dy: i64, ratio: Ratio, area: Rect) -> Option<Rect> {
+    let (l, t, r, b) = edges(start);
+    // 边手柄只拖动一个方向：另一方向只给 1 像素，让拖动方向占优，再由比例推出另一边。
+    let (anchor, to) = match handle {
+        Handle::NW => ((r, b), (l + dx, t + dy)),
+        Handle::NE => ((l, b), (r + dx, t + dy)),
+        Handle::SE => ((l, t), (r + dx, b + dy)),
+        Handle::SW => ((r, t), (l + dx, b + dy)),
+        Handle::E => ((l, t), (r + dx, t + 1)),
+        Handle::W => ((r, t), (l + dx, t + 1)),
+        Handle::S => ((l, t), (l + 1, b + dy)),
+        Handle::N => ((l, b), (l + 1, t + dy)),
+    };
+    from_points_ratio(anchor, to, ratio, area)
+}
+
+/// 按输入的位置与尺寸放置选区：尺寸限制在 `area` 内（`keep_ratio` 时等比缩小），位置再向内推，
+/// 保证整个选区都在截图范围里。尺寸不足 1 像素返回 None。
+pub fn placed(x: i64, y: i64, width: i64, height: i64, keep_ratio: bool, area: Rect) -> Option<Rect> {
+    if width < 1 || height < 1 {
+        return None;
+    }
+    let (aw, ah) = (i64::from(area.width), i64::from(area.height));
+    let (mut w, mut h) = (width, height);
+    if keep_ratio && (w > aw || h > ah) {
+        // 整数比较哪一边先碰到范围，避免浮点误差少算 1 像素。
+        if w * ah >= h * aw {
+            (w, h) = (aw, (h * aw / w).max(1));
+        } else {
+            (w, h) = ((w * ah / h).max(1), ah);
+        }
+    }
+    let (w, h) = (w.min(aw), h.min(ah));
+    let (al, at, ar, ab) = edges(area);
+    let (x, y) = (x.clamp(al, ar - w), y.clamp(at, ab - h));
+    from_edges(x, y, x + w, y + h, area)
+}
+
+/// 把选区改成给定比例：保持左上角与宽度，由比例推出高度；放不下时等比缩小。
+pub fn with_ratio(rect: Rect, ratio: Ratio, area: Rect) -> Rect {
+    let (rw, rh) = ratio_parts(ratio);
+    let width = i64::from(rect.width);
+    let height = (width * rh / rw).max(1);
+    placed(i64::from(rect.x), i64::from(rect.y), width, height, true, area).unwrap_or(rect)
+}
+
+/// 方向键对应的选区边。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Side {
+    Left,
+    Right,
+    Up,
+    Down,
+}
+
+/// 方向键调整选区的方式：平移，或改变方向键所指那条边。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Nudge {
+    Move,
+    /// 把这条边向外推（选区变大）。
+    Grow,
+    /// 把这条边向内收（选区变小）。
+    Shrink,
+}
+
+/// 键盘微调选区 `step` 像素。`symmetric` 时同一轴上的对边同步变化，以中心对称缩放；
+/// 扩展碰到 `area` 边缘时停在边上，收缩到不足 1 像素时保持原样（不像拖动手柄那样翻转）。
+pub fn nudged(rect: Rect, side: Side, nudge: Nudge, step: i64, symmetric: bool, area: Rect) -> Rect {
+    let (dx, dy) = match side {
+        Side::Left => (-step, 0),
+        Side::Right => (step, 0),
+        Side::Up => (0, -step),
+        Side::Down => (0, step),
+    };
+    let grow = match nudge {
+        Nudge::Move => return moved(rect, dx, dy, area),
+        Nudge::Grow => step,
+        Nudge::Shrink => -step,
+    };
+    let (mut l, mut t, mut r, mut b) = edges(rect);
+    // 先改方向键所指的边，对称时再反向改对边。
+    match side {
+        Side::Left => l -= grow,
+        Side::Right => r += grow,
+        Side::Up => t -= grow,
+        Side::Down => b += grow,
+    }
+    if symmetric {
+        match side {
+            Side::Left => r += grow,
+            Side::Right => l -= grow,
+            Side::Up => b += grow,
+            Side::Down => t -= grow,
+        }
+    }
+    if r - l < 1 || b - t < 1 {
+        return rect;
+    }
+    from_edges(l, t, r, b, area).unwrap_or(rect)
+}
+
 /// 手柄中心点（物理像素）。
 pub fn handle_point(rect: Rect, handle: Handle) -> Point {
     let (l, t, r, b) = edges(rect);
@@ -201,6 +332,56 @@ mod tests {
         // 左边拖过右边：选区翻到右侧。
         assert_eq!(resized(start, Handle::W, 40, 0, AREA), Some(rect(40, 10, 10, 20)));
         assert_eq!(resized(start, Handle::S, 0, -20, AREA), None);
+    }
+
+    #[test]
+    fn keyboard_grows_shrinks_and_mirrors_the_pointed_edge() {
+        let start = rect(10, 10, 30, 20);
+        assert_eq!(nudged(start, Side::Right, Nudge::Move, 10, false, AREA), rect(20, 10, 30, 20));
+        assert_eq!(nudged(start, Side::Left, Nudge::Grow, 1, false, AREA), rect(9, 10, 31, 20));
+        assert_eq!(nudged(start, Side::Left, Nudge::Shrink, 1, false, AREA), rect(11, 10, 29, 20));
+        assert_eq!(nudged(start, Side::Down, Nudge::Grow, 1, false, AREA), rect(10, 10, 30, 21));
+        assert_eq!(nudged(start, Side::Up, Nudge::Shrink, 1, false, AREA), rect(10, 11, 30, 19));
+        // 对称：两条边一起动，中心不变。
+        assert_eq!(nudged(start, Side::Right, Nudge::Grow, 1, true, AREA), rect(9, 10, 32, 20));
+        assert_eq!(nudged(start, Side::Up, Nudge::Shrink, 1, true, AREA), rect(10, 11, 30, 18));
+        // 扩展停在显示区域边上；收缩不能把选区收没或翻转。
+        assert_eq!(nudged(rect(0, 0, 10, 10), Side::Left, Nudge::Grow, 1, false, AREA), rect(0, 0, 10, 10));
+        assert_eq!(nudged(rect(5, 5, 1, 4), Side::Right, Nudge::Shrink, 1, false, AREA), rect(5, 5, 1, 4));
+        assert_eq!(nudged(rect(5, 5, 2, 4), Side::Left, Nudge::Shrink, 1, true, AREA), rect(5, 5, 2, 4));
+    }
+
+    #[test]
+    fn locked_ratio_follows_the_longer_drag_and_shrinks_at_edges() {
+        // 4:3：横向拖得更远时由宽推出高；向左上拖动时方向跟随。
+        assert_eq!(from_points_ratio((10, 10), (50, 20), (4, 3), AREA), Some(rect(10, 10, 40, 30)));
+        // 纵向更远：由高推出宽（53），左侧只剩 50 像素，等比缩成 50×37。
+        assert_eq!(from_points_ratio((50, 50), (40, 10), (4, 3), AREA), Some(rect(0, 13, 50, 37)));
+        assert_eq!(from_points_ratio((60, 60), (30, 20), (1, 1), AREA), Some(rect(20, 20, 40, 40)));
+        // 往右下放不下：等比缩到碰边为止。
+        assert_eq!(from_points_ratio((80, 10), (200, 20), (2, 1), AREA), Some(rect(80, 10, 20, 10)));
+        assert_eq!(from_points_ratio((10, 70), (11, 200), (1, 2), AREA), Some(rect(10, 70, 5, 10)));
+    }
+
+    #[test]
+    fn locked_ratio_resizes_from_the_opposite_corner_or_edge() {
+        let start = rect(10, 10, 40, 30);
+        assert_eq!(resized_ratio(start, Handle::SE, 20, 0, (4, 3), AREA), Some(rect(10, 10, 60, 45)));
+        assert_eq!(resized_ratio(start, Handle::NW, -4, 0, (4, 3), AREA), Some(rect(6, 7, 44, 33)));
+        assert_eq!(resized_ratio(start, Handle::E, 8, 50, (4, 3), AREA), Some(rect(10, 10, 48, 36)));
+        assert_eq!(resized_ratio(start, Handle::S, 50, 6, (4, 3), AREA), Some(rect(10, 10, 48, 36)));
+    }
+
+    #[test]
+    fn typed_size_is_clamped_inside_the_area() {
+        assert_eq!(placed(90, 70, 30, 20, false, AREA), Some(rect(70, 60, 30, 20)));
+        assert_eq!(placed(-5, 5, 300, 20, false, AREA), Some(rect(0, 5, 100, 20)));
+        // 保持比例：200×100 缩成 100×50。
+        assert_eq!(placed(0, 0, 200, 100, true, AREA), Some(rect(0, 0, 100, 50)));
+        assert_eq!(placed(0, 0, 0, 10, false, AREA), None);
+        assert_eq!(with_ratio(rect(10, 10, 40, 10), (4, 3), AREA), rect(10, 10, 40, 30));
+        // 3:4 推出的高度超出：等比缩小后再向内推。
+        assert_eq!(with_ratio(rect(0, 0, 90, 10), (3, 4), AREA), rect(0, 0, 60, 80));
     }
 
     fn snap(rect: Rect, kind: SnapKind, window: usize) -> Snap {

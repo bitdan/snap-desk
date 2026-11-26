@@ -138,6 +138,9 @@ pub trait Host: Send + Sync + 'static {
     }
     /// 把成图写入系统剪贴板（同一份 PNG 可直接复用）。
     fn copy(&self, image: &RgbaImage, png: &[u8]) -> Result<(), String>;
+    /// 保存与复制之后交出成图本身（移交所有权，不再复制一份最多 3200 万像素的画布），
+    /// 外壳可据此打开结果窗口继续裁剪、贴图或识别；在 [`Host::finished`] 之前调用，默认丢弃。
+    fn output(&self, _image: RgbaImage) {}
     /// 输出完成：`message` 含保存位置与复制结果。
     fn finished(&self, result: &ScrollView, message: String);
 }
@@ -402,6 +405,7 @@ fn complete(host: &dyn Host, id: u64, message: &str) -> Result<(), String> {
         result.width,
         result.height
     );
+    host.output(image);
     host.close_session(id)?;
     host.finished(&result, format!("{message} {output}"));
     Ok(())

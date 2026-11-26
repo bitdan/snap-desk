@@ -3,6 +3,7 @@
 //! 边界约定：本 crate 不依赖 `gpui` 或任何窗口/事件循环；需要通知界面或调用系统
 //! 外壳能力（注册快捷键、发事件、读写窗口）时，由调用方以闭包或 trait 注入。
 pub mod annotations;
+pub mod auto_save;
 pub mod autostart;
 pub mod capture;
 pub mod clipboard;
@@ -19,6 +20,8 @@ pub mod platform;
 pub mod recognition;
 pub mod recording;
 pub mod resources;
+#[cfg(windows)]
+pub mod save_dialog;
 pub mod scroll;
 pub mod settings;
 pub mod shelf;

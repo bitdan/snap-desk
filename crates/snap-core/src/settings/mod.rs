@@ -21,12 +21,14 @@ pub fn default_path() -> Option<PathBuf> {
 }
 
 /// 普通截图和贴图共用的导出偏好；滚动截图的自动 PNG 存档保持独立。
+/// PDF 为单页文档：页面与图片同尺寸（按 96 DPI 换算），透明处为白色纸面。
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ExportFormat {
     Png,
     Jpeg,
     Webp,
+    Pdf,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -37,7 +39,14 @@ pub struct ExportSettings {
     pub filename_prefix: String,
     pub include_dimensions: bool,
     pub remember_directory: bool,
+    /// 复制、贴图或滚动截图后，自动在截图保存目录另存一份（见 `auto_save`）。
+    pub auto_save: bool,
+    /// 自动保存的截图保留天数，到期由 `auto_save::clean` 删除；0 为永久保留。只能取 [`AUTO_CLEAN_DAYS`] 中的值。
+    pub auto_clean_days: u16,
 }
+
+/// 自动保存截图可选的保留天数（0 为永久保留）。
+pub const AUTO_CLEAN_DAYS: [u16; 4] = [0, 7, 30, 90];
 
 impl Default for ExportSettings {
     fn default() -> Self {
@@ -47,6 +56,8 @@ impl Default for ExportSettings {
             filename_prefix: "SnapDesk".into(),
             include_dimensions: false,
             remember_directory: true,
+            auto_save: false,
+            auto_clean_days: 0,
         }
     }
 }
@@ -56,6 +67,9 @@ impl ExportSettings {
     pub fn validate(&self) -> Result<(), String> {
         if !(1..=100).contains(&self.jpeg_quality) {
             return Err("JPEG 质量必须为 1～100 的整数。".into());
+        }
+        if !AUTO_CLEAN_DAYS.contains(&self.auto_clean_days) {
+            return Err("自动保存截图的保留天数无效。".into());
         }
         let prefix = &self.filename_prefix;
         if prefix.is_empty()
@@ -74,12 +88,15 @@ impl ExportSettings {
 }
 
 impl ExportFormat {
+    pub const ALL: [Self; 4] = [Self::Png, Self::Jpeg, Self::Webp, Self::Pdf];
+
     /// 保存对话框默认扩展名；JPEG 统一用 `.jpg`。
     pub fn extension(self) -> &'static str {
         match self {
             Self::Png => "png",
             Self::Jpeg => "jpg",
             Self::Webp => "webp",
+            Self::Pdf => "pdf",
         }
     }
 
@@ -89,7 +106,14 @@ impl ExportFormat {
             Self::Png => ("PNG 图片（无损）", &["png"]),
             Self::Jpeg => ("JPEG 图片（白底）", &["jpg", "jpeg"]),
             Self::Webp => ("WebP 图片（无损）", &["webp"]),
+            Self::Pdf => ("PDF 文档（白底）", &["pdf"]),
         }
+    }
+
+    /// 保存对话框依次列出的类型：设置中的默认格式在前（对话框默认选中它），其余格式随后，
+    /// 用户可在对话框里临时改存其他格式而不必修改设置。
+    pub fn dialog_order(self) -> impl Iterator<Item = Self> {
+        std::iter::once(self).chain(Self::ALL.into_iter().filter(move |format| *format != self))
     }
 }
 
@@ -1198,9 +1222,14 @@ mod tests {
             filename_prefix: "工作截图".into(),
             include_dimensions: true,
             remember_directory: false,
+            auto_save: true,
+            auto_clean_days: 30,
         };
         persist(&path, &value).unwrap();
         assert_eq!(load(&path), (value.clone(), None));
+        let mut invalid = value.clone();
+        invalid.export.auto_clean_days = 5;
+        assert!(invalid.validate().is_err());
         for prefix in [
             "",
             "../escape",

@@ -1,5 +1,5 @@
-//! 截图与贴图的图片导出：文件名、编码、扩展名校验和保存目录记忆。保存路径只能来自系统对话框，
-//! 对话框本身与临时文件追踪由各外壳负责（GPUI 用 rfd）。
+//! 截图与贴图的图片导出：文件名、编码（PNG / JPEG / WebP / 单页 PDF）、扩展名校验和保存目录记忆。
+//! 保存路径只能来自系统对话框，对话框本身与临时文件追踪由各外壳负责（GPUI 用 rfd）。
 use crate::settings::{ExportFormat, ExportSettings};
 use image::{codecs::jpeg::JpegEncoder, ImageFormat, RgbImage, RgbaImage};
 use std::{
@@ -8,9 +8,46 @@ use std::{
     path::{Path, PathBuf},
 };
 
+/// PDF 页面尺寸换算：图片 1 像素按 96 DPI 计，与剪贴板组合导出的“原始尺寸”页面一致。
+const PDF_MM_PER_PX: f32 = 25.4 / 96.0;
+
 /// 保存目录与用户设置分文件存放（与 settings.json 同目录），不覆盖并发保存的偏好。
 pub fn directory_record() -> Option<PathBuf> {
     crate::paths::config_dir().map(|dir| dir.join("export-directory.json"))
+}
+
+/// 快速保存与自动保存的目录：设置里选定的截图保存目录（开启“记住上次保存目录”时也可能是上次保存的位置），
+/// 都没有时为“图片/Snap Desk”。目录不存在时由保存时创建。
+pub fn save_directory(remember: bool) -> Option<PathBuf> {
+    directory_record()
+        .as_deref()
+        .and_then(|record| preferred_directory(record, remember))
+        .or_else(|| dirs::picture_dir().map(|dir| dir.join("Snap Desk")))
+}
+
+/// 目录里不与已有文件重名的路径：重名时在扩展名前加 -2、-3……，不覆盖已有文件。
+pub fn unique_path(directory: &Path, name: &str) -> PathBuf {
+    let first = directory.join(name);
+    if !first.exists() {
+        return first;
+    }
+    let (stem, extension) = name.rsplit_once('.').map_or((name, None), |(stem, ext)| (stem, Some(ext)));
+    (2..)
+        .map(|n| match extension {
+            Some(ext) => directory.join(format!("{stem}-{n}.{ext}")),
+            None => directory.join(format!("{stem}-{n}")),
+        })
+        .find(|path| !path.exists())
+        .expect("编号足够多时总能找到未使用的文件名")
+}
+
+/// 不弹对话框直接保存：按设置的默认格式与文件名规则存进 `directory`（不存在时创建），重名时加编号。返回保存路径。
+pub fn quick_save(image: &RgbaImage, settings: &ExportSettings, directory: &Path) -> Result<PathBuf, String> {
+    fs::create_dir_all(directory).map_err(|_| "截图保存目录无法创建，请在设置中重新选择。".to_string())?;
+    let name = filename(settings, &timestamp(), image.width(), image.height())?;
+    let path = unique_path(directory, &name);
+    write_file(&path, image, settings)?;
+    Ok(path)
 }
 
 /// 文件名所用的本地时间戳（YYYYMMDD-HHMMSS）。
@@ -19,36 +56,34 @@ pub fn timestamp() -> String {
 }
 
 /// 编码到同目录临时文件再替换目标：失败时保留旧文件。不做崩溃残留追踪。
+/// 编码格式由对话框返回路径的扩展名决定（对话框里可临时改存其他格式），JPEG 质量等其余偏好沿用设置。
 pub fn write_file(path: &Path, image: &RgbaImage, settings: &ExportSettings) -> Result<(), String> {
-    validate_extension(path, settings.format)?;
+    let settings = ExportSettings {
+        format: format_for_path(path)?,
+        ..settings.clone()
+    };
     let parent = path.parent().ok_or("保存路径无效。")?;
     let mut file = tempfile::NamedTempFile::new_in(parent).map_err(|e| e.to_string())?;
-    encode(file.as_file_mut(), image, settings)?;
+    encode(file.as_file_mut(), image, &settings)?;
     file.as_file().sync_all().map_err(|e| e.to_string())?;
     file.persist(path).map_err(|e| e.error.to_string())?;
     Ok(())
 }
 
-/// 不自动重写用户指定的扩展名，避免绕过系统对话框对实际目标文件的覆盖确认。
-pub fn validate_extension(path: &Path, format: ExportFormat) -> Result<(), String> {
-    if path
-        .extension()
+/// 按扩展名确定编码格式。不自动补写或改写用户指定的扩展名，避免绕过系统对话框对实际目标文件的覆盖确认。
+pub fn format_for_path(path: &Path) -> Result<ExportFormat, String> {
+    path.extension()
         .and_then(|ext| ext.to_str())
-        .is_some_and(|ext| {
-            format
-                .filter()
-                .1
-                .iter()
-                .any(|allowed| ext.eq_ignore_ascii_case(allowed))
+        .and_then(|ext| {
+            ExportFormat::ALL.into_iter().find(|format| {
+                format
+                    .filter()
+                    .1
+                    .iter()
+                    .any(|allowed| ext.eq_ignore_ascii_case(allowed))
+            })
         })
-    {
-        Ok(())
-    } else {
-        Err(format!(
-            "当前导出格式需要 .{} 扩展名；可在设置中更换格式。",
-            format.extension()
-        ))
-    }
+        .ok_or_else(|| "文件扩展名须为 .png、.jpg、.webp 或 .pdf。".into())
 }
 
 /// 文件名只由已验证的前缀、本地日期时间（YYYYMMDD-HHMMSS）和可选像素尺寸组成，不接收任意路径模板。
@@ -103,8 +138,61 @@ pub fn encode(
         ExportFormat::Webp => image.write_to(writer, ImageFormat::WebP),
         ExportFormat::Jpeg => JpegEncoder::new_with_quality(writer, settings.jpeg_quality)
             .encode_image(&white_background(image)),
+        ExportFormat::Pdf => {
+            let bytes = pdf(image)?;
+            return writer.write_all(&bytes).map_err(|e| format!("图片编码失败：{e}"));
+        }
     }
     .map_err(|e| format!("图片编码失败：{e}"))
+}
+
+/// 单页 PDF：页面与图片同尺寸（96 DPI）、无边距，图片铺满整页。滚动截图等超长图片按 96 DPI 会超过
+/// 常见阅读器的页面上限（200 英寸），这时整页等比缩小到长边 200 英寸；像素数据不变，只是标称尺寸变小。
+pub fn pdf(image: &RgbaImage) -> Result<Vec<u8>, String> {
+    const MAX_PAGE_MM: f32 = 200.0 * 25.4;
+    let (w, h) = (image.width() as f32 * PDF_MM_PER_PX, image.height() as f32 * PDF_MM_PER_PX);
+    let k = (MAX_PAGE_MM / w.max(h)).min(1.0);
+    let doc = printpdf::PdfDocument::empty("Snap Desk");
+    add_pdf_image_page(&doc, image, (k < 1.0).then_some((w * k, h * k)), 0.0);
+    doc.save_to_bytes().map_err(|_| "PDF 编码失败。".to_string())
+}
+
+/// 向 PDF 追加一页图片（剪贴板组合导出与截图保存共用）。`page_mm` 为 None 时页面取图片尺寸加边距，
+/// 否则用给定纸张（毫米）；图片在边距内等比缩放并居中。PDF 是白色纸面，透明像素先与白色合成，避免变黑。
+pub(crate) fn add_pdf_image_page(
+    doc: &printpdf::PdfDocumentReference,
+    image: &RgbaImage,
+    page_mm: Option<(f32, f32)>,
+    margin_mm: f32,
+) {
+    use printpdf::*;
+    let (w, h) = image.dimensions();
+    let (image_w, image_h) = (w as f32 * PDF_MM_PER_PX, h as f32 * PDF_MM_PER_PX);
+    let (pw, ph) = page_mm.unwrap_or((image_w + margin_mm * 2.0, image_h + margin_mm * 2.0));
+    let scale = ((pw - margin_mm * 2.0) / image_w).min((ph - margin_mm * 2.0) / image_h);
+    let (page, layer) = doc.add_page(Mm(pw), Mm(ph), "图片");
+    let object = Image::from(ImageXObject {
+        width: Px(w as usize),
+        height: Px(h as usize),
+        color_space: ColorSpace::Rgb,
+        bits_per_component: ColorBits::Bit8,
+        interpolate: true,
+        image_data: white_background(image).into_raw(),
+        image_filter: None,
+        smask: None,
+        clipping_bbox: None,
+    });
+    object.add_to_layer(
+        doc.get_page(page).get_layer(layer),
+        ImageTransform {
+            translate_x: Some(Mm((pw - image_w * scale) / 2.0)),
+            translate_y: Some(Mm((ph - image_h * scale) / 2.0)),
+            scale_x: Some(scale),
+            scale_y: Some(scale),
+            dpi: Some(96.0),
+            ..Default::default()
+        },
+    );
 }
 
 
@@ -249,15 +337,59 @@ mod tests {
     }
 
     #[test]
-    fn extension_must_match_encoder_and_accepts_jpeg_alias() {
+    fn extension_selects_the_encoder_and_accepts_jpeg_alias() {
         for path in ["screen.JPG", "screen.jpeg"] {
-            assert!(validate_extension(Path::new(path), ExportFormat::Jpeg).is_ok());
+            assert_eq!(format_for_path(Path::new(path)), Ok(ExportFormat::Jpeg));
         }
-        for path in ["screen", "screen.jpg", "screen.png.exe"] {
-            assert!(validate_extension(Path::new(path), ExportFormat::Png).is_err());
+        for path in ["screen", "screen.png.exe", "screen.gif"] {
+            assert!(format_for_path(Path::new(path)).is_err());
         }
-        assert!(validate_extension(Path::new("screen.PNG"), ExportFormat::Png).is_ok());
-        assert!(validate_extension(Path::new("screen.webp"), ExportFormat::Webp).is_ok());
+        assert_eq!(format_for_path(Path::new("screen.PNG")), Ok(ExportFormat::Png));
+        assert_eq!(format_for_path(Path::new("screen.webp")), Ok(ExportFormat::Webp));
+        assert_eq!(format_for_path(Path::new("screen.Pdf")), Ok(ExportFormat::Pdf));
+    }
+
+    #[test]
+    fn quick_save_numbers_duplicates_instead_of_overwriting() {
+        let directory = tempfile::tempdir().unwrap();
+        let target = directory.path().join("nested");
+        let image = RgbaImage::from_pixel(3, 2, image::Rgba([1, 2, 3, 255]));
+        let settings = ExportSettings::default();
+        let first = quick_save(&image, &settings, &target).unwrap();
+        assert!(first.starts_with(&target) && first.extension().unwrap() == "png");
+        // 同一秒内再存两次：依次加 -2、-3，原文件不被覆盖。
+        let name = first.file_name().unwrap().to_str().unwrap().to_owned();
+        let stem = name.trim_end_matches(".png");
+        assert_eq!(unique_path(&target, &name), target.join(format!("{stem}-2.png")));
+        fs::write(target.join(format!("{stem}-2.png")), b"x").unwrap();
+        assert_eq!(unique_path(&target, &name), target.join(format!("{stem}-3.png")));
+        assert_eq!(unique_path(&target, "free.png"), target.join("free.png"));
+    }
+
+    #[test]
+    fn dialog_lists_the_default_format_first_then_the_rest_once() {
+        let order: Vec<_> = ExportFormat::Webp.dialog_order().collect();
+        assert_eq!(
+            order,
+            [ExportFormat::Webp, ExportFormat::Png, ExportFormat::Jpeg, ExportFormat::Pdf]
+        );
+    }
+
+    #[test]
+    fn pdf_page_matches_the_image_and_is_chosen_by_extension() {
+        let image = RgbaImage::from_pixel(192, 96, image::Rgba([10, 20, 30, 0]));
+        let bytes = pdf(&image).unwrap();
+        assert!(bytes.starts_with(b"%PDF-"));
+        // 超过 200 英寸的长图缩小页面后照常输出。
+        assert!(pdf(&RgbaImage::new(2, 20_000)).unwrap().starts_with(b"%PDF-"));
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("screen.pdf");
+        // 设置里的默认格式是 PNG；对话框里改存 .pdf 时按扩展名编码。
+        write_file(&path, &image, &ExportSettings::default()).unwrap();
+        assert!(fs::read(&path).unwrap().starts_with(b"%PDF-"));
+        let png = directory.path().join("screen.png");
+        write_file(&png, &image, &ExportSettings { format: ExportFormat::Pdf, ..ExportSettings::default() }).unwrap();
+        assert_eq!(image::guess_format(&fs::read(&png).unwrap()).unwrap(), ImageFormat::Png);
     }
 
     #[test]
@@ -320,7 +452,7 @@ mod tests {
     }
 
     #[test]
-    fn write_file_replaces_target_and_rejects_mismatched_extension() {
+    fn write_file_replaces_target_and_rejects_unknown_extension() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("shot.png");
         fs::write(&path, b"old").unwrap();
@@ -328,7 +460,7 @@ mod tests {
         write_file(&path, &image, &ExportSettings::default()).unwrap();
         let decoded = image::open(&path).unwrap().to_rgba8();
         assert_eq!(decoded, image);
-        let wrong = dir.path().join("shot.jpg");
+        let wrong = dir.path().join("shot.gif");
         assert!(write_file(&wrong, &image, &ExportSettings::default()).is_err());
         assert!(!wrong.exists());
         // 失败的写入不留下临时文件。

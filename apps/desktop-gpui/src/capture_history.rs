@@ -373,6 +373,7 @@ fn apply(
         s.hover = None;
         s.drag = None;
         s.text_input = None;
+        s.drop_size_editor();
         s.editor = annotate_editor(shapes);
         s.layers.clear();
         s.sync();

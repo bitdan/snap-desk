@@ -6,7 +6,8 @@
 //! 2. 选区紫色边框（鼠标穿透）、侧边预览窗（拼接缩略图 + 当前画面位置）与下方控制条
 //!    （状态、完成/保存已确认部分/重试、取消），三者置顶且不进入采集（Windows 用 WDA_EXCLUDEFROMCAPTURE）；
 //! 3. 采集线程通过 [`GpuiHost`] 写入共享状态，控制条每 100 ms 读取并执行窗口操作；
-//!    完成后全部窗口立即收起（结果已复制并保存），不再显示结果条。
+//!    完成后采集用的窗口立即收起（结果已复制并保存），再打开结果窗口（`scroll_result.rs`），
+//!    可裁掉两端、贴图、识别文字或另存。
 //!
 //! 结果 PNG 存在数据目录 `scroll-results`（不经导出暂存记录）；预览/控制条遮挡选区时
 //! 只在 Windows 上由捕获排除保证不进入画面（macOS/Linux 未实现采样时临时隐藏）；结果不进主界面。
@@ -26,6 +27,9 @@ use std::{
     },
     time::Duration,
 };
+
+#[path = "scroll_result.rs"]
+mod result;
 
 const POLL: Duration = Duration::from_millis(100);
 const ACCENT: u32 = 0x7c3aed;
@@ -49,6 +53,8 @@ struct Shared {
     saved: Option<PathBuf>,
     copied: bool,
     error: Option<String>,
+    /// 输出完成后的成图（[`Host::output`] 移交），完成时交给结果窗口。
+    output: Option<RgbaImage>,
 }
 
 #[derive(Default)]
@@ -560,10 +566,12 @@ impl Controls {
             return;
         };
         let cancelled = scroller.state.cancel.load(Ordering::SeqCst);
-        let (view, hide, show, closed, result, error) = {
+        let (view, hide, show, closed, result, error, output) = {
             let Ok(mut shared) = scroller.shared.lock() else {
                 return;
             };
+            // 成图在完成通知之前写入（同一采集线程依次加锁），取走完成结果时一并取走。
+            let output = if shared.result.is_some() { shared.output.take() } else { None };
             (
                 shared.view.clone(),
                 std::mem::take(&mut shared.hidden),
@@ -571,6 +579,7 @@ impl Controls {
                 shared.closed,
                 shared.result.take(),
                 shared.error.take(),
+                output,
             )
         };
         if let Some(next) = view.filter(|v| v.id == self.id) {
@@ -597,8 +606,9 @@ impl Controls {
         }
         if closed == Some(self.id) {
             match result {
-                // 完成即全部收起：结果已复制并保存在 scroll-results（通用页可打开），不再留结果条。
-                // 结果条被排除在采集之外，留在屏幕上时紧接着截图会在它的位置出现一块黑色。
+                // 完成即收起采集用的窗口：结果已复制并保存在 scroll-results（通用页可打开）。
+                // 这些窗口被排除在采集之外，留在屏幕上时紧接着截图会在它们的位置出现一块黑色；
+                // 结果窗口是普通窗口，没有这个问题。
                 Some((path, copied)) => {
                     log::info!(
                         "event=gpui.scroll_finished id={} saved={} copied={copied}",
@@ -606,6 +616,15 @@ impl Controls {
                         path.is_some()
                     );
                     close_windows(cx, true);
+                    if let Some(image) = output {
+                        let image = Arc::new(image);
+                        crate::capture::auto_save(cx, image.clone());
+                        let horizontal = self
+                            .view
+                            .as_ref()
+                            .is_some_and(|v| matches!(v.direction, "left" | "right"));
+                        result::open(cx, image, horizontal, self.language.clone());
+                    }
                 }
                 // 取消，或完成通知迟迟不来（不应发生）：直接收起。
                 None if cancelled || self.waiting >= 20 => close_windows(cx, true),
@@ -879,6 +898,9 @@ impl Host for GpuiHost {
         let copied = result.is_ok();
         self.with(|s| s.copied = copied);
         result
+    }
+    fn output(&self, image: RgbaImage) {
+        self.with(|s| s.output = Some(image));
     }
     fn finished(&self, _result: &ScrollView, _message: String) {
         self.with(|s| s.result = Some((s.saved.take(), s.copied)));
