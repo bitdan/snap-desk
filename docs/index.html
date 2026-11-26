@@ -26,7 +26,7 @@
   <meta property="og:image" content="https://raw.githubusercontent.com/bitdan/snap-desk/master/resources/icons/128x128@2x.png">
   <meta name="twitter:card" content="summary">
   <script type="application/ld+json">{"@context":"https://schema.org","@type":"SoftwareApplication","name":"Snap Desk","alternateName":["SnapDesk","snap-desk"],"url":"https://bitdan.github.io/snap-desk/","description":"Snap Desk（SnapDesk）是免费开源的跨平台截图与录屏工具，可在 Windows、macOS 和 Linux 上使用，支持滚动截图、图片标注、桌面贴图、MP4/GIF 录屏、OCR 文字识别、翻译及剪贴板历史。","applicationCategory":"UtilitiesApplication","operatingSystem":"Windows (x64), macOS (Apple silicon), Linux (x64)","license":"https://www.gnu.org/licenses/gpl-3.0.html","downloadUrl":"https://github.com/bitdan/snap-desk/releases","isAccessibleForFree":true,"offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
-  <script type="module" src="assets/downloads.js"></script>
+  <script type="module" src="assets/install-commands.js"></script>
 </head>
 <body>
   <svg class="defs" width="0" height="0" aria-hidden="true" focusable="false">
@@ -81,31 +81,34 @@
       </div>
     </section>
 
-    <section class="container" id="download" data-copied="已复制" data-copy-failed="复制失败，可手动复制下方命令">
-      <div class="plaque"><h2>下载与平台</h2><p>Windows 与 macOS 版功能完整，macOS 已在 Apple 芯片 Mac 上实机验证；Linux 的主要功能已适配，目前仅通过 CI 构建和自动化测试，尚未实机验证，欢迎反馈问题。</p></div>
-      <script type="application/json" data-downloads>{{ site.data.downloads | jsonify }}</script>
-      <p class="download-version">正式版 <span data-download-version>v{{ site.data.downloads.version }}</span> · <a href="https://github.com/bitdan/snap-desk/releases">历史版本与更新说明</a></p>
+    <section class="container" id="download" data-copied="已复制" data-copy-failed="自动复制失败，命令已选中">
+      <div class="plaque"><h2>下载与平台</h2></div>
+      <div class="download-options">
+        <h3>终端安装</h3>
+        <a class="mlink" href="https://github.com/bitdan/snap-desk/releases">前往 GitHub Releases 下载<span class="arrow" aria-hidden="true">→</span></a>
+      </div>
       <div class="platforms">
         <article class="platform">
           <span class="status full">功能完整</span>
           <h3>Windows</h3>
           <p class="arch">x64</p>
           <ul><li><code>-setup.exe</code> 安装包</li><li><code>-standalone.exe</code> 独立 EXE，免安装</li><li>两种形式都支持在线更新</li></ul>
-          {% include download-actions.html keys="setup,standalone" lang="zh" %}
+          {% include install-command.html key="windows" label="PowerShell" copy="复制 Windows 安装命令" %}
         </article>
         <article class="platform">
           <span class="status full">功能完整</span>
           <h3>macOS</h3>
           <p class="arch">Apple 芯片 · macOS 13.3+</p>
-          <ul><li><code>.dmg</code> 磁盘映像，支持在线更新</li><li>未经 Apple 公证，首次打开需在“隐私与安全性”中放行</li><li>截图前需在“录屏与系统录音”中授权，更新后无需重新授权</li><li>已实机验证</li></ul>
-          {% include download-actions.html keys="dmg" lang="zh" %}
+          <ul><li><code>.dmg</code> 磁盘映像，支持在线更新</li><li>未经 Apple 公证，首次打开需在“隐私与安全性”中放行</li><li>截图前需在“录屏与系统录音”中授权，更新后无需重新授权</li></ul>
+          {% include install-command.html key="unix" label="终端" copy="复制 macOS 安装命令" %}
         </article>
         <article class="platform">
           <span class="status preview">预览版</span>
           <h3>Linux</h3>
           <p class="arch">x64 · Ubuntu 22.04 或同期发行版</p>
-          <ul><li><code>.AppImage</code> 下载即用，支持在线更新</li><li><code>.deb</code> 体积更小，依赖由包管理器安装</li><li>支持 X11 与 Wayland 会话</li><li>尚未实机验证</li></ul>
-          {% include download-actions.html keys="appimage,deb" lang="zh" %}
+          <ul><li><code>.AppImage</code> 下载即用，支持在线更新</li><li><code>.deb</code> 体积更小，依赖由包管理器安装</li><li>支持 X11 与 Wayland 会话</li></ul>
+          {% include install-command.html key="unix" label="AppImage" copy="复制 Linux AppImage 安装命令" %}
+          {% include install-command.html key="deb" label="Debian / Ubuntu" copy="复制 Debian 或 Ubuntu 安装命令" %}
         </article>
       </div>
       {% include install-channels.html lang="zh" %}

@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://bitdan.github.io/snap-desk/en/#download">Download</a> ·
+  <a href="#download">Download</a> ·
   <a href="https://bitdan.github.io/snap-desk/en/">Website</a> ·
   <a href="#features">Features</a> ·
   <a href="#quick-start">Quick Start</a> ·
@@ -167,18 +167,46 @@ Native Rust, no embedded browser engine. Measured on a release build; full data 
 
 ## Download
 
-Get the package for your platform from the [download page](https://bitdan.github.io/snap-desk/en/#download), or copy a terminal command that verifies its SHA-256 checksum. See [GitHub Releases](https://github.com/bitdan/snap-desk/releases) for earlier versions and release notes.
+[Download from GitHub Releases](https://github.com/bitdan/snap-desk/releases) · [Installation on the website](https://bitdan.github.io/snap-desk/en/#download)
 
-- Windows x64 (with Scoop installed): Run `scoop bucket add snap-desk https://github.com/bitdan/homebrew-snap-desk`, then `scoop install snap-desk/snap-desk`.
-- macOS Apple silicon (with Homebrew installed): `brew install --cask bitdan/snap-desk/snap-desk`.
-- Debian / Ubuntu: Download the deb and run `sudo apt install ./<filename>.deb` from the download directory. The website's AppImage command downloads and verifies the file, then makes it executable.
-- Other channels: [WinGet v0.3.2 is under review](https://github.com/microsoft/winget-pkgs/pull/488147). The AUR package is pending publication.
+### Install from a terminal
 
-| Platform | File | Status |
-| --- | --- | --- |
-| Windows x64 | `-setup.exe` installer / `-standalone.exe` standalone EXE | Full feature set |
-| macOS Apple silicon | `-macos-arm64.dmg` | Full feature set, macOS 13.3+ |
-| Linux x64 | `-linux-x64.AppImage` / `-linux-x64.deb` | Preview, glibc 2.35+ (Ubuntu 22.04 era) |
+**Windows x64 · PowerShell**
+
+```powershell
+irm https://bitdan.github.io/snap-desk/install.ps1.txt | iex
+```
+
+**macOS Apple silicon · Linux x64**
+
+```sh
+curl -fsSL https://bitdan.github.io/snap-desk/install.sh | sh
+```
+
+On macOS this installs into `~/Applications`. On Linux this installs the AppImage at `~/.local/bin/snap-desk.AppImage`.
+
+**Debian / Ubuntu x64 · deb**
+
+```sh
+curl -fsSL https://bitdan.github.io/snap-desk/install.sh | sh -s -- --deb
+```
+
+### Install with a package manager
+
+**Windows x64 · Scoop**
+
+```powershell
+scoop bucket add snap-desk https://github.com/bitdan/homebrew-snap-desk
+scoop install snap-desk/snap-desk
+```
+
+**macOS Apple silicon · Homebrew**
+
+```sh
+brew install --cask bitdan/snap-desk/snap-desk
+```
+
+WinGet is [under review](https://github.com/microsoft/winget-pkgs/pull/488147). AUR is pending publication.
 
 <details>
 <summary><strong>macOS and Linux notes</strong></summary>

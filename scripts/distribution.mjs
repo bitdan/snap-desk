@@ -215,7 +215,11 @@ export function writeDistribution(version, hashes, output) {
   write('homebrew', { 'snap-desk.rb': homebrewCask(version, hashes) })
   write('winget', wingetManifests(version, hashes))
   write('aur', aurPackage(version, hashes))
-  writeFileSync(join(output, 'downloads.json'), JSON.stringify(downloadManifest(version, hashes), null, 2) + '\n')
+  const downloads = downloadManifest(version, hashes)
+  writeFileSync(join(output, 'downloads.json'), JSON.stringify(downloads, null, 2) + '\n')
+  // 安装脚本直接读取制表符分隔的清单，macOS / Linux 不需要额外安装 JSON 工具。
+  const rows = Object.entries(downloads.assets).map(([key, { url, sha256 }]) => `${key}\t${url}\t${sha256}`)
+  writeFileSync(join(output, 'downloads.tsv'), rows.join('\n') + '\n')
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
