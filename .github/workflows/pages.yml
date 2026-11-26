@@ -1,0 +1,84 @@
+name: Pages
+run-name: 官网 · ${{ github.event_name == 'workflow_run' && format('发布 {0} 后更新', github.event.workflow_run.head_branch) || github.event_name }}
+
+# 官网（docs/）由 Actions 构建部署（仓库设置 Pages 来源为 GitHub Actions）。构建前按最新正式版 Release 生成
+# docs/_data/downloads.json（scripts/site-downloads.mjs），终端安装脚本读取的 install/downloads.tsv 因此随发版更新。
+# - docs 或生成脚本改动推送到 master 时部署；PR 中只构建，检查清单生成与 Jekyll 能通过。
+# - 正式版发布流水线结束后重新部署。workflow_run 总在默认分支上运行：github-pages 环境只允许 master 部署，
+#   由标签触发的发布流水线不能直接部署。流水线失败也照常运行，数据只取已公开的最新正式版。
+on:
+  push:
+    branches: [master]
+    paths: ['docs/**', 'scripts/site-downloads.mjs', 'scripts/distribution.mjs', 'scripts/release-assets.mjs', '.github/workflows/pages.yml']
+  pull_request:
+    paths: ['docs/**', 'scripts/site-downloads.mjs', 'scripts/distribution.mjs', 'scripts/release-assets.mjs', '.github/workflows/pages.yml']
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages-${{ github.event_name == 'pull_request' && github.ref || 'deploy' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    name: Build site
+    # 测试版标签（含连字符）不会改变最新正式版，跳过。
+    if: github.event_name != 'workflow_run' || !contains(github.event.workflow_run.head_branch, '-')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      # releases/latest 只返回已公开的最新正式版；附件不全或缺少 SHA-256 时构建失败，线上保留上一次部署。
+      - name: Generate download manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/releases/latest" > "$RUNNER_TEMP/release.json"
+          node scripts/site-downloads.mjs "$RUNNER_TEMP/release.json" docs/_data/downloads.json
+
+      - uses: actions/configure-pages@v6
+        if: github.event_name != 'pull_request'
+
+      # 与传统模式相同的 github-pages 构建环境，_config.yml 与插件行为不变。
+      - uses: actions/jekyll-build-pages@v1
+        with:
+          source: ./docs
+          destination: ./_site
+
+      # 部署前确认安装清单渲染出了全部附件，避免空清单上线后终端安装失败。
+      - name: Check install manifest
+        run: |
+          rows=$(grep -c "$(printf '\t')https://github.com/bitdan/snap-desk/releases/download/" _site/install/downloads.tsv)
+          test "$rows" -eq "$(jq '.assets | length' docs/_data/downloads.json)"
+          cat _site/install/downloads.tsv
+
+      - uses: actions/upload-pages-artifact@v5
+        if: github.event_name != 'pull_request'
+
+  deploy:
+    name: Deploy
+    needs: build
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5

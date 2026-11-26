@@ -1,4 +1,5 @@
-# GitHub Pages（传统模式，从 master 的 /docs 用 Jekyll 构建）发布配置。
+# GitHub Pages 发布配置：.github/workflows/pages.yml 用 Jekyll 构建 docs/ 并部署，
+# 构建前生成 _data/downloads.json（最新正式版的下载清单，不提交到仓库）。
 # performance/ 是项目内部的性能测试脚本与结果，只在仓库中查看，不发布到官网。
 exclude:
   - performance

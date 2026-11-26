@@ -44,8 +44,9 @@ main() {
     if [ "$kind" = deb ]; then
         command -v apt >/dev/null && command -v sudo >/dev/null || fail '--deb requires apt and sudo.'
     fi
-    if ! find_asset 'https://raw.githubusercontent.com/bitdan/homebrew-snap-desk/HEAD/downloads.tsv'; then
-        find_asset 'https://bitdan.github.io/snap-desk/install/downloads.tsv' || fail 'Could not resolve a stable download. See GitHub Releases.'
+    # 官网清单在每次发版后重新部署；raw.githubusercontent.com 在部分网络下不可达，tap 仓库的副本只作备用。
+    if ! find_asset 'https://bitdan.github.io/snap-desk/install/downloads.tsv'; then
+        find_asset 'https://raw.githubusercontent.com/bitdan/homebrew-snap-desk/HEAD/downloads.tsv' || fail 'Could not resolve a stable download. See GitHub Releases.'
     fi
 
     work=$(mktemp -d "${TMPDIR:-/tmp}/snap-desk.XXXXXXXX") || fail 'Could not create a temporary directory.'

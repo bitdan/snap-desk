@@ -7,7 +7,7 @@
   "type": "module",
   "scripts": {
     "check:architecture": "node scripts/check-architecture.mjs",
-    "test": "npm run check:architecture && node --test scripts/sync-version.test.mjs scripts/update-manifest.test.mjs scripts/release-assets.test.mjs scripts/release-signing.test.mjs scripts/release-notes.test.mjs scripts/package-gpui.test.mjs scripts/check-architecture.test.mjs scripts/distribution.test.mjs scripts/downloads.test.mjs scripts/install.test.mjs",
+    "test": "npm run check:architecture && node --test scripts/sync-version.test.mjs scripts/update-manifest.test.mjs scripts/release-assets.test.mjs scripts/release-signing.test.mjs scripts/release-notes.test.mjs scripts/package-gpui.test.mjs scripts/check-architecture.test.mjs scripts/distribution.test.mjs scripts/downloads.test.mjs scripts/site-downloads.test.mjs scripts/install.test.mjs",
     "version:sync": "node scripts/sync-version.mjs",
     "desktop:dev": "cargo run -p snap-desk-gpui",
     "desktop:package": "node scripts/package-gpui.mjs",
