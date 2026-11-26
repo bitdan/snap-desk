@@ -18,6 +18,12 @@
 //! 图片上的按下交给编辑器（`annotate.rs`），“移动贴图”按钮回到拖动窗口。标注坐标为贴图图像像素，
 //! 复制/保存时合成到底图副本，不改变可编辑对象；旋转/翻转用 core `transform_annotations` 随图变换，
 //! “恢复原图”恢复贴图创建时的标注。
+//!
+//! 选择文字：`T`、工具栏或右键菜单进入。用设置中所选的 OCR 引擎识别底图（不含标注），
+//! 把逐行识别框铺成一层不可见的文字层（core `recognition::text_layer`），像网页一样拖选、
+//! 双击取词、三击取行、Ctrl/⌘+A 全选、Ctrl/⌘+C 复制文字、`H` 把选区转成荧光笔标注；Esc 退出。
+//! 文字层按底图版本缓存，旋转、翻转等变换后作废并按新图重新识别，不推算旧坐标。
+//! 坐标与标注相同用图像像素，绘制时随缩放与 DPI 换算，因此缩放后选区仍贴合文字。
 use crate::annotate::{self, Action, Editor, Job, Layers, Tool, ToolbarProps};
 use gpui_kit::{
     component::input::{Textarea, TextareaState},
@@ -27,6 +33,10 @@ use image::RgbaImage;
 use snap_core::{
     annotations::{Annotation, Point as ImagePoint, edit::Bounds as ImageBounds},
     pins::{self as core_pins, PinAppearance, PinLayout, PinShadow, Transform},
+    recognition::{
+        ocr::OcrResult,
+        text_layer::{self, Selection, TextLayer, Unavailable},
+    },
     settings::{ExportSettings, Language},
 };
 use std::{sync::Arc, time::Duration};
@@ -36,8 +46,18 @@ const MENU_WIDTH: f32 = 224.0;
 const ITEM_HEIGHT: f32 = 28.0;
 const SEPARATOR_HEIGHT: f32 = 9.0;
 const OPACITIES: [f32; 4] = [1.0, 0.8, 0.6, 0.4];
-/// 工具栏完整显示所需宽度（逻辑像素）：移动 + 7 个工具分组 + 撤销/重做 + 缩放、处理、置顶、保存、关闭、复制。
-const TOOLBAR_WIDTH: f32 = 680.0;
+/// 工具栏完整显示所需宽度（逻辑像素）：移动 + 7 个工具分组 + 撤销/重做 + 缩放、选择文字、识别、处理、
+/// 置顶、保存、关闭、复制。选择文字模式下多一个“高亮”按钮，另加 [`TEXT_BUTTON_WIDTH`]。
+const TOOLBAR_WIDTH: f32 = 712.0;
+/// 工具栏一个图标按钮占的宽度（30 + 间距）。
+const TEXT_BUTTON_WIDTH: f32 = 32.0;
+/// 选中文字的底色：主题强调色 #3b5bdb，约 35% 不透明，下面的文字仍清晰可读。
+const TEXT_SELECTION: u32 = 0x3b5bdb59;
+/// “高亮所选文字”生成的荧光笔：色板里的黄色，透明度与荧光笔工具默认值一致。
+const TEXT_HIGHLIGHT_COLOR: &str = "#facc15";
+const TEXT_HIGHLIGHT_OPACITY: f64 = 0.35;
+/// “选择文字”按钮图标（Lucide text-cursor，ISC 许可，见 assets/icons/LICENSE-LUCIDE）。
+const TEXT_CURSOR_ICON: &[u8] = include_bytes!("../assets/icons/text-cursor.svg");
 
 /// 贴图位置：原位（截图选区）或居中（剪贴板）。
 pub enum Placement {
@@ -192,6 +212,10 @@ pub fn create(
                 original_annotations: annotations,
                 layers,
                 annotating: false,
+                text_select: None,
+                text_cache: None,
+                image_serial: 0,
+                text_pending: None,
                 toolbar: false,
                 drag_text: drag_text.clone(),
                 hidden: false,
@@ -628,6 +652,11 @@ fn decode_clipboard_image(bytes: &[u8]) -> Result<RgbaImage, String> {
 #[derive(Clone, Copy, PartialEq)]
 enum Item {
     Recognize(crate::recognition::Mode),
+    /// 进入 / 退出选择文字模式。
+    SelectText,
+    /// 有选中文字时才出现在菜单顶部。
+    CopyText,
+    HighlightText,
     Copy,
     Save,
     Topmost,
@@ -641,10 +670,11 @@ enum Item {
     Separator,
 }
 
-const MENU: [Item; 27] = [
+const MENU: [Item; 28] = [
     Item::Recognize(crate::recognition::Mode::Ocr),
     Item::Recognize(crate::recognition::Mode::Qr),
     Item::Recognize(crate::recognition::Mode::Translate),
+    Item::SelectText,
     Item::Separator,
     Item::Copy,
     Item::Save,
@@ -835,11 +865,20 @@ impl Render for PinToolbar {
     }
 }
 
-fn menu_height() -> f32 {
-    MENU.iter()
+fn menu_height(items: &[Item]) -> f32 {
+    items
+        .iter()
         .map(|item| if *item == Item::Separator { SEPARATOR_HEIGHT } else { ITEM_HEIGHT })
         .sum::<f32>()
         + 12.0
+}
+
+/// “选择文字”模式的状态；文字层在识别完成前为空（显示“正在识别文字…”）。
+struct TextSelect {
+    layer: Option<Arc<TextLayer>>,
+    selection: Option<Selection>,
+    /// 按下落在文字上、正在拖选；双击取词、三击取行后拖动不再改成逐字选择。
+    dragging: bool,
 }
 
 pub struct Pin {
@@ -850,6 +889,14 @@ pub struct Pin {
     layers: Layers,
     /// 选择了标注工具：图片上的按下交给编辑器，否则拖动窗口。
     annotating: bool,
+    /// 选择文字模式（与标注工具互斥）；None 为普通模式。
+    text_select: Option<TextSelect>,
+    /// 按底图版本缓存的文字层：同一张图再次进入模式时不重复识别。
+    text_cache: Option<(u64, Arc<TextLayer>)>,
+    /// 底图版本，每次变换（旋转、翻转、灰度、反色、恢复原图）加一，旧文字层随之作废。
+    image_serial: u64,
+    /// 正在识别的底图版本；同一时间只识别一次（本地引擎不允许并发识别）。
+    text_pending: Option<u64>,
     /// 外置工具栏是否显示（空格切换）。
     toolbar: bool,
     /// 被 [`hide_pins`] 临时隐藏（对话框期间）。
@@ -932,9 +979,14 @@ impl Pin {
     }
 
     fn flash(&mut self, message: String, cx: &mut Context<Self>) {
+        self.flash_for(message, 1200, cx);
+    }
+
+    /// 错误提示停留更久，来得及读完；仍是贴图内的短提示，不弹模态框。
+    fn flash_for(&mut self, message: String, millis: u64, cx: &mut Context<Self>) {
         self.badge = Some(message);
         self.badge_task = Some(cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(Duration::from_millis(1200)).await;
+            cx.background_executor().timer(Duration::from_millis(millis)).await;
             let _ = this.update(cx, |pin, cx| {
                 pin.badge = None;
                 cx.notify();
@@ -970,14 +1022,20 @@ impl Pin {
         let Some(pin) = window.window_handle().downcast::<Pin>() else {
             return;
         };
-        let entries: Vec<Entry> = MENU
+        let mut items = Vec::with_capacity(MENU.len() + 3);
+        if self.selected_text().is_some() {
+            items.extend([Item::CopyText, Item::HighlightText, Item::Separator]);
+        }
+        items.extend(MENU);
+        let height = menu_height(&items);
+        let entries: Vec<Entry> = items
             .into_iter()
             .map(|item| {
                 let (label, checked) = self.label(item);
                 Entry { item, label, checked, shortcut: Self::shortcut(item) }
             })
             .collect();
-        let size = size(px(MENU_WIDTH + 2.0), px(menu_height() + 2.0));
+        let size = size(px(MENU_WIDTH + 2.0), px(height + 2.0));
         let origin = window.bounds().origin + position;
         let screen = window.display(cx).map(|d| d.bounds());
         let mut at = origin;
@@ -1025,6 +1083,9 @@ impl Pin {
         self.close_menu(window, cx);
         match item {
             Item::Recognize(mode) => self.recognize(mode, cx),
+            Item::SelectText => self.toggle_text_select(window, cx),
+            Item::CopyText => self.copy_text(cx),
+            Item::HighlightText => self.highlight_text(window, cx),
             Item::Copy => self.copy(window, cx),
             Item::Save => self.save(window, cx),
             Item::Topmost => match crate::native::set_topmost(window, !self.topmost) {
@@ -1258,6 +1319,7 @@ impl Pin {
                     pin.editor.crop = image_bounds(&pin.image);
                     pin.editor.reset(shapes);
                     pin.layers.update(&pin.editor);
+                    pin.image_changed(cx);
                     cx.notify();
                     old
                 })
@@ -1390,11 +1452,14 @@ impl Pin {
         // 窗口贴合工具栏：工具行 40 + 上下边距；选了标注工具时多一行样式条（行距 6）。
         let options = self.annotating && !(self.editor.tool == Tool::Edit && self.editor.selected.is_none());
         // 文字、矩形、箭头的样式条比工具行宽，按样式条估算宽度加宽；工具栏随贴图状态变化重新定位时一并更新。
-        let width = if options {
-            (TOOLBAR_WIDTH + 72.0).max(annotate::options_width(&self.editor) + 32.0)
-        } else {
-            TOOLBAR_WIDTH + 32.0
-        };
+        // 选择文字模式时工具行多一个按钮。
+        let text_button = if self.text_select.is_some() { TEXT_BUTTON_WIDTH } else { 0.0 };
+        let width = text_button
+            + if options {
+                (TOOLBAR_WIDTH + 72.0).max(annotate::options_width(&self.editor) + 32.0)
+            } else {
+                TOOLBAR_WIDTH + 32.0
+            };
         let height = 40.0 + if options { 46.0 } else { 0.0 } + extra;
         // 窗口比工具条大一圈透明边距放阴影；定位按工具条本身计算。
         let margin = px(TOOLBAR_SHADOW);
@@ -1501,6 +1566,7 @@ impl Pin {
         let job = match action {
             Action::Tool(tool) => {
                 this.annotating = true;
+                this.text_select = None;
                 e.set_tool(tool);
                 None
             }
@@ -1558,6 +1624,9 @@ impl Pin {
         // 容差按屏幕 6 逻辑像素换算到图像像素。
         let (w, _) = PinLayout::load().displayed(self.image.width(), self.image.height(), self.zoom);
         let tolerance = 6.0 * f64::from(scale) * f64::from(self.image.width()) / f64::from(w.max(1));
+        if self.press_text(p, tolerance, event.click_count, event.modifiers.shift, cx) {
+            return;
+        }
         if self.annotating && !self.locked {
             let handle = self.editor.handle_at(p, tolerance);
             if inside || handle.is_some() {
@@ -1581,6 +1650,11 @@ impl Pin {
     }
 
     fn motion(&mut self, event: &MouseMoveEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if self.text_select.as_ref().is_some_and(|mode| mode.dragging) {
+            let p = self.to_point(event.position, window.scale_factor());
+            self.drag_text_selection(p, event.pressed_button == Some(MouseButton::Left), cx);
+            return;
+        }
         if event.pressed_button != Some(MouseButton::Left) || self.editor.draft.is_none() || self.editor.text.is_some() {
             return;
         }
@@ -1594,6 +1668,9 @@ impl Pin {
     }
 
     fn release(&mut self, _: &MouseUpEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(mode) = self.text_select.as_mut() {
+            mode.dragging = false;
+        }
         if self.editor.draft.is_none() {
             return;
         }
@@ -1651,7 +1728,12 @@ impl Pin {
                 self.editor.abort();
                 self.after_edit(window, cx);
             }
+            // 选择文字模式中先退出模式，再按一次才关闭贴图。
+            "escape" if self.text_select.is_some() => self.leave_text_select(cx),
             "escape" => window.remove_window(),
+            "t" if !command && !keystroke.modifiers.alt => self.toggle_text_select(window, cx),
+            "a" if command && self.text_select.is_some() => self.select_all_text(cx),
+            "h" if !command && !keystroke.modifiers.alt && self.selected_text().is_some() => self.highlight_text(window, cx),
             "space" if !command => self.toggle_toolbar(window, cx),
             "z" if command && editable => {
                 if keystroke.modifiers.shift {
@@ -1686,6 +1768,8 @@ impl Pin {
                 self.run(job, cx);
                 self.after_edit(window, cx);
             }
+            // 有选中文字时复制文字，否则复制图片。
+            "c" if command && self.selected_text().is_some() => self.copy_text(cx),
             "c" if command => self.copy(window, cx),
             "s" if command => self.save(window, cx),
             "w" if command => window.remove_window(),
@@ -1708,6 +1792,9 @@ impl Pin {
                 }),
                 false,
             ),
+            Item::SelectText => (self.text("选择文字"), self.text_select.is_some()),
+            Item::CopyText => (self.text("复制所选文字"), false),
+            Item::HighlightText => (self.text("高亮所选文字"), false),
             Item::Copy => (self.text("复制图片"), false),
             Item::Save => (self.text("保存图片"), false),
             Item::Topmost => (self.text("窗口置顶"), self.topmost),
@@ -1736,8 +1823,235 @@ impl Pin {
         }
     }
 
+    /// 进入或退出选择文字模式。进入时退出标注工具；同一张图已识别过就直接用缓存，
+    /// 否则先确认所选引擎会返回文字位置（在线 OCR 不返回，提前提示，不上传图片），再在后台识别。
+    fn toggle_text_select(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.text_select.is_some() {
+            self.leave_text_select(cx);
+            return;
+        }
+        if self.editor.pending || self.editor.interacting() || self.click_through {
+            return;
+        }
+        let cached = self.text_cache.as_ref().filter(|(serial, _)| *serial == self.image_serial).map(|(_, layer)| layer.clone());
+        if cached.is_none() && self.text_pending.is_none() {
+            let settings = crate::shell::settings(cx);
+            let error = match snap_core::recognition::locates_text(&settings) {
+                Ok(true) => None,
+                Ok(false) => Some(Unavailable::NoPositions.message().to_owned()),
+                Err(error) => Some(error),
+            };
+            if let Some(error) = error {
+                log::info!("event=gpui.pin_text_select_unavailable message={error}");
+                let message = snap_core::i18n::for_language(&self.language, &error).to_owned();
+                self.flash_for(message, 3000, cx);
+                return;
+            }
+        }
+        self.annotating = false;
+        self.editor.select(None);
+        let ready = cached.is_some();
+        self.text_select = Some(TextSelect { layer: cached, selection: None, dragging: false });
+        if !ready {
+            self.recognize_text(cx);
+        }
+        log::info!("event=gpui.pin_text_select_entered cached={ready}");
+        self.after_edit(window, cx);
+    }
+
+    fn leave_text_select(&mut self, cx: &mut Context<Self>) {
+        if self.text_select.take().is_some() {
+            cx.notify();
+        }
+    }
+
+    /// 后台识别当前底图（不含标注：标注不是图片里的文字，荧光笔也会干扰识别）。
+    /// 已有识别在进行时不再发起，完成后若底图已变，由 [`Pin::text_recognized`] 按新图补一次。
+    fn recognize_text(&mut self, cx: &mut Context<Self>) {
+        if self.text_pending.is_some() {
+            return;
+        }
+        let serial = self.image_serial;
+        self.text_pending = Some(serial);
+        let (width, height) = self.image.dimensions();
+        let task = crate::recognition::recognize_text(cx, self.image.clone());
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            let _ = this.update(cx, |pin, cx| pin.text_recognized(serial, width, height, result, cx));
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn text_recognized(&mut self, serial: u64, width: u32, height: u32, result: Result<OcrResult, String>, cx: &mut Context<Self>) {
+        self.text_pending = None;
+        let waiting = self.text_select.as_ref().is_some_and(|mode| mode.layer.is_none());
+        if serial != self.image_serial {
+            // 识别期间图片已变换：旧坐标不适用新图，丢弃结果；仍在等待文字层时按新图重新识别。
+            if waiting {
+                self.recognize_text(cx);
+            }
+            return;
+        }
+        let layer = match result {
+            Ok(result) => {
+                log::info!(
+                    "event=gpui.pin_text_recognized provider={} lines={} elapsed_ms={}",
+                    result.provider,
+                    result.lines.len(),
+                    result.elapsed_ms
+                );
+                TextLayer::new(&result, width, height).map_err(|reason| self.text(reason.message()))
+            }
+            Err(error) => {
+                log::warn!("event=gpui.pin_text_recognize_failed message={error}");
+                Err(snap_core::i18n::for_language(&self.language, &error).to_owned())
+            }
+        };
+        match layer {
+            Ok(layer) => {
+                let layer = Arc::new(layer);
+                let count = layer.lines().len();
+                self.text_cache = Some((serial, layer.clone()));
+                if let Some(mode) = self.text_select.as_mut().filter(|mode| mode.layer.is_none()) {
+                    mode.layer = Some(layer);
+                    let message = self.text("已识别 {0} 行文字").replace("{0}", &count.to_string());
+                    self.flash(message, cx);
+                }
+            }
+            // 失败只在仍等待结果时提示并退出模式；用户已退出模式就不再打扰。
+            Err(message) if waiting => {
+                self.text_select = None;
+                self.flash_for(message, 3000, cx);
+            }
+            Err(_) => {}
+        }
+        cx.notify();
+    }
+
+    /// 底图换了（变换或恢复原图）：文字层作废；仍在选择文字模式时清空选区并按新图重新识别。
+    fn image_changed(&mut self, cx: &mut Context<Self>) {
+        self.image_serial = self.image_serial.wrapping_add(1);
+        self.text_cache = None;
+        if let Some(mode) = self.text_select.as_mut() {
+            mode.layer = None;
+            mode.selection = None;
+            mode.dragging = false;
+            self.recognize_text(cx);
+        }
+    }
+
+    /// 文字层与非空选区（选择文字模式、识别完成且选中了内容时才有）。
+    fn text_selection(&self) -> Option<(&TextLayer, Selection)> {
+        let mode = self.text_select.as_ref()?;
+        let selection = mode.selection.filter(|selection| !selection.is_empty())?;
+        Some((mode.layer.as_deref()?, selection))
+    }
+
+    /// 选中的文字；只有空白时视为没有选中。
+    fn selected_text(&self) -> Option<String> {
+        let (layer, selection) = self.text_selection()?;
+        Some(layer.text(selection)).filter(|text| !text.trim().is_empty())
+    }
+
+    /// 选择文字模式下的按下：落在文字上（或按住 Shift 扩展选区）时开始拖选，双击取词、三击取行，返回 true；
+    /// 识别中或落在文字以外时清除选区并返回 false，按下照常拖动贴图。`p` 与 `tolerance` 为图像像素。
+    fn press_text(&mut self, p: ImagePoint, tolerance: f64, clicks: usize, extend: bool, cx: &mut Context<Self>) -> bool {
+        let Some(mode) = self.text_select.as_mut() else {
+            return false;
+        };
+        let Some(layer) = mode.layer.clone() else {
+            return false;
+        };
+        let extend = extend && mode.selection.is_some();
+        if !extend && !layer.hit(p, tolerance) {
+            if mode.selection.take().is_some() {
+                cx.notify();
+            }
+            return false;
+        }
+        mode.selection = match clicks {
+            2 => layer.word_at(p),
+            n if n >= 3 => layer.line_at(p),
+            _ => layer.caret_at(p).map(|caret| match mode.selection {
+                Some(current) if extend => Selection { anchor: current.anchor, focus: caret },
+                _ => Selection::at(caret),
+            }),
+        };
+        mode.dragging = clicks < 2;
+        cx.notify();
+        true
+    }
+
+    /// 拖选：焦点跟随指针，拖出文字范围时停在最近一行的行首或行尾。松开左键后结束。
+    fn drag_text_selection(&mut self, p: ImagePoint, pressed: bool, cx: &mut Context<Self>) {
+        let Some(mode) = self.text_select.as_mut() else {
+            return;
+        };
+        if !pressed {
+            mode.dragging = false;
+            return;
+        }
+        let caret = mode.layer.as_ref().and_then(|layer| layer.caret_at(p));
+        if let (Some(caret), Some(selection)) = (caret, mode.selection.as_mut()) {
+            if selection.focus != caret {
+                selection.focus = caret;
+                cx.notify();
+            }
+        }
+    }
+
+    fn select_all_text(&mut self, cx: &mut Context<Self>) {
+        if let Some(mode) = self.text_select.as_mut() {
+            if let Some(layer) = mode.layer.as_ref() {
+                mode.selection = layer.select_all();
+                mode.dragging = false;
+                cx.notify();
+            }
+        }
+    }
+
+    /// 复制选中的文字：按阅读顺序，换行保留（拼接规则见 core `TextLayer::text`）。
+    fn copy_text(&mut self, cx: &mut Context<Self>) {
+        let Some(text) = self.selected_text() else {
+            return;
+        };
+        cx.write_to_clipboard(ClipboardItem::new_string(text));
+        let message = self.text("已复制文字");
+        self.flash(message, cx);
+    }
+
+    /// 把选区转成荧光笔标注（每段文字一笔，一步撤销），之后可用标注工具改色、移动或删除；
+    /// 完成后清除选区，露出高亮效果。数量超限等校验失败时只提示，不改标注。
+    fn highlight_text(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.locked || self.busy || self.editor.pending || self.editor.interacting() {
+            return;
+        }
+        let Some((layer, selection)) = self.text_selection() else {
+            return;
+        };
+        let (width, height) = self.image.dimensions();
+        let marks = text_layer::highlighter_marks(&layer.highlights(selection), TEXT_HIGHLIGHT_COLOR, TEXT_HIGHLIGHT_OPACITY, width, height);
+        let mut combined = self.editor.shapes().to_vec();
+        combined.extend(marks.iter().cloned());
+        if let Err(error) = snap_core::annotations::validate(&combined, width, height) {
+            let message = snap_core::i18n::for_language(&self.language, &error).to_owned();
+            self.flash_for(message, 3000, cx);
+            return;
+        }
+        if self.editor.append(marks) {
+            if let Some(mode) = self.text_select.as_mut() {
+                mode.selection = None;
+            }
+        }
+        self.after_edit(window, cx);
+    }
+
     fn shortcut(item: Item) -> &'static str {
         match item {
+            Item::SelectText => "T",
+            Item::CopyText => "Ctrl+C",
+            Item::HighlightText => "H",
             Item::Copy => "Ctrl+C",
             Item::Save => "Ctrl+S",
             Item::ClickThrough => "Ctrl+Alt+P",
@@ -1791,6 +2105,19 @@ impl Render for Pin {
         }
         let map = |p: ImagePoint| point(px(p.x as f32 * kx), px(p.y as f32 * ky));
         content = content.children(annotate::selection_overlay(&self.editor, &map));
+        // 选择文字：每个识别框一块透明区域（鼠标移上去显示文字光标），选区按字符边界画半透明底色。
+        // 文字层是图像像素，与标注一样乘 kx / ky，缩放和 DPI 变化后仍贴合文字。
+        if let Some(mode) = self.text_select.as_ref() {
+            if let Some(layer) = mode.layer.as_ref() {
+                let area = |r: snap_core::recognition::overlay::Rect| {
+                    div().absolute().left(px(r.x * kx)).top(px(r.y * ky)).w(px(r.width * kx)).h(px(r.height * ky))
+                };
+                content = content.children(layer.lines().iter().map(|line| area(line.rect).cursor_text()));
+                if let Some(selection) = mode.selection.filter(|selection| !selection.is_empty()) {
+                    content = content.children(layer.highlights(selection).into_iter().map(|r| area(r).bg(rgba(TEXT_SELECTION))));
+                }
+            }
+        }
         // 不画边框（用户反馈不需要），只保留圆角与阴影。
         let _ = border;
         let mut stage = div()
@@ -1863,6 +2190,8 @@ impl Render for Pin {
                 .absolute()
                 .left(px(inset + 8.0))
                 .top(px(top))
+                // 较长的错误提示在图片宽度内换行，不伸出贴图。
+                .max_w(px((w - 16.0).max(48.0)))
                 .px_1()
                 .rounded_sm()
                 .bg(rgba(0x000000b0))
@@ -1872,6 +2201,8 @@ impl Render for Pin {
         };
         if let Some(text) = self.badge.clone() {
             root = root.child(badge(text, top + 8.0));
+        } else if self.text_select.as_ref().is_some_and(|mode| mode.layer.is_none()) {
+            root = root.child(badge(self.text("正在识别文字…"), top + 8.0));
         }
         if self.click_through {
             let hint = self.text("鼠标穿透中 · 用全局贴图快捷键或托盘恢复");
@@ -1889,13 +2220,15 @@ impl Pin {
         let disabled = self.locked || self.busy;
         let props = ToolbarProps { editor: &self.editor, active: self.annotating, disabled, compact: true, grouped: true, collapsible: false, popover_up: false, text: &text };
         let host = annotate::Host { view: &view, window, dispatch: Self::remote_action };
+        let selecting = self.text_select.is_some();
         let leading = vec![
-            annotate::icon_button("pin-move", annotate::icons::MOVE, self.text("移动贴图"), !self.annotating, disabled)
+            annotate::icon_button("pin-move", annotate::icons::MOVE, self.text("移动贴图"), !self.annotating && !selecting, disabled)
                 .on_click(cx.listener(|pin, _: &ClickEvent, _, cx| {
                     pin.in_own_window(cx, |pin, window, cx| {
                         if pin.editor.interacting() || pin.editor.pending {
                             return;
                         }
+                        pin.leave_text_select(cx);
                         pin.annotating = false;
                         pin.editor.select(None);
                         pin.after_edit(window, cx);
@@ -1927,8 +2260,28 @@ impl Pin {
                     cx.notify();
                 })
             }));
-        let trailing = vec![
+        let mut trailing = vec![
             zoom.into_any_element(),
+            annotate::icon_button("pin-select-text", TEXT_CURSOR_ICON, self.text("选择文字 T"), selecting, self.click_through)
+                .on_click(cx.listener(|pin, _: &ClickEvent, _, cx| {
+                    pin.in_own_window(cx, |pin, window, cx| pin.toggle_text_select(window, cx))
+                }))
+                .into_any_element(),
+        ];
+        if selecting {
+            // 只在选择文字模式里出现；没有选中文字时置灰。
+            let empty = self.selected_text().is_none() || disabled;
+            trailing.push(
+                annotate::icon_button("pin-highlight-text", annotate::icons::HIGHLIGHTER, self.text("高亮所选文字 H"), false, empty)
+                    .on_click(cx.listener(move |pin, _: &ClickEvent, _, cx| {
+                        if !empty {
+                            pin.in_own_window(cx, |pin, window, cx| pin.highlight_text(window, cx));
+                        }
+                    }))
+                    .into_any_element(),
+            );
+        }
+        trailing.extend([
             annotate::icon_button("pin-recognize", annotate::icons::SCAN_TEXT, self.text("识别"), false, self.busy)
                 .on_click(cx.listener(|pin, event: &ClickEvent, window, cx| {
                     // 识别菜单与右键菜单共用（识别项在最上方）；按屏幕位置换算回贴图窗口坐标。
@@ -1968,7 +2321,7 @@ impl Pin {
                 .bg(rgb(0x2563eb))
                 .on_click(cx.listener(|pin, _: &ClickEvent, _, cx| pin.in_own_window(cx, |pin, window, cx| pin.copy(window, cx))))
                 .into_any_element(),
-        ];
+        ]);
         div()
             .id("pin-toolbar")
             .flex()

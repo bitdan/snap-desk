@@ -64,6 +64,11 @@ lead: 全局快捷键可以在主界面“快捷键”页修改；窗口内的�
 | <kbd>Ctrl</kbd>+<kbd>C</kbd> | 复制图片 |
 | <kbd>Ctrl</kbd>+<kbd>S</kbd> | 保存图片 |
 | <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>P</kbd> | 开关鼠标穿透 |
+| <kbd>T</kbd> | 选择文字：在图片上直接选中、复制文字 |
+| 选择文字时 <kbd>Ctrl</kbd>+<kbd>A</kbd> / <kbd>Ctrl</kbd>+<kbd>C</kbd> | 全选 / 复制选中的文字 |
+| 选择文字时双击 / 三击 | 选中一个词 / 一整行 |
+| 选择文字时 <kbd>H</kbd> | 把选中的文字转成荧光笔标注 |
+| 选择文字时 <kbd>Esc</kbd> | 退出选择文字 |
 | <kbd>Esc</kbd> / <kbd>Ctrl</kbd>+<kbd>W</kbd> | 关闭贴图 |
 | 右键 | 更多操作菜单 |
 
