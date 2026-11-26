@@ -134,7 +134,7 @@ apps/desktop-gpui/     # 桌面应用（主程序 snap-desk-gpui，打包时复�
 crates/snap-core/      # 与界面无关的业务核心
   src/capture/         # 桌面采集与窗口/控件候选（Windows、macOS、Linux X11/Wayland）、选区合成
   src/settings/        # 设置模型、校验、落盘与快捷键事务
-  src/recognition/     # 服务目录、OCR、翻译与凭据
+  src/recognition/     # 服务目录、OCR、贴图文字层（选择文字）、翻译与凭据
   src/clipboard/       # 历史模型、分类、SQLite 仓库与 Windows 图片剪贴板
   src/recording/       # 录屏采集、编码与输入事件
   src/pins/            # 贴图布局、像素预算、缩放步进、变换、图片文件解码与文字贴图

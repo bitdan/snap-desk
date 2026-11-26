@@ -1,6 +1,7 @@
 //! 识别与翻译：配置模型（服务目录、翻译与 OCR 设置及地址白名单）、OCR 引擎（本地 PP-OCR、
 //! Windows OCR / Apple Vision、在线 OCR 与 PaddleOCR 服务）、二维码、在线翻译与系统凭据库。
 //! 本地 CTranslate2 翻译（引擎安装、语言包、worker 进程桥）在 local_*；微信 OCR（仅 Windows x64）在 wechat_ocr。
+//! 贴图“选择文字”的文字层（命中测试、选区与复制文本）在 text_layer。
 pub mod ai_credentials;
 pub mod local_models;
 pub mod local_runtime;
@@ -16,6 +17,7 @@ pub mod providers;
 pub mod qr;
 pub mod selected_text;
 pub mod services;
+pub mod text_layer;
 pub mod translation;
 #[cfg(target_os = "macos")]
 pub mod vision_ocr;
@@ -65,6 +67,13 @@ pub fn system_ocr_languages() -> Result<Vec<ocr_config::OcrLanguage>, String> {
     Err("Windows 系统 OCR 仅支持 Windows。".into())
 }
 
+/// 所选引擎是否返回逐行位置（贴图“选择文字”依赖）。在线 OCR 只返回文字，据此在上传前就能提示，
+/// 不必白白上传一次；配置无效时返回与识别相同的错误。
+pub fn locates_text(settings: &Settings) -> Result<bool, String> {
+    let (ocr, service) = ocr_config::snapshot(settings)?;
+    Ok(service.is_none() && matches!(ocr.provider.as_str(), "local-ppocr" | "windows-media" | "wechat-ocr"))
+}
+
 /// 按已保存的 OCR 设置识别；严格使用所选引擎，不跨引擎重试或自动联网。
 /// 识别后的动作开关（自动复制、合并行）随结果返回。
 pub fn recognize(image: &image::RgbaImage, settings: &Settings, engines: &Engines) -> Result<OcrResult, String> {
@@ -85,6 +94,18 @@ pub fn recognize(image: &image::RgbaImage, settings: &Settings, engines: &Engine
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn only_offline_engines_locate_text() {
+        let mut settings = crate::settings::Settings::default();
+        assert_eq!(super::locates_text(&settings), Ok(true));
+        settings.ocr.provider = "wechat-ocr".into();
+        assert_eq!(super::locates_text(&settings), Ok(true));
+        // 在线服务未选中有效连接：与识别时相同的配置错误，不进入上传。
+        settings.ocr.provider = "service".into();
+        settings.ocr.service_id = "missing".into();
+        assert!(super::locates_text(&settings).is_err());
+    }
+
     /// 依赖本机已下载的 OCR 资源与系统字体，CI 不跑：
     /// `cargo test -p snap-core recognizes_rendered_text -- --ignored --nocapture`。
     #[test]

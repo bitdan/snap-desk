@@ -122,6 +122,14 @@ pub fn open_text(cx: &mut App, text: Option<String>) {
     crate::translation_window::open(cx, text);
 }
 
+/// 贴图“选择文字”：在后台用设置中所选引擎识别图片，与识别结果窗口共用常驻的本地引擎；
+/// 返回的任务交给调用方等待并建立文字层（`snap_core::recognition::text_layer`）。
+pub fn recognize_text(cx: &mut App, image: Arc<RgbaImage>) -> Task<Result<OcrResult, String>> {
+    let settings = crate::shell::settings(cx);
+    let local = local_engine(cx);
+    cx.background_executor().spawn(async move { recognition::recognize(&image, &settings, &local) })
+}
+
 /// 打开识别结果窗口并立即开始识别。
 pub fn open(cx: &mut App, image: RgbaImage, mode: Mode) {
     let settings = crate::shell::settings(cx);

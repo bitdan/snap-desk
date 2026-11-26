@@ -1052,6 +1052,19 @@ impl Editor {
         self.selected = None;
     }
 
+    /// 追加一组已校验的标注，作为一步撤销（贴图把选中的文字转成荧光笔时使用）；返回是否已提交。
+    pub fn append(&mut self, shapes: Vec<Annotation>) -> bool {
+        if self.locked() || self.interacting() || shapes.is_empty() {
+            return false;
+        }
+        let mut next = self.shapes().to_vec();
+        next.extend(shapes);
+        let version = self.version;
+        self.commit(next);
+        self.selected = None;
+        self.version != version
+    }
+
     pub fn undo(&mut self) {
         if !self.locked() && !self.interacting() && self.history.undo() {
             self.selected = None;
