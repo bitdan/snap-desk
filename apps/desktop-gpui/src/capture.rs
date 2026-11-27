@@ -820,6 +820,8 @@ fn open_overlays(cx: &mut App, session: &Entity<Session>) {
         // 录屏中截图：浮层不进入录像，录下来的仍是实际桌面。
         let exclude = crate::recording::active(cx);
         match cx.open_window(options, |window, cx| {
+            // 复制、保存等完成后浮层立即消失，不淡出。
+            crate::native::disable_transitions(window);
             if exclude {
                 if let Err(error) = crate::native::exclude_from_capture(window) {
                     log::warn!("event=gpui.overlay_exclude_failed message={error}");
