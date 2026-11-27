@@ -116,6 +116,26 @@ pub fn frameless(window: &Window) {
     let _ = window;
 }
 
+/// 关掉 DWM 的窗口打开/关闭过渡。系统开启“最小化和最大化时显示窗口动画”（默认开启）时，
+/// 窗口销毁会淡出约 0.2 秒；全屏的截图浮层淡出时，冻结画面叠在实际桌面上，看起来像闪了一下（issue #111）。
+pub fn disable_transitions(window: &Window) {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_TRANSITIONS_FORCEDISABLED};
+        let hwnd = hwnd(window) as windows_sys::Win32::Foundation::HWND;
+        if hwnd.is_null() {
+            return;
+        }
+        let disabled: i32 = 1; // BOOL TRUE
+        // SAFETY: hwnd 来自存活窗口；属性值指向栈上的 BOOL，长度与类型一致。
+        unsafe {
+            DwmSetWindowAttribute(hwnd, DWMWA_TRANSITIONS_FORCEDISABLED as u32, &disabled as *const _ as *const _, std::mem::size_of_val(&disabled) as u32);
+        }
+    }
+    #[cfg(not(windows))]
+    let _ = window;
+}
+
 /// 点击穿透：加上分层 + 透明扩展样式后，鼠标事件落到下面的窗口；DirectComposition 渲染不受影响。
 /// 透明度保持 255，显示透明度由界面自己的 opacity 决定。
 pub fn set_click_through(window: &Window, enabled: bool) -> Result<(), String> {
