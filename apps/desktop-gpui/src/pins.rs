@@ -3,7 +3,7 @@
 //! 来源：截图选区（原位贴图，图片首像素对准选区）、剪贴板（图片、文件路径、文字，居中显示），
 //! 以及剪贴板历史、暂存架和主界面“贴图”页的“打开图片贴图”（[`open_file`]）。
 //! 操作：拖动移动、滚轮/±键缩放（10% 步进）、右键菜单（复制、保存、置顶、锁定、鼠标穿透、
-//! 变换、不透明度、关闭）、Ctrl+C / Ctrl+S / Ctrl+W / Esc、Ctrl+Alt+P 切换穿透。
+//! 变换、不透明度、关闭）、双击图片关闭、Ctrl+C / Ctrl+S / Ctrl+W / Esc、Ctrl+Alt+P 切换穿透。
 //! 鼠标穿透后窗口收不到点击，由全局贴图快捷键或托盘“贴图”恢复。
 //!
 //! 尺寸见 `snap_core::pins::PinLayout`：缩放 1 表示一图像像素对应一物理像素，
@@ -1643,6 +1643,12 @@ impl Pin {
                 self.after_edit(window, cx);
                 return;
             }
+        }
+        // 双击图片关闭贴图。锁定、标注和选择文字时双击另有用途或需要防误触，不关闭；
+        // 只认图片区域，连点工具栏按钮不会关掉贴图。
+        if event.click_count >= 2 && inside && !self.locked && !self.annotating && self.text_select.is_none() {
+            window.remove_window();
+            return;
         }
         if !self.locked {
             crate::native::start_move(window);
