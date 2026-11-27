@@ -24,9 +24,10 @@
     if ([Environment]::OSVersion.Platform -ne 'Win32NT' -or $architecture -notin 'AMD64', 'X64') {
         throw 'Snap Desk requires x64 Windows.'
     }
-    $asset = Get-SnapDeskAsset 'https://raw.githubusercontent.com/bitdan/homebrew-snap-desk/HEAD/downloads.tsv'
+    # 官网清单在每次发版后重新部署；raw.githubusercontent.com 在部分网络下不可达，tap 仓库的副本只作备用。
+    $asset = Get-SnapDeskAsset 'https://bitdan.github.io/snap-desk/install/downloads.tsv'
     if (!$asset) {
-        $asset = Get-SnapDeskAsset 'https://bitdan.github.io/snap-desk/install/downloads.tsv'
+        $asset = Get-SnapDeskAsset 'https://raw.githubusercontent.com/bitdan/homebrew-snap-desk/HEAD/downloads.tsv'
     }
     if (!$asset) { throw 'Could not resolve a stable download. See GitHub Releases.' }
 

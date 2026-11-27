@@ -11,3 +11,5 @@ scripts/ci/__pycache__/
 out/
 release-assets/
 *.log
+# 官网下载清单在 Pages 部署时按最新正式版生成（scripts/site-downloads.mjs）。
+docs/_data/downloads.json
