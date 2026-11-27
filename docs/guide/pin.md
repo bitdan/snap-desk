@@ -25,7 +25,7 @@ lead: 贴图会把一张图片“钉”在屏幕最上层。对照着资料写�
 
 - **拖动**贴图可以移动位置；
 - **滚轮**或 <kbd>+</kbd> / <kbd>-</kbd> 放大缩小；
-- <kbd>Esc</kbd> 或 <kbd>Ctrl</kbd>+<kbd>W</kbd> 关闭当前贴图；
+- **双击**贴图、<kbd>Esc</kbd> 或 <kbd>Ctrl</kbd>+<kbd>W</kbd> 关闭当前贴图；锁定、标注或选择文字时双击不会关闭；
 - <kbd>Ctrl</kbd>+<kbd>C</kbd> 复制图片，<kbd>Ctrl</kbd>+<kbd>S</kbd> 保存为文件；
 - **按住 <kbd>Ctrl</kbd>（macOS 为 <kbd>⌥ Option</kbd>）再拖动**，可以把贴图拖进聊天窗口、文档或文件夹：文字贴图拖出的是文字，其余拖出的是带标注的 PNG。
 
