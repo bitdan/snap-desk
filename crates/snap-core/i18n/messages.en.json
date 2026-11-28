@@ -1297,8 +1297,8 @@
   "{0} 行 · {1} 字": "{0} lines · {1} characters",
   "正在识别二维码 / 条形码…": "Recognizing QR codes and barcodes…",
   "正在识别文字…": "Recognizing text…",
-  "回车或双击粘贴到原窗口 · {0}+1～9 粘贴第 N 条 · 单击选中 · {0} 多选 · Shift 连选 · 多选后回车一起粘贴 · {0}+C 仅复制 · 右键更多操作": "Enter or double-click to paste into the previous window · {0}+1–9 to paste item N · Click to select · {0} for multiple · Shift for range · Enter on a selection pastes all · {0}+C to copy only · Right-click for more",
-  "回车或双击复制并收起 · {0}+1～9 复制第 N 条 · 单击选中 · {0} 多选 · Shift 连选 · 多选后回车一起复制 · {0}+C 仅复制 · 右键更多操作": "Enter or double-click to copy and hide · {0}+1–9 to copy item N · Click to select · {0} for multiple · Shift for range · Enter on a selection copies all · {0}+C to copy only · Right-click for more",
+  "回车粘贴 · {0}+1～9 粘贴第 N 条 · {0} / Shift 多选 · {0}+C 仅复制 · 右键更多": "Enter to paste · {0}+1–9 item N · {0} / Shift to multi-select · {0}+C copy only · Right-click for more",
+  "回车复制 · {0}+1～9 复制第 N 条 · {0} / Shift 多选 · 右键更多": "Enter to copy · {0}+1–9 item N · {0} / Shift to multi-select · Right-click for more",
   "已粘贴。": "Pasted.",
   "回车或双击后直接粘贴到原窗口": "Paste into the previous window on Enter or double-click",
   "不记录这些程序复制的内容": "Do not record content copied by these apps",
@@ -1433,5 +1433,5 @@
   "保存后可测试。": "Save the service to test it.",
   "测试连接": "Test connection",
   "密钥不存在。": "Key not found.",
-  "若“系统设置 → 隐私与安全性 → 录屏与系统录音”中已开启 Snap Desk，这里仍显示未授权，通常是应用更新后旧授权记录失效：在该列表中选中 Snap Desk，点“−”移除，退出并重新打开 Snap Desk 后按提示重新授权。": "If Snap Desk is enabled in System Settings → Privacy & Security → Screen & System Audio Recording but still shows as not granted here, the old permission entry stopped matching after an update. Select Snap Desk in that list, click “−” to remove it, quit and reopen Snap Desk, then grant the permission again when prompted."
+  "已开启仍显示未授权时：在“录屏与系统录音”列表中移除 Snap Desk，重新打开应用后再授权。": "Still not granted though enabled? Remove Snap Desk from the Screen & System Audio Recording list, reopen the app and grant it again."
 }
