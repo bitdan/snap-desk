@@ -1600,7 +1600,7 @@ impl SettingsView {
             let mut elements = vec![heading(t("系统权限")).into_any_element(), card(rows).into_any_element()];
             if !screen {
                 elements.push(
-                    note(t("若“系统设置 → 隐私与安全性 → 录屏与系统录音”中已开启 Snap Desk，这里仍显示未授权，通常是应用更新后旧授权记录失效：在该列表中选中 Snap Desk，点“−”移除，退出并重新打开 Snap Desk 后按提示重新授权。"))
+                    note(t("已开启仍显示未授权时：在“录屏与系统录音”列表中移除 Snap Desk，重新打开应用后再授权。"))
                         .into_any_element(),
                 );
             }
