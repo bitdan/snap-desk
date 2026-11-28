@@ -269,21 +269,17 @@ impl SettingsView {
             }
         }
         let saved = service.clone();
+        let local_supported = snap_core::recognition::local_runtime::supported();
         if let Err(error) = crate::shell::update_settings(cx, move |s| {
             match s.recognition_services.iter_mut().find(|x| x.id == saved.id) {
                 Some(slot) => *slot = saved.clone(),
                 None => s.recognition_services.push(saved.clone()),
             }
-            // 正在使用的翻译服务改了地址或模型：同步运行时配置。
+            // 正在使用的翻译服务改了地址或模型：同步运行时配置；还没有可用翻译引擎时直接启用它。
             if s.ai.service_id == saved.id {
-                s.ai.provider = if saved.protocol == "deepl" {
-                    "deepl"
-                } else {
-                    "online-llm"
-                }
-                .into();
-                s.ai.endpoint = saved.endpoint.clone();
-                s.ai.model = saved.model.clone();
+                super::bind_translation(s, &saved);
+            } else {
+                super::adopt_translation(s, &saved, local_supported);
             }
         }) {
             self.error = Some(error);

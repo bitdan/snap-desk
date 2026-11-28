@@ -174,8 +174,41 @@ fn remove_service(settings: &mut Settings, id: &str) {
         settings.ocr.provider = "local-ppocr".into();
         settings.ocr.service_id.clear();
     }
+    // 正在使用的翻译服务被删：换成下一个翻译服务，没有时回到本地翻译。只清空服务标识会留下旧版
+    // “按地址直接配置”的运行时字段，翻译时去找按地址保存的旧密钥，提示缺少 API Key。
     if settings.ai.service_id == id {
-        settings.ai.service_id.clear();
+        match settings.recognition_services.iter().find(|s| s.supports_translation()).cloned() {
+            Some(next) => bind_translation(settings, &next),
+            None => use_local_translation(settings),
+        }
+    }
+}
+
+/// 翻译引擎指向 `service`，同步运行时使用的协议、地址与模型。
+pub(super) fn bind_translation(settings: &mut Settings, service: &RecognitionService) {
+    settings.ai.service_id = service.id.clone();
+    settings.ai.provider = if service.protocol == "deepl" { "deepl" } else { "online-llm" }.into();
+    settings.ai.endpoint = service.endpoint.clone();
+    settings.ai.model = service.model.clone();
+}
+
+fn use_local_translation(settings: &mut Settings) {
+    settings.ai.provider = "local-ctranslate2".into();
+    settings.ai.service_id.clear();
+    settings.ai.endpoint.clear();
+    settings.ai.model.clear();
+    // 本地语言包只支持中英互译。
+    if !["zh-CN", "en"].contains(&settings.ai.target_language.as_str()) {
+        settings.ai.target_language = "zh-CN".into();
+    }
+}
+
+/// 保存翻译服务时，翻译引擎还没有可用的选择（未绑定服务，且不是本机支持的本地翻译，例如 macOS 首次添加）
+/// 就直接用它，免得保存、测试都成功后翻译仍报缺少密钥。
+pub(super) fn adopt_translation(settings: &mut Settings, service: &RecognitionService, local_supported: bool) {
+    let local_usable = settings.ai.provider == "local-ctranslate2" && local_supported;
+    if service.supports_translation() && settings.ai.service_id.is_empty() && !local_usable {
+        bind_translation(settings, service);
     }
 }
 
@@ -338,10 +371,11 @@ impl SettingsView {
                 format!("{} · {}", t(service_kind(service)), key_hint(service)),
             ));
         }
+        // 没有匹配项时不标记任何一项为已选（usize::MAX），否则点击显示为已选的那项不会保存。
         let current = choices
             .iter()
             .position(|(provider, id, _, _)| *provider == s.ocr.provider && (provider != "service" || *id == s.ocr.service_id))
-            .unwrap_or(0);
+            .unwrap_or(usize::MAX);
         let engine_hint = choices.get(current).map(|c| c.3.clone());
         let picked = choices.clone();
         let decor = |index: usize| {
@@ -474,7 +508,7 @@ impl SettingsView {
         let current_tr = engines_tr
             .iter()
             .position(|(id, _, _, service)| if local_selected { service.is_none() } else { service.is_some() && *id == s.ai.service_id })
-            .unwrap_or(0);
+            .unwrap_or(usize::MAX);
         let translator_hint = engines_tr.get(current_tr).map(|e| e.2.clone());
         let picked_tr = engines_tr.clone();
         // 没有可用的翻译引擎时列表为空（macOS 无本地翻译且未添加翻译服务），下拉框仍按第 0 项取图标。
@@ -492,20 +526,8 @@ impl SettingsView {
             move |view, index, cx| {
                 let chosen = picked_tr.get(index).and_then(|e| e.3.clone());
                 view.change(cx, move |s| match chosen {
-                Some(chosen) => {
-                    s.ai.service_id = chosen.id.clone();
-                    s.ai.provider = if chosen.protocol == "deepl" { "deepl" } else { "online-llm" }.into();
-                    s.ai.endpoint = chosen.endpoint.clone();
-                    s.ai.model = chosen.model.clone();
-                }
-                None => {
-                    s.ai.provider = "local-ctranslate2".into();
-                    s.ai.service_id.clear();
-                    // 本地语言包只支持中英互译。
-                    if !["zh-CN", "en"].contains(&s.ai.target_language.as_str()) {
-                        s.ai.target_language = "zh-CN".into();
-                    }
-                }
+                    Some(chosen) => bind_translation(s, &chosen),
+                    None => use_local_translation(s),
                 })
             },
         );
@@ -772,7 +794,7 @@ impl SettingsView {
 
 #[cfg(test)]
 mod tests {
-    use super::{PRESETS, new_id, portal, remove_service, service_kind};
+    use super::{PRESETS, adopt_translation, bind_translation, new_id, portal, remove_service, service_kind};
 
     #[test]
     fn key_pages_follow_protocol_and_host() {
@@ -852,6 +874,49 @@ mod tests {
         remove_service(&mut settings, &s.id);
         assert!(settings.recognition_services.is_empty());
         assert_eq!(settings.ocr.provider, "local-ppocr");
+        assert_eq!(settings.ai.provider, "local-ctranslate2");
+        assert!(settings.ai.service_id.is_empty() && settings.ai.endpoint.is_empty());
         assert!(settings.validate().is_ok());
+    }
+
+    #[test]
+    fn removing_the_used_translator_moves_to_the_next_one() {
+        let mut settings = Settings::default();
+        let first = service("deepl", "https://api-free.deepl.com/v2/translate", false);
+        let second = service("openai-compatible", "https://api.example.com/v1/chat/completions", false);
+        settings.recognition_services = vec![first.clone(), second.clone()];
+        bind_translation(&mut settings, &first);
+        remove_service(&mut settings, &first.id);
+        assert_eq!(settings.ai.service_id, second.id);
+        assert_eq!(settings.ai.provider, "online-llm");
+        assert_eq!(settings.ai.endpoint, second.endpoint);
+        assert!(settings.validate().is_ok());
+    }
+
+    #[test]
+    fn saving_a_translator_binds_it_only_when_nothing_usable_is_selected() {
+        let deepl = service("deepl", "https://api-free.deepl.com/v2/translate", false);
+        let mut ocr_only = service("ocr-space", "https://api.ocr.space/parse/image", true);
+        ocr_only.model = "2".into();
+        // macOS：默认的本地翻译不可用，新存的翻译服务直接启用；仅 OCR 的服务不绑定。
+        let mut mac = Settings::default();
+        adopt_translation(&mut mac, &ocr_only, false);
+        assert!(mac.ai.service_id.is_empty());
+        adopt_translation(&mut mac, &deepl, false);
+        assert_eq!((mac.ai.service_id.as_str(), mac.ai.provider.as_str()), (deepl.id.as_str(), "deepl"));
+        // 旧版删除服务后留下的“按地址直接配置”同样视为未绑定。
+        let mut stale = Settings::default();
+        stale.ai.provider = "deepl".into();
+        stale.ai.endpoint = deepl.endpoint.clone();
+        adopt_translation(&mut stale, &deepl, true);
+        assert_eq!(stale.ai.service_id, deepl.id);
+        // 本地翻译可用，或已选其他服务时不改动。
+        let mut windows = Settings::default();
+        adopt_translation(&mut windows, &deepl, true);
+        assert_eq!(windows.ai.provider, "local-ctranslate2");
+        let other = service("openai-compatible", "https://api.example.com/v1/chat/completions", false);
+        bind_translation(&mut windows, &other);
+        adopt_translation(&mut windows, &deepl, false);
+        assert_eq!(windows.ai.service_id, other.id);
     }
 }
