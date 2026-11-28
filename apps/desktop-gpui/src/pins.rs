@@ -228,6 +228,7 @@ pub fn create(
                 placed: None,
                 topmost: true,
                 click_through: false,
+                move_from: None,
                 appearance: settings.pin_appearance.clone(),
                 export: settings.export.clone(),
                 language: settings.appearance.language.clone(),
@@ -912,6 +913,9 @@ pub struct Pin {
     locked: bool,
     topmost: bool,
     click_through: bool,
+    /// 按下图片时的位置（窗口内逻辑像素）：拖出几个像素后才交给系统移动窗口。按下就进入系统移动循环会吞掉
+    /// 抬起，第二次按下认不出双击，双击关闭就失效了。
+    move_from: Option<Point<Pixels>>,
     appearance: PinAppearance,
     export: ExportSettings,
     language: Language,
@@ -1651,11 +1655,20 @@ impl Pin {
             return;
         }
         if !self.locked {
-            crate::native::start_move(window);
+            self.move_from = Some(event.position);
         }
     }
 
     fn motion(&mut self, event: &MouseMoveEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(from) = self.move_from {
+            if event.pressed_button != Some(MouseButton::Left) {
+                self.move_from = None;
+            } else if (event.position.x - from.x).abs() > px(3.0) || (event.position.y - from.y).abs() > px(3.0) {
+                self.move_from = None;
+                crate::native::start_move(window);
+                return;
+            }
+        }
         if self.text_select.as_ref().is_some_and(|mode| mode.dragging) {
             let p = self.to_point(event.position, window.scale_factor());
             self.drag_text_selection(p, event.pressed_button == Some(MouseButton::Left), cx);
@@ -1674,6 +1687,7 @@ impl Pin {
     }
 
     fn release(&mut self, _: &MouseUpEvent, window: &mut Window, cx: &mut Context<Self>) {
+        self.move_from = None;
         if let Some(mode) = self.text_select.as_mut() {
             mode.dragging = false;
         }
