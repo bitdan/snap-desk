@@ -6,8 +6,9 @@
 //!   设置“自动复制”“自动合并换行”；
 //! - 进入翻译视图（截图翻译或点击“翻译文字”）即视为确认，自动用所选服务翻译识别出的文字；
 //!   本地 CTranslate2 翻译在本机进程中执行（`local_translate.rs`）；
-//! - 设置开启“截图翻译覆盖原文”且原文未改动时按段落翻译，并把译文按原图配色画回原位置
-//!   （`snap_core::recognition::overlay`）；
+//! - 截图翻译默认原地覆盖：原文未改动时按段落翻译，并把译文按原图配色画回原位置
+//!   （`snap_core::recognition::overlay`），窗口只显示原图；缺坐标、倾斜或出错时才显示文字面板；
+//! - 原图支持缩放：滚轮或 Ctrl +/- 以光标（或中心）为锚点缩放，放大后左键拖动平移，双击或 Ctrl+0 还原；
 //! - 二维码 / 条形码逐个列出格式与内容，只在用户确认后才打开 HTTP/HTTPS 链接。
 //! 识别与翻译在后台线程执行（翻译用一个临时的单线程 tokio 运行时承载异步 HTTP 请求）。
 //!
@@ -216,10 +217,15 @@ struct Panel {
     overlay: Option<Vec<OverlayItem>>,
     /// 覆盖块显示译文还是露出原文（底栏眼睛按钮切换）。
     show_overlay: bool,
-    /// 正在按段落翻译、完成后会覆盖原文；期间就隐藏右侧翻译面板，避免面板出现又消失。
+    /// 正在按段落翻译、完成后会覆盖原文；期间就不显示文字面板，避免面板出现又消失。
     overlay_pending: bool,
-    /// 覆盖原文时手动展开右侧翻译面板（底栏按钮切换）；默认收起，只看原图。
-    show_panel: bool,
+    /// 原图相对“适应窗口”的缩放倍数（≥ 1）与平移量（逻辑像素，相对原图栏中心）。
+    zoom: f32,
+    pan: (f32, f32),
+    /// 拖动平移时上一次的指针位置（窗口坐标）。
+    drag: Option<(f32, f32)>,
+    /// 最近一次渲染的原图栏尺寸；原图栏位于窗口左上角，事件坐标可直接换算。
+    view: (f32, f32),
     /// 当前译文对应的（目标语言, 原文）；回到翻译视图时两者都没变才沿用旧译文。
     translated_for: Option<(String, String)>,
 }
@@ -280,24 +286,71 @@ impl Panel {
             overlay: None,
             show_overlay: true,
             overlay_pending: false,
-            show_panel: false,
+            zoom: 1.0,
+            pan: (0.0, 0.0),
+            drag: None,
+            view: (0.0, 0.0),
             translated_for: None,
         }
     }
 
-    /// 译文覆盖在原图上，右侧翻译面板可以收起（底栏出现展开 / 收起按钮）。
-    /// 翻译出错（需要看到原因）、隐藏原图或没有覆盖结果时始终分栏，可在面板里改原文、换语言。
-    fn panel_collapsible(&self) -> bool {
+    /// 截图翻译只显示原图（译文原地画在图上，不再提供侧边面板）：识别中、按段落翻译中或已有覆盖结果时。
+    /// 出错（需要看到原因）、隐藏原图或识别结果无法覆盖（缺坐标、倾斜）时退回文字面板。
+    fn overlay_only(&self) -> bool {
         self.mode == Mode::Translate
             && self.show_image
             && self.preview.is_some()
             && self.error.is_none()
-            && (self.overlay.is_some() || self.overlay_pending)
+            && (self.overlay.is_some() || self.overlay_pending || self.ocr.is_none())
     }
 
-    /// 只显示原图：可收起且用户没有展开面板。译文已画在图上，面板默认只会重复一遍。
-    fn overlay_only(&self) -> bool {
-        self.panel_collapsible() && !self.show_panel
+    /// “适应窗口”时原图的显示比例（原图栏留 12 像素边距、底部留提示行）。
+    fn fit_scale(&self) -> Option<f32> {
+        let image = self.image.as_ref()?;
+        let (width, height) = self.view;
+        let k = ((width - 24.0) / image.width().max(1) as f32)
+            .min((height - 48.0) / image.height().max(1) as f32)
+            .min(1.0);
+        (k > 0.0).then_some(k)
+    }
+
+    /// 以 `anchor`（窗口坐标；None 为原图栏中心）为不动点缩放；最大放大到原图像素的 8 倍。
+    fn zoom_at(&mut self, factor: f32, anchor: Option<(f32, f32)>, cx: &mut Context<Self>) {
+        let Some(fit) = self.fit_scale() else {
+            return;
+        };
+        let next = (self.zoom * factor).clamp(1.0, (8.0 / fit).max(1.0));
+        if (next - self.zoom).abs() < f32::EPSILON {
+            return;
+        }
+        let (width, height) = self.view;
+        let (ax, ay) = anchor.unwrap_or((width / 2.0, height / 2.0));
+        let (cx0, cy0) = (ax - width / 2.0, ay - height / 2.0);
+        let ratio = next / self.zoom;
+        self.pan = (cx0 - (cx0 - self.pan.0) * ratio, cy0 - (cy0 - self.pan.1) * ratio);
+        self.zoom = next;
+        self.pan = self.clamped_pan();
+        cx.notify();
+    }
+
+    fn reset_zoom(&mut self, cx: &mut Context<Self>) {
+        self.zoom = 1.0;
+        self.pan = (0.0, 0.0);
+        self.drag = None;
+        cx.notify();
+    }
+
+    /// 平移不超出原图边缘：原图比原图栏小的方向保持居中。
+    fn clamped_pan(&self) -> (f32, f32) {
+        let (Some(fit), Some(image)) = (self.fit_scale(), self.image.as_ref()) else {
+            return (0.0, 0.0);
+        };
+        let k = fit * self.zoom;
+        let (width, height) = self.view;
+        let limit = |size: f32, view: f32| ((size * k - view) / 2.0).max(0.0);
+        let lx = limit(image.width() as f32, width - 24.0);
+        let ly = limit(image.height() as f32, height - 48.0);
+        (self.pan.0.clamp(-lx, lx), self.pan.1.clamp(-ly, ly))
     }
 
     fn t(&self, key: &'static str) -> String {
@@ -465,8 +518,6 @@ impl Panel {
             cx.notify();
             return;
         }
-        // 设置关闭“覆盖原文”时始终按空行分段普通翻译。
-        let paragraphs = paragraphs.filter(|_| ai.overlay);
         if let Some(list) = &paragraphs {
             texts = list.iter().map(|p| p.text.clone()).collect();
         }
@@ -559,6 +610,15 @@ impl Panel {
     }
 
     fn key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let modifiers = &event.keystroke.modifiers;
+        if (modifiers.control || modifiers.platform) && self.show_image && self.preview.is_some() {
+            match event.keystroke.key.as_str() {
+                "=" | "+" => return self.zoom_at(1.25, None, cx),
+                "-" => return self.zoom_at(0.8, None, cx),
+                "0" => return self.reset_zoom(cx),
+                _ => {}
+            }
+        }
         if event.keystroke.key == "escape" {
             if self.pending_link.take().is_some() {
                 cx.notify();
