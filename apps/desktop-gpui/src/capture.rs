@@ -121,6 +121,8 @@ pub struct Session {
     /// 已识别的顶层窗口及原生句柄（“原生窗口截图”只接受这些窗口）与截图是否含光标。
     natives: Vec<(Rect, snap_core::capture::NativeWindow)>,
     include_cursor: bool,
+    /// 截图时的顶层窗口及其进程名、标题（文件名变量），最上层在前。
+    sources: Vec<(Rect, snap_core::export::Source)>,
     /// 工具栏被拖动后的偏移（逻辑像素；双击工具栏恢复位置），与拖动起点。
     toolbar_offset: (f32, f32),
     toolbar_drag: Option<(Point<Pixels>, (f32, f32))>,
@@ -211,6 +213,12 @@ impl Session {
 }
 
 impl Session {
+    /// 选区中心所在的最上层窗口（文件名变量）；没有时为 None。
+    fn source_for(&self, rect: Rect) -> Option<snap_core::export::Source> {
+        let center = (i64::from(rect.x) + i64::from(rect.width) / 2, i64::from(rect.y) + i64::from(rect.height) / 2);
+        self.sources.iter().find(|(r, _)| selection::contains(*r, center)).map(|(_, s)| s.clone())
+    }
+
     /// 选区正好是某个顶层窗口时返回该窗口。
     fn selected_window(&self) -> Option<crate::recording::WindowTarget> {
         let selection = self.selection?;
@@ -398,6 +406,7 @@ struct Grabbed {
     windows: Vec<crate::recording::WindowTarget>,
     natives: Vec<(Rect, snap_core::capture::NativeWindow)>,
     include_cursor: bool,
+    sources: Vec<(Rect, snap_core::export::Source)>,
     /// Windows：UI Automation 控件候选在浮层显示后再后台补充（控件枚举占拍屏耗时大半）。
     deferred: Option<Deferred>,
     probe: Option<snap_core::capture::HoverProbe>,
@@ -467,8 +476,16 @@ fn grab(include_cursor: bool, snap: bool) -> Result<Grabbed, String> {
         .filter(|t| t.kind == "window" && !t.recording_only)
         .filter_map(|t| Some((t.rect, desktop.windows.get(t.window_index)?.clone())))
         .collect();
+    // 文件名变量用的来源窗口（前后层次顺序，最上层在前）。
+    let sources = desktop
+        .targets
+        .iter()
+        .filter(|t| t.kind == "window" && !t.recording_only)
+        .map(|t| (t.rect, snap_core::export::Source { app: t.app_name.clone(), title: t.title.clone() }))
+        .collect();
     Ok(Grabbed {
         natives,
+        sources,
         include_cursor: desktop.include_cursor,
         windows: window_targets(&desktop),
         targets: snap_targets(&desktop.targets),
@@ -707,6 +724,7 @@ fn begin(cx: &mut App, settings: &Settings, delay: Duration, purpose: Option<Rec
                         displays: grabbed.displays,
                         targets: grabbed.targets,
                         selection: None,
+                        sources: grabbed.sources,
                         hover: None,
                         levels: Vec::new(),
                         level: 0,
@@ -1368,9 +1386,9 @@ fn save(cx: &mut App) {
     let Some((session, image, rect, shapes)) = begin_export(cx) else {
         return;
     };
-    let (export, title, language) = {
+    let (export, title, language, source) = {
         let s = session.read(cx);
-        (s.export.clone(), s.text("保存图片"), s.language.clone())
+        (s.export.clone(), s.text("保存图片"), s.language.clone(), s.source_for(rect))
     };
     close_overlays(cx, &session);
     cx.spawn(async move |cx| {
@@ -1386,11 +1404,12 @@ fn save(cx: &mut App) {
                 return;
             }
         };
-        let name = match snap_core::export::filename(
+        let name = match snap_core::export::filename_from(
             &export,
             &snap_core::export::timestamp(),
             image.width(),
             image.height(),
+            source.as_ref(),
         ) {
             Ok(name) => name,
             Err(error) => {
@@ -1450,7 +1469,10 @@ pub(crate) fn quick_save(cx: &mut App) {
     let Some((session, image, rect, shapes)) = begin_export(cx) else {
         return;
     };
-    let export = session.read(cx).export.clone();
+    let (export, source) = {
+        let s = session.read(cx);
+        (s.export.clone(), s.source_for(rect))
+    };
     cx.spawn(async move |cx| {
         let saved = cx
             .background_executor()
@@ -1458,7 +1480,7 @@ pub(crate) fn quick_save(cx: &mut App) {
                 let image = snap_core::capture::compose(&image, rect, &shapes)?;
                 let directory = snap_core::export::save_directory(export.remember_directory)
                     .ok_or("无法确定截图保存目录，请在设置中选择。")?;
-                snap_core::export::quick_save(&image, &export, &directory)
+                snap_core::export::quick_save_from(&image, &export, &directory, source.as_ref())
             })
             .await;
         cx.update(|cx| match saved {

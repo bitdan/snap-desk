@@ -1790,7 +1790,13 @@ impl SettingsView {
         }
         export.push(row(
             t("文件名前缀"),
-            snap_core::export::filename(&s.export, "20260101-120000", 1920, 1080)
+            snap_core::export::filename_from(
+                &s.export,
+                "20260101-120000",
+                1920,
+                1080,
+                Some(&snap_core::export::Source { app: "chrome".into(), title: t("示例页面") }),
+            )
                 .ok()
                 .map(|name| format!("{}{name}", t("示例："))),
             self.text_input(&self.capture_prefix, 180.0),
@@ -1804,6 +1810,16 @@ impl SettingsView {
                 cx,
                 |s, v| s.export.include_dimensions = v,
             ),
+        ));
+        export.push(row(
+            t("文件名包含进程名"),
+            None,
+            self.toggle("export-app", s.export.include_app, cx, |s, v| s.export.include_app = v),
+        ));
+        export.push(row(
+            t("文件名包含窗口标题"),
+            None,
+            self.toggle("export-title", s.export.include_title, cx, |s, v| s.export.include_title = v),
         ));
         export.push(row(
             t("记住上次保存目录"),

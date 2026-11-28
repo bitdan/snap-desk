@@ -43,8 +43,18 @@ pub fn unique_path(directory: &Path, name: &str) -> PathBuf {
 
 /// 不弹对话框直接保存：按设置的默认格式与文件名规则存进 `directory`（不存在时创建），重名时加编号。返回保存路径。
 pub fn quick_save(image: &RgbaImage, settings: &ExportSettings, directory: &Path) -> Result<PathBuf, String> {
+    quick_save_from(image, settings, directory, None)
+}
+
+/// 同 [`quick_save`]，文件名按设置附加来源窗口（见 [`filename_from`]）。
+pub fn quick_save_from(
+    image: &RgbaImage,
+    settings: &ExportSettings,
+    directory: &Path,
+    source: Option<&Source>,
+) -> Result<PathBuf, String> {
     fs::create_dir_all(directory).map_err(|_| "截图保存目录无法创建，请在设置中重新选择。".to_string())?;
-    let name = filename(settings, &timestamp(), image.width(), image.height())?;
+    let name = filename_from(settings, &timestamp(), image.width(), image.height(), source)?;
     let path = unique_path(directory, &name);
     write_file(&path, image, settings)?;
     Ok(path)
@@ -86,6 +96,13 @@ pub fn format_for_path(path: &Path) -> Result<ExportFormat, String> {
         .ok_or_else(|| "文件扩展名须为 .png、.jpg、.webp 或 .pdf。".into())
 }
 
+/// 截图来源窗口：进程名（应用名）与窗口标题。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Source {
+    pub app: String,
+    pub title: String,
+}
+
 /// 文件名只由已验证的前缀、本地日期时间（YYYYMMDD-HHMMSS）和可选像素尺寸组成，不接收任意路径模板。
 /// 同一秒内重名由保存对话框提示覆盖或改名。
 pub fn filename(
@@ -94,17 +111,46 @@ pub fn filename(
     width: u32,
     height: u32,
 ) -> Result<String, String> {
+    filename_from(settings, stamp, width, height, None)
+}
+
+/// 同 [`filename`]，按设置在时间之后附加来源窗口的进程名、窗口标题（各自清理成安全的文件名片段，
+/// 最多 40 个字符；为空时省略），顺序为 前缀-时间[-进程名][-标题][-宽x高]。
+pub fn filename_from(
+    settings: &ExportSettings,
+    stamp: &str,
+    width: u32,
+    height: u32,
+    source: Option<&Source>,
+) -> Result<String, String> {
     settings.validate()?;
-    let dimensions = if settings.include_dimensions {
-        format!("-{width}x{height}")
-    } else {
-        String::new()
-    };
-    Ok(format!(
-        "{}-{stamp}{dimensions}.{}",
-        settings.filename_prefix,
-        settings.format.extension()
-    ))
+    let mut name = format!("{}-{stamp}", settings.filename_prefix);
+    if let Some(source) = source {
+        for (enabled, text) in [(settings.include_app, &source.app), (settings.include_title, &source.title)] {
+            let part = name_part(text);
+            if enabled && !part.is_empty() {
+                name.push('-');
+                name.push_str(&part);
+            }
+        }
+    }
+    if settings.include_dimensions {
+        name.push_str(&format!("-{width}x{height}"));
+    }
+    Ok(format!("{name}.{}", settings.format.extension()))
+}
+
+/// 窗口标题等任意文字转成文件名片段：去掉扩展名式的 `.exe`，路径与保留字符、控制字符换成 `_`，
+/// 连续空白合并，去掉首尾空白和点，最多 40 个字符。
+fn name_part(text: &str) -> String {
+    let text = text.trim();
+    let text = text.strip_suffix(".exe").or_else(|| text.strip_suffix(".EXE")).unwrap_or(text);
+    let cleaned: String = text
+        .chars()
+        .map(|c| if c.is_control() || "<>:\"/\\|?*".contains(c) { '_' } else { c })
+        .collect();
+    let joined = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
+    joined.trim_matches(|c: char| c == '.' || c.is_whitespace()).chars().take(40).collect::<String>().trim_end().to_owned()
 }
 
 /// JPEG 没有 alpha：先与白底合成，不能直接丢掉 alpha，避免透明处变黑。
@@ -408,6 +454,28 @@ mod tests {
         );
         settings.filename_prefix = "../escape".into();
         assert!(filename(&settings, "20261113-143005", 640, 480).is_err());
+    }
+
+    #[test]
+    fn names_can_append_the_source_app_and_window_title_safely() {
+        let mut settings = ExportSettings::default();
+        let source = Source { app: "chrome.exe".into(), title: "  a/b: c?  | 页面.  ".into() };
+        assert_eq!(
+            filename_from(&settings, "20261113-143005", 640, 480, Some(&source)).unwrap(),
+            "SnapDesk-20261113-143005.png",
+            "off by default"
+        );
+        settings.include_app = true;
+        settings.include_title = true;
+        settings.include_dimensions = true;
+        assert_eq!(
+            filename_from(&settings, "20261113-143005", 640, 480, Some(&source)).unwrap(),
+            "SnapDesk-20261113-143005-chrome-a_b_ c_ _ 页面-640x480.png"
+        );
+        let long = Source { app: String::new(), title: "x".repeat(80) };
+        let name = filename_from(&settings, "1", 1, 1, Some(&long)).unwrap();
+        assert_eq!(name, format!("SnapDesk-1-{}-1x1.png", "x".repeat(40)));
+        assert_eq!(filename_from(&settings, "1", 1, 1, None).unwrap(), "SnapDesk-1-1x1.png");
     }
 
     #[test]

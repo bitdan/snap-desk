@@ -125,6 +125,7 @@ pub fn parse(bytes: &[u8]) -> Result<Backup, String> {
         settings.entry("screenshotAfter").or_insert("none".into());
         for (field, additions) in [
             ("ai", serde_json::json!({"serviceId": "", "autoCopy": false})),
+            ("export", serde_json::json!({"includeApp": false, "includeTitle": false})),
             ("ocr", serde_json::json!({"serviceId": "", "autoCopy": false, "mergeLines": false})),
             ("clipboard", serde_json::json!({"pasteOnActivate": true, "excludedApps": []})),
         ] {
