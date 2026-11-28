@@ -345,7 +345,9 @@ impl SettingsView {
         let engine_hint = choices.get(current).map(|c| c.3.clone());
         let picked = choices.clone();
         let decor = |index: usize| {
-            let (provider, id, _, _) = &choices[index];
+            let Some((provider, id, _, _)) = choices.get(index) else {
+                return (div(), None);
+            };
             let service = s.recognition_services.iter().find(|x| provider == "service" && x.id == *id);
             catalog::provider_icon(provider, service, t)
         };
@@ -475,9 +477,11 @@ impl SettingsView {
             .unwrap_or(0);
         let translator_hint = engines_tr.get(current_tr).map(|e| e.2.clone());
         let picked_tr = engines_tr.clone();
-        let decor_tr = |index: usize| match &engines_tr[index].3 {
-            Some(service) => catalog::provider_icon("service", Some(service), t),
-            None => catalog::provider_icon("local-ctranslate2", None, t),
+        // 没有可用的翻译引擎时列表为空（macOS 无本地翻译且未添加翻译服务），下拉框仍按第 0 项取图标。
+        let decor_tr = |index: usize| match engines_tr.get(index).map(|e| &e.3) {
+            Some(Some(service)) => catalog::provider_icon("service", Some(service), t),
+            Some(None) => catalog::provider_icon("local-ctranslate2", None, t),
+            None => (div(), None),
         };
         let translator_select = self.select_decorated(
             "tr-engine",
