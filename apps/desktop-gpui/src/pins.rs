@@ -72,6 +72,8 @@ pub enum Placement {
 #[derive(Default)]
 struct Registry {
     pins: Vec<(AnyWindowHandle, WeakEntity<Pin>)>,
+    /// 用户用“隐藏所有贴图 / 只显示此贴图”藏起来的贴图（与对话框期间的临时隐藏分开记录）。
+    user_hidden: Vec<AnyWindowHandle>,
 }
 impl Global for Registry {}
 
@@ -361,6 +363,40 @@ pub fn show_pins(cx: &mut App, hidden: Vec<AnyWindowHandle>) {
             log::warn!("event=gpui.pin_show_failed message={error}");
         }
         pin.update(cx, |pin, _| pin.hidden = false);
+    }
+}
+
+/// 用户隐藏的贴图中仍然存在的。
+fn user_hidden(cx: &mut App) -> Vec<AnyWindowHandle> {
+    let alive: Vec<AnyWindowHandle> = alive(cx).into_iter().map(|(handle, _)| handle).collect();
+    let registry = cx.default_global::<Registry>();
+    registry.user_hidden.retain(|handle| alive.contains(handle));
+    registry.user_hidden.clone()
+}
+
+/// 有被用户隐藏的贴图时全部显示，否则隐藏所有贴图（托盘与贴图菜单）。
+/// 不能在某个贴图自身的事件处理中直接调用（会读取它的实体），由调用方 `defer`。
+pub fn toggle_all(cx: &mut App) {
+    let hidden = user_hidden(cx);
+    if hidden.is_empty() {
+        let hidden = hide_pins(cx, None);
+        cx.default_global::<Registry>().user_hidden = hidden;
+    } else {
+        cx.default_global::<Registry>().user_hidden.clear();
+        show_pins(cx, hidden);
+        log::info!("event=gpui.pins_shown");
+    }
+}
+
+/// 只显示 `keep`：其余可见贴图隐藏；已经只显示它时恢复全部。
+fn solo(cx: &mut App, keep: AnyWindowHandle) {
+    let hidden = user_hidden(cx);
+    if hidden.is_empty() {
+        let hidden = hide_pins(cx, Some(keep));
+        cx.default_global::<Registry>().user_hidden = hidden;
+    } else {
+        cx.default_global::<Registry>().user_hidden.clear();
+        show_pins(cx, hidden);
     }
 }
 
@@ -663,6 +699,9 @@ enum Item {
     Lock,
     Toolbar,
     ClickThrough,
+    /// 只显示此贴图（其他贴图已被隐藏时为“显示所有贴图”）。
+    Solo,
+    HideAll,
     Transform(Transform),
     Opacity(usize),
     ClearAnnotations,
@@ -670,7 +709,7 @@ enum Item {
     Separator,
 }
 
-const MENU: [Item; 28] = [
+const MENU: [Item; 31] = [
     Item::Recognize(crate::recognition::Mode::Ocr),
     Item::Recognize(crate::recognition::Mode::Qr),
     Item::Recognize(crate::recognition::Mode::Translate),
@@ -683,6 +722,9 @@ const MENU: [Item; 28] = [
     Item::Lock,
     Item::Toolbar,
     Item::ClickThrough,
+    Item::Separator,
+    Item::Solo,
+    Item::HideAll,
     Item::Separator,
     Item::Transform(Transform::RotateLeft),
     Item::Transform(Transform::RotateRight),
@@ -1028,10 +1070,14 @@ impl Pin {
         }
         items.extend(MENU);
         let height = menu_height(&items);
+        let others_hidden = !user_hidden(cx).is_empty();
         let entries: Vec<Entry> = items
             .into_iter()
             .map(|item| {
-                let (label, checked) = self.label(item);
+                let (label, checked) = match item {
+                    Item::Solo if others_hidden => (self.text("显示所有贴图"), false),
+                    _ => self.label(item),
+                };
                 Entry { item, label, checked, shortcut: Self::shortcut(item) }
             })
             .collect();
@@ -1101,6 +1147,11 @@ impl Pin {
             }
             Item::Toolbar => self.toggle_toolbar(window, cx),
             Item::ClickThrough => self.set_click_through(!self.click_through, window, cx),
+            Item::Solo => {
+                let keep = window.window_handle();
+                cx.defer(move |cx| solo(cx, keep));
+            }
+            Item::HideAll => cx.defer(toggle_all),
             Item::Transform(action) => self.transform(action, cx),
             Item::Opacity(index) => self.opacity = OPACITIES[index],
             Item::ClearAnnotations => {
@@ -1808,6 +1859,8 @@ impl Pin {
             Item::Toolbar => (self.text("显示工具栏"), self.toolbar),
             Item::ClearAnnotations => (self.text("清空标注"), false),
             Item::ClickThrough => (self.text("鼠标穿透"), self.click_through),
+            Item::Solo => (self.text("只显示此贴图"), false),
+            Item::HideAll => (self.text("隐藏所有贴图"), false),
             Item::Transform(action) => (
                 self.text(match action {
                     Transform::RotateLeft => "左转",
