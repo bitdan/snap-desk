@@ -91,7 +91,9 @@ main() {
             mkdir -p "$directory" || fail 'Could not create ~/.local/bin.'
             stage=$(mktemp -d "$directory/.snap-desk.XXXXXXXX") || fail 'Could not stage the AppImage.'
             install -m 755 "$package" "$stage/snap-desk.AppImage" || fail 'Could not stage the AppImage.'
-            mv -fT "$stage/snap-desk.AppImage" "$target" || fail 'Could not install the AppImage.'
+            # 不用 GNU 的 mv -T（BSD / macOS 没有）：目标是目录时 mv 会移进目录里，先拒绝。
+            [ ! -d "$target" ] || fail 'The destination is a directory.'
+            mv -f "$stage/snap-desk.AppImage" "$target" || fail 'Could not install the AppImage.'
             printf 'Installed at %s\nLaunch with: "%s"\n' "$target" "$target"
             ;;
         deb)
