@@ -1039,6 +1039,7 @@
   "{0} 天": "{0} days",
   "拖动裁剪": "Drag to crop",
   "重置裁剪": "Reset crop",
+  "自动裁剪": "Auto crop",
   "贴到桌面，可继续标注 Ctrl/⌘+P": "Pin to the desktop and keep annotating · Ctrl/⌘+P",
   "下一张 .": "Next .",
   "下一张截图（.），最后一张后返回现场": "Next capture (.), then return to the live session",
