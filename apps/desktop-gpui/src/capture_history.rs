@@ -313,6 +313,7 @@ pub fn refresh(cx: &mut App) {
                     let frame = Frame { origin: grabbed.origin, displays: grabbed.displays, layout_key };
                     session.update(cx, |s, _| {
                         s.natives = grabbed.natives;
+                        s.sources = grabbed.sources;
                         s.include_cursor = grabbed.include_cursor;
                         s.probe = grabbed.probe.take().map(Arc::new);
                         s.probe_seq += 1;

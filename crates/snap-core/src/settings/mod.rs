@@ -38,6 +38,9 @@ pub struct ExportSettings {
     pub jpeg_quality: u8,
     pub filename_prefix: String,
     pub include_dimensions: bool,
+    /// 文件名附加截图来源窗口的进程名 / 窗口标题（截图保存与快速保存；取选区中心所在的最上层窗口）。
+    pub include_app: bool,
+    pub include_title: bool,
     pub remember_directory: bool,
     /// 复制、贴图或滚动截图后，自动在截图保存目录另存一份（见 `auto_save`）。
     pub auto_save: bool,
@@ -55,6 +58,8 @@ impl Default for ExportSettings {
             jpeg_quality: 90,
             filename_prefix: "SnapDesk".into(),
             include_dimensions: false,
+            include_app: false,
+            include_title: false,
             remember_directory: true,
             auto_save: false,
             auto_clean_days: 0,
@@ -1221,6 +1226,8 @@ mod tests {
             jpeg_quality: 75,
             filename_prefix: "工作截图".into(),
             include_dimensions: true,
+            include_app: true,
+            include_title: false,
             remember_directory: false,
             auto_save: true,
             auto_clean_days: 30,
