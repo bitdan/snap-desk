@@ -1,8 +1,9 @@
 //! 截图识别结果窗口的界面：文字识别、翻译与二维码 / 条形码结果。
 //!
 //! 文字识别：左侧浅底原图（识别框描边），右侧整理工具条与可编辑文字，底栏为行数/字数与“翻译文字”“复制文字”。
-//! 截图翻译：右侧为浅底上的原文卡片、语言条与译文卡片，底栏“返回识别”。开启“覆盖原文”时只显示原图一栏
-//! （译文画在图上），底栏提供显示原文/译文、展开 / 收起翻译面板与“复制译文”；出错或隐藏原图时恢复右侧面板。
+//! 截图翻译：默认只显示原图一栏（译文原地画在图上），底栏提供“返回识别”、显示原文/译文与“复制译文”；
+//! 出错、隐藏原图或无法覆盖时才显示原文卡片、语言条与译文卡片。
+//! 原图栏可缩放（滚轮 / Ctrl +/-）、放大后拖动平移，双击或点右上角比例还原。
 //! 二维码 / 条形码：按原图阅读顺序排列的结果卡片（格式名、链接或文本、内容与操作）与底栏。
 use super::{Mode, Panel, TARGETS};
 use crate::theme;
@@ -33,7 +34,6 @@ mod icons {
     icon!(TYPE, "type");
     icon!(RETRY, "rotate-ccw");
     icon!(EYE, "eye");
-    icon!(PANEL, "panel-right");
 }
 
 /// `--ocr-*` 与 `--qr-*` 色值。
@@ -200,21 +200,27 @@ pub(super) fn tidy_spaces(text: &str) -> String {
 }
 
 impl Panel {
-    fn image_pane(&self, width: f32, height: f32, c: &Colors) -> Option<Div> {
+    fn image_pane(&self, width: f32, height: f32, c: &Colors, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
         let preview = self.preview.clone().filter(|_| self.show_image)?;
         let image = self.image.as_ref()?;
         let (iw, ih) = (image.width() as f32, image.height() as f32);
-        let k = ((width - 24.0) / iw)
-            .min((height - 48.0) / ih)
-            .min(1.0)
-            .max(0.0);
+        let fit = self.fit_scale().unwrap_or(0.0);
+        let k = fit * self.zoom;
         let (w, h) = (iw * k, ih * k);
-        let mut figure = div().relative().w(px(w)).h(px(h)).child(
-            img(preview)
-                .absolute()
-                .size_full()
-                .object_fit(ObjectFit::Fill),
-        );
+        let (pan_x, pan_y) = self.clamped_pan();
+        // 原图居中于原图栏（底部 24 像素留给识别框提示），再按平移量偏移。
+        let mut figure = div()
+            .absolute()
+            .left(px(width / 2.0 + pan_x - w / 2.0))
+            .top(px((height - 24.0) / 2.0 + pan_y - h / 2.0))
+            .w(px(w))
+            .h(px(h))
+            .child(
+                img(preview)
+                    .absolute()
+                    .size_full()
+                    .object_fit(ObjectFit::Fill),
+            );
         let mut boxes = 0;
         // 覆盖原文：每段先铺取样背景遮住原文，再按框宽逐行排版译文；字号从原文行高起步，放不下时缩小。
         let overlay = self
@@ -280,28 +286,112 @@ impl Panel {
                 );
             }
         }
-        Some(
-            div()
-                .w(px(width))
-                .h_full()
-                .flex()
-                .flex_none()
-                .flex_col()
-                .items_center()
-                .justify_center()
-                .gap(px(6.0))
-                .p(px(12.0))
-                .bg(rgb(c.soft))
-                .border_r_1()
-                .border_color(rgb(c.border))
-                .child(figure)
-                .children((boxes > 0).then(|| {
-                    div()
-                        .text_size(px(11.0))
-                        .text_color(rgb(c.muted))
-                        .child(self.t("识别框为识别出的文字位置"))
-                })),
-        )
+        let zoomed = self.zoom > 1.0;
+        let dragging = self.drag.is_some();
+        let pane = div()
+            .id("recognition-image")
+            .relative()
+            .w(px(width))
+            .h_full()
+            .flex_none()
+            .overflow_hidden()
+            .bg(rgb(c.soft))
+            .border_r_1()
+            .border_color(rgb(c.border))
+            .on_scroll(cx.listener(|p, event: &ScrollEvent, _, cx| {
+                let dy = f32::from(event.delta.pixel_delta(px(50.0)).y);
+                if dy != 0.0 {
+                    // 鼠标一格约 ×1.13，触控板按像素平滑缩放。
+                    let factor = 1.0025_f32.powf(dy.clamp(-200.0, 200.0));
+                    let at = (f32::from(event.position.x), f32::from(event.position.y));
+                    p.zoom_at(factor, Some(at), cx);
+                }
+            }))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|p, event: &MouseDownEvent, _, cx| {
+                    if event.click_count >= 2 {
+                        p.reset_zoom(cx);
+                    } else if p.zoom > 1.0 {
+                        p.drag = Some((f32::from(event.position.x), f32::from(event.position.y)));
+                        cx.notify();
+                    }
+                }),
+            )
+            .on_mouse_move(cx.listener(|p, event: &MouseMoveEvent, _, cx| {
+                let Some((x0, y0)) = p.drag else {
+                    return;
+                };
+                if event.pressed_button != Some(MouseButton::Left) {
+                    p.drag = None;
+                    cx.notify();
+                    return;
+                }
+                let (x, y) = (f32::from(event.position.x), f32::from(event.position.y));
+                p.pan = (p.pan.0 + x - x0, p.pan.1 + y - y0);
+                p.pan = p.clamped_pan();
+                p.drag = Some((x, y));
+                cx.notify();
+            }))
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|p, _: &MouseUpEvent, _, cx| {
+                    p.drag = None;
+                    cx.notify();
+                }),
+            )
+            .on_mouse_up_out(
+                MouseButton::Left,
+                cx.listener(|p, _: &MouseUpEvent, _, cx| {
+                    p.drag = None;
+                    cx.notify();
+                }),
+            )
+            .child(figure)
+            .children((boxes > 0).then(|| {
+                div()
+                    .absolute()
+                    .bottom(px(6.0))
+                    .left_0()
+                    .w_full()
+                    .flex()
+                    .justify_center()
+                    .text_size(px(11.0))
+                    .text_color(rgb(c.muted))
+                    .child(self.t("识别框为识别出的文字位置"))
+            }))
+            .children(zoomed.then(|| {
+                let hover = c.hover;
+                let tip = self.t("还原缩放");
+                div()
+                    .id("recognition-zoom")
+                    .absolute()
+                    .top(px(8.0))
+                    .right(px(8.0))
+                    .h(px(24.0))
+                    .px(px(8.0))
+                    .flex()
+                    .items_center()
+                    .rounded(px(6.0))
+                    .border_1()
+                    .border_color(rgb(c.border))
+                    .bg(rgb(c.bg))
+                    .text_size(px(12.0))
+                    .text_color(rgb(c.muted))
+                    .cursor_pointer()
+                    .hover(move |s| s.bg(rgb(hover)))
+                    .tooltip(move |_, cx| cx.new(|_| crate::annotate::Tooltip(tip.clone().into())).into())
+                    .child(format!("{}%", (k * 100.0).round()))
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .on_click(cx.listener(|p, _: &ClickEvent, _, cx| p.reset_zoom(cx)))
+            }));
+        Some(if dragging {
+            pane.cursor_grabbing()
+        } else if zoomed {
+            pane.cursor_grab()
+        } else {
+            pane
+        })
     }
 
     fn ocr_main(&self, cx: &mut Context<Self>, c: &Colors) -> Div {
@@ -959,7 +1049,9 @@ impl Render for Panel {
                 } else {
                     (width * 0.45).max(320.0).min(width)
                 };
-                let image = self.image_pane((width - main_width).max(0.0), height - 52.0, &c);
+                let pane_width = (width - main_width).max(0.0);
+                self.view = (pane_width, height - 52.0);
+                let image = self.image_pane(pane_width, height - 52.0, &c, cx);
                 let main = (!only).then(|| {
                     if mode == Mode::Ocr {
                         self.ocr_main(cx, &c)
@@ -1098,23 +1190,9 @@ impl Render for Panel {
                                 }))
                             }),
                         )
-                        .children(self.panel_collapsible().then(|| {
-                            let open = self.show_panel;
-                            tool_button(
-                                "translate-panel",
-                                icons::PANEL,
-                                self.t(if open { "收起翻译面板" } else { "展开翻译面板" }),
-                                open,
-                                true,
-                                &c,
-                            )
-                            .on_click(cx.listener(|p, _: &ClickEvent, _, cx| {
-                                p.show_panel = !p.show_panel;
-                                cx.notify();
-                            }))
-                        }))
                         .child(pin)
-                        .child(
+                        // 原地覆盖时不提供隐藏原图（没有侧边面板可切换）；退回文字面板时保留。
+                        .children((!only).then(|| {
                             tool_button(
                                 "translate-image",
                                 icons::IMAGE,
@@ -1132,8 +1210,8 @@ impl Render for Panel {
                                     p.show_image = !p.show_image;
                                     cx.notify();
                                 },
-                            )),
-                        )
+                            ))
+                        }))
                         // 只显示原图时右侧面板的复制按钮不在，底栏补上主操作。
                         .children(only.then(|| {
                             let translated = !self.translated.read(cx).value().trim().is_empty();
