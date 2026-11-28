@@ -12,6 +12,7 @@ pub mod windows;
 pub mod recent;
 pub mod regions;
 pub mod sizing;
+pub mod shape;
 #[cfg(windows)]
 pub use windows::{AppWindow as NativeWindow, PhysicalDpi};
 #[cfg(not(windows))]
@@ -81,6 +82,20 @@ pub fn compose(
             y: f64::from(rect.y),
         },
     )?;
+    Ok(image)
+}
+
+/// 合成选区后把不规则形状（自由、折线、多窗口截图）以外的像素设为透明；没有形状时同 [`compose`]。
+pub fn compose_shaped(
+    source: &RgbaImage,
+    rect: Rect,
+    annotations: &[crate::annotations::Annotation],
+    shape: Option<&shape::Shape>,
+) -> Result<RgbaImage, String> {
+    let mut image = compose(source, rect, annotations)?;
+    if let Some(shape) = shape {
+        shape.apply(&mut image, (rect.x, rect.y));
+    }
     Ok(image)
 }
 

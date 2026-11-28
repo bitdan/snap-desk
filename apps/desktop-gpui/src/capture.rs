@@ -13,6 +13,10 @@
 //! 即得到截图物理像素。选区可跨屏（坐标是整张虚拟桌面截图），各浮层只画与本屏相交的部分；
 //! 取色放大镜见 `magnifier.rs`。贴图窗口见 `pins.rs`。
 //!
+//! 框选方式（模式条或快捷键，只在还没有选区时切换）：矩形（默认）、自由 F（按住拖出轨迹）、折线 L（单击加顶点，
+//! 双击 / 点回起点 / Enter 闭合）、多窗口 M（单击加入或移除窗口，拖动加入一块区域）。不规则选区仍以外接矩形
+//! 作为选区，形状存于 `Session::shape`，导出时形状以外透明（`snap_core::capture::shape`）；有形状时选区固定。
+//!
 //! 标注（`annotate.rs`）：选区下方工具栏选择工具后，选区内的按下交给编辑器；标注坐标与截图同为
 //! 物理像素，导出时随选区一起交给 `compose`。已有标注时选区不能再移动或缩放（避免标注被裁掉）。
 use crate::annotate::{self, Action, Editor, Job, Layers, Tool, ToolbarProps};
@@ -29,7 +33,7 @@ use gpui_kit::{
 use image::RgbaImage;
 use snap_core::{
     annotations::{Annotation, Point as ImagePoint, edit::Bounds as ImageBounds},
-    capture::{Display, Rect, recent::{self, RecentSelection}, sizing::{self, Size as Dimensions, Unit}},
+    capture::{Display, Rect, recent::{self, RecentSelection}, shape::{self, Shape}, sizing::{self, Size as Dimensions, Unit}},
     settings::{ExportSettings, Language, Settings},
 };
 use std::{sync::Arc, time::{Duration, Instant}};
@@ -61,6 +65,17 @@ enum Drag {
     Create { anchor: selection::Point, moved: bool, area: Rect },
     Move { anchor: selection::Point, start: Rect },
     Resize { anchor: selection::Point, start: Rect, handle: Handle },
+    /// 多窗口截图：单击加入 / 移除鼠标下的窗口，拖动加入一块矩形。
+    Add { anchor: selection::Point, moved: bool },
+}
+
+/// 框选方式。
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ShapeMode {
+    Rect,
+    Free,
+    Polyline,
+    Windows,
 }
 
 /// 一次截图会话；由所有浮层共享。
@@ -128,6 +143,16 @@ pub struct Session {
     size_editor: Option<SizeEditor>,
     /// 比例锁定、尺寸条单位与尺寸预设（`capture-size.json`），修改即保存。
     sizing: sizing::Sizing,
+    /// 框选方式；不规则选区的形状与其外接矩形（选区被替换后自动失效，见 `active_shape`）。
+    shape_mode: ShapeMode,
+    shape: Option<(Rect, Shape)>,
+    /// 正在画的自由轨迹或折线顶点（截图物理像素），折线最后一段跟随光标。
+    trace: Vec<(f64, f64)>,
+    trace_cursor: Option<(f64, f64)>,
+    /// 多窗口截图拖动中的矩形预览。
+    adding: Option<Rect>,
+    /// 折线刚在按下时闭合：松开时执行“截图后动作”。
+    closed: bool,
 }
 
 /// 位置与尺寸输入条：所在浮层与 X、Y、宽、高四个输入框（数值为尺寸条当前单位）。
@@ -328,10 +353,103 @@ impl Session {
         }
     }
 
-    /// 已有标注或正在编辑时锁定选区。
+    /// 已有标注、正在编辑或是不规则选区时锁定选区。
     fn selection_locked(&self) -> bool {
-        !self.editor.shapes().is_empty() || self.editor.interacting()
+        !self.editor.shapes().is_empty() || self.editor.interacting() || self.active_shape().is_some()
     }
+
+    /// 当前选区的不规则形状；选区被别的操作（全屏、最近选区、重新框选）替换后旧形状失效。
+    fn active_shape(&self) -> Option<&Shape> {
+        self.shape.as_ref().filter(|(rect, _)| Some(*rect) == self.selection).map(|(_, shape)| shape)
+    }
+
+    /// 以形状的外接矩形作为选区；太小（任一边不足 4 像素）时清空。返回是否得到选区。
+    fn set_shape(&mut self, shape: Shape) -> bool {
+        match shape.bounds(self.area()) {
+            Some(rect) if rect.width >= 4 && rect.height >= 4 => {
+                self.selection = Some(rect);
+                self.shape = Some((rect, shape));
+            }
+            _ => {
+                self.selection = None;
+                self.shape = None;
+            }
+        }
+        self.trace.clear();
+        self.trace_cursor = None;
+        self.hover = None;
+        self.drop_size_editor();
+        self.sync();
+        self.selection.is_some()
+    }
+
+    /// 闭合自由轨迹或折线。
+    fn close_trace(&mut self) -> bool {
+        let points = std::mem::take(&mut self.trace);
+        self.trace_cursor = None;
+        points.len() >= 3 && self.set_shape(Shape::Polygon(points))
+    }
+
+    /// 还没有选区、不在录屏框选、没有标注时才能切换框选方式。
+    fn can_switch_shape(&self) -> bool {
+        !self.recording && !self.busy && self.selection.is_none() && self.drag.is_none() && self.trace.is_empty()
+            && self.editor.shapes().is_empty()
+    }
+
+    fn set_shape_mode(&mut self, mode: ShapeMode) {
+        self.shape_mode = mode;
+        self.trace.clear();
+        self.trace_cursor = None;
+        self.hover = None;
+    }
+
+    /// 鼠标下的窗口 / 控件是否高亮：矩形与多窗口截图在选择时，多窗口截图已选了一部分时也继续。
+    fn hovering(&self) -> bool {
+        if self.recording {
+            return self.selection.is_none();
+        }
+        match self.shape_mode {
+            ShapeMode::Rect => self.selection.is_none(),
+            ShapeMode::Windows => {
+                self.selection.is_none() || (self.active_shape().is_some() && self.editor.shapes().is_empty())
+            }
+            ShapeMode::Free | ShapeMode::Polyline => false,
+        }
+    }
+
+    /// 多窗口截图：加入矩形；与已选的某个重合时改为移除。
+    fn toggle_rect(&mut self, rect: Rect) {
+        let mut rects = match self.active_shape() {
+            Some(Shape::Rects(rects)) => rects.clone(),
+            _ => Vec::new(),
+        };
+        match rects.iter().position(|r| snap_core::capture::same_bounds(*r, rect)) {
+            Some(index) => {
+                rects.remove(index);
+            }
+            None => rects.push(rect),
+        }
+        if rects.is_empty() {
+            self.selection = None;
+            self.shape = None;
+            self.sync();
+        } else {
+            self.set_shape(Shape::Rects(rects));
+        }
+    }
+}
+
+/// 框选完成后要执行的“截图后动作”；录屏框选与回放的截图不执行。
+fn after_action(s: &Session, cx: &App) -> Option<String> {
+    if s.recording || history::position(cx).is_some() {
+        return None;
+    }
+    s.selection.map(|_| match s.purpose {
+        Some(RecognitionMode::Ocr) => "ocr".to_owned(),
+        Some(RecognitionMode::Translate) => "translate".to_owned(),
+        Some(RecognitionMode::Qr) => "qr".to_owned(),
+        None => s.after.clone(),
+    })
 }
 
 /// 在后台线程栅格化文字/序号/滤镜，完成后写回编辑器。
@@ -707,6 +825,12 @@ fn begin(cx: &mut App, settings: &Settings, delay: Duration, purpose: Option<Rec
                         displays: grabbed.displays,
                         targets: grabbed.targets,
                         selection: None,
+                        shape_mode: ShapeMode::Rect,
+                        shape: None,
+                        trace: Vec::new(),
+                        trace_cursor: None,
+                        adding: None,
+                        closed: false,
                         hover: None,
                         levels: Vec::new(),
                         level: 0,
@@ -1094,7 +1218,7 @@ fn record(cx: &mut App, _owner: isize) {
         }
         return;
     }
-    let Some((session, _, rect, shapes)) = begin_export(cx) else {
+    let Some((session, _, rect, shapes, _)) = begin_export(cx) else {
         return;
     };
     let request = {
@@ -1187,14 +1311,14 @@ fn current(cx: &App) -> Option<Entity<Session>> {
 }
 
 /// 取出待导出的选区、源图与标注并标记忙碌；没有选区、已在导出、文字输入或栅格化未完成时返回 None。
-fn begin_export(cx: &mut App) -> Option<(Entity<Session>, Arc<RgbaImage>, Rect, Vec<Annotation>)> {
+fn begin_export(cx: &mut App) -> Option<(Entity<Session>, Arc<RgbaImage>, Rect, Vec<Annotation>, Option<Shape>)> {
     let session = current(cx)?;
-    let (image, rect, shapes) = {
+    let (image, rect, shapes, mask) = {
         let s = session.read(cx);
         if s.busy || s.editor.pending || s.editor.text.is_some() {
             return None;
         }
-        (s.image.clone(), s.selection?, s.editor.shapes().to_vec())
+        (s.image.clone(), s.selection?, s.editor.shapes().to_vec(), s.active_shape().cloned())
     };
     session.update(cx, |s, _| {
         // 未完成的笔画不导出。
@@ -1202,7 +1326,7 @@ fn begin_export(cx: &mut App) -> Option<(Entity<Session>, Arc<RgbaImage>, Rect, 
         s.sync();
         s.busy = true;
     });
-    Some((session, image, rect, shapes))
+    Some((session, image, rect, shapes, mask))
 }
 
 pub(crate) fn png(image: &RgbaImage) -> Result<Vec<u8>, String> {
@@ -1217,14 +1341,14 @@ pub(crate) fn png(image: &RgbaImage) -> Result<Vec<u8>, String> {
 
 /// 复制选区到剪贴板。`owner` 是 Windows 剪贴板所有者窗口（当前浮层），复制完成后才关闭浮层。
 fn copy(cx: &mut App, owner: isize) {
-    let Some((session, image, rect, shapes)) = begin_export(cx) else {
+    let Some((session, image, rect, shapes, mask)) = begin_export(cx) else {
         return;
     };
     cx.spawn(async move |cx| {
         let encoded = cx
             .background_executor()
             .spawn(async move {
-                let image = snap_core::capture::compose(&image, rect, &shapes)?;
+                let image = snap_core::capture::compose_shaped(&image, rect, &shapes, mask.as_ref())?;
                 let png = png(&image)?;
                 Ok::<_, String>((image, png))
             })
@@ -1264,11 +1388,11 @@ pub(crate) fn write_clipboard(cx: &App, _owner: isize, _image: &RgbaImage, png: 
 /// 把选区贴到屏幕上：图片首像素对准选区原位置，然后结束截图。
 /// 截图中按全局贴图键、工具栏“贴图”或“截图后动作 = 贴图”都走这里。
 pub fn pin(cx: &mut App) {
-    let Some((session, image, rect, shapes)) = begin_export(cx) else {
+    let Some((session, image, rect, shapes, mask)) = begin_export(cx) else {
         return;
     };
     // 自动保存的那一份带上标注（贴图本身的标注仍可编辑，底图不合成）。
-    let annotated = crate::shell::settings(cx).export.auto_save.then(|| (image.clone(), shapes.clone()));
+    let annotated = crate::shell::settings(cx).export.auto_save.then(|| (image.clone(), shapes.clone(), mask.clone()));
     // 贴图保留可编辑的标注：底图不合成，标注坐标换算到贴图图像（减去选区原点）。
     let (ox, oy) = (f64::from(rect.x), f64::from(rect.y));
     let shapes: Vec<Annotation> = shapes
@@ -1310,7 +1434,7 @@ pub fn pin(cx: &mut App) {
     cx.spawn(async move |cx| {
         let composed = cx
             .background_executor()
-            .spawn(async move { snap_core::capture::compose(&image, rect, &[]) })
+            .spawn(async move { snap_core::capture::compose_shaped(&image, rect, &[], mask.as_ref()) })
             .await;
         cx.update(|cx| {
             let result = composed.and_then(|image| {
@@ -1319,8 +1443,8 @@ pub fn pin(cx: &mut App) {
             match result {
                 Ok(()) => {
                     log::info!("event=gpui.capture_pinned width={} height={}", rect.width, rect.height);
-                    if let Some((source, shapes)) = annotated {
-                        auto_save_composed(cx, source, rect, shapes);
+                    if let Some((source, shapes, mask)) = annotated {
+                        auto_save_composed(cx, source, rect, shapes, mask);
                     }
                     remember(cx);
                     finish(cx);
@@ -1338,14 +1462,14 @@ pub fn pin(cx: &mut App) {
 /// 识别选区：文字识别与翻译用原始像素（标注可能遮挡文字），二维码 / 条形码包含标注。
 /// 识别在结果窗口中进行；浮层随即关闭，结果窗口独立存活。
 pub fn recognize(cx: &mut App, mode: RecognitionMode) {
-    let Some((session, image, rect, shapes)) = begin_export(cx) else {
+    let Some((session, image, rect, shapes, mask)) = begin_export(cx) else {
         return;
     };
     let shapes = if mode == RecognitionMode::Qr { shapes } else { Vec::new() };
     cx.spawn(async move |cx| {
         let composed = cx
             .background_executor()
-            .spawn(async move { snap_core::capture::compose(&image, rect, &shapes) })
+            .spawn(async move { snap_core::capture::compose_shaped(&image, rect, &shapes, mask.as_ref()) })
             .await;
         cx.update(|cx| match composed {
             Ok(image) => {
@@ -1365,7 +1489,7 @@ pub fn recognize(cx: &mut App, mode: RecognitionMode) {
 /// 保存选区。置顶浮层会挡住系统保存对话框，因此先关闭浮层但保留会话；取消或失败时重新打开浮层，
 /// 选区保持不变。文件名、格式、目录记忆见 `snap_core::export`。
 fn save(cx: &mut App) {
-    let Some((session, image, rect, shapes)) = begin_export(cx) else {
+    let Some((session, image, rect, shapes, mask)) = begin_export(cx) else {
         return;
     };
     let (export, title, language) = {
@@ -1376,7 +1500,7 @@ fn save(cx: &mut App) {
     cx.spawn(async move |cx| {
         let composed = cx
             .background_executor()
-            .spawn(async move { snap_core::capture::compose(&image, rect, &shapes) })
+            .spawn(async move { snap_core::capture::compose_shaped(&image, rect, &shapes, mask.as_ref()) })
             .await;
         let image = match composed {
             Ok(image) => image,
@@ -1447,7 +1571,7 @@ fn save(cx: &mut App) {
 /// 快速保存：不弹对话框，按默认格式与文件名规则存进截图保存目录（重名加 -2、-3），然后结束截图并提示已保存，
 /// 单击提示在文件夹中定位文件。失败时保留浮层与选区，在工具栏下方显示原因。
 pub(crate) fn quick_save(cx: &mut App) {
-    let Some((session, image, rect, shapes)) = begin_export(cx) else {
+    let Some((session, image, rect, shapes, mask)) = begin_export(cx) else {
         return;
     };
     let export = session.read(cx).export.clone();
@@ -1455,7 +1579,7 @@ pub(crate) fn quick_save(cx: &mut App) {
         let saved = cx
             .background_executor()
             .spawn(async move {
-                let image = snap_core::capture::compose(&image, rect, &shapes)?;
+                let image = snap_core::capture::compose_shaped(&image, rect, &shapes, mask.as_ref())?;
                 let directory = snap_core::export::save_directory(export.remember_directory)
                     .ok_or("无法确定截图保存目录，请在设置中选择。")?;
                 snap_core::export::quick_save(&image, &export, &directory)
@@ -1504,11 +1628,11 @@ pub(crate) fn auto_save(cx: &App, image: Arc<RgbaImage>) {
 }
 
 /// 贴图时的自动保存：成图要先把标注合成进去，合成也放在后台线程。
-fn auto_save_composed(cx: &App, source: Arc<RgbaImage>, rect: Rect, shapes: Vec<Annotation>) {
+fn auto_save_composed(cx: &App, source: Arc<RgbaImage>, rect: Rect, shapes: Vec<Annotation>, mask: Option<Shape>) {
     let export = crate::shell::settings(cx).export;
     cx.background_executor()
         .spawn(async move {
-            let composed = snap_core::capture::compose(&source, rect, &shapes);
+            let composed = snap_core::capture::compose_shaped(&source, rect, &shapes, mask.as_ref());
             let directory = snap_core::export::save_directory(export.remember_directory);
             match (composed, directory) {
                 (Ok(image), Some(directory)) => match snap_core::auto_save::save(&image, &export, &directory) {
@@ -1703,6 +1827,34 @@ fn mode_bar(s: &Session, position: Option<(usize, usize)>, has_history: bool) ->
         }
         bar = bar.child(refresh);
     }
+    if !s.recording {
+        let switchable = enabled && s.can_switch_shape();
+        bar = bar.child(div().w(px(1.0)).h(px(18.0)).mx(px(4.0)).bg(rgb(annotate::border())));
+        for (id, label, mode) in [
+            ("capture-shape-rect", "矩形", ShapeMode::Rect),
+            ("capture-shape-free", "自由 F", ShapeMode::Free),
+            ("capture-shape-polyline", "折线 L", ShapeMode::Polyline),
+            ("capture-shape-windows", "多窗口 M", ShapeMode::Windows),
+        ] {
+            let active = s.shape_mode == mode;
+            let mut item = button(id, s.text(label), switchable || active);
+            if active {
+                item = item.bg(rgb(annotate::hover())).text_color(rgb(ACCENT));
+            }
+            if switchable {
+                item = item.on_click(move |_, _, cx| {
+                    if let Some(session) = current(cx) {
+                        session.update(cx, |s, cx| {
+                            s.set_shape_mode(mode);
+                            cx.notify();
+                        });
+                    }
+                });
+            }
+            bar = bar.child(item);
+        }
+        bar = bar.child(div().w(px(1.0)).h(px(18.0)).mx(px(4.0)).bg(rgb(annotate::border())));
+    }
     let recent = enabled
         && !s.selection_locked()
         && recent::restore(s.recent.as_ref(), s.image.width(), s.image.height(), &s.layout_key).is_some();
@@ -1731,6 +1883,12 @@ fn mode_bar(s: &Session, position: Option<(usize, usize)>, has_history: bool) ->
 fn capture_tip(s: &Session) -> Div {
     let (main, keys) = if s.recording {
         ("拖动选择录屏范围", "Esc 退出 · Ctrl / ⌘ + A 全屏 · R 最近选区")
+    } else if s.shape_mode == ShapeMode::Free {
+        ("按住拖动，画出截图范围", "F 回到矩形 · Esc 取消")
+    } else if s.shape_mode == ShapeMode::Polyline {
+        ("单击添加顶点，双击或点回起点闭合", "Backspace / 右键 撤销顶点 · Enter 闭合 · L 回到矩形")
+    } else if s.shape_mode == ShapeMode::Windows {
+        ("单击窗口加入截图，再次单击移除 · 拖动加入区域", "双击或 Enter 完成 · M 回到矩形")
     } else if !s.targets.is_empty() {
         ("点击吸附 · 滚轮 / Tab 切换层级 · Alt 整个窗口 · 拖动框选", "C 取色 · Esc 取消 · Ctrl / ⌘ + A 全屏 · R 最近选区")
     } else {
@@ -1948,6 +2106,50 @@ impl Overlay {
             if event.click_count >= 2 && inside {
                 return true;
             }
+            if !s.recording && s.editor.shapes().is_empty() {
+                match s.shape_mode {
+                    ShapeMode::Rect => {}
+                    ShapeMode::Free => {
+                        if inside {
+                            return false;
+                        }
+                        s.selection = None;
+                        s.trace = vec![(point.x, point.y)];
+                        s.hover = None;
+                        s.sync();
+                        cx.notify();
+                        return false;
+                    }
+                    ShapeMode::Polyline => {
+                        if s.selection.is_some() {
+                            if inside {
+                                return false;
+                            }
+                            s.selection = None;
+                            s.sync();
+                        }
+                        let near_start = s
+                            .trace
+                            .first()
+                            .is_some_and(|&(x, y)| (point.x - x).hypot(point.y - y) <= t * 1.5);
+                        if s.trace.len() >= 3 && (near_start || event.click_count >= 2) {
+                            s.closed = s.close_trace();
+                        } else if event.click_count < 2 || s.trace.is_empty() {
+                            s.trace.push((point.x, point.y));
+                            s.trace_cursor = Some((point.x, point.y));
+                        }
+                        s.hover = None;
+                        cx.notify();
+                        return false;
+                    }
+                    ShapeMode::Windows => {
+                        s.drag = Some(Drag::Add { anchor: p, moved: false });
+                        s.adding = None;
+                        cx.notify();
+                        return false;
+                    }
+                }
+            }
             if s.selection_locked() {
                 // 已有标注：选区固定，单击只取消选中。
                 s.editor.select(None);
@@ -2019,6 +2221,24 @@ impl Overlay {
                 cx.notify();
                 return true;
             }
+            // 自由截图记录轨迹（相邻点至少 2 像素），折线截图让最后一段跟随光标。
+            if !s.trace.is_empty() && s.selection.is_none() {
+                match s.shape_mode {
+                    ShapeMode::Free if pressed => {
+                        let last = s.trace[s.trace.len() - 1];
+                        if (point.x - last.0).hypot(point.y - last.1) >= 2.0 {
+                            s.trace.push((point.x, point.y));
+                            cx.notify();
+                        }
+                    }
+                    ShapeMode::Polyline => {
+                        s.trace_cursor = Some((point.x, point.y));
+                        cx.notify();
+                    }
+                    _ => {}
+                }
+                return false;
+            }
             match (pressed, s.drag) {
                 (true, Some(Drag::Create { anchor, moved, area })) => {
                     let far = (p.0 - anchor.0).abs().max((p.1 - anchor.1).abs()) >= CLICK_SLOP;
@@ -2031,6 +2251,15 @@ impl Overlay {
                         Some(ratio) => selection::from_points_ratio(anchor, p, ratio, area),
                         None => selection::from_points(anchor, p, area),
                     };
+                    s.hover = None;
+                }
+                (true, Some(Drag::Add { anchor, moved })) => {
+                    let far = (p.0 - anchor.0).abs().max((p.1 - anchor.1).abs()) >= CLICK_SLOP;
+                    if !moved && !far {
+                        return false;
+                    }
+                    s.drag = Some(Drag::Add { anchor, moved: true });
+                    s.adding = selection::from_points(anchor, p, s.area());
                     s.hover = None;
                 }
                 (true, Some(Drag::Move { anchor, start })) => {
@@ -2047,7 +2276,7 @@ impl Overlay {
                         s.selection = Some(rect);
                     }
                 }
-                _ if s.selection.is_none() => {
+                _ if s.hovering() => {
                     probe_at = Some(p);
                     if !s.hover_at(p, event.modifiers.alt) {
                         return false;
@@ -2078,24 +2307,34 @@ impl Overlay {
                 cx.notify();
                 return (None, job);
             }
+            // 自由截图：松开即闭合轨迹；折线截图在按下时已闭合。
+            if s.shape_mode == ShapeMode::Free && !s.trace.is_empty() && s.selection.is_none() {
+                s.trace = shape::simplify(&s.trace, 2.0);
+                let created = s.close_trace();
+                cx.notify();
+                return (created.then(|| after_action(s, cx)).flatten(), None);
+            }
+            if std::mem::take(&mut s.closed) {
+                cx.notify();
+                return (after_action(s, cx), None);
+            }
             let drag = s.drag.take();
+            if let Some(Drag::Add { moved, .. }) = drag {
+                let rect = if moved { s.adding.take() } else { s.hover };
+                s.adding = None;
+                if let Some(rect) = rect {
+                    s.toggle_rect(rect);
+                }
+                cx.notify();
+                return (None, None);
+            }
             // 单击（没有拖动）选中鼠标下的窗口或控件。
             if let Some(Drag::Create { moved: false, .. }) = drag {
                 s.selection = s.hover;
             }
             s.sync();
             cx.notify();
-            // 回放的截图不执行“截图后动作”。
-            let after = (matches!(drag, Some(Drag::Create { .. })) && !s.recording && history::position(cx).is_none())
-                .then(|| {
-                    s.selection.map(|_| match s.purpose {
-                        Some(RecognitionMode::Ocr) => "ocr".to_owned(),
-                        Some(RecognitionMode::Translate) => "translate".to_owned(),
-                        Some(RecognitionMode::Qr) => "qr".to_owned(),
-                        None => s.after.clone(),
-                    })
-                })
-                .flatten();
+            let after = matches!(drag, Some(Drag::Create { .. })).then(|| after_action(s, cx)).flatten();
             (after, None)
         });
         self.run(job, cx);
@@ -2115,6 +2354,23 @@ impl Overlay {
     fn right_click(&mut self, _: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         if self.session.read(cx).size_editor.is_some() {
             self.close_size_editor(window, cx);
+            return;
+        }
+        // 正在画折线：右键撤销最后一个顶点；自由轨迹直接放弃。
+        let undone = self.session.update(cx, |s, cx| {
+            if s.trace.is_empty() {
+                return false;
+            }
+            if s.shape_mode == ShapeMode::Polyline && s.trace.len() > 1 {
+                s.trace.pop();
+            } else {
+                s.trace.clear();
+                s.trace_cursor = None;
+            }
+            cx.notify();
+            true
+        });
+        if undone {
             return;
         }
         let cleared = self.session.update(cx, |s, cx| {
@@ -2177,6 +2433,48 @@ impl Overlay {
             }
             cx.stop_propagation();
             return;
+        }
+        // 框选方式：F 自由、L 折线、M 多窗口（再按一次回到矩形）；画折线时 Enter 闭合、Backspace 撤销顶点，
+        // 正在画时 Esc 只放弃这次轨迹。
+        if !command && !keystroke.modifiers.alt {
+            let handled = self.session.update(cx, |s, cx| {
+                let handled = match key {
+                    "f" | "l" | "m" if s.can_switch_shape() => {
+                        let mode = match key {
+                            "f" => ShapeMode::Free,
+                            "l" => ShapeMode::Polyline,
+                            _ => ShapeMode::Windows,
+                        };
+                        s.set_shape_mode(if s.shape_mode == mode { ShapeMode::Rect } else { mode });
+                        true
+                    }
+                    "enter" if s.shape_mode == ShapeMode::Polyline && s.trace.len() >= 3 => {
+                        s.close_trace();
+                        true
+                    }
+                    "backspace" | "delete" if !s.trace.is_empty() => {
+                        s.trace.pop();
+                        if s.trace.is_empty() {
+                            s.trace_cursor = None;
+                        }
+                        true
+                    }
+                    "escape" if !s.trace.is_empty() => {
+                        s.trace.clear();
+                        s.trace_cursor = None;
+                        true
+                    }
+                    _ => false,
+                };
+                if handled {
+                    cx.notify();
+                }
+                handled
+            });
+            if handled {
+                cx.stop_propagation();
+                return;
+            }
         }
         // 取色快捷键：C 复制色值、P 切换全局/相对坐标（Shift 切换格式见 modifiers）。
         if !command && !keystroke.modifiers.alt && matches!(key, "c" | "p") && self.session.read(cx).picking() {
@@ -2967,7 +3265,142 @@ impl Render for Overlay {
             }
         }
 
-        if selection.is_none() {
+        let to_local = move |x: f64, y: f64| {
+            point(px((x as f32 - region.x as f32) / scale), px((y as f32 - region.y as f32) / scale))
+        };
+        // 不规则选区：外接矩形内、形状外同样遮住，并描出形状边线。
+        if let (Some(rect), Some(shape)) = (selection.filter(|_| visible.is_some()), s.active_shape()) {
+            match shape {
+                Shape::Polygon(points) => {
+                    let b = local(rect, region, scale);
+                    let corners = [
+                        b.origin,
+                        point(b.origin.x + b.size.width, b.origin.y),
+                        point(b.origin.x + b.size.width, b.origin.y + b.size.height),
+                        point(b.origin.x, b.origin.y + b.size.height),
+                    ];
+                    let outline: Vec<Point<Pixels>> = points.iter().map(|&(x, y)| to_local(x, y)).collect();
+                    root = root.child(
+                        canvas(
+                            |_, _, _| (),
+                            move |_, _, window, _| {
+                                let mut fill = PathBuilder::fill().with_style(PathStyle::Fill(FillOptions::even_odd()));
+                                fill.add_polygon(&corners, true);
+                                fill.add_polygon(&outline, true);
+                                if let Ok(path) = fill.build() {
+                                    window.paint_path(path, rgba(MASK));
+                                }
+                                let mut line = PathBuilder::stroke(px(1.5));
+                                line.add_polygon(&outline, true);
+                                if let Ok(path) = line.build() {
+                                    window.paint_path(path, rgb(ACCENT));
+                                }
+                            },
+                        )
+                        .absolute()
+                        .size_full(),
+                    );
+                }
+                Shape::Rects(rects) => {
+                    // 按各矩形的边把外接矩形切成网格，没被任何矩形覆盖的格子遮住。
+                    let edges = |pick: fn(&Rect) -> (u32, u32), lo: u32, hi: u32| {
+                        let mut v: Vec<u32> = rects.iter().flat_map(|r| { let (a, b) = pick(r); [a, b] }).collect();
+                        v.extend([lo, hi]);
+                        v.retain(|x| (lo..=hi).contains(x));
+                        v.sort_unstable();
+                        v.dedup();
+                        v
+                    };
+                    let xs = edges(|r| (r.x, r.x + r.width), rect.x, rect.x + rect.width);
+                    let ys = edges(|r| (r.y, r.y + r.height), rect.y, rect.y + rect.height);
+                    for row in ys.windows(2) {
+                        for col in xs.windows(2) {
+                            let cx0 = f64::from(col[0] + col[1]) / 2.0;
+                            let cy0 = f64::from(row[0] + row[1]) / 2.0;
+                            if !shape.contains(cx0, cy0) {
+                                let cell = Rect { x: col[0], y: row[0], width: col[1] - col[0], height: row[1] - row[0] };
+                                if let Some(cell) = selection::intersect(cell, region) {
+                                    root = root.child(shade(local(cell, region, scale)));
+                                }
+                            }
+                        }
+                    }
+                    for r in rects {
+                        if let Some(r) = selection::intersect(*r, region) {
+                            let b = local(r, region, scale);
+                            root = root.child(
+                                div()
+                                    .absolute()
+                                    .left(b.origin.x)
+                                    .top(b.origin.y)
+                                    .w(b.size.width)
+                                    .h(b.size.height)
+                                    .border_1()
+                                    .border_color(rgb(ACCENT)),
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        // 正在画的自由轨迹 / 折线（含跟随光标的最后一段与顶点）。
+        if selection.is_none() && !s.trace.is_empty() {
+            let polyline = s.shape_mode == ShapeMode::Polyline;
+            let vertices: Vec<Point<Pixels>> = s.trace.iter().map(|&(x, y)| to_local(x, y)).collect();
+            let mut line = vertices.clone();
+            if let Some((x, y)) = s.trace_cursor.filter(|_| polyline) {
+                line.push(to_local(x, y));
+            }
+            root = root.child(
+                canvas(
+                    |_, _, _| (),
+                    move |_, _, window, _| {
+                        if line.len() < 2 {
+                            return;
+                        }
+                        let mut path = PathBuilder::stroke(px(2.0));
+                        path.add_polygon(&line, false);
+                        if let Ok(path) = path.build() {
+                            window.paint_path(path, rgb(ACCENT));
+                        }
+                    },
+                )
+                .absolute()
+                .size_full(),
+            );
+            if polyline {
+                for (i, v) in vertices.iter().enumerate() {
+                    let size_px = if i == 0 { 10.0 } else { 7.0 };
+                    root = root.child(
+                        div()
+                            .absolute()
+                            .left(v.x - px(size_px / 2.0))
+                            .top(v.y - px(size_px / 2.0))
+                            .size(px(size_px))
+                            .rounded_full()
+                            .border_1()
+                            .border_color(rgb(ACCENT))
+                            .bg(rgb(0xffffff)),
+                    );
+                }
+            }
+        }
+        // 多窗口截图：拖动中的区域预览。
+        if let Some(rect) = s.adding.and_then(|rect| selection::intersect(rect, region)) {
+            let b = local(rect, region, scale);
+            root = root.child(
+                div()
+                    .absolute()
+                    .left(b.origin.x)
+                    .top(b.origin.y)
+                    .w(b.size.width)
+                    .h(b.size.height)
+                    .border_2()
+                    .border_color(rgb(ACCENT)),
+            );
+        }
+
+        if s.hovering() && s.adding.is_none() {
             if let Some(rect) = hover.and_then(|rect| selection::intersect(rect, region)) {
                 let b = local(rect, region, scale);
                 root = root.child(
@@ -3041,16 +3474,18 @@ impl Render for Overlay {
             )
         };
         root = root.children(annotate::selection_overlay(&s.editor, &map));
-        root = root.child(
-            div()
-                .absolute()
-                .left(b.origin.x)
-                .top(b.origin.y)
-                .w(b.size.width)
-                .h(b.size.height)
-                .border_1()
-                .border_color(rgb(ACCENT)),
-        );
+        if s.active_shape().is_none() {
+            root = root.child(
+                div()
+                    .absolute()
+                    .left(b.origin.x)
+                    .top(b.origin.y)
+                    .w(b.size.width)
+                    .h(b.size.height)
+                    .border_1()
+                    .border_color(rgb(ACCENT)),
+            );
+        }
         // 位置与尺寸条替代尺寸标签；这里只构建，等工具栏定好位置后再放（避开选区与工具栏），
         // 并且最后加入，画在选区手柄之上。
         let panel_size = size_panel_size(s.sizing.presets.len());
