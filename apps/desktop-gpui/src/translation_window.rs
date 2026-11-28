@@ -1,8 +1,8 @@
 //! 文字翻译窗口。
 //!
-//! 无边框窗口（380×560）：顶栏为置顶按钮、可拖动的“文字翻译”标题与关闭；下方依次是原文卡片（可编辑，
-//! 复制/读取剪贴板/合并换行/清空/截图翻译，检测到的语言，翻译按钮）、语言条（原文语言、交换、目标语言）、
-//! “中英自动互译”与译文卡片（服务名、状态、重新读取配置；复制/回译/重新翻译，取消或目标语言）。
+//! 无边框窗口（860×620，最小 640×460）：顶栏为置顶按钮、可拖动的“文字翻译”标题与关闭；
+//! 下方为语言条（原文语言、交换、目标语言）与“中英自动互译”，再下是左右并排、填满剩余高度的原文卡片（可编辑，复制/读取剪贴板/合并换行/清空/截图翻译，检测到的语言，翻译按钮）、
+//! 与译文卡片（服务名、状态、重新读取配置；复制/回译/重新翻译，取消或目标语言）。
 //! 回车翻译、Shift+回车换行，Ctrl+回车也翻译，Esc 关闭。中英自动互译按原文主体语言选择方向，
 //! 不改写默认目标语言。
 use crate::theme;
@@ -40,7 +40,10 @@ mod icons {
     icon!(RETRY, "rotate-ccw");
     icon!(CHEVRON, "chevron-down");
     icon!(INFO, "info");
+    icon!(TYPE, "type");
 }
+
+
 
 /// 目标语言；本地翻译只支持前两项。
 const LANGUAGES: [(&str, &str); 6] = [
@@ -783,6 +786,48 @@ impl Render for Translator {
             );
 
         // ---- 原文卡片 ----
+        let language_chip = || {
+            ["zh-CN", "en"].contains(&detected).then(|| {
+                div()
+                    .px(px(6.0))
+                    .py(px(1.0))
+                    .rounded(px(10.0))
+                    .border_1()
+                    .border_color(rgb(c.border))
+                    .text_size(px(11.0))
+                    .font_weight(FontWeight::NORMAL)
+                    .text_color(rgb(c.muted))
+                    .child(self.t(if detected == "en" {
+                        "英语"
+                    } else {
+                        "简体中文"
+                    }))
+            })
+        };
+        // 两张卡片共用的标题行：不铺底色，只用细分隔线，左右与正文对齐。
+        let card_heading = || {
+            div()
+                .flex()
+                .flex_none()
+                .items_center()
+                .gap(px(6.0))
+                .h(px(40.0))
+                .pl(px(12.0))
+                .pr(px(6.0))
+                .border_b_1()
+                .border_color(rgb(c.border))
+                .font_weight(FontWeight::SEMIBOLD)
+        };
+        // 原文卡片也有标题行，与译文卡片顶部对齐。
+        let source_heading = card_heading()
+            .child(
+                Icon::default()
+                    .data(icons::TYPE)
+                    .size(px(15.0))
+                    .text_color(rgb(c.muted)),
+            )
+            .child(self.t("原文"))
+            .children(language_chip());
         let source_tools = div()
             .flex()
             .flex_wrap()
@@ -879,21 +924,6 @@ impl Render for Translator {
                             }),
                     ),
             )
-            .children(["zh-CN", "en"].contains(&detected).then(|| {
-                div()
-                    .px(px(6.0))
-                    .py(px(1.0))
-                    .rounded(px(10.0))
-                    .border_1()
-                    .border_color(rgb(c.border))
-                    .text_size(px(11.0))
-                    .text_color(rgb(c.muted))
-                    .child(self.t(if detected == "en" {
-                        "英语"
-                    } else {
-                        "简体中文"
-                    }))
-            }))
             .child(
                 div().ml_auto().child(
                     self.icon_button(
@@ -914,13 +944,18 @@ impl Render for Translator {
                 ),
             );
         let source_card = div()
-            .flex_none()
+            .flex_1()
+            .min_h(px(120.0))
+            .flex()
+            .flex_col()
             .rounded(px(10.0))
             .overflow_hidden()
             .bg(rgb(c.card))
+            .child(source_heading)
             .child(
                 div()
-                    .h(px(140.0))
+                    .flex_1()
+                    .min_h(px(72.0))
                     .p(px(12.0))
                     .text_size(px(14.0))
                     .line_height(relative(1.65))
@@ -1009,6 +1044,7 @@ impl Render for Translator {
                     .items_center()
                     .gap(px(4.0))
                     .text_size(px(11.0))
+                    .font_weight(FontWeight::NORMAL)
                     .text_color(rgb(c.muted))
                     .child(self.t("翻译中"))
                     .into_any_element(),
@@ -1020,6 +1056,7 @@ impl Render for Translator {
                     .items_center()
                     .gap(px(4.0))
                     .text_size(px(11.0))
+                    .font_weight(FontWeight::NORMAL)
                     .text_color(rgb(c.success))
                     .child(
                         Icon::default()
@@ -1037,31 +1074,19 @@ impl Render for Translator {
             .config
             .as_ref()
             .is_ok_and(|cfg| cfg.provider != "local-ctranslate2");
-        let heading = div()
-            .flex()
-            .items_center()
-            .gap(px(6.0))
-            .min_h(px(32.0))
-            .px(px(8.0))
-            .py(px(4.0))
-            .bg(rgb(c.bar))
+        let heading = card_heading()
             .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(6.0))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child(
-                        Icon::default()
-                            .data(icons::LANGUAGES)
-                            .size(px(16.0))
-                            .text_color(rgb(BLUE)),
-                    )
-                    .child(self.provider_label()),
+                Icon::default()
+                    .data(icons::LANGUAGES)
+                    .size(px(15.0))
+                    .text_color(rgb(BLUE)),
             )
+            .child(self.provider_label())
             .children(online.then(|| {
                 div()
                     .id("translate-online-tip")
+                    .flex()
+                    .items_center()
                     .child(
                         Icon::default()
                             .data(icons::INFO)
@@ -1198,14 +1223,18 @@ impl Render for Translator {
             )
             .child(div().ml_auto().child(trailing));
         let provider_card = div()
-            .flex_none()
+            .flex_1()
+            .min_h(px(150.0))
+            .flex()
+            .flex_col()
             .rounded(px(10.0))
             .overflow_hidden()
             .bg(rgb(c.card))
             .child(heading)
             .child(
                 div()
-                    .h(px(180.0))
+                    .flex_1()
+                    .min_h(px(72.0))
                     .p(px(12.0))
                     .text_size(px(14.0))
                     .line_height(relative(1.65))
@@ -1221,7 +1250,23 @@ impl Render for Translator {
             }))
             .child(provider_tools);
 
-        let _ = window;
+        // 语言条在上，原文与译文左右并排、各占满剩余高度。
+        let body = div()
+            .flex_1()
+            .min_h_0()
+            .flex()
+            .flex_col()
+            .gap(px(8.0))
+            .child(language_area)
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .flex()
+                    .gap(px(8.0))
+                    .child(source_card.min_w_0())
+                    .child(provider_card.min_w_0()),
+            );
         div()
             .id("translation-window")
             .track_focus(&self.focus)
@@ -1240,16 +1285,13 @@ impl Render for Translator {
             .gap(px(8.0))
             .px(px(10.0))
             .pb(px(10.0))
-            .overflow_y_scroll()
             .border_1()
             .border_color(rgb(c.window_border))
             .bg(rgb(c.window))
             .text_color(rgb(c.fg))
             .text_size(px(13.0))
             .child(tools)
-            .child(source_card)
-            .child(language_area)
-            .child(provider_card)
+            .child(body)
     }
 }
 
@@ -1318,13 +1360,13 @@ pub fn merge_lines(text: &str) -> String {
     out
 }
 
-/// 打开文字翻译窗口（380×560，最小 340×420，无边框）；带原文时立即翻译。
+/// 打开文字翻译窗口（860×620、原文与译文并排，最小 640×460，无边框）；带原文时立即翻译。
 pub fn open(cx: &mut App, text: Option<String>) {
     let settings = crate::shell::settings(cx);
     let options = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
             None,
-            size(px(380.0), px(560.0)),
+            size(px(860.0), px(620.0)),
             cx,
         ))),
         titlebar: None,
@@ -1333,7 +1375,7 @@ pub fn open(cx: &mut App, text: Option<String>) {
         kind: WindowKind::Normal,
         is_resizable: true,
         is_minimizable: true,
-        window_min_size: Some(size(px(340.0), px(420.0))),
+        window_min_size: Some(size(px(640.0), px(460.0))),
         ..Default::default()
     };
     match cx.open_window(options, |window, cx| {
