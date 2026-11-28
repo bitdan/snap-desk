@@ -216,6 +216,8 @@ pub mod icons {
     icon!(INFO, "info");
     icon!(ARROW_END, "move-right");
     icon!(ARROW_BOTH, "move-horizontal");
+    icon!(ARROW_START, "move-left");
+    icon!(ARROW_DIMENSION, "dimension");
 }
 
 /// 样式条“圆角”按钮使用的半径（原图物理像素）。
@@ -1533,18 +1535,19 @@ fn sample_button(id: impl Into<ElementId>, tooltip: String, pressed: bool, sampl
     button
 }
 
-/// 线型样张：一条实线、三段短划或四个圆点，宽度相近，按钮排在一起时对齐。
+/// 线型样张：一条实线、三段短划、四个圆点或“划 点 划”，宽度相近，按钮排在一起时对齐。
 fn line_sample(style: LineStyle, color: u32) -> Div {
-    let (count, length) = match style {
-        LineStyle::Solid => (1, 14.0),
-        LineStyle::Dashed => (3, 4.0),
-        LineStyle::Dotted => (4, 2.0),
+    let lengths: &[f32] = match style {
+        LineStyle::Solid => &[14.0],
+        LineStyle::Dashed => &[4.0, 4.0, 4.0],
+        LineStyle::Dotted => &[2.0, 2.0, 2.0, 2.0],
+        LineStyle::DashDot => &[5.0, 2.0, 5.0],
     };
     div()
         .flex()
         .items_center()
         .gap(px(2.0))
-        .children((0..count).map(move |_| div().w(px(length)).h(px(2.0)).rounded(px(1.0)).bg(rgb(color))))
+        .children(lengths.iter().map(move |&length| div().w(px(length)).h(px(2.0)).rounded(px(1.0)).bg(rgb(color))))
 }
 
 /// 填充与圆角样张：12 像素小方框，填充用底色深浅表示，圆角用方框圆角表示。
@@ -1802,14 +1805,19 @@ pub fn options_row<T: 'static>(props: &ToolbarProps, host: &Host<T>) -> Option<D
     let sample = |pressed: bool| if pressed { active_fg() } else { text() };
     if let Some(kind) = kind.filter(|k| k.has_line_style()) {
         let mut group = div().flex().flex_none().items_center().gap(px(2.0));
-        for (index, (value, name)) in [(LineStyle::Solid, "实线"), (LineStyle::Dashed, "虚线"), (LineStyle::Dotted, "点线")].into_iter().enumerate() {
+        for (index, (value, name)) in [(LineStyle::Solid, "实线"), (LineStyle::Dashed, "虚线"), (LineStyle::Dotted, "点线"), (LineStyle::DashDot, "点划线")].into_iter().enumerate() {
             let pressed = e.style.line_style == value;
             let b = sample_button(("annotation-line-style", index), (props.text)(name), pressed, line_sample(value, sample(pressed)));
             group = group.child(on(b, Action::Style(StylePatch::LineStyle(value)), enabled, host));
         }
         if kind == Kind::Arrow {
             group = group.child(divider());
-            for (index, (value, name, data)) in [(ArrowHeads::End, "单向箭头", icons::ARROW_END), (ArrowHeads::Both, "双向箭头", icons::ARROW_BOTH)].into_iter().enumerate() {
+            for (index, (value, name, data)) in [
+                (ArrowHeads::End, "单向箭头", icons::ARROW_END),
+                (ArrowHeads::Start, "反向箭头", icons::ARROW_START),
+                (ArrowHeads::Both, "双向箭头", icons::ARROW_BOTH),
+                (ArrowHeads::Dimension, "尺寸标注线", icons::ARROW_DIMENSION),
+            ].into_iter().enumerate() {
                 let pressed = e.style.arrow_heads == value;
                 let b = sample_button(("annotation-arrow-heads", index), (props.text)(name), pressed, icon(data, sample(pressed)));
                 group = group.child(on(b, Action::Style(StylePatch::ArrowHeads(value)), enabled, host));

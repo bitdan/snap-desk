@@ -8,6 +8,7 @@ mod recovery;
 pub mod session;
 mod stability;
 mod stitcher;
+pub mod trim;
 
 pub use matcher::Bounds;
 pub use session::{

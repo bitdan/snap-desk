@@ -62,15 +62,21 @@ pub enum LineStyle {
     Solid,
     Dashed,
     Dotted,
+    /// 点划线：长划与圆点交替。
+    #[serde(rename = "dashdot")]
+    DashDot,
 }
 
-/// 箭头头部：只画在终点（旧数据的唯一形态），或起点、终点都画。
+/// 箭头头部：只画在终点（旧数据的唯一形态）、起点终点都画、只画在起点（反向），
+/// 或尺寸标注线（两端箭头加垂直的界线）。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ArrowHeads {
     #[default]
     End,
     Both,
+    Start,
+    Dimension,
 }
 
 /// 矩形、椭圆的内部填充，颜色与描边相同；半透明按 [`FILL_TRANSLUCENT`] 覆盖，再乘标注不透明度。
@@ -321,50 +327,54 @@ fn color(text: &str) -> Result<[u8; 3], String> {
 fn segments(s: &Annotation) -> Vec<(Point, Point)> {
     let (path, closed) = stroke_path(s);
     let mut out = match dash_pattern(s.line_style, s.width) {
-        Some((on, off)) if s.kind.has_line_style() => dash(&path, on, off, closed),
+        Some((marks, period)) if s.kind.has_line_style() => dash(&path, &marks, period, closed),
         _ => path,
     };
     if matches!(s.kind, Kind::Arrow) {
         for (tip, wings) in edit::arrow_heads(s) {
             out.extend(wings.map(|wing| (wing, tip)));
         }
+        out.extend(edit::dimension_ticks(s));
     }
     out
 }
 
 /// 虚线 / 点线的“画、空”长度（原图像素）。线段两端是圆头，各多出半个线宽，
 /// 所以看到的划比 `on` 长一个线宽、空隙比 `off` 短一个线宽：虚线约为 3 倍线宽的划、2 倍线宽的空，
-/// 点线为直径等于线宽、间隔约一个线宽的圆点。细线按 2 像素计，避免划和空细碎到看不出线型。
-fn dash_pattern(style: LineStyle, width: f64) -> Option<(f64, f64)> {
+/// 点线为直径等于线宽、间隔约一个线宽的圆点；点划线为长划、圆点交替，间隔约 1.5 倍线宽。
+/// 细线按 2 像素计，避免划和空细碎到看不出线型。返回一个周期内各划的（起点, 长度）与周期长度。
+fn dash_pattern(style: LineStyle, width: f64) -> Option<(Vec<(f64, f64)>, f64)> {
     let unit = width.max(2.0);
     match style {
         LineStyle::Solid => None,
-        LineStyle::Dashed => Some((unit * 2.0, unit * 3.0)),
-        LineStyle::Dotted => Some((0.0, unit * 2.0)),
+        LineStyle::Dashed => Some((vec![(0.0, unit * 2.0)], unit * 5.0)),
+        LineStyle::Dotted => Some((vec![(0.0, 0.0)], unit * 2.0)),
+        LineStyle::DashDot => Some((vec![(0.0, unit * 3.0), (unit * 5.5, 0.0)], unit * 8.0)),
     }
 }
 
-/// 沿路径累计长度切出划段（点线的划长为 0，画成圆点）；一段划可以跨过拐角，连续经过多条线段。
-/// 开放路径缩放间距使两端都落在划上，封闭路径缩放为整数个周期，起点处不会出现半截划或多出的空隙。
-fn dash(path: &[(Point, Point)], on: f64, off: f64, closed: bool) -> Vec<(Point, Point)> {
+/// 沿路径累计长度切出划段（划长为 0 的画成圆点）；一段划可以跨过拐角，连续经过多条线段。
+/// `marks` 为一个周期内各划的（起点, 长度），按起点升序。开放路径缩放间距使两端都落在第一种划上，
+/// 封闭路径缩放为整数个周期，起点处不会出现半截划或多出的空隙。
+fn dash(path: &[(Point, Point)], marks: &[(f64, f64)], period: f64, closed: bool) -> Vec<(Point, Point)> {
     let lengths: Vec<f64> = path.iter().map(|(a, b)| (b.x - a.x).hypot(b.y - a.y)).collect();
     let total: f64 = lengths.iter().sum();
-    let period = on + off;
-    if path.is_empty() || total <= 0.0 || period <= 0.0 {
+    if path.is_empty() || marks.is_empty() || total <= 0.0 || period <= 0.0 {
         return path.to_vec();
     }
+    let first = marks[0].1;
     let scale = if closed {
         total / ((total / period).round().max(1.0) * period)
     } else {
-        let count = ((total + off) / period).round().max(1.0);
-        let span = count * on + (count - 1.0) * off;
+        let count = ((total + period - first) / period).round().max(1.0);
+        let span = (count - 1.0) * period + first;
         if span > 0.0 {
             total / span
         } else {
             1.0
         }
     };
-    let (on, period) = (on * scale, period * scale);
+    let period = period * scale;
     // 封闭路径的最后一个周期回到起点，不再重复画起点处的划；开放路径容许浮点误差，保住终点的划。
     let limit = if closed { total - 1e-6 } else { total + 1e-6 };
     let lerp = |a: Point, b: Point, t: f64| Point {
@@ -374,8 +384,13 @@ fn dash(path: &[(Point, Point)], on: f64, off: f64, closed: bool) -> Vec<(Point,
     let mut out = Vec::new();
     // `index` 是第一条结束位置不早于当前划起点的线段，`offset` 为它之前的累计长度；划起点单调增加，只需向前扫描。
     let (mut index, mut offset) = (0, 0.0);
-    let mut start = 0.0;
-    while start <= limit {
+    let starts = (0..).map(|cycle| f64::from(cycle) * period).take_while(|c| *c <= limit).flat_map(|c| {
+        marks.iter().map(move |&(at, on)| (c + at * scale, on * scale))
+    });
+    for (start, on) in starts {
+        if start > limit {
+            break;
+        }
         let end = (start + on).min(total);
         while index + 1 < path.len() && offset + lengths[index] < start {
             offset += lengths[index];
@@ -400,7 +415,6 @@ fn dash(path: &[(Point, Point)], on: f64, off: f64, closed: bool) -> Vec<(Point,
             o += length;
             i += 1;
         }
-        start += period;
     }
     out
 }
@@ -1264,19 +1278,61 @@ mod tests {
             (p(0.0, 40.0), p(0.0, 0.0)),
         ];
         // 周长 160、周期 10：整 16 段划，转角处的划拆成两段但总长不变，最后一段不回到起点重画。
-        let closed = dash(&square, 4.0, 6.0, true);
+        let closed = dash(&square, &[(0.0, 4.0)], 10.0, true);
         assert!((length(&closed) - 64.0).abs() < 1e-9);
         assert_eq!((closed[0].0.x, closed[0].0.y), (0.0, 0.0));
         let line = [(p(0.0, 0.0), p(60.0, 0.0))];
-        let open = dash(&line, 4.0, 6.0, false);
+        let open = dash(&line, &[(0.0, 4.0)], 10.0, false);
         assert_eq!(open.len(), 7);
         assert!((length(&open) - 7.0 * 3.75).abs() < 1e-9);
         assert_eq!(open.last().unwrap().1.x, 60.0);
-        let dots = dash(&line, 0.0, 4.0, false);
+        let dots = dash(&line, &[(0.0, 0.0)], 4.0, false);
         assert_eq!(dots.len(), 16);
         assert!(dots.iter().all(|(a, b)| a.x == b.x));
         // 零长度路径原样返回。
-        assert_eq!(dash(&[(p(5.0, 5.0), p(5.0, 5.0))], 4.0, 6.0, false).len(), 1);
+        assert_eq!(dash(&[(p(5.0, 5.0), p(5.0, 5.0))], &[(0.0, 4.0)], 10.0, false).len(), 1);
+    }
+
+    #[test]
+    fn dash_dot_alternates_long_dashes_and_dots() {
+        let p = |x: f64, y: f64| Point { x, y };
+        let line = [(p(0.0, 0.0), p(160.0, 0.0))];
+        let (marks, period) = dash_pattern(LineStyle::DashDot, 2.0).unwrap();
+        let pieces = dash(&line, &marks, period, false);
+        // 交替出现：长划（长度 > 0）与圆点（长度 0），从长划开始、以长划结束。
+        let kinds: Vec<bool> = pieces.iter().map(|(a, b)| b.x > a.x).collect();
+        assert!(kinds.len() >= 5);
+        assert!(kinds.windows(2).all(|w| w[0] != w[1]));
+        assert!(kinds[0] && *kinds.last().unwrap());
+        assert!((pieces.last().unwrap().1.x - 160.0).abs() < 1e-6);
+        let styled: Annotation = serde_json::from_str(
+            r##"{"kind":"line","start":{"x":0,"y":0},"end":{"x":9,"y":9},"color":"#ff0000","width":2,"lineStyle":"dashdot"}"##,
+        )
+        .unwrap();
+        assert_eq!(styled.line_style, LineStyle::DashDot);
+    }
+
+    #[test]
+    fn reverse_arrow_and_dimension_line_place_heads_and_ticks() {
+        let mut s = shape();
+        s.kind = Kind::Arrow;
+        s.start = Point { x: 10.0, y: 20.0 };
+        s.end = Point { x: 60.0, y: 20.0 };
+        s.arrow_heads = ArrowHeads::Start;
+        let heads = edit::arrow_heads(&s);
+        assert_eq!(heads.len(), 1);
+        assert_eq!(heads[0].0.x, 10.0);
+        assert!(edit::dimension_ticks(&s).is_empty());
+        s.arrow_heads = ArrowHeads::Dimension;
+        assert_eq!(edit::arrow_heads(&s).len(), 2);
+        let ticks = edit::dimension_ticks(&s);
+        assert_eq!(ticks.len(), 2);
+        // 界线垂直于主线、以端点为中点。
+        assert!(ticks.iter().all(|(a, b)| a.x == b.x && (a.y + b.y) / 2.0 == 20.0));
+        validate(std::slice::from_ref(&s), 80, 40).unwrap();
+        let mut image = RgbaImage::new(80, 40);
+        render(&mut image, std::slice::from_ref(&s), Point { x: 0.0, y: 0.0 }).unwrap();
+        assert!(image.get_pixel(10, 8)[3] > 0 && image.get_pixel(60, 32)[3] > 0);
     }
 
     #[test]

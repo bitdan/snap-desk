@@ -34,6 +34,8 @@ const ACTIONS: [(&str, &str, ShortcutAction); 5] = [
 ];
 /// 托盘“恢复关闭的贴图”：重新贴出最近关闭的一张。
 const PIN_RESTORE_ID: &str = "pin_restore";
+/// 托盘“显示 / 隐藏所有贴图”。
+const PIN_TOGGLE_ID: &str = "pin_toggle";
 const SHORTCUTS_ID: &str = "shortcuts";
 const SETTINGS_ID: &str = "settings";
 const RESTART_ID: &str = "restart";
@@ -291,6 +293,7 @@ fn handle(cx: &mut App, event: ShellEvent) {
             PIN_RESTORE_ID => {
                 crate::pins::restore_last(cx);
             }
+            PIN_TOGGLE_ID => crate::pins::toggle_all(cx),
             id => {
                 if let Some((_, _, action)) = ACTIONS.iter().find(|(item, _, _)| *item == id) {
                     run_action(cx, *action, "menu");
@@ -636,10 +639,12 @@ fn build_tray(language: &settings::Language, checked: bool, icon: tray_icon::Ico
         if id == "pin" {
             menu.append(&MenuItem::with_id(PIN_RESTORE_ID, text("恢复关闭的贴图"), true, None))
                 .map_err(|e| e.to_string())?;
+            menu.append(&MenuItem::with_id(PIN_TOGGLE_ID, text("显示 / 隐藏所有贴图"), true, None))
+                .map_err(|e| e.to_string())?;
         }
     }
     let shortcuts_item = CheckMenuItem::with_id(SHORTCUTS_ID, text("启用全局快捷键"), true, checked, None);
-    // 托盘菜单：五个动作（贴图后接“恢复关闭的贴图”）、打开主界面（设置窗口）、全局快捷键开关、重启、退出。
+    // 托盘菜单：五个动作（贴图后接“恢复关闭的贴图”“显示 / 隐藏所有贴图”）、打开主界面（设置窗口）、全局快捷键开关、重启、退出。
     menu.append_items(&[
         &MenuItem::with_id(SETTINGS_ID, text("打开 Snap Desk"), true, None),
         &shortcuts_item,

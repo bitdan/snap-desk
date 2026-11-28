@@ -224,13 +224,34 @@ pub fn resize_shape(shape: &Annotation, handle: Handle, p: Point, crop: Bounds) 
     }
 }
 
-/// 箭头头部 `(尖端, 两翼端点)`：终点总有，双向箭头起点也有一个；`render` 与命中测试共用。
+/// 箭头头部 `(尖端, 两翼端点)`：单向在终点，反向在起点，双向与尺寸标注线两端都有；`render` 与命中测试共用。
 pub fn arrow_heads(shape: &Annotation) -> Vec<(Point, [Point; 2])> {
-    let mut heads = vec![(shape.end, wings(shape.start, shape.end, shape.width))];
-    if shape.arrow_heads == ArrowHeads::Both {
-        heads.push((shape.start, wings(shape.end, shape.start, shape.width)));
+    let end = (shape.end, wings(shape.start, shape.end, shape.width));
+    let start = (shape.start, wings(shape.end, shape.start, shape.width));
+    match shape.arrow_heads {
+        ArrowHeads::End => vec![end],
+        ArrowHeads::Start => vec![start],
+        ArrowHeads::Both | ArrowHeads::Dimension => vec![end, start],
     }
-    heads
+}
+
+/// 尺寸标注线两端垂直于主线的界线（以端点为中点，长度约为箭头翼长的 2.4 倍）；其他箭头为空。
+pub fn dimension_ticks(shape: &Annotation) -> Vec<(Point, Point)> {
+    if shape.arrow_heads != ArrowHeads::Dimension {
+        return Vec::new();
+    }
+    let (a, b) = (shape.start, shape.end);
+    let (dx, dy) = (b.x - a.x, b.y - a.y);
+    let length = dx.hypot(dy);
+    if length == 0.0 {
+        return Vec::new();
+    }
+    let half = (shape.width * 4.0).max(10.0) * 1.2;
+    let (nx, ny) = (-dy / length * half, dx / length * half);
+    [a, b]
+        .into_iter()
+        .map(|p| (Point { x: p.x + nx, y: p.y + ny }, Point { x: p.x - nx, y: p.y - ny }))
+        .collect()
 }
 
 /// 从 `a` 指向尖端 `b` 的两翼端点。短箭头的翼不超过主线长度的 45%，双向箭头两端合计也不会重叠。

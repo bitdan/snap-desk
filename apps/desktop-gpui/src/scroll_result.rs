@@ -1,5 +1,6 @@
 //! 滚动截图的结果窗口：拼接完成后打开，预览整张长图，拖动两条裁剪线去掉多余的页眉、页脚
 //! （横向长图为左右两端），再复制、保存、贴图（贴图后可在贴图上继续标注）或识别文字。
+//! 打开时自动把裁剪线放到两端纯色空白的内容边缘（`snap_core::scroll::trim`），可重置或再次自动裁剪。
 //!
 //! 成图在完成时已复制并存入 `scroll-results`（见 `scroll.rs`）；这里的操作都作用于裁剪后的图片，
 //! 不改写已保存的原始结果，直接关闭窗口即放弃裁剪。GPU 纹理有尺寸上限，长图不能整张上传，
@@ -38,14 +39,17 @@ enum Edge {
 /// 拼接完成后打开结果窗口；缩略图在后台线程生成后再开窗。
 pub fn open(cx: &mut App, image: Arc<RgbaImage>, horizontal: bool, language: Language) {
     cx.spawn(async move |cx| {
-        let preview = cx
+        let (preview, auto) = cx
             .background_executor()
             .spawn({
                 let image = image.clone();
-                async move { thumbnail(&image, horizontal) }
+                async move {
+                    let auto = snap_core::scroll::trim::blank_ends(&image, horizontal, MIN_KEEP);
+                    (thumbnail(&image, horizontal), auto)
+                }
             })
             .await;
-        cx.update(|cx| open_window(cx, image, horizontal, preview, language));
+        cx.update(|cx| open_window(cx, image, horizontal, preview, auto, language));
     })
     .detach();
 }
@@ -93,7 +97,14 @@ fn cropped(image: &RgbaImage, horizontal: bool, start: u32, end: u32) -> RgbaIma
     image::imageops::crop_imm(image, x, y, cw, ch).to_image()
 }
 
-fn open_window(cx: &mut App, image: Arc<RgbaImage>, horizontal: bool, preview: Arc<RenderImage>, language: Language) {
+fn open_window(
+    cx: &mut App,
+    image: Arc<RgbaImage>,
+    horizontal: bool,
+    preview: Arc<RenderImage>,
+    auto: (u32, u32),
+    language: Language,
+) {
     let screen = cx
         .primary_display()
         .map(|d| d.visible_bounds().size)
@@ -120,8 +131,9 @@ fn open_window(cx: &mut App, image: Arc<RgbaImage>, horizontal: bool, preview: A
             image,
             horizontal,
             preview,
-            start: 0,
-            end: 0,
+            start: auto.0,
+            end: auto.1,
+            auto,
             dragging: None,
             bounds: Rc::new(Cell::new(Bounds::default())),
             language,
@@ -134,7 +146,7 @@ fn open_window(cx: &mut App, image: Arc<RgbaImage>, horizontal: bool, preview: A
     match result {
         Ok(handle) => {
             let _ = handle.update(cx, |_, window, _| window.activate_window());
-            log::info!("event=gpui.scroll_result_opened width={w} height={h}");
+            log::info!("event=gpui.scroll_result_opened width={w} height={h} auto_start={} auto_end={}", auto.0, auto.1);
         }
         Err(error) => log::error!("event=gpui.scroll_result_failed message={error}"),
     }
@@ -154,6 +166,8 @@ pub struct ResultView {
     /// 从起始端、末端裁掉的原图像素。
     start: u32,
     end: u32,
+    /// 自动裁剪的建议值（两端纯色空白），打开时即采用；没有空白时为 (0, 0)。
+    auto: (u32, u32),
     dragging: Option<Edge>,
     /// 预览图在窗口中的边界（绘制时写入，随滚动变化），用于把鼠标位置换算成原图像素。
     bounds: Rc<Cell<Bounds<Pixels>>>,
@@ -508,6 +522,23 @@ impl Render for ResultView {
                     .on_click(cx.listener(|view, _: &ClickEvent, _, cx| {
                         view.start = 0;
                         view.end = 0;
+                        cx.notify();
+                    })),
+            );
+        }
+        if self.auto != (0, 0) && (self.start, self.end) != self.auto {
+            info = info.child(
+                div()
+                    .id("scroll-crop-auto")
+                    .px(px(6.0))
+                    .py(px(2.0))
+                    .rounded(px(4.0))
+                    .cursor_pointer()
+                    .text_color(rgb(ACCENT))
+                    .hover(|s| s.bg(rgb(c.hover)))
+                    .child(self.t("自动裁剪"))
+                    .on_click(cx.listener(|view, _: &ClickEvent, _, cx| {
+                        (view.start, view.end) = view.auto;
                         cx.notify();
                     })),
             );

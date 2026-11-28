@@ -976,9 +976,9 @@ impl HistoryView {
         let c = clip();
         let modifier = modifier();
         let key = if self.paste_on_activate {
-            "回车或双击粘贴到原窗口 · {0}+1～9 粘贴第 N 条 · 单击选中 · {0} 多选 · Shift 连选 · 多选后回车一起粘贴 · {0}+C 仅复制 · 右键更多操作"
+            "回车粘贴 · {0}+1～9 粘贴第 N 条 · {0} / Shift 多选 · {0}+C 仅复制 · 右键更多"
         } else {
-            "回车或双击复制并收起 · {0}+1～9 复制第 N 条 · 单击选中 · {0} 多选 · Shift 连选 · 多选后回车一起复制 · {0}+C 仅复制 · 右键更多操作"
+            "回车复制 · {0}+1～9 复制第 N 条 · {0} / Shift 多选 · 右键更多"
         };
         div()
             .w_full()

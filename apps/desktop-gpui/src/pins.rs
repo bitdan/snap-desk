@@ -72,6 +72,8 @@ pub enum Placement {
 #[derive(Default)]
 struct Registry {
     pins: Vec<(AnyWindowHandle, WeakEntity<Pin>)>,
+    /// 用户用“隐藏所有贴图 / 只显示此贴图”藏起来的贴图（与对话框期间的临时隐藏分开记录）。
+    user_hidden: Vec<AnyWindowHandle>,
 }
 impl Global for Registry {}
 
@@ -228,6 +230,7 @@ pub fn create(
                 placed: None,
                 topmost: true,
                 click_through: false,
+                move_from: None,
                 appearance: settings.pin_appearance.clone(),
                 export: settings.export.clone(),
                 language: settings.appearance.language.clone(),
@@ -361,6 +364,40 @@ pub fn show_pins(cx: &mut App, hidden: Vec<AnyWindowHandle>) {
             log::warn!("event=gpui.pin_show_failed message={error}");
         }
         pin.update(cx, |pin, _| pin.hidden = false);
+    }
+}
+
+/// 用户隐藏的贴图中仍然存在的。
+fn user_hidden(cx: &mut App) -> Vec<AnyWindowHandle> {
+    let alive: Vec<AnyWindowHandle> = alive(cx).into_iter().map(|(handle, _)| handle).collect();
+    let registry = cx.default_global::<Registry>();
+    registry.user_hidden.retain(|handle| alive.contains(handle));
+    registry.user_hidden.clone()
+}
+
+/// 有被用户隐藏的贴图时全部显示，否则隐藏所有贴图（托盘与贴图菜单）。
+/// 不能在某个贴图自身的事件处理中直接调用（会读取它的实体），由调用方 `defer`。
+pub fn toggle_all(cx: &mut App) {
+    let hidden = user_hidden(cx);
+    if hidden.is_empty() {
+        let hidden = hide_pins(cx, None);
+        cx.default_global::<Registry>().user_hidden = hidden;
+    } else {
+        cx.default_global::<Registry>().user_hidden.clear();
+        show_pins(cx, hidden);
+        log::info!("event=gpui.pins_shown");
+    }
+}
+
+/// 只显示 `keep`：其余可见贴图隐藏；已经只显示它时恢复全部。
+fn solo(cx: &mut App, keep: AnyWindowHandle) {
+    let hidden = user_hidden(cx);
+    if hidden.is_empty() {
+        let hidden = hide_pins(cx, Some(keep));
+        cx.default_global::<Registry>().user_hidden = hidden;
+    } else {
+        cx.default_global::<Registry>().user_hidden.clear();
+        show_pins(cx, hidden);
     }
 }
 
@@ -663,6 +700,9 @@ enum Item {
     Lock,
     Toolbar,
     ClickThrough,
+    /// 只显示此贴图（其他贴图已被隐藏时为“显示所有贴图”）。
+    Solo,
+    HideAll,
     Transform(Transform),
     Opacity(usize),
     ClearAnnotations,
@@ -670,7 +710,7 @@ enum Item {
     Separator,
 }
 
-const MENU: [Item; 28] = [
+const MENU: [Item; 31] = [
     Item::Recognize(crate::recognition::Mode::Ocr),
     Item::Recognize(crate::recognition::Mode::Qr),
     Item::Recognize(crate::recognition::Mode::Translate),
@@ -683,6 +723,9 @@ const MENU: [Item; 28] = [
     Item::Lock,
     Item::Toolbar,
     Item::ClickThrough,
+    Item::Separator,
+    Item::Solo,
+    Item::HideAll,
     Item::Separator,
     Item::Transform(Transform::RotateLeft),
     Item::Transform(Transform::RotateRight),
@@ -912,6 +955,9 @@ pub struct Pin {
     locked: bool,
     topmost: bool,
     click_through: bool,
+    /// 按下图片时的位置（窗口内逻辑像素）：拖出几个像素后才交给系统移动窗口。按下就进入系统移动循环会吞掉
+    /// 抬起，第二次按下认不出双击，双击关闭就失效了。
+    move_from: Option<Point<Pixels>>,
     appearance: PinAppearance,
     export: ExportSettings,
     language: Language,
@@ -1028,10 +1074,14 @@ impl Pin {
         }
         items.extend(MENU);
         let height = menu_height(&items);
+        let others_hidden = !user_hidden(cx).is_empty();
         let entries: Vec<Entry> = items
             .into_iter()
             .map(|item| {
-                let (label, checked) = self.label(item);
+                let (label, checked) = match item {
+                    Item::Solo if others_hidden => (self.text("显示所有贴图"), false),
+                    _ => self.label(item),
+                };
                 Entry { item, label, checked, shortcut: Self::shortcut(item) }
             })
             .collect();
@@ -1101,6 +1151,11 @@ impl Pin {
             }
             Item::Toolbar => self.toggle_toolbar(window, cx),
             Item::ClickThrough => self.set_click_through(!self.click_through, window, cx),
+            Item::Solo => {
+                let keep = window.window_handle();
+                cx.defer(move |cx| solo(cx, keep));
+            }
+            Item::HideAll => cx.defer(toggle_all),
             Item::Transform(action) => self.transform(action, cx),
             Item::Opacity(index) => self.opacity = OPACITIES[index],
             Item::ClearAnnotations => {
@@ -1651,11 +1706,20 @@ impl Pin {
             return;
         }
         if !self.locked {
-            crate::native::start_move(window);
+            self.move_from = Some(event.position);
         }
     }
 
     fn motion(&mut self, event: &MouseMoveEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(from) = self.move_from {
+            if event.pressed_button != Some(MouseButton::Left) {
+                self.move_from = None;
+            } else if (event.position.x - from.x).abs() > px(3.0) || (event.position.y - from.y).abs() > px(3.0) {
+                self.move_from = None;
+                crate::native::start_move(window);
+                return;
+            }
+        }
         if self.text_select.as_ref().is_some_and(|mode| mode.dragging) {
             let p = self.to_point(event.position, window.scale_factor());
             self.drag_text_selection(p, event.pressed_button == Some(MouseButton::Left), cx);
@@ -1674,6 +1738,7 @@ impl Pin {
     }
 
     fn release(&mut self, _: &MouseUpEvent, window: &mut Window, cx: &mut Context<Self>) {
+        self.move_from = None;
         if let Some(mode) = self.text_select.as_mut() {
             mode.dragging = false;
         }
@@ -1808,6 +1873,8 @@ impl Pin {
             Item::Toolbar => (self.text("显示工具栏"), self.toolbar),
             Item::ClearAnnotations => (self.text("清空标注"), false),
             Item::ClickThrough => (self.text("鼠标穿透"), self.click_through),
+            Item::Solo => (self.text("只显示此贴图"), false),
+            Item::HideAll => (self.text("隐藏所有贴图"), false),
             Item::Transform(action) => (
                 self.text(match action {
                     Transform::RotateLeft => "左转",
